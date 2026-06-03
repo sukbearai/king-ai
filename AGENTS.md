@@ -31,7 +31,7 @@ Run `pnpm build && pnpm test` or `pnpm verify` after changes.
 
 ## Commit & Pull Request Guidelines
 
-Recent commits use Conventional Commit prefixes such as `feat:` and `fix:`; continue that pattern with short, specific summaries. PRs should describe the behavior change, list verification commands run, and call out any runtime-server API assumptions. Include logs or terminal output when changing service installation, pairing, SSE, or engine invocation behavior.
+Recent commits use Conventional Commit prefixes such as `feat:` and `fix:`; continue that pattern with short, specific English summaries. Commit messages in this repository must be written in English. PRs should describe the behavior change, list verification commands run, and call out any runtime-server API assumptions. Include logs or terminal output when changing service installation, pairing, SSE, or engine invocation behavior.
 
 ## Security & Configuration Tips
 
