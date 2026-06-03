@@ -248,14 +248,101 @@ test("demo runtime records computer capabilities from pair and heartbeat", async
   assert.equal(heartbeatState.lastHeartbeat?.version, "0.1.0");
 });
 
-test("demo page exposes runtime observation panel", async () => {
+test("demo page exposes mobile-first chat shell with settings modal", async () => {
   const page = await worker.fetch(new Request("https://demo/"), env());
   const html = await page.text();
-  assert.match(html, /Runtime observation/);
-  assert.match(html, /id="classification"/);
-  assert.match(html, /id="metricUnread"/);
-  assert.match(html, /function observeState/);
-  assert.match(html, /backlog_stuck/);
+  assert.match(html, /King AI 对话/);
+  assert.match(html, /id="chatWindow"/);
+  assert.match(html, /id="settingsDialog"/);
+  assert.match(html, /function openSettings/);
+  assert.match(html, /height:\s*100vh/);
+  assert.match(html, /模型状态/);
+  assert.match(html, /id="modelStatus"/);
+  assert.match(html, /发送/);
+  assert.match(html, /应用模型/);
+  assert.match(html, /\/demo\/summary/);
+  assert.doesNotMatch(html, /id="state"/);
+});
+
+test("demo ui summary and activity endpoints aggregate console state", async () => {
+  const bindings = env();
+  await worker.fetch(new Request("https://demo/api/computers/pair", {
+    method: "POST",
+    body: JSON.stringify({ code: "demo", engines: ["codex"], capabilities: { workspaces: ["/tmp/project"] } })
+  }), bindings);
+  await worker.fetch(new Request("https://demo/demo/message", {
+    method: "POST",
+    body: JSON.stringify({ body: "inspect this" })
+  }), bindings);
+  await worker.fetch(new Request("https://demo/demo/task", {
+    method: "POST",
+    body: JSON.stringify({ title: "Console task", description: "verify summary", paths: "apps/demo-worker/src/index.ts" })
+  }), bindings);
+
+  const summary = await json<{
+    connection: { paired: boolean };
+    availableEngines: string[];
+    observation: { classification: string; counts: { unreadMessages: number; activeTasks: number } };
+    routeSummary: string;
+  }>(await worker.fetch(new Request("https://demo/demo/summary"), bindings));
+  assert.equal(summary.connection.paired, true);
+  assert.deepEqual(summary.availableEngines, ["codex"]);
+  assert.equal(summary.observation.classification, "backlog_stuck");
+  assert.equal(summary.observation.counts.unreadMessages, 1);
+  assert.equal(summary.observation.counts.activeTasks, 1);
+  assert.match(summary.routeSummary, /steer\/normal\/msg/);
+
+  const activity = await json<{ rows: { type: string; summary: string }[] }>(
+    await worker.fetch(new Request("https://demo/demo/activity?limit=10"), bindings)
+  );
+  assert.ok(activity.rows.some((row) => row.type === "message.human" && row.summary.includes("inspect this")));
+  assert.ok(activity.rows.some((row) => row.type === "queue.backlog"));
+});
+
+test("demo ui can update tasks, move cards, and mark a conversation read", async () => {
+  const bindings = env();
+  await worker.fetch(new Request("https://demo/demo/message", {
+    method: "POST",
+    body: JSON.stringify({ body: "read me" })
+  }), bindings);
+  const createdTask = await json<{ task: { id: string; status: string } }>(
+    await worker.fetch(new Request("https://demo/demo/task", {
+      method: "POST",
+      body: JSON.stringify({ title: "Move task", wake: false })
+    }), bindings)
+  );
+  assert.equal(createdTask.task.status, "assigned");
+
+  const updatedTask = await json<{ task: { status: string } }>(
+    await worker.fetch(new Request(`https://demo/demo/task/${createdTask.task.id}/update`, {
+      method: "POST",
+      body: JSON.stringify({ status: "done", result: "ok" })
+    }), bindings)
+  );
+  assert.equal(updatedTask.task.status, "done");
+
+  const createdCard = await json<{ card: { id: string; column: string } }>(
+    await worker.fetch(new Request("https://demo/demo/card", {
+      method: "POST",
+      body: JSON.stringify({ title: "Move card", allowedPaths: ["apps/demo-worker"] })
+    }), bindings)
+  );
+  const movedCard = await json<{ card: { column: string } }>(
+    await worker.fetch(new Request(`https://demo/demo/card/${createdCard.card.id}/move`, {
+      method: "POST",
+      body: JSON.stringify({ column: "doing" })
+    }), bindings)
+  );
+  assert.equal(movedCard.card.column, "doing");
+
+  await json<{ ok: true }>(await worker.fetch(new Request("https://demo/demo/conversation/mark-read", {
+    method: "POST",
+    body: JSON.stringify({ conversationId: "demo-convo" })
+  }), bindings));
+  const summary = await json<{ observation: { counts: { unreadMessages: number } } }>(
+    await worker.fetch(new Request("https://demo/demo/summary"), bindings)
+  );
+  assert.equal(summary.observation.counts.unreadMessages, 0);
 });
 
 test("demo runtime supports broader king CLI commands", async () => {

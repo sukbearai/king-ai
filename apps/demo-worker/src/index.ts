@@ -456,6 +456,26 @@ type AgentConfigPayload = {
   lifecycle?: unknown;
 };
 
+type DemoTaskPayload = {
+  title?: unknown;
+  description?: unknown;
+  assignee?: unknown;
+  priority?: unknown;
+  paths?: unknown;
+  wake?: unknown;
+};
+
+type DemoTaskUpdatePayload = {
+  status?: unknown;
+  assignee?: unknown;
+  result?: unknown;
+};
+
+type DemoCardMovePayload = {
+  column?: unknown;
+  owner?: unknown;
+};
+
 type AgendaPayload = {
   actionable?: boolean;
   brief?: string;
@@ -511,198 +531,526 @@ const DEFAULT_EVALUATION_CRITERIA: EvaluationCriteria[] = [
 const REVIEW_COVERAGE_GATE = 95;
 const LOOP_EVENT_BUFFER_CAPACITY = 100;
 
-const html = `<!doctype html>
+const legacyHtml = `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>King Demo</title>
+  <title>King 本地 Agent 控制台</title>
   <style>
-    body { font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: #f7f7f5; color: #1d1d1f; }
-    main { max-width: 980px; margin: 0 auto; padding: 28px; }
-    h1 { font-size: 28px; margin: 0 0 8px; }
-    h2 { font-size: 18px; margin-top: 28px; }
-    code, pre { background: #ececea; border-radius: 6px; }
-    code { padding: 2px 5px; }
-    pre { padding: 14px; overflow: auto; }
-    .row { display: flex; gap: 10px; flex-wrap: wrap; }
-    input, textarea, button { font: inherit; }
-    input, textarea { border: 1px solid #c9c9c4; border-radius: 6px; padding: 9px; background: white; }
-    select { border: 1px solid #c9c9c4; border-radius: 6px; padding: 9px; background: white; font: inherit; }
-    input, select, button { min-height: 42px; box-sizing: border-box; }
-    textarea { width: 100%; min-height: 90px; }
-    button { border: 0; border-radius: 6px; padding: 9px 12px; background: #111; color: white; cursor: pointer; }
-    .panel { background: white; border: 1px solid #deded9; border-radius: 8px; padding: 16px; margin-top: 12px; }
-    .muted { color: #666; }
-    .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
-    .chip { display: inline-flex; align-items: center; border-radius: 6px; padding: 5px 8px; background: #ececea; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-    .field { display: grid; gap: 5px; min-width: 180px; }
-    .field.action { min-width: auto; align-self: end; }
-    .field.action button { padding: 9px 14px; line-height: 1; }
-    label { font-size: 13px; color: #666; }
-    .status { margin-top: 10px; color: #666; font-size: 13px; }
-    .metric { display: grid; gap: 3px; min-width: 110px; }
-    .metric strong { font-size: 20px; }
-    .classification { display: inline-flex; align-items: center; border-radius: 6px; padding: 6px 9px; background: #111; color: white; font-weight: 600; }
+    :root {
+      --primary: #00d992;
+      --primary-soft: #2fd6a1;
+      --primary-deep: #10b981;
+      --canvas: #101010;
+      --canvas-soft: #1a1a1a;
+      --hairline: #3d3a39;
+      --ink: #f2f2f2;
+      --ink-strong: #ffffff;
+      --body: #bdbdbd;
+      --mute: #8b949e;
+      --code: #f5f6f7;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--canvas);
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-feature-settings: "calt", "rlig";
+    }
+    main { max-width: 1380px; margin: 0 auto; padding: 32px; }
+    h1, h2, h3, p { margin: 0; }
+    h1 { color: var(--ink-strong); font-size: 60px; font-weight: 400; line-height: 60px; letter-spacing: -0.65px; max-width: 760px; }
+    h2 { color: var(--ink-strong); font-size: 24px; font-weight: 700; line-height: 32px; letter-spacing: -0.6px; }
+    h3 { color: var(--ink-strong); font-size: 16px; font-weight: 600; line-height: 24px; }
+    p { color: var(--body); font-size: 16px; line-height: 26px; }
+    code, pre, .mono, .metric strong, .chip, .activity-type { font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+    button, input, textarea, select { font: inherit; }
+    button {
+      min-height: 44px;
+      border-radius: 6px;
+      border: 1px solid var(--hairline);
+      padding: 10px 16px;
+      background: var(--canvas);
+      color: var(--ink);
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--primary-soft); }
+    .primary { background: var(--primary); border-color: var(--primary); color: #101010; font-weight: 600; }
+    .ghost { border-color: transparent; color: var(--primary-soft); }
+    input, textarea, select {
+      width: 100%;
+      min-height: 44px;
+      border: 1px solid var(--hairline);
+      border-radius: 6px;
+      background: var(--canvas-soft);
+      color: var(--ink);
+      padding: 10px 12px;
+    }
+    textarea { min-height: 112px; resize: vertical; line-height: 22px; }
+    label { color: var(--mute); font-size: 12px; line-height: 16px; }
+    pre {
+      overflow: auto;
+      margin: 0;
+      border: 1px solid var(--hairline);
+      border-radius: 8px;
+      background: var(--canvas-soft);
+      color: var(--code);
+      padding: 16px;
+      font-size: 13px;
+      line-height: 18px;
+    }
+    .eyebrow {
+      color: var(--primary);
+      font-size: 14px;
+      font-weight: 600;
+      line-height: 20px;
+      letter-spacing: 2px;
+    }
+    .hero { padding: 48px 0 28px; border-bottom: 1px dashed rgba(79, 93, 117, 0.4); }
+    .hero p { margin-top: 18px; max-width: 720px; font-size: 18px; line-height: 28px; }
+    .status-bar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: grid;
+      grid-template-columns: minmax(180px, 1.2fr) repeat(5, minmax(110px, 1fr));
+      gap: 1px;
+      margin: 24px 0 0;
+      border: 1px solid var(--hairline);
+      border-radius: 8px;
+      background: var(--hairline);
+      overflow: hidden;
+    }
+    .status-cell { background: var(--canvas); padding: 14px 16px; min-width: 0; }
+    .status-cell span { display: block; color: var(--mute); font-size: 12px; line-height: 16px; }
+    .status-cell strong { display: block; margin-top: 4px; color: var(--ink-strong); font-size: 13px; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 28px;
+      border: 1px solid var(--hairline);
+      border-radius: 9999px;
+      padding: 5px 10px;
+      color: var(--ink);
+      font-size: 14px;
+      line-height: 20px;
+    }
+    .pill.live { border-color: var(--primary); color: var(--primary); }
+    .dot { width: 7px; height: 7px; border-radius: 9999px; background: var(--mute); }
+    .live .dot { background: var(--primary); }
+    .grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 0.74fr); gap: 24px; padding: 32px 0; }
+    .chat-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 24px; padding: 32px 0; align-items: start; }
+    .stack { display: grid; gap: 24px; }
+    .card {
+      border: 1px solid var(--hairline);
+      border-radius: 8px;
+      background: var(--canvas);
+      padding: 24px;
+    }
+    .card.featured { border-width: 3px; }
+    .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+    .subtle { color: var(--mute); font-size: 14px; line-height: 20px; }
+    .row { display: flex; flex-wrap: wrap; gap: 10px; }
+    .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .field { display: grid; gap: 6px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid var(--hairline);
+      border-radius: 6px;
+      padding: 4px 8px;
+      color: var(--code);
+      background: var(--canvas-soft);
+      font-size: 13px;
+      line-height: 18px;
+    }
+    .metric-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; border: 1px solid var(--hairline); background: var(--hairline); border-radius: 8px; overflow: hidden; }
+    .metric { background: var(--canvas); padding: 14px; min-width: 0; }
+    .metric span { color: var(--mute); font-size: 12px; line-height: 16px; }
+    .metric strong { display: block; margin-top: 5px; color: var(--ink-strong); font-size: 24px; line-height: 32px; font-weight: 550; }
+    .classification {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 9999px;
+      padding: 6px 10px;
+      background: rgba(0, 217, 146, 0.08);
+      color: var(--primary);
+      border: 1px solid var(--primary);
+      font-size: 14px;
+      line-height: 20px;
+      font-weight: 600;
+    }
+    .activity-list, .message-list, .compact-list { display: grid; gap: 10px; }
+    .chat-card { min-height: 680px; display: grid; grid-template-rows: auto minmax(320px, 1fr) auto; }
+    .chat-window {
+      display: grid;
+      align-content: end;
+      gap: 14px;
+      min-height: 420px;
+      max-height: 620px;
+      overflow: auto;
+      border: 1px solid var(--hairline);
+      border-radius: 8px;
+      background: var(--canvas-soft);
+      padding: 18px;
+    }
+    .bubble {
+      max-width: 78%;
+      border: 1px solid var(--hairline);
+      border-radius: 8px;
+      padding: 12px 14px;
+      background: var(--canvas);
+    }
+    .bubble.human { justify-self: end; border-color: var(--primary); }
+    .bubble.agent { justify-self: start; }
+    .bubble.system { justify-self: center; max-width: 92%; border-style: dashed; }
+    .bubble-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+    .bubble-name { color: var(--ink-strong); font-size: 14px; font-weight: 600; line-height: 20px; }
+    .bubble-body { color: var(--body); font-size: 15px; line-height: 24px; white-space: pre-wrap; word-break: break-word; }
+    .composer { display: grid; gap: 12px; margin-top: 16px; }
+    .composer textarea { min-height: 96px; }
+    .composer-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .side-card { padding: 18px; }
+    .activity, .message, .compact-row {
+      border: 1px solid var(--hairline);
+      border-radius: 8px;
+      padding: 12px;
+      background: var(--canvas);
+    }
+    .activity-top, .message-top, .compact-top { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 6px; }
+    .activity-type { color: var(--primary-soft); font-size: 12px; line-height: 16px; }
+    .time { color: var(--mute); font-size: 12px; line-height: 16px; white-space: nowrap; }
+    .message.human { border-left: 2px solid var(--primary); }
+    .message.agent { border-left: 2px solid var(--hairline); }
+    .message-body, .activity-body, .compact-body { color: var(--body); font-size: 14px; line-height: 20px; word-break: break-word; }
+    .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 16px; }
+    .tab { min-height: 36px; padding: 7px 12px; font-size: 14px; }
+    .tab.active { background: var(--primary); border-color: var(--primary); color: #101010; font-weight: 600; }
+    .hidden { display: none !important; }
+    .debug-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+    .green-divider { border-top: 2px solid var(--primary); margin: 8px 0 24px; }
+    @media (max-width: 1023px) {
+      main { padding: 24px; }
+      h1 { font-size: 42px; line-height: 44px; }
+      .grid, .chat-layout { grid-template-columns: 1fr; }
+      .status-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); position: static; }
+    }
+    @media (max-width: 767px) {
+      main { padding: 18px; }
+      h1 { font-size: 32px; line-height: 36px; letter-spacing: 0; }
+      .fields, .metric-grid, .status-bar { grid-template-columns: 1fr; }
+      .card { padding: 18px; }
+    }
   </style>
 </head>
 <body>
 <main>
-  <h1>King Demo Runtime</h1>
-  <p class="muted">Pair code: <code>demo</code>. This page lets you send messages to the local daemon and inspect replies posted through <code>king</code>.</p>
+  <section class="hero">
+    <div class="eyebrow">本地 AGENT 运行台</div>
+    <h1>King 本地 Agent 控制台</h1>
+    <p>把这台电脑上的 Claude 或 Codex CLI 接入云端 Worker，然后在这里发消息、派任务、看运行状态和处理结果。</p>
+  </section>
 
-  <h2>1. Pair locally</h2>
-  <pre id="cmd"></pre>
-  <div class="panel">
-    <div class="muted">Available engines reported by this computer</div>
-    <div id="engines" class="chips"></div>
-    <div class="status" id="actualEngine"></div>
-    <div class="status" id="agentWorkspaceRoot"></div>
-    <div class="muted" style="margin-top:12px">Allowed workspaces</div>
-    <div id="workspaces" class="chips"></div>
-    <div class="row" style="margin-top:14px">
-      <div class="field">
-        <label for="engine">Agent engine</label>
-        <select id="engine"></select>
+  <section class="status-bar" aria-label="Runtime status">
+    <div class="status-cell"><span>连接状态</span><strong><span id="statusPill" class="pill"><span class="dot"></span> 未配对</span></strong></div>
+    <div class="status-cell"><span>最近心跳</span><strong id="heartbeatStat">未收到</strong></div>
+    <div class="status-cell"><span>运行引擎</span><strong id="engineStat">自动</strong></div>
+    <div class="status-cell"><span>运行模式</span><strong id="lifecycleStat">按需启动</strong></div>
+    <div class="status-cell"><span>待读消息</span><strong id="unreadStat">0</strong></div>
+    <div class="status-cell"><span>失败次数</span><strong id="failedStat">0</strong></div>
+  </section>
+
+  <section class="chat-layout">
+    <section class="card featured chat-card">
+      <div class="card-head">
+        <div>
+          <div class="eyebrow">对话</div>
+          <h2>给本地 AI 发消息</h2>
+          <p class="subtle" id="routeSummary" style="margin-top:6px">暂无待处理消息</p>
+        </div>
+        <button class="ghost" onclick="refresh()">刷新</button>
       </div>
-      <div class="field">
-        <label for="lifecycle">Lifecycle</label>
-        <select id="lifecycle">
-          <option value="on-demand">on-demand</option>
-          <option value="24/7">24/7</option>
-          <option value="idle_cached">idle_cached</option>
-          <option value="disabled">disabled</option>
-        </select>
+      <div id="chatWindow" class="chat-window"></div>
+      <div class="composer">
+        <label for="body">输入消息</label>
+        <textarea id="body" placeholder="问本地 Agent 一个问题，或让它帮你处理当前项目。">请用一句话回复，确认本地 demo runtime 已经连上。</textarea>
+        <div class="composer-actions">
+          <div class="row">
+            <button class="primary" onclick="sendMessage()">发送给 AI</button>
+            <button onclick="markConversationRead()">标记已读</button>
+            <button onclick="clearMessages()">清空对话</button>
+          </div>
+          <span class="subtle">发送后，本地守护进程会唤醒 Claude/Codex，并把回复写回这里。</span>
+        </div>
       </div>
-      <div class="field">
-        <label for="model">Model override</label>
-        <input id="model" placeholder="default CLI model" />
-      </div>
-      <div class="field">
-        <label for="fastModel">Fast model override</label>
-        <input id="fastModel" placeholder="default small model" />
-      </div>
-      <div class="field action">
-        <button onclick="saveAgentConfig()">Apply</button>
+    </section>
+
+    <aside class="stack">
+      <section class="card side-card">
+        <div class="card-head">
+          <div>
+            <div class="eyebrow">第一步：连接本机</div>
+            <h2>配对这台电脑</h2>
+          </div>
+          <button class="primary" onclick="copyPairCommand()">复制命令</button>
+        </div>
+        <pre id="cmd"></pre>
+        <div class="green-divider"></div>
+        <div class="fields">
+          <div class="field">
+            <label>本机可用引擎</label>
+            <div id="engines" class="chips"></div>
+          </div>
+          <div class="field">
+            <label>Agent 工作目录根路径</label>
+            <div id="agentWorkspaceRoot" class="chip">默认独立工作目录</div>
+          </div>
+        </div>
+        <div class="field" style="margin-top:12px">
+          <label>允许访问的项目目录</label>
+          <div id="workspaces" class="chips"></div>
+        </div>
+      </section>
+
+      <section class="card side-card">
+        <div class="card-head">
+          <div>
+            <div class="eyebrow">第二步：配置 AGENT</div>
+            <h2>本地 Agent 设置</h2>
+          </div>
+          <button class="primary" onclick="saveAgentConfig()">应用</button>
+        </div>
+        <div class="fields">
+          <div class="field">
+            <label for="engine">使用哪个引擎</label>
+            <select id="engine"></select>
+          </div>
+          <div class="field">
+            <label for="lifecycle">运行模式</label>
+            <select id="lifecycle">
+              <option value="on-demand">按需启动</option>
+              <option value="24/7">持续在线</option>
+              <option value="idle_cached">空闲保活</option>
+              <option value="disabled">停用</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="model">主模型覆盖</label>
+            <input id="model" placeholder="使用 CLI 默认模型" />
+          </div>
+          <div class="field">
+            <label for="fastModel">快速模型覆盖</label>
+            <input id="fastModel" placeholder="使用默认小模型" />
+          </div>
+        </div>
+        <p class="subtle" id="applyState" style="margin-top:12px">设置会在下一次本地守护进程轮询或重启后生效。</p>
+      </section>
+
+      <section class="card side-card">
+        <div class="card-head">
+          <div>
+            <div class="eyebrow">运行观察</div>
+            <h2>当前状态</h2>
+          </div>
+          <div id="classification" class="classification">空闲</div>
+        </div>
+        <p id="observationReasons" class="subtle">暂时没有状态变化</p>
+        <div class="metric-grid" style="margin-top:16px">
+          <div class="metric"><span>待读</span><strong id="metricUnread">0</strong></div>
+          <div class="metric"><span>阻塞</span><strong id="metricBlocked">0</strong></div>
+          <div class="metric"><span>进行中任务</span><strong id="metricTasks">0</strong></div>
+          <div class="metric"><span>变更包</span><strong id="metricCapsules">0</strong></div>
+          <div class="metric"><span>产物</span><strong id="metricArtifacts">0</strong></div>
+          <div class="metric"><span>失败</span><strong id="metricFailures">0</strong></div>
+        </div>
+      </section>
+
+      <section class="card side-card">
+        <div class="card-head">
+          <div>
+            <div class="eyebrow">时间线</div>
+            <h2>最近事件</h2>
+          </div>
+        </div>
+        <div id="activity" class="activity-list"></div>
+      </section>
+    </aside>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <div>
+        <div class="eyebrow">高级功能</div>
+        <h2>任务、卡片、变更包、产物和调试</h2>
       </div>
     </div>
-    <div class="status" id="applyState">After changing settings, wait up to 60 seconds for daemon sync or restart the daemon command.</div>
-  </div>
-
-  <h2>2. Send a message</h2>
-  <div class="panel">
-    <textarea id="body">请回复一句话，说明你已经连上本地 demo runtime。</textarea>
-    <div class="row" style="margin-top:10px">
-      <button onclick="sendMessage()">Send wake</button>
-      <button onclick="refresh()">Refresh state</button>
-      <button onclick="clearMessages()">Clear messages</button>
+    <div class="fields" style="margin-bottom:16px">
+      <div class="field">
+        <label for="taskTitle">任务标题</label>
+        <input id="taskTitle" placeholder="优化 demo 控制台页面" />
+      </div>
+      <div class="field">
+        <label for="taskPaths">限定代码路径</label>
+        <input id="taskPaths" placeholder="apps/demo-worker/src/index.ts" />
+      </div>
+      <div class="field">
+        <label for="taskDescription">任务说明</label>
+        <textarea id="taskDescription" placeholder="希望本地 Agent 做什么？"></textarea>
+      </div>
+      <div class="field" style="align-self:end">
+        <div class="row">
+          <button class="primary" onclick="createTask()">创建任务并唤醒</button>
+          <button onclick="createCard()">创建卡片</button>
+        </div>
+      </div>
     </div>
-  </div>
-
-  <h2>3. Runtime observation</h2>
-  <div class="panel">
-    <div id="classification" class="classification">idle</div>
-    <div class="status" id="observationReasons"></div>
-    <div class="row" style="margin-top:12px">
-      <div class="metric"><span class="muted">Unread</span><strong id="metricUnread">0</strong></div>
-      <div class="metric"><span class="muted">Blocked</span><strong id="metricBlocked">0</strong></div>
-      <div class="metric"><span class="muted">Active tasks</span><strong id="metricTasks">0</strong></div>
-      <div class="metric"><span class="muted">Open capsules</span><strong id="metricCapsules">0</strong></div>
-      <div class="metric"><span class="muted">Artifacts</span><strong id="metricArtifacts">0</strong></div>
-      <div class="metric"><span class="muted">Failed runs</span><strong id="metricFailures">0</strong></div>
+    <div class="tabs">
+      <button class="tab active" data-tab="tasks" onclick="showTab('tasks')">任务</button>
+      <button class="tab" data-tab="cards" onclick="showTab('cards')">卡片</button>
+      <button class="tab" data-tab="capsules" onclick="showTab('capsules')">变更包</button>
+      <button class="tab" data-tab="artifacts" onclick="showTab('artifacts')">产物</button>
+      <button class="tab" data-tab="debug" onclick="showTab('debug')">调试 JSON</button>
     </div>
-  </div>
-
-  <h2>State JSON</h2>
-  <pre id="state"></pre>
+    <div id="tab-tasks" class="compact-list"></div>
+    <div id="tab-cards" class="compact-list hidden"></div>
+    <div id="tab-capsules" class="compact-list hidden"></div>
+    <div id="tab-artifacts" class="compact-list hidden"></div>
+    <div id="tab-debug" class="hidden">
+      <div class="debug-actions">
+        <button onclick="exportState()">导出状态</button>
+        <button onclick="importState()">导入状态</button>
+        <button onclick="resetState()">重置状态</button>
+      </div>
+      <textarea id="snapshot" placeholder="把导出的 snapshot JSON 粘贴到这里"></textarea>
+      <pre id="state" style="margin-top:12px"></pre>
+    </div>
+  </section>
 </main>
 <script>
 const base = location.origin;
-document.getElementById('cmd').textContent = 'king agent computer --pair demo --server ' + base + '\\nking agent computer --server ' + base;
+const pairCommand = 'king agent computer --pair demo --server ' + base + '\\nking agent computer --server ' + base;
+let currentState = null;
+let currentSummary = null;
+let currentActivity = [];
+document.getElementById('cmd').textContent = pairCommand;
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, function(ch) {
+    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
+  });
+}
+function formatTime(value) {
+  if (!value) return '未收到';
+  return new Date(value).toLocaleTimeString();
+}
+function lifecycleLabel(value) {
+  return ({ 'on-demand': '按需启动', '24/7': '持续在线', idle_cached: '空闲保活', disabled: '停用' })[value] || value || '按需启动';
+}
+function classificationLabel(value) {
+  return ({ productive: '有进展', idle: '空闲', blocked: '有阻塞', backlog_stuck: '有待处理消息', error: '运行异常' })[value] || value || '空闲';
+}
+function taskStatusLabel(value) {
+  return ({ pending: '待分配', assigned: '已分配', in_progress: '进行中', review: '待评审', done: '已完成', failed: '失败', blocked: '被阻塞' })[value] || value || '未知';
+}
+function cardColumnLabel(value) {
+  return ({ todo: '待办', doing: '进行中', done: '已完成' })[value] || value || '未知';
+}
+function activityTypeLabel(value) {
+  if (value === 'message.human') return '用户消息';
+  if (value === 'message.agent') return 'Agent 回复';
+  if (value === 'runtime.status') return '运行状态';
+  if (value === 'runtime.cli') return 'CLI 写回';
+  if (value === 'runtime.notice') return '运行通知';
+  if (value === 'runtime.triage') return '消息判断';
+  if (value === 'queue.backlog') return '任务已入队';
+  if (value === 'task.transition') return '任务状态变化';
+  if (String(value).startsWith('run.')) return '运行记录';
+  if (String(value).startsWith('typing.')) return '输入状态';
+  if (String(value).startsWith('thinking.')) return '思考状态';
+  return value || '事件';
+}
+function activitySummaryLabel(item) {
+  const body = item && item.body;
+  if (item.type === 'queue.backlog') {
+    const taskId = body && body.taskId ? String(body.taskId).slice(0, 12) : '';
+    return taskId ? '新任务已进入本地 Agent 待办：' + taskId : '新任务已进入本地 Agent 待办。';
+  }
+  if (item.type === 'task.transition') {
+    return '任务状态变化：' + taskStatusLabel(body && body.from) + ' -> ' + taskStatusLabel(body && body.to);
+  }
+  if (item.type === 'message.human' || item.type === 'message.agent') {
+    return typeof item.summary === 'string' ? item.summary.replace(/^Demo Human:/, '用户：').replace(/^Demo Agent:/, 'Agent：') : activityBody(item);
+  }
+  if (String(item.type || '').startsWith('run.')) {
+    return '运行记录已更新。';
+  }
+  return activityBody(item);
+}
+function reasonLabel(reason) {
+  return String(reason || '')
+    .replace(/(\\d+) unread message\\(s\\) pending/g, '$1 条消息等待处理')
+    .replace(/(\\d+) blocked task\\(s\\) by dependencies/g, '$1 个任务被依赖阻塞')
+    .replace(/(\\d+) failed run\\(s\\)/g, '$1 次运行失败')
+    .replace(/(\\d+) artifact\\(s\\) recorded/g, '已记录 $1 个产物')
+    .replace(/(\\d+) capsule\\(s\\) in review/g, '$1 个变更包等待评审')
+    .replace(/(\\d+) task\\(s\\) advanced/g, '$1 个任务有进展')
+    .replace('no state changes detected', '暂时没有状态变化');
+}
+function chip(value) {
+  return '<span class="chip">' + escapeHtml(value) + '</span>';
+}
+async function request(path, options) {
+  const res = await fetch(path, options);
+  if (!res.ok) throw new Error(await res.text());
+  return res.headers.get('Content-Type') && res.headers.get('Content-Type').includes('application/json') ? res.json() : res.text();
+}
+async function copyPairCommand() {
+  await navigator.clipboard.writeText(pairCommand).catch(function() {});
+}
 async function sendMessage() {
-  await fetch('/demo/message', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ body: document.getElementById('body').value }) });
+  const input = document.getElementById('body');
+  const body = input.value.trim();
+  if (!body) return;
+  await request('/demo/message', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ body: body })
+  });
+  input.value = '';
   await refresh();
 }
-async function refresh() {
-  const data = await fetch('/demo/state').then(r => r.json());
-  const observation = observeState(data);
-  const engines = data.availableEngines && data.availableEngines.length ? data.availableEngines : [];
-  document.getElementById('engines').innerHTML = engines.length
-    ? engines.map((engine) => '<span class="chip">' + engine + '</span>').join('')
-    : '<span class="muted">Pair this computer to populate engines.</span>';
-  const agent = data.agents && data.agents[0] ? data.agents[0] : {};
-  const workspaces = data.capabilities && Array.isArray(data.capabilities.workspaces) ? data.capabilities.workspaces : [];
-  const agentWorkspaceRoot = data.capabilities && data.capabilities.agentWorkspaceRoot ? data.capabilities.agentWorkspaceRoot : 'default per-agent home workspace';
-  document.getElementById('agentWorkspaceRoot').textContent = 'Agent workspace root: ' + agentWorkspaceRoot;
-  document.getElementById('workspaces').innerHTML = workspaces.length
-    ? workspaces.map((path) => '<span class="chip">' + path + '</span>').join('')
-    : '<span class="muted">No external workspace allowlist reported.</span>';
-  const lastRun = [...(data.runLog || [])].reverse().find((row) => row.action === 'start');
-  const actualEngine = lastRun && lastRun.body && lastRun.body.trigger && lastRun.body.trigger.engine ? lastRun.body.trigger.engine : agent.engine || 'not running yet';
-  document.getElementById('actualEngine').textContent = 'Configured engine: ' + (agent.engine || 'auto') + ' · lifecycle: ' + (agent.lifecycle || 'on-demand') + ' · actual last-run engine: ' + actualEngine;
-  document.getElementById('engine').innerHTML = engines.length
-    ? engines.map((engine) => '<option value="' + engine + '"' + (engine === agent.engine ? ' selected' : '') + '>' + engine + '</option>').join('')
-    : '<option value="">Pair first</option>';
-  document.getElementById('model').value = agent.model || '';
-  document.getElementById('fastModel').value = agent.fastModel || '';
-  document.getElementById('lifecycle').value = agent.lifecycle || 'on-demand';
-  const updatedAt = data.agentConfigUpdatedAt ? new Date(data.agentConfigUpdatedAt).toLocaleTimeString() : 'never';
-  const heartbeatAt = data.lastHeartbeat && data.lastHeartbeat.at ? new Date(data.lastHeartbeat.at).toLocaleTimeString() : 'not seen';
-  document.getElementById('applyState').textContent = 'Settings last applied: ' + updatedAt + ' · daemon heartbeat: ' + heartbeatAt + '. Runner sync may take up to 60 seconds or one daemon restart.';
-  document.getElementById('classification').textContent = observation.classification;
-  document.getElementById('observationReasons').textContent = observation.reasons.join('; ');
-  document.getElementById('metricUnread').textContent = String(observation.counts.unreadMessages);
-  document.getElementById('metricBlocked').textContent = String(observation.counts.blockedTasks);
-  document.getElementById('metricTasks').textContent = String(observation.counts.activeTasks);
-  document.getElementById('metricCapsules').textContent = String(observation.counts.openCapsules + observation.counts.inReviewCapsules);
-  document.getElementById('metricArtifacts').textContent = String(observation.counts.artifacts);
-  document.getElementById('metricFailures').textContent = String(observation.counts.failedRuns);
-  document.getElementById('state').textContent = JSON.stringify(data, null, 2);
+async function createTask() {
+  await request('/demo/task', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      title: document.getElementById('taskTitle').value,
+      description: document.getElementById('taskDescription').value,
+      paths: document.getElementById('taskPaths').value,
+      wake: true
+    })
+  });
+  await refresh();
 }
-function taskVisibleStatus(tasks, task) {
-  if (task.status === 'done') return 'done';
-  const doneIds = tasks.filter((row) => row.status === 'done').map((row) => row.id);
-  const blocked = (task.dependsOn || []).some((id) => !doneIds.some((doneId) => doneId === id || doneId.startsWith(id) || id.startsWith(doneId)));
-  return blocked ? 'blocked' : task.status;
-}
-function observeState(data) {
-  const tasks = Array.isArray(data.tasks) ? data.tasks : [];
-  const capsules = Array.isArray(data.capsules) ? data.capsules : [];
-  const messages = Array.isArray(data.messages) ? data.messages : [];
-  const artifacts = Array.isArray(data.artifacts) ? data.artifacts : [];
-  const runLog = Array.isArray(data.runLog) ? data.runLog : [];
-  const unreadMessages = messages.filter((message) => !(message.readBy || []).includes('demo-agent')).length;
-  const blockedTasks = tasks.filter((task) => taskVisibleStatus(tasks, task) === 'blocked').length;
-  const activeTasks = tasks.filter((task) => taskVisibleStatus(tasks, task) !== 'done').length;
-  const openCapsules = capsules.filter((capsule) => capsule.status === 'open').length;
-  const inReviewCapsules = capsules.filter((capsule) => capsule.status === 'in_review').length;
-  const failedRuns = runLog.filter((row) => row.action === 'finish' && row.body && row.body.status === 'failed').length;
-  const reasons = [];
-  let classification = 'idle';
-  if (failedRuns > 0) {
-    classification = 'error';
-    reasons.push(failedRuns + ' failed run(s)');
-  } else if (artifacts.length > 0 || inReviewCapsules > 0 || tasks.some((task) => task.status === 'done' || task.status === 'review')) {
-    classification = 'productive';
-    if (artifacts.length > 0) reasons.push(artifacts.length + ' artifact(s) recorded');
-    if (inReviewCapsules > 0) reasons.push(inReviewCapsules + ' capsule(s) in review');
-    const advancedTasks = tasks.filter((task) => task.status === 'done' || task.status === 'review').length;
-    if (advancedTasks > 0) reasons.push(advancedTasks + ' task(s) advanced');
-  } else if (unreadMessages > 0) {
-    classification = 'backlog_stuck';
-    reasons.push(unreadMessages + ' unread message(s) pending');
-  } else if (blockedTasks > 0) {
-    classification = 'blocked';
-    reasons.push(blockedTasks + ' task(s) blocked by dependencies');
-  } else {
-    reasons.push('no state changes detected');
-  }
-  return { classification, reasons, counts: { unreadMessages, blockedTasks, activeTasks, openCapsules, inReviewCapsules, artifacts: artifacts.length, failedRuns } };
+async function createCard() {
+  await request('/demo/card', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      title: document.getElementById('taskTitle').value || 'Demo card',
+      allowedPaths: document.getElementById('taskPaths').value.split(',').map(function(path) { return path.trim(); }).filter(Boolean)
+    })
+  });
+  await refresh();
 }
 async function saveAgentConfig() {
-  await fetch('/demo/agent-config', {
+  await request('/demo/agent-config', {
     method: 'POST',
-    headers: {'Content-Type':'application/json'},
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       engine: document.getElementById('engine').value,
       lifecycle: document.getElementById('lifecycle').value,
@@ -712,11 +1060,590 @@ async function saveAgentConfig() {
   });
   await refresh();
 }
-async function clearMessages() {
-  await fetch('/demo/clear-messages', { method: 'POST' });
+async function markConversationRead() {
+  await request('/demo/conversation/mark-read', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ conversationId: 'demo-convo' })
+  });
   await refresh();
 }
+async function clearMessages() {
+  await request('/demo/clear-messages', { method: 'POST' });
+  await refresh();
+}
+async function resetState() {
+  await request('/demo/reset-state', { method: 'POST' });
+  await refresh();
+}
+async function exportState() {
+  const snapshot = await request('/demo/export-state');
+  document.getElementById('snapshot').value = JSON.stringify(snapshot, null, 2);
+}
+async function importState() {
+  const raw = document.getElementById('snapshot').value;
+  await request('/demo/import-state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: raw });
+  await refresh();
+}
+function observeState(data) {
+  return data && data.observation ? data.observation : { classification: 'idle', reasons: ['暂时没有状态变化'], counts: { unreadMessages: 0, blockedTasks: 0, activeTasks: 0, openCapsules: 0, inReviewCapsules: 0, artifacts: 0, failedRuns: 0 } };
+}
+function renderSummary(summary) {
+  const observation = observeState(summary);
+  const agent = summary.agent || {};
+  const connection = summary.connection || {};
+  const counts = observation.counts || {};
+  const paired = connection.paired;
+  const statusPill = document.getElementById('statusPill');
+  statusPill.className = paired ? 'pill live' : 'pill';
+  statusPill.innerHTML = '<span class="dot"></span> ' + (paired ? (connection.online ? '已连接' : '已配对但离线') : '未配对');
+  document.getElementById('heartbeatStat').textContent = connection.lastHeartbeatAt ? formatTime(connection.lastHeartbeatAt) : '未收到';
+  document.getElementById('engineStat').textContent = agent.engine || '自动';
+  document.getElementById('lifecycleStat').textContent = lifecycleLabel(agent.lifecycle);
+  document.getElementById('unreadStat').textContent = String(counts.unreadMessages || 0);
+  document.getElementById('failedStat').textContent = String(counts.failedRuns || 0);
+  document.getElementById('classification').textContent = classificationLabel(observation.classification);
+  document.getElementById('observationReasons').textContent = (observation.reasons || []).map(reasonLabel).join('；');
+  document.getElementById('metricUnread').textContent = String(counts.unreadMessages || 0);
+  document.getElementById('metricBlocked').textContent = String(counts.blockedTasks || 0);
+  document.getElementById('metricTasks').textContent = String(counts.activeTasks || 0);
+  document.getElementById('metricCapsules').textContent = String((counts.openCapsules || 0) + (counts.inReviewCapsules || 0));
+  document.getElementById('metricArtifacts').textContent = String(counts.artifacts || 0);
+  document.getElementById('metricFailures').textContent = String(counts.failedRuns || 0);
+  document.getElementById('routeSummary').textContent = summary.routeSummary ? '下一条：' + summary.routeSummary.replace(/\\[[^\\]]+\\]\\s*/, '').slice(0, 80) : '暂无待处理消息';
+  const engines = summary.availableEngines || [];
+  document.getElementById('engines').innerHTML = engines.length ? engines.map(chip).join('') : '<span class="subtle">先在本机执行上面的配对命令。</span>';
+  document.getElementById('engine').innerHTML = engines.length ? engines.map(function(engine) {
+    return '<option value="' + escapeHtml(engine) + '"' + (engine === agent.engine ? ' selected' : '') + '>' + escapeHtml(engine) + '</option>';
+  }).join('') : '<option value="">请先配对</option>';
+  document.getElementById('model').value = agent.model === 'default' ? '' : (agent.model || '');
+  document.getElementById('fastModel').value = agent.fastModel === 'default' ? '' : (agent.fastModel || '');
+  document.getElementById('lifecycle').value = agent.lifecycle || 'on-demand';
+  const capabilities = summary.capabilities || {};
+  const root = capabilities.agentWorkspaceRoot || '默认独立工作目录';
+  document.getElementById('agentWorkspaceRoot').textContent = root;
+  const workspaces = capabilities.workspaces || [];
+  document.getElementById('workspaces').innerHTML = workspaces.length ? workspaces.map(chip).join('') : '<span class="subtle">本机暂未上报可访问项目目录。</span>';
+  const updatedAt = summary.agentConfigUpdatedAt ? formatTime(summary.agentConfigUpdatedAt) : '从未应用';
+  document.getElementById('applyState').textContent = '最近应用：' + updatedAt + '。本地守护进程最多约 60 秒同步一次，也可以重启后立即生效。';
+}
+function renderMessages(state) {
+  const rows = (state.messages || []).slice(-20);
+  const unread = rows.filter(function(message) { return !(message.readBy || []).includes('demo-agent') && message.author_kind === 'human'; }).length;
+  const waiting = unread > 0 && !rows.slice().reverse().some(function(message) { return message.author_kind === 'agent'; });
+  const html = rows.length ? rows.map(function(message) {
+    const cls = message.author_kind === 'human' ? 'human' : message.author_kind === 'agent' ? 'agent' : 'system';
+    const name = message.author_kind === 'human' ? '你' : message.author_kind === 'agent' ? '本地 AI' : '系统';
+    return '<div class="bubble ' + cls + '"><div class="bubble-top"><span class="bubble-name">' + escapeHtml(name) + '</span><span class="time">' + formatTime(message.created_at) + '</span></div><div class="bubble-body">' + escapeHtml(message.body) + '</div></div>';
+  }).join('') : '<div class="bubble system"><div class="bubble-body">还没有消息。输入一句话，发送给本地 AI。</div></div>';
+  document.getElementById('chatWindow').innerHTML = html + (waiting ? '<div class="bubble agent"><div class="bubble-top"><span class="bubble-name">本地 AI</span></div><div class="bubble-body">已唤醒，等待本地 Claude/Codex 回复...</div></div>' : '');
+  document.getElementById('chatWindow').scrollTop = document.getElementById('chatWindow').scrollHeight;
+}
+function activityBody(item) {
+  if (typeof item.summary === 'string') return item.summary;
+  if (typeof item.body === 'string') return item.body;
+  return JSON.stringify(item.body || item, null, 0);
+}
+function renderActivity(rows) {
+  document.getElementById('activity').innerHTML = rows.length ? rows.map(function(item) {
+    return '<div class="activity"><div class="activity-top"><span class="activity-type">' + escapeHtml(activityTypeLabel(item.type)) + '</span><span class="time">' + formatTime(item.at) + '</span></div><div class="activity-body">' + escapeHtml(activitySummaryLabel(item)) + '</div></div>';
+  }).join('') : '<p class="subtle">还没有运行事件。</p>';
+}
+function compactRow(title, meta, body, actions) {
+  return '<div class="compact-row"><div class="compact-top"><h3>' + escapeHtml(title) + '</h3><span class="chip">' + escapeHtml(meta) + '</span></div><div class="compact-body">' + escapeHtml(body || '') + '</div>' + (actions || '') + '</div>';
+}
+function renderBoard(state) {
+  document.getElementById('tab-tasks').innerHTML = (state.tasks || []).length ? state.tasks.slice().reverse().map(function(task) {
+    const actions = '<div class="row" style="margin-top:10px"><button onclick="updateTask(\\'' + task.id + '\\',\\'in_progress\\')">开始</button><button onclick="updateTask(\\'' + task.id + '\\',\\'review\\')">送审</button><button onclick="updateTask(\\'' + task.id + '\\',\\'done\\')">完成</button></div>';
+    return compactRow(task.title, taskStatusLabel(task.status) + ' P' + task.priority, task.description || ((task.scope && task.scope.paths || []).join(', ')), actions);
+  }).join('') : '<p class="subtle">还没有任务。</p>';
+  document.getElementById('tab-cards').innerHTML = (state.cards || []).length ? state.cards.slice().reverse().map(function(card) {
+    const actions = '<div class="row" style="margin-top:10px"><button onclick="moveCard(\\'' + card.id + '\\',\\'todo\\')">待办</button><button onclick="moveCard(\\'' + card.id + '\\',\\'doing\\')">进行中</button><button onclick="moveCard(\\'' + card.id + '\\',\\'done\\')">完成</button></div>';
+    return compactRow(card.title, cardColumnLabel(card.column), (card.allowedPaths || []).join(', '), actions);
+  }).join('') : '<p class="subtle">还没有卡片。</p>';
+  document.getElementById('tab-capsules').innerHTML = (state.capsules || []).length ? state.capsules.slice().reverse().map(function(capsule) {
+    return compactRow(capsule.goal, capsule.status, (capsule.allowedPaths || []).join(', '), '');
+  }).join('') : '<p class="subtle">还没有变更包。</p>';
+  document.getElementById('tab-artifacts').innerHTML = (state.artifacts || []).length ? state.artifacts.slice().reverse().map(function(artifact) {
+    return compactRow(artifact.path, artifact.kind + ' ' + artifact.confidence, artifact.source, '');
+  }).join('') : '<p class="subtle">还没有产物。</p>';
+}
+async function updateTask(id, status) {
+  await request('/demo/task/' + encodeURIComponent(id) + '/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: status }) });
+  await refresh();
+}
+async function moveCard(id, column) {
+  await request('/demo/card/' + encodeURIComponent(id) + '/move', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ column: column }) });
+  await refresh();
+}
+function showTab(name) {
+  ['tasks', 'cards', 'capsules', 'artifacts', 'debug'].forEach(function(tab) {
+    document.getElementById('tab-' + tab).classList.toggle('hidden', tab !== name);
+    document.querySelector('[data-tab="' + tab + '"]').classList.toggle('active', tab === name);
+  });
+}
+async function refresh() {
+  const results = await Promise.all([
+    request('/demo/summary'),
+    request('/demo/activity?limit=40'),
+    request('/demo/state')
+  ]);
+  currentSummary = results[0];
+  currentActivity = results[1].rows || [];
+  currentState = results[2];
+  renderSummary(currentSummary);
+  renderMessages(currentState);
+  renderActivity(currentActivity);
+  renderBoard(currentState);
+  document.getElementById('state').textContent = JSON.stringify(currentState, null, 2);
+}
 refresh();
+setInterval(refresh, 4000);
+</script>
+</body>
+</html>`;
+
+const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>King AI 对话</title>
+  <style>
+    :root {
+      --primary: #ff385c;
+      --primary-active: #e00b41;
+      --canvas: #ffffff;
+      --surface-soft: #f7f7f7;
+      --surface-strong: #f2f2f2;
+      --hairline: #dddddd;
+      --hairline-soft: #ebebeb;
+      --ink: #222222;
+      --body: #3f3f3f;
+      --muted: #6a6a6a;
+      --muted-soft: #929292;
+      --on-primary: #ffffff;
+      --shadow: rgba(0,0,0,0.02) 0 0 0 1px, rgba(0,0,0,0.04) 0 2px 6px 0, rgba(0,0,0,0.1) 0 4px 8px 0;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--canvas);
+      color: var(--ink);
+      font-family: "Airbnb Cereal VF", Circular, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    }
+    main {
+      width: min(760px, 100vw);
+      height: 100vh;
+      margin: 0 auto;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      padding: 0;
+      background: var(--canvas);
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid var(--hairline-soft);
+      padding: 14px 16px;
+      background: var(--canvas);
+    }
+    h1 { margin: 0; font-size: 22px; line-height: 1.18; font-weight: 600; letter-spacing: -0.44px; }
+    h2 { margin: 0; font-size: 20px; line-height: 1.2; font-weight: 600; letter-spacing: -0.18px; }
+    p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.43; }
+    button, textarea, select, input { font: inherit; }
+    button {
+      min-height: 48px;
+      border: 0;
+      border-radius: 8px;
+      padding: 14px 24px;
+      background: var(--primary);
+      color: var(--on-primary);
+      font-size: 16px;
+      line-height: 1.25;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    button:active { background: var(--primary-active); }
+    button.secondary {
+      background: var(--canvas);
+      color: var(--ink);
+      border: 1px solid var(--ink);
+    }
+    button.tertiary {
+      min-height: auto;
+      padding: 0;
+      background: transparent;
+      color: var(--ink);
+      text-decoration: underline;
+    }
+    .brand { display: grid; gap: 2px; min-width: 0; }
+    .brand p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .status-strip {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 36px;
+      border: 1px solid var(--hairline);
+      border-radius: 9999px;
+      padding: 8px 14px;
+      background: var(--canvas);
+      color: var(--ink);
+      font-size: 14px;
+      line-height: 1.29;
+      font-weight: 500;
+    }
+    .dot { width: 8px; height: 8px; border-radius: 9999px; background: var(--muted-soft); }
+    .pill.online .dot { background: var(--primary); }
+    .chat-shell {
+      min-height: 0;
+      display: grid;
+      grid-template-rows: minmax(0, 1fr);
+    }
+    .chat-card {
+      display: grid;
+      grid-template-rows: minmax(0, 1fr);
+      overflow: hidden;
+      background: var(--surface-soft);
+    }
+    .chat-window {
+      min-height: 0;
+      overflow: auto;
+      display: grid;
+      align-content: end;
+      gap: 12px;
+      padding: 16px;
+      background: var(--surface-soft);
+    }
+    .bubble {
+      max-width: 76%;
+      border-radius: 14px;
+      padding: 14px 16px;
+      background: var(--canvas);
+      box-shadow: rgba(0,0,0,0.02) 0 0 0 1px;
+    }
+    .bubble.human {
+      justify-self: end;
+      background: var(--primary);
+      color: var(--on-primary);
+    }
+    .bubble.agent { justify-self: start; }
+    .bubble.system { justify-self: center; max-width: 90%; color: var(--muted); }
+    .bubble-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 6px;
+      font-size: 13px;
+      line-height: 1.23;
+      font-weight: 500;
+    }
+    .bubble.human .time { color: rgba(255,255,255,0.82); }
+    .time { color: var(--muted); white-space: nowrap; }
+    .bubble-body { font-size: 16px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+    .composer {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      padding: 16px;
+      border-top: 1px solid var(--hairline-soft);
+      background: var(--canvas);
+    }
+    textarea {
+      min-height: 56px;
+      max-height: 160px;
+      resize: vertical;
+      border: 1px solid var(--hairline);
+      border-radius: 14px;
+      padding: 16px;
+      color: var(--ink);
+      background: var(--canvas);
+      font-size: 16px;
+      line-height: 1.5;
+    }
+    textarea:focus, select:focus, input:focus {
+      outline: 0;
+      border: 2px solid var(--ink);
+      padding: 15px;
+    }
+    .settings-button {
+      min-width: 48px;
+      width: 48px;
+      padding: 0;
+      border-radius: 9999px;
+      background: var(--surface-strong);
+      color: var(--ink);
+    }
+    .side { display: grid; gap: 16px; align-content: start; }
+    .side-card { padding: 20px; display: grid; gap: 14px; }
+    .field { display: grid; gap: 8px; }
+    label { color: var(--muted); font-size: 14px; line-height: 1.43; font-weight: 500; }
+    select, input {
+      width: 100%;
+      min-height: 48px;
+      border: 1px solid var(--hairline);
+      border-radius: 9999px;
+      padding: 0 16px;
+      background: var(--canvas);
+      color: var(--ink);
+      font-size: 14px;
+      line-height: 1.43;
+    }
+    .model-grid { display: grid; gap: 10px; }
+    .model-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border-top: 1px solid var(--hairline-soft);
+      padding-top: 12px;
+      color: var(--body);
+      font-size: 14px;
+      line-height: 1.43;
+    }
+    .model-row:first-child { border-top: 0; padding-top: 0; }
+    .available { color: var(--primary); font-weight: 600; }
+    .unavailable { color: var(--muted-soft); }
+    .cmd {
+      border-radius: 14px;
+      background: var(--surface-soft);
+      padding: 14px;
+      color: var(--body);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.4;
+      overflow: auto;
+    }
+    .sub-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    dialog {
+      width: min(520px, calc(100vw - 24px));
+      max-height: min(760px, calc(100vh - 24px));
+      border: 0;
+      border-radius: 14px;
+      padding: 0;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    dialog::backdrop { background: rgba(0,0,0,0.5); }
+    .modal-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 20px;
+      border-bottom: 1px solid var(--hairline-soft);
+    }
+    .modal-body {
+      display: grid;
+      gap: 16px;
+      padding: 20px;
+      overflow: auto;
+      max-height: calc(100vh - 120px);
+    }
+    .modal-close {
+      min-width: 40px;
+      width: 40px;
+      min-height: 40px;
+      padding: 0;
+      border-radius: 9999px;
+      background: var(--surface-strong);
+      color: var(--ink);
+    }
+    @media (max-width: 900px) {
+      main { width: 100vw; }
+      h1 { font-size: 20px; }
+      .brand p { max-width: calc(100vw - 96px); }
+      .composer { padding: 12px; gap: 8px; }
+      .composer button { padding: 14px 18px; }
+      .bubble { max-width: 86%; }
+      .chat-window { padding: 12px; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="brand">
+      <h1>King AI 对话</h1>
+      <p id="routeSummary">输入一段文本，发送给本地 AI。</p>
+    </div>
+    <button class="settings-button" onclick="openSettings()" aria-label="打开设置">···</button>
+  </header>
+
+  <section class="chat-shell">
+    <section class="chat-card">
+      <div id="chatWindow" class="chat-window"></div>
+    </section>
+  </section>
+
+  <div class="composer">
+    <textarea id="body" placeholder="输入你想让 AI 回复的内容...">你好，请用一句中文回复，确认你已收到消息。</textarea>
+    <button onclick="sendMessage()">发送</button>
+  </div>
+</main>
+
+<dialog id="settingsDialog">
+  <div class="modal-head">
+    <h2>设置</h2>
+    <button class="modal-close" onclick="closeSettings()" aria-label="关闭设置">×</button>
+  </div>
+  <div class="modal-body">
+    <section class="side-card">
+      <h2>模型状态</h2>
+      <div class="model-grid" id="modelStatus"></div>
+    </section>
+    <section class="side-card">
+      <h2>切换模型</h2>
+      <div class="field">
+        <label for="engine">使用哪个本地 CLI</label>
+        <select id="engine"></select>
+      </div>
+      <div class="field">
+        <label for="model">主模型</label>
+        <input id="model" placeholder="例如 opus / gpt-5，留空使用默认" />
+      </div>
+      <div class="field">
+        <label for="fastModel">快速模型</label>
+        <input id="fastModel" placeholder="留空使用默认小模型" />
+      </div>
+      <button onclick="saveAgentConfig()">应用模型</button>
+    </section>
+    <section class="side-card">
+      <h2>连接本机</h2>
+      <p id="heartbeatStat">最近心跳：未收到</p>
+      <p id="observationReasons">等待本地 Agent 连接。</p>
+      <div class="cmd" id="cmd"></div>
+      <div class="sub-actions">
+        <button class="secondary" onclick="copyPairCommand()">复制命令</button>
+        <button class="tertiary" onclick="refresh()">刷新状态</button>
+        <button class="tertiary" onclick="clearMessages()">清空对话</button>
+      </div>
+      <p>待读 <strong id="unreadStat">0</strong> · 失败 <strong id="failedStat">0</strong></p>
+    </section>
+  </div>
+</dialog>
+<script>
+const base = location.origin;
+const pairCommand = 'king agent computer --pair demo --server ' + base + '\\nking agent computer --server ' + base;
+document.getElementById('cmd').textContent = pairCommand;
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, function(ch) {
+    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
+  });
+}
+function formatTime(value) {
+  if (!value) return '未收到';
+  return new Date(value).toLocaleTimeString();
+}
+function lifecycleLabel(value) {
+  return ({ 'on-demand': '按需启动', '24/7': '持续在线', idle_cached: '空闲保活', disabled: '停用' })[value] || value || '按需启动';
+}
+function reasonLabel(reason) {
+  return String(reason || '')
+    .replace(/(\\d+) unread message\\(s\\) pending/g, '$1 条消息等待本地 AI 处理')
+    .replace(/(\\d+) failed run\\(s\\)/g, '$1 次运行失败')
+    .replace('no state changes detected', '等待下一条消息。');
+}
+async function request(path, options) {
+  const res = await fetch(path, options);
+  if (!res.ok) throw new Error(await res.text());
+  return res.headers.get('Content-Type') && res.headers.get('Content-Type').includes('application/json') ? res.json() : res.text();
+}
+function openSettings() {
+  document.getElementById('settingsDialog').showModal();
+}
+function closeSettings() {
+  document.getElementById('settingsDialog').close();
+}
+async function copyPairCommand() {
+  await navigator.clipboard.writeText(pairCommand).catch(function() {});
+}
+async function sendMessage() {
+  const input = document.getElementById('body');
+  const body = input.value.trim();
+  if (!body) return;
+  await request('/demo/message', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ body })
+  });
+  input.value = '';
+  await refresh();
+}
+async function clearMessages() {
+  await request('/demo/clear-messages', { method: 'POST' });
+  await refresh();
+}
+async function saveAgentConfig() {
+  await request('/demo/agent-config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      engine: document.getElementById('engine').value,
+      lifecycle: 'on-demand',
+      model: document.getElementById('model').value,
+      fastModel: document.getElementById('fastModel').value
+    })
+  });
+  await refresh();
+}
+function renderMessages(state) {
+  const rows = (state.messages || []).slice(-30);
+  const unread = rows.filter(function(message) { return !(message.readBy || []).includes('demo-agent') && message.author_kind === 'human'; }).length;
+  const waiting = unread > 0 && !rows.slice().reverse().some(function(message) { return message.author_kind === 'agent'; });
+  const html = rows.length ? rows.map(function(message) {
+    const cls = message.author_kind === 'human' ? 'human' : message.author_kind === 'agent' ? 'agent' : 'system';
+    const name = message.author_kind === 'human' ? '你' : message.author_kind === 'agent' ? 'AI' : '系统';
+    return '<div class="bubble ' + cls + '"><div class="bubble-top"><span>' + escapeHtml(name) + '</span><span class="time">' + formatTime(message.created_at) + '</span></div><div class="bubble-body">' + escapeHtml(message.body) + '</div></div>';
+  }).join('') : '<div class="bubble system"><div class="bubble-body">还没有消息。输入一句话，发送给本地 AI。</div></div>';
+  document.getElementById('chatWindow').innerHTML = html + (waiting ? '<div class="bubble agent"><div class="bubble-top"><span>AI</span></div><div class="bubble-body">已唤醒，等待本地 Claude/Codex 回复...</div></div>' : '');
+  document.getElementById('chatWindow').scrollTop = document.getElementById('chatWindow').scrollHeight;
+}
+function renderSummary(summary) {
+  const connection = summary.connection || {};
+  const observation = summary.observation || { counts: {}, reasons: [] };
+  const counts = observation.counts || {};
+  const agent = summary.agent || {};
+  const paired = connection.paired;
+  document.getElementById('heartbeatStat').textContent = '最近心跳：' + (connection.lastHeartbeatAt ? formatTime(connection.lastHeartbeatAt) : '未收到');
+  document.getElementById('unreadStat').textContent = String(counts.unreadMessages || 0);
+  document.getElementById('failedStat').textContent = String(counts.failedRuns || 0);
+  document.getElementById('routeSummary').textContent = counts.unreadMessages ? '消息已发送，等待本地 AI 回复。' : '输入一段文本，发送给本地 AI。';
+  document.getElementById('observationReasons').textContent = (observation.reasons || []).map(reasonLabel).join('；') || '等待下一条消息。';
+  const engines = summary.availableEngines || [];
+  document.getElementById('engine').innerHTML = engines.length ? engines.map(function(engine) {
+    return '<option value="' + escapeHtml(engine) + '"' + (engine === agent.engine ? ' selected' : '') + '>' + escapeHtml(engine) + '</option>';
+  }).join('') : '<option value="">请先配对</option>';
+  document.getElementById('model').value = agent.model === 'default' ? '' : (agent.model || '');
+  document.getElementById('fastModel').value = agent.fastModel === 'default' ? '' : (agent.fastModel || '');
+  const modelRows = ['claude', 'codex'].map(function(engine) {
+    const available = engines.includes(engine);
+    const active = agent.engine === engine;
+    const label = active && !available ? '当前配置，未检测到本机' : available ? '可用' : '未检测到';
+    return '<div class="model-row"><span>' + engine + (active ? ' · 当前' : '') + '</span><span class="' + (available ? 'available' : 'unavailable') + '">' + label + '</span></div>';
+  }).join('');
+  document.getElementById('modelStatus').innerHTML = modelRows + '<div class="model-row"><span>运行模式</span><span>' + lifecycleLabel(agent.lifecycle) + '</span></div>';
+}
+async function refresh() {
+  const results = await Promise.all([
+    request('/demo/summary'),
+    request('/demo/state')
+  ]);
+  renderSummary(results[0]);
+  renderMessages(results[1]);
+}
+refresh();
+setInterval(refresh, 3500);
 </script>
 </body>
 </html>`;
@@ -858,6 +1785,8 @@ app.post("/runtime/conversation/mark-read", async (c) => stateId(c.env).fetch("h
 }));
 
 app.get("/demo/state", (c) => stateId(c.env).fetch("https://state/demo-state"));
+app.get("/demo/summary", (c) => stateId(c.env).fetch("https://state/demo-summary"));
+app.get("/demo/activity", (c) => stateId(c.env).fetch(`https://state/demo-activity?${new URL(c.req.url).searchParams.toString()}`));
 app.get("/demo/export-state", (c) => stateId(c.env).fetch("https://state/demo-export-state"));
 app.post("/demo/import-state", async (c) => stateId(c.env).fetch("https://state/demo-import-state", {
   method: "POST",
@@ -874,6 +1803,26 @@ app.post("/demo/agent-config", async (c) => stateId(c.env).fetch("https://state/
   body: JSON.stringify(await c.req.json().catch(() => ({})))
 }));
 app.post("/demo/card", async (c) => stateId(c.env).fetch("https://state/demo-card", {
+  method: "POST",
+  body: JSON.stringify(await c.req.json().catch(() => ({})))
+}));
+app.post("/demo/task", async (c) => stateId(c.env).fetch("https://state/demo-task", {
+  method: "POST",
+  body: JSON.stringify(await c.req.json().catch(() => ({})))
+}));
+app.post("/demo/task/:taskId/update", async (c) => stateId(c.env).fetch(`https://state/demo-task/${c.req.param("taskId")}/update`, {
+  method: "POST",
+  body: JSON.stringify(await c.req.json().catch(() => ({})))
+}));
+app.post("/demo/card/:cardId/move", async (c) => stateId(c.env).fetch(`https://state/demo-card/${c.req.param("cardId")}/move`, {
+  method: "POST",
+  body: JSON.stringify(await c.req.json().catch(() => ({})))
+}));
+app.post("/demo/conversation/mark-read", async (c) => stateId(c.env).fetch("https://state/demo-conversation/mark-read", {
+  method: "POST",
+  body: JSON.stringify(await c.req.json().catch(() => ({})))
+}));
+app.post("/demo/wake", async (c) => stateId(c.env).fetch("https://state/demo-wake", {
   method: "POST",
   body: JSON.stringify(await c.req.json().catch(() => ({})))
 }));
@@ -909,13 +1858,20 @@ export class DemoState implements DurableObject {
     if (path.startsWith("/runs/") && path.endsWith("/heartbeat")) return this.authRuntime(request, async () => this.runAction(path.split("/")[2] || "run", "heartbeat"));
     if (path.startsWith("/runs/") && path.endsWith("/finish")) return this.authRuntime(request, async () => this.runAction(path.split("/")[2] || "run", "finish", await request.json().catch(() => null)));
     if (path === "/demo-state") return json(await this.get());
+    if (path === "/demo-summary") return this.demoSummary();
+    if (path === "/demo-activity") return this.demoActivity(url.searchParams);
     if (path === "/demo-export-state") return json(this.snapshot(await this.get()));
     if (path === "/demo-import-state") return this.importSnapshot(await request.json().catch(() => null));
     if (path === "/demo-reset-state") return this.resetState();
     if (path === "/demo-message") return this.demoMessage(await request.json() as { body?: string });
     if (path === "/demo-clear-messages") return this.clearMessages();
     if (path === "/demo-agent-config") return this.agentConfig(await request.json() as AgentConfigPayload);
-    if (path === "/demo-card") return this.createCard(await request.json().catch(() => ({})) as { title?: string; assignee?: string });
+    if (path === "/demo-card") return this.createCard(await request.json().catch(() => ({})) as { title?: string; assignee?: string; allowedPaths?: string[] });
+    if (path === "/demo-task") return this.createTask(await request.json().catch(() => ({})) as DemoTaskPayload);
+    if (path.startsWith("/demo-task/") && path.endsWith("/update")) return this.updateTask(path.split("/")[2], await request.json().catch(() => ({})) as DemoTaskUpdatePayload);
+    if (path.startsWith("/demo-card/") && path.endsWith("/move")) return this.moveCard(path.split("/")[2], await request.json().catch(() => ({})) as DemoCardMovePayload);
+    if (path === "/demo-conversation/mark-read") return this.demoMarkRead(await request.json().catch(() => ({})) as { conversationId?: string; upToMessageId?: string });
+    if (path === "/demo-wake") return this.demoWake(await request.json().catch(() => ({})));
     return json({ error: "not found" }, { status: 404 });
   }
 
@@ -1061,6 +2017,101 @@ export class DemoState implements DurableObject {
     };
     await this.put(state);
     return json({ ok: true, at: state.lastHeartbeat.at });
+  }
+
+  private async demoSummary(): Promise<Response> {
+    const state = await this.get();
+    const agent = state.agents[0] ?? DEFAULT_AGENT;
+    const agentSummary = agentStateSummary(state, agent);
+    const observation = buildLoopSnapshot(state);
+    const lastRunStart = state.runLog.slice().reverse().find((row) => row.action === "start");
+    const lastRunFinish = state.runLog.slice().reverse().find((row) => row.action === "finish");
+    const lastHeartbeatAt = state.lastHeartbeat?.at;
+    const paired = state.availableEngines.length > 0;
+    const online = Boolean(lastHeartbeatAt && Date.now() - lastHeartbeatAt < 90_000);
+    const unread = state.messages.filter((message) => !message.readBy.includes(DEFAULT_AGENT.id));
+    return json({
+      connection: {
+        paired,
+        online,
+        computerId: state.computerId,
+        lastHeartbeatAt,
+        version: state.lastHeartbeat?.version
+      },
+      availableEngines: state.availableEngines,
+      capabilities: state.capabilities,
+      agent: agentSummary,
+      actualEngine: runtimeBodyEngine(lastRunStart?.body) ?? agent.engine ?? "not running yet",
+      observation,
+      routeSummary: formatMessageRouteSummary(unread, DEFAULT_AGENT.id),
+      agentConfigUpdatedAt: state.agentConfigUpdatedAt,
+      lastRun: {
+        start: lastRunStart,
+        finish: lastRunFinish
+      }
+    });
+  }
+
+  private async demoActivity(params: URLSearchParams): Promise<Response> {
+    const state = await this.get();
+    const limit = Math.min(100, Math.max(1, Number.parseInt(params.get("limit") || "40", 10) || 40));
+    const rows = [
+      ...state.messages.map((message) => ({
+        type: `message.${message.author_kind}`,
+        at: message.created_at,
+        summary: `${message.author_name}: ${message.body}`,
+        body: message
+      })),
+      ...state.statusLog.map((row) => ({
+        type: "runtime.status",
+        at: row.at,
+        summary: row.status,
+        body: row
+      })),
+      ...state.typingLog.map((row) => ({
+        type: row.done ? "typing.done" : "typing.start",
+        at: row.at,
+        summary: row.conversationId || "conversation",
+        body: row
+      })),
+      ...state.thinkingLog.map((row) => ({
+        type: `thinking.${row.action}`,
+        at: row.at,
+        summary: row.conversationIds.join(", ") || "conversation",
+        body: row
+      })),
+      ...state.runLog.map((row) => ({
+        type: `run.${row.action}`,
+        at: row.at,
+        summary: `${row.runId}${runtimeBodyStatus(row.body) ? ` ${runtimeBodyStatus(row.body)}` : ""}`,
+        body: row
+      })),
+      ...state.cliLog.map((row) => ({
+        type: "runtime.cli",
+        at: row.at,
+        summary: `${row.argv.join(" ")} -> ${row.result}`,
+        body: row
+      })),
+      ...state.noticeLog.map((row) => ({
+        type: "runtime.notice",
+        at: row.at,
+        summary: summarizeUnknown(row.body),
+        body: row
+      })),
+      ...state.triageLog.map((row) => ({
+        type: "runtime.triage",
+        at: row.at,
+        summary: summarizeUnknown(row.body),
+        body: row
+      })),
+      ...state.loopEvents.map((row) => ({
+        type: row.type,
+        at: Date.parse(row.timestamp) || Date.now(),
+        summary: formatLoopEventLine(row),
+        body: row
+      }))
+    ].sort((a, b) => b.at - a.at).slice(0, limit);
+    return json({ rows });
   }
 
   private async authDevice(request: Request, fn: () => Promise<Response>): Promise<Response> {
@@ -2517,6 +3568,18 @@ export class DemoState implements DurableObject {
     return json({ ok: true, message });
   }
 
+  private async demoWake(payload: unknown): Promise<Response> {
+    await this.broadcast({ event: "wake", data: { ...(payload && typeof payload === "object" ? payload as Record<string, unknown> : {}), at: Date.now() } });
+    return json({ ok: true });
+  }
+
+  private async demoMarkRead(payload: { conversationId?: string; upToMessageId?: string }): Promise<Response> {
+    return this.markRead({
+      conversationId: payload.conversationId || "demo-convo",
+      upToMessageId: payload.upToMessageId
+    });
+  }
+
   private newCard(state: State, title: string, assignee?: string, allowedPaths: string[] = []): Card {
     const card: Card = {
       id: `card-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -2537,6 +3600,84 @@ export class DemoState implements DurableObject {
     await this.put(state);
     await this.broadcast({ event: "wake", data: { agenda: true, cardId: card.id, at: Date.now() } });
     return json({ ok: true, card });
+  }
+
+  private async moveCard(cardId: string | undefined, payload: DemoCardMovePayload): Promise<Response> {
+    const state = await this.get();
+    if (!cardId) return json({ error: "card not found" }, { status: 404 });
+    const card = state.cards.find((row) => row.id === cardId || row.id.startsWith(cardId));
+    if (!card) return json({ error: `card not found: ${cardId || ""}` }, { status: 404 });
+    const column = payload.column;
+    if (column !== "todo" && column !== "doing" && column !== "done") return json({ error: "column must be todo, doing, or done" }, { status: 400 });
+    card.column = column;
+    if (typeof payload.owner === "string" && payload.owner.trim()) {
+      card.assignee = payload.owner.trim();
+      card.claimedBy = payload.owner.trim();
+    }
+    if (column === "done") card.claimedBy = undefined;
+    await this.put(state);
+    await this.broadcast({ event: "wake", data: { agenda: true, cardId: card.id, at: Date.now() } });
+    return json({ ok: true, card });
+  }
+
+  private async createTask(payload: DemoTaskPayload): Promise<Response> {
+    const state = await this.get();
+    const title = typeof payload.title === "string" && payload.title.trim() ? payload.title.trim() : "Demo task";
+    const description = typeof payload.description === "string" && payload.description.trim() ? payload.description.trim() : undefined;
+    const assignee = typeof payload.assignee === "string" && payload.assignee.trim() ? payload.assignee.trim() : DEFAULT_AGENT.id;
+    const priority = typeof payload.priority === "number"
+      ? Math.min(10, Math.max(1, Math.round(payload.priority)))
+      : 5;
+    const paths = normalizeStringList(payload.paths);
+    const now = Date.now();
+    const task: Task = {
+      id: `task-${now}-${Math.random().toString(36).slice(2)}`,
+      title,
+      description,
+      status: assignee ? "assigned" : "pending",
+      assignee,
+      priority,
+      scope: paths.length ? { paths } : undefined,
+      created_at: now,
+      updated_at: now
+    };
+    state.tasks.push(task);
+    pushLoopEvent(state, {
+      type: "queue.backlog",
+      agent: assignee,
+      taskId: task.id,
+      pendingMessages: state.messages.filter((message) => !message.readBy.includes(assignee)).length,
+      payload: { taskId: task.id, source: "demo-ui" }
+    });
+    await this.put(state);
+    if (payload.wake !== false) await this.broadcast({ event: "wake", data: { agenda: true, taskId: task.id, at: Date.now() } });
+    return json({ ok: true, task });
+  }
+
+  private async updateTask(taskId: string | undefined, payload: DemoTaskUpdatePayload): Promise<Response> {
+    const state = await this.get();
+    const task = findTask(state, taskId);
+    if (!task) return json({ error: `task not found: ${taskId || ""}` }, { status: 404 });
+    const previousStatus = task.status;
+    if (typeof payload.status === "string") {
+      if (!isTaskStatus(payload.status)) return json({ error: `invalid task status: ${payload.status}` }, { status: 400 });
+      task.status = payload.status;
+    }
+    if (typeof payload.assignee === "string" && payload.assignee.trim()) task.assignee = payload.assignee.trim();
+    if (typeof payload.result === "string") task.result = payload.result.trim() || undefined;
+    task.updated_at = Date.now();
+    if (previousStatus !== task.status) {
+      pushLoopEvent(state, {
+        type: "task.transition",
+        agent: task.assignee,
+        taskId: task.id,
+        from: previousStatus,
+        to: task.status
+      });
+    }
+    await this.put(state);
+    await this.broadcast({ event: "wake", data: { agenda: true, taskId: task.id, at: Date.now() } });
+    return json({ ok: true, task });
   }
 
   private newAgentMessage(args: {
@@ -2651,6 +3792,43 @@ function normalizeCapabilities(input: unknown): { workspaces: string[]; agentWor
     workspaces,
     agentWorkspaceRoot: typeof agentWorkspaceRoot === "string" && agentWorkspaceRoot.trim() ? agentWorkspaceRoot.trim() : undefined
   };
+}
+
+function normalizeStringList(input: unknown): string[] {
+  const raw = Array.isArray(input)
+    ? input
+    : typeof input === "string"
+      ? input.split(",")
+      : [];
+  return raw
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .filter((item, idx, all) => all.indexOf(item) === idx);
+}
+
+function runtimeBodyStatus(body: unknown): string | undefined {
+  if (!body || typeof body !== "object") return undefined;
+  const status = (body as { status?: unknown }).status;
+  return typeof status === "string" ? status : undefined;
+}
+
+function runtimeBodyEngine(body: unknown): string | undefined {
+  if (!body || typeof body !== "object") return undefined;
+  const trigger = (body as { trigger?: unknown }).trigger;
+  if (!trigger || typeof trigger !== "object") return undefined;
+  const engine = (trigger as { engine?: unknown }).engine;
+  return typeof engine === "string" ? engine : undefined;
+}
+
+function summarizeUnknown(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (!value || typeof value !== "object") return String(value ?? "");
+  const record = value as Record<string, unknown>;
+  for (const key of ["message", "status", "reason", "error", "type"]) {
+    if (typeof record[key] === "string") return record[key];
+  }
+  return JSON.stringify(value).slice(0, 180);
 }
 
 function agentStateSummary(state: State, agent: Agent): AgentStateSummary {
