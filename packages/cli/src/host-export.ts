@@ -48,7 +48,8 @@ export interface HostExportMeta {
 }
 
 export function planHostExport(input: HostExportInput = {}): HostExportPlan {
-  const runId = cleanString(input.runId) || buildExportRunId();
+  const explicitRunId = cleanString(input.runId);
+  const runId = explicitRunId ? safeFilenameSegment(explicitRunId, "runId") : buildExportRunId();
   const outputDir = resolve(cleanString(input.outputDir) || "deliverables");
   const exportDir = join(outputDir, runId);
   const workspaceRoot = resolveOptionalExistingDir(input.workspaceRoot, "workspaceRoot");
@@ -162,6 +163,13 @@ export function createHostExportMeta(plan: HostExportPlan, writtenFiles: string[
 
 function cleanString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function safeFilenameSegment(value: string, label: string): string {
+  if (value === "." || value === ".." || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value)) {
+    throw new Error(`${label} must be a safe filename segment`);
+  }
+  return value;
 }
 
 function buildExportRunId(): string {

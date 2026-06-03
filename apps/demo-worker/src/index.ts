@@ -804,39 +804,51 @@ app.post("/runtime/cli", async (c) => stateId(c.env).fetch("https://state/cli", 
 
 app.post("/runtime/status", async (c) => stateId(c.env).fetch("https://state/status", {
   method: "POST",
+  headers: { Authorization: c.req.header("Authorization") || "", "Content-Type": "application/json" },
   body: JSON.stringify(await c.req.json().catch(() => ({})))
 }));
 app.post("/runtime/typing", async (c) => stateId(c.env).fetch("https://state/typing", {
   method: "POST",
+  headers: { Authorization: c.req.header("Authorization") || "", "Content-Type": "application/json" },
   body: JSON.stringify(await c.req.json().catch(() => ({})))
 }));
 app.post("/runtime/thinking/mark", async (c) => stateId(c.env).fetch("https://state/thinking/mark", {
   method: "POST",
+  headers: { Authorization: c.req.header("Authorization") || "", "Content-Type": "application/json" },
   body: JSON.stringify(await c.req.json().catch(() => ({})))
 }));
 app.post("/runtime/thinking/unmark", async (c) => stateId(c.env).fetch("https://state/thinking/unmark", {
   method: "POST",
+  headers: { Authorization: c.req.header("Authorization") || "", "Content-Type": "application/json" },
   body: JSON.stringify(await c.req.json().catch(() => ({})))
 }));
 app.post("/runtime/events", async (c) => stateId(c.env).fetch("https://state/events", {
   method: "POST",
+  headers: { Authorization: c.req.header("Authorization") || "", "Content-Type": "application/json" },
   body: JSON.stringify(await c.req.json().catch(() => ({})))
 }));
 app.post("/runtime/notices", async (c) => stateId(c.env).fetch("https://state/notices", {
   method: "POST",
+  headers: { Authorization: c.req.header("Authorization") || "", "Content-Type": "application/json" },
   body: JSON.stringify(await c.req.json().catch(() => ({})))
 }));
 app.post("/runtime/triage", async (c) => stateId(c.env).fetch("https://state/triage-log", {
   method: "POST",
+  headers: { Authorization: c.req.header("Authorization") || "", "Content-Type": "application/json" },
   body: JSON.stringify(await c.req.json().catch(() => ({})))
 }));
 app.post("/runtime/runs", async (c) => stateId(c.env).fetch("https://state/runs", {
   method: "POST",
+  headers: { Authorization: c.req.header("Authorization") || "", "Content-Type": "application/json" },
   body: JSON.stringify(await c.req.json().catch(() => ({})))
 }));
-app.post("/runtime/runs/:runId/heartbeat", (c) => stateId(c.env).fetch(`https://state/runs/${c.req.param("runId")}/heartbeat`, { method: "POST" }));
+app.post("/runtime/runs/:runId/heartbeat", (c) => stateId(c.env).fetch(`https://state/runs/${c.req.param("runId")}/heartbeat`, {
+  method: "POST",
+  headers: { Authorization: c.req.header("Authorization") || "" }
+}));
 app.post("/runtime/runs/:runId/finish", async (c) => stateId(c.env).fetch(`https://state/runs/${c.req.param("runId")}/finish`, {
   method: "POST",
+  headers: { Authorization: c.req.header("Authorization") || "", "Content-Type": "application/json" },
   body: JSON.stringify(await c.req.json().catch(() => ({})))
 }));
 app.post("/runtime/conversation/mark-read", async (c) => stateId(c.env).fetch("https://state/mark-read", {
@@ -886,16 +898,16 @@ export class DemoState implements DurableObject {
     if (path === "/preamble") return this.authRuntime(request, async () => this.preamble(url.searchParams));
     if (path === "/cli") return this.authRuntime(request, async () => this.cli(await request.json() as { argv?: string[] }));
     if (path === "/mark-read") return this.authRuntime(request, async () => this.markRead(await request.json() as { conversationId?: string; upToMessageId?: string }));
-    if (path === "/status") return this.status(await request.json() as { status?: string });
-    if (path === "/typing") return this.typing(await request.json() as { conversationId?: string; done?: boolean });
-    if (path === "/thinking/mark") return this.thinking("mark", await request.json() as { conversationIds?: string[] });
-    if (path === "/thinking/unmark") return this.thinking("unmark", await request.json() as { conversationIds?: string[] });
-    if (path === "/events") return this.events(await request.json().catch(() => null));
-    if (path === "/notices") return this.logBody("noticeLog", await request.json().catch(() => null));
-    if (path === "/triage-log") return this.logBody("triageLog", await request.json().catch(() => null));
-    if (path === "/runs") return this.startRun(await request.json().catch(() => null));
-    if (path.startsWith("/runs/") && path.endsWith("/heartbeat")) return this.runAction(path.split("/")[2] || "run", "heartbeat");
-    if (path.startsWith("/runs/") && path.endsWith("/finish")) return this.runAction(path.split("/")[2] || "run", "finish", await request.json().catch(() => null));
+    if (path === "/status") return this.authRuntime(request, async () => this.status(await request.json() as { status?: string }));
+    if (path === "/typing") return this.authRuntime(request, async () => this.typing(await request.json() as { conversationId?: string; done?: boolean }));
+    if (path === "/thinking/mark") return this.authRuntime(request, async () => this.thinking("mark", await request.json() as { conversationIds?: string[] }));
+    if (path === "/thinking/unmark") return this.authRuntime(request, async () => this.thinking("unmark", await request.json() as { conversationIds?: string[] }));
+    if (path === "/events") return this.authRuntime(request, async () => this.events(await request.json().catch(() => null)));
+    if (path === "/notices") return this.authRuntime(request, async () => this.logBody("noticeLog", await request.json().catch(() => null)));
+    if (path === "/triage-log") return this.authRuntime(request, async () => this.logBody("triageLog", await request.json().catch(() => null)));
+    if (path === "/runs") return this.authRuntime(request, async () => this.startRun(await request.json().catch(() => null)));
+    if (path.startsWith("/runs/") && path.endsWith("/heartbeat")) return this.authRuntime(request, async () => this.runAction(path.split("/")[2] || "run", "heartbeat"));
+    if (path.startsWith("/runs/") && path.endsWith("/finish")) return this.authRuntime(request, async () => this.runAction(path.split("/")[2] || "run", "finish", await request.json().catch(() => null)));
     if (path === "/demo-state") return json(await this.get());
     if (path === "/demo-export-state") return json(this.snapshot(await this.get()));
     if (path === "/demo-import-state") return this.importSnapshot(await request.json().catch(() => null));

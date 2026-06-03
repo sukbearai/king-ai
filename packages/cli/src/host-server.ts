@@ -113,7 +113,7 @@ function hostResponseHeaders(req?: IncomingMessage, headers: Record<string, stri
     ...headers,
     ...(origin ? {
       "Access-Control-Allow-Origin": origin,
-      "Access-Control-Allow-Methods": "GET,HEAD,POST,PATCH,OPTIONS",
+      "Access-Control-Allow-Methods": "GET,HEAD,POST,PATCH,DELETE,OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type,Accept",
       "Access-Control-Max-Age": "600"
     } : {})

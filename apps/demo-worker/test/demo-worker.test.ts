@@ -467,6 +467,44 @@ test("demo runtime records status, typing, thinking, events, and runs", async ()
   assert.deepEqual(state.runLog.map((row) => row.action), ["start", "heartbeat", "finish"]);
 });
 
+test("demo runtime rejects unauthenticated state mutations", async () => {
+  const bindings = env();
+  await worker.fetch(new Request("https://demo/api/computers/pair", {
+    method: "POST",
+    body: JSON.stringify({ code: "demo", engines: ["claude"] })
+  }), bindings);
+
+  const statusRes = await worker.fetch(new Request("https://demo/runtime/status", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status: "spoofed" })
+  }), bindings);
+  assert.equal(statusRes.status, 401);
+
+  const eventRes = await worker.fetch(new Request("https://demo/runtime/events", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind: "spoofed.event" })
+  }), bindings);
+  assert.equal(eventRes.status, 401);
+
+  const runRes = await worker.fetch(new Request("https://demo/runtime/runs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ trigger: "spoofed" })
+  }), bindings);
+  assert.equal(runRes.status, 401);
+
+  const state = await json<{
+    statusLog: unknown[];
+    eventLog: unknown[];
+    runLog: unknown[];
+  }>(await worker.fetch(new Request("https://demo/demo/state"), bindings));
+  assert.equal(state.statusLog.length, 0);
+  assert.equal(state.eventLog.length, 0);
+  assert.equal(state.runLog.length, 0);
+});
+
 test("demo runtime classifies loop observability snapshots", async () => {
   const bindings = env();
   const paired = await json<{ deviceToken: string }>(

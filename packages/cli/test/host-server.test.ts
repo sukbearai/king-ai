@@ -114,6 +114,17 @@ test("createHostStatusServer serves read-only app endpoints", async (t) => {
   assert.equal(corsPreflight.status, 204);
   assert.equal(corsPreflight.headers.get("access-control-allow-origin"), "http://127.0.0.1:5173");
   assert.match(corsPreflight.headers.get("access-control-allow-methods") ?? "", /PATCH/);
+  assert.match(corsPreflight.headers.get("access-control-allow-methods") ?? "", /DELETE/);
+
+  const deletePreflight = await fetch(`http://127.0.0.1:${port}/runs/preflight`, {
+    method: "OPTIONS",
+    headers: {
+      Origin: "http://localhost:5173",
+      "Access-Control-Request-Method": "DELETE"
+    }
+  });
+  assert.equal(deletePreflight.status, 204);
+  assert.match(deletePreflight.headers.get("access-control-allow-methods") ?? "", /DELETE/);
 
   const rejectedPreflight = await fetch(`http://127.0.0.1:${port}/runs/preflight`, {
     method: "OPTIONS",

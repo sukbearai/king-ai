@@ -110,6 +110,25 @@ test("createHostRunPlan accepts King worker run options without leaking worker k
   assert.equal(plan.summary.includes("worker-secret-key"), false);
 });
 
+test("createHostRunPlan rejects run IDs that are not safe filename segments", () => {
+  assert.throws(
+    () => createHostRunPlan({ goal: "unsafe run", runId: "../../outside" }),
+    /runId must be a safe filename segment/
+  );
+  assert.throws(
+    () => createHostRunPlan({ goal: "unsafe run", runId: "nested/run" }),
+    /runId must be a safe filename segment/
+  );
+
+  const plan = createHostLaunchPlan({
+    goal: "safe run",
+    runId: "safe-run_1.2",
+    options: { outputDir: "out" }
+  }, {}, ["codex"]);
+  assert.equal(plan.runId, "safe-run_1.2");
+  assert.equal(plan.layout.baseDir, join(plan.options.outputDir, ".king-local", "safe-run_1.2"));
+});
+
 test("createHostLaunchPlan reports launch readiness and preflight issues", async () => {
   const dir = await mkdtemp(join(tmpdir(), "king-host-launch-"));
   await writeFile(join(dir, "package.json"), "{}", "utf8");

@@ -175,6 +175,7 @@ export function createHostRunPlan(input: HostRunSpecInput, env: NodeJS.ProcessEn
   const workspaceRoot = input.workspaceRoot ? resolve(input.workspaceRoot) : env.KING_AGENT_WORKSPACE_ROOT;
   const gitRoot = input.gitRoot ? resolve(input.gitRoot) : repoSourceDir ?? projectDir;
   const options = createDefaultHostRunOptions(input.options);
+  const explicitRunId = cleanString(input.runId);
   const spec: HostProjectRunSpec = {
     goal,
     mode,
@@ -190,7 +191,7 @@ export function createHostRunPlan(input: HostRunSpecInput, env: NodeJS.ProcessEn
     hooks: input.hooks
   };
   return {
-    runId: cleanString(input.runId) || buildHostRunId(goal),
+    runId: explicitRunId ? safeFilenameSegment(explicitRunId, "runId") : buildHostRunId(goal),
     spec,
     options,
     summary: formatHostRunPlanSummary({ spec, options })
@@ -510,6 +511,13 @@ export function createHostRunSessionPlan(plan: HostRunPlan, effectiveEngine?: En
 
 function cleanString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function safeFilenameSegment(value: string, label: string): string {
+  if (value === "." || value === ".." || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value)) {
+    throw new Error(`${label} must be a safe filename segment`);
+  }
+  return value;
 }
 
 function normalizeReasoningEffort(value: unknown): CodexReasoningEffort | undefined {

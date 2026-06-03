@@ -86,6 +86,27 @@ test("exportHostArtifacts writes workspace files and repo patch bundle", async (
   assert.equal(result.writtenFiles.some((file) => file.endsWith("meta.json")), true);
 });
 
+test("planHostExport rejects run IDs that are not safe filename segments", async () => {
+  const root = await mkdtemp(join(tmpdir(), "king-host-export-unsafe-"));
+  const outside = join(root, "outside");
+  await mkdir(outside, { recursive: true });
+  await writeFile(join(outside, "keep.txt"), "keep", "utf8");
+
+  assert.throws(
+    () => planHostExport({ outputDir: join(root, "deliverables"), runId: "../../outside" }),
+    /runId must be a safe filename segment/
+  );
+  assert.throws(
+    () => planHostExport({ outputDir: join(root, "deliverables"), runId: "nested/run" }),
+    /runId must be a safe filename segment/
+  );
+  await assert.rejects(
+    () => exportHostArtifacts({ outputDir: join(root, "deliverables"), runId: "../../outside" }),
+    /runId must be a safe filename segment/
+  );
+  assert.equal(existsSync(join(outside, "keep.txt")), true);
+});
+
 test("planHostExport rejects invalid repo roots", () => {
   assert.throws(() => planHostExport({ repoRoot: "/path/that/does/not/exist" }), /repoRoot does not exist/);
 });
