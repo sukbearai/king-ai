@@ -12,7 +12,7 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
-  apps/demo-worker:
+  apps/gui-worker:
     dependencies:
       '@suwujs/king':
         specifier: workspace:*

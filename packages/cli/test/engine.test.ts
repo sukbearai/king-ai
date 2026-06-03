@@ -275,7 +275,7 @@ test("writeShim forwards --file and --stdin bodies as single CLI args", async ()
     await writeShim(dir);
 
     await execFileP(join(dir, "king"), ["reply", "demo-convo", "--file", bodyPath], {
-      env: { PATH: process.env.PATH, KING_AGENT_RUNTIME_URL: url, KING_AGENT_RUNTIME_TOKEN: "token" }
+      env: { PATH: process.env.PATH, KING_AGENT_RUNTIME_URL: url, KING_AGENT_RUNTIME_TOKEN: "token", KING_AGENT_ID: "demo-agent", KING_AGENT_ENGINE: "claude" }
     });
     await runWithStdin(join(dir, "king"), ["reply", "demo-convo", "--stdin"], "from stdin\nwith quotes", {
       PATH: process.env.PATH,
@@ -284,10 +284,10 @@ test("writeShim forwards --file and --stdin bodies as single CLI args", async ()
     });
 
     assert.deepEqual(
-      seen.map((row) => (row as { argv?: string[] }).argv),
+      seen.map((row) => (row as { argv?: string[]; agentId?: string; engine?: string })),
       [
-        ["reply", "demo-convo", "line 1\n`code` and $var"],
-        ["reply", "demo-convo", "from stdin\nwith quotes"]
+        { argv: ["reply", "demo-convo", "line 1\n`code` and $var"], agentId: "demo-agent", engine: "claude" },
+        { argv: ["reply", "demo-convo", "from stdin\nwith quotes"] }
       ]
     );
   } finally {

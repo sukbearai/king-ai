@@ -154,7 +154,7 @@ export function scanReadme(projectPath: string): string | undefined {
 }
 
 export function detectCodeRoots(projectPath: string): string[] {
-  const roots = ["src", "app", "apps", "packages", "services", "backend", "frontend", "web", "api", "lib", "cmd", "demo-worker"];
+  const roots = ["src", "app", "apps", "packages", "services", "backend", "frontend", "web", "api", "lib", "cmd", "gui-worker"];
   return roots.filter((name) => {
     const dir = join(projectPath, name);
     return existsSync(dir) && statSync(dir).isDirectory();

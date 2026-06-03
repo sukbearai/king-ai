@@ -46,6 +46,7 @@ const NESTED_ENV_BLOCKLIST = [
   "KING_AGENT_RUNTIME_TOKEN",
   "KING_AGENT_RUNTIME_TOKEN_FILE",
   "KING_AGENT_ID",
+  "KING_AGENT_ENGINE",
   "KING_AGENT_HOME",
   "KING_AGENT_WORKSPACE_ROOT",
   "KING_AGENT_WORKSPACES",
@@ -291,6 +292,10 @@ export function swallowTurnRejection(task: Promise<void>, onError: (message: str
   });
 }
 
+export function agentSessionFile(agentId: string, engine: EngineId): string {
+  return join(SESSIONS_DIR, `${agentId}.${engine}.session`);
+}
+
 export class AgentRunner {
   private readonly home: string;
   private readonly binDir: string;
@@ -328,8 +333,8 @@ export class AgentRunner {
   ) {
     this.home = join(AGENTS_ROOT, agent.id);
     this.binDir = join(this.home, "bin");
-    this.sessionFile = join(SESSIONS_DIR, `${agent.id}.session`);
     this.adapter = getAdapter(engine);
+    this.sessionFile = agentSessionFile(agent.id, this.adapter.id);
   }
 
   get isBusy(): boolean {
@@ -515,6 +520,7 @@ export class AgentRunner {
       KING_AGENT_RUNTIME_TOKEN: this.token,
       KING_AGENT_RUNTIME_TOKEN_FILE: join(this.binDir, ".runtime-token"),
       KING_AGENT_ID: this.agent.id,
+      KING_AGENT_ENGINE: this.adapter.id,
       KING_AGENT_HOME: this.home,
       KING_AGENT_WORKSPACE_ROOT: this.workspaceRoot(),
       KING_AGENT_WORKSPACES: capabilities.workspaces.join(delimiter),

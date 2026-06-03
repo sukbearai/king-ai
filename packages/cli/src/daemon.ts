@@ -18,7 +18,7 @@ import { normalizeAgentLifecycle, shouldHostAgent } from "./lifecycle.js";
 import { FileHeartbeat } from "./heartbeat.js";
 import { validateAgentConfig } from "./agent-config-validation.js";
 
-const AGENT_POLL_MS = Number(process.env.KING_AGENT_POLL_MS) || 60_000;
+const AGENT_POLL_MS = Number(process.env.KING_AGENT_POLL_MS) || 5_000;
 const HEARTBEAT_MS = Number(process.env.KING_HEARTBEAT_MS) || 30_000;
 const SHUTDOWN_GRACE_MS = Number(process.env.KING_SHUTDOWN_GRACE_MS) || 15_000;
 const UPDATE_CHECK_MS = Number(process.env.KING_UPDATE_CHECK_MS) || 6 * 60 * 60 * 1000;

@@ -518,9 +518,11 @@ class ClaudeSession implements EngineSession {
         if (obj.type === "result") {
           this.steerQueue = [];
           const isError = obj.is_error === true;
+          const detail = failurePreview(1, null, this.pending?.stderr ?? [], this.pending?.stdout ?? []);
+          const resultText = String(obj.result ?? "").trim();
           this.settle({
             exitCode: isError ? 1 : 0,
-            error: isError ? String(obj.result ?? "engine turn error").slice(0, MAX_FAILURE_CHARS) : undefined,
+            error: isError ? (resultText && resultText !== "error" ? resultText : detail || "engine turn error").slice(0, MAX_FAILURE_CHARS) : undefined,
             sessionId: this.sid,
             usage: obj.usage && typeof obj.usage === "object" ? (obj.usage as EngineUsage) : undefined,
             model: this.currentModel

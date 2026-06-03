@@ -5,12 +5,12 @@
   "type": "module",
   "description": "Monorepo for king CLI and app integrations.",
   "scripts": {
-    "build": "pnpm --filter @suwujs/king build && pnpm --filter @king/demo-worker build",
-    "test": "pnpm --filter @suwujs/king test && pnpm --filter @king/demo-worker test",
+    "build": "pnpm --filter @suwujs/king build && pnpm --filter @king/gui-worker build",
+    "test": "pnpm --filter @suwujs/king test && pnpm --filter @king/gui-worker test",
     "verify": "pnpm build && pnpm test",
     "dev": "pnpm --filter @suwujs/king dev",
-    "demo:dev": "pnpm --filter @king/demo-worker dev",
-    "demo:deploy": "pnpm --filter @king/demo-worker deploy"
+    "gui:dev": "pnpm --filter @king/gui-worker dev",
+    "gui:deploy": "pnpm --filter @king/gui-worker deploy"
   },
   "packageManager": "pnpm@9.15.0",
   "engines": {

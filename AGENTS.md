@@ -4,16 +4,16 @@
 
 This is a pnpm workspace for a local agent daemon. The publishable CLI package lives in `packages/cli/`; `packages/cli/src/cli.ts` defines the `king` command, `packages/cli/src/daemon.ts` coordinates pairing and runner startup, `packages/cli/src/runner.ts` handles per-agent runtime loops, and `packages/cli/src/engine.ts` adapts local `claude` and `codex` CLIs. Shared runtime types are in `packages/cli/src/types.ts`.
 
-CLI tests live in `packages/cli/test/` and compile into `packages/cli/dist/test/`. The optional Cloudflare demo runtime app is under `apps/demo-worker/`, with tests in `apps/demo-worker/test/`. Generated output belongs in package-local `dist/` directories and should not be edited by hand.
+CLI tests live in `packages/cli/test/` and compile into `packages/cli/dist/test/`. The optional Cloudflare GUI runtime app is under `apps/gui-worker/`, with tests in `apps/gui-worker/test/`. Generated output belongs in package-local `dist/` directories and should not be edited by hand.
 
 ## Build, Test, and Development Commands
 
 - `pnpm install`: install package dependencies from `pnpm-lock.yaml`.
-- `pnpm build`: build the CLI package and demo worker app.
+- `pnpm build`: build the CLI package and GUI worker app.
 - `pnpm test`: run compiled Node tests for the workspace packages; build first.
 - `pnpm verify`: build and run the full test suite.
 - `pnpm dev -- agent computer --doctor`: run the CLI package through `tsx` during development.
-- `pnpm demo:dev`: start the demo Cloudflare Worker with Wrangler.
+- `pnpm gui:dev`: start the GUI Cloudflare Worker with Wrangler.
 
 Use `pnpm verify` before handing off code changes.
 

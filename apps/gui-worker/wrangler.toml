@@ -1,11 +1,11 @@
-name = "king-demo"
+name = "king-gui"
 main = "src/index.ts"
 compatibility_date = "2026-06-02"
 
 [[durable_objects.bindings]]
-name = "DEMO_STATE"
-class_name = "DemoState"
+name = "GUI_STATE"
+class_name = "GuiState"
 
 [[migrations]]
 tag = "v1"
-new_sqlite_classes = ["DemoState"]
+new_sqlite_classes = ["GuiState"]

@@ -2,11 +2,12 @@
 
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { renderPage } from "./page.js";
 import { cronMatches, parseCron } from "@suwujs/king/cron";
 import { formatMessageRouteSummary, messageRouteTag, sortRuntimeMessages } from "@suwujs/king/message-routing";
 
 type Bindings = {
-  DEMO_STATE: DurableObjectNamespace;
+  GUI_STATE: DurableObjectNamespace;
 };
 
 type Env = {
@@ -50,6 +51,8 @@ type Message = {
   conversation_kind: "direct" | "group";
   author_name: string;
   author_kind: "human" | "agent" | "system";
+  author_engine?: Agent["engine"];
+  status?: "pending" | "done";
   kind: "message" | "system";
   body: string;
   priority?: "normal" | "steer";
@@ -59,6 +62,15 @@ type Message = {
   payload?: unknown;
   created_at: number;
   readBy: string[];
+};
+
+type Conversation = {
+  id: string;
+  title: string;
+  kind: "direct" | "group";
+  created_at: number;
+  updated_at: number;
+  order?: number;
 };
 
 type EventRoute = {
@@ -401,11 +413,13 @@ type State = {
   computerId: string;
   deviceToken: string;
   runtimeToken: string;
+  pairingCode: string;
   availableEngines: string[];
   capabilities: { workspaces: string[]; agentWorkspaceRoot?: string };
   lastHeartbeat?: { at: number; version?: string; capabilities?: { workspaces: string[]; agentWorkspaceRoot?: string } };
   agentConfigUpdatedAt?: number;
   agents: Agent[];
+  conversations: Conversation[];
   messages: Message[];
   cliLog: { at: number; agentId: string; argv: string[]; result: string }[];
   statusLog: { at: number; status: string }[];
@@ -439,24 +453,27 @@ type State = {
 };
 
 type StateSnapshot = {
-  schema: "king.demo-state.v1";
+  schema: "king.gui-state.v1";
   exportedAt: number;
   state: State;
 };
 
 type PairPayload = {
+  code?: unknown;
   engines?: unknown;
   capabilities?: unknown;
 };
 
 type AgentConfigPayload = {
+  name?: unknown;
+  role?: unknown;
   engine?: unknown;
   model?: unknown;
   fastModel?: unknown;
   lifecycle?: unknown;
 };
 
-type DemoTaskPayload = {
+type GuiTaskPayload = {
   title?: unknown;
   description?: unknown;
   assignee?: unknown;
@@ -465,13 +482,13 @@ type DemoTaskPayload = {
   wake?: unknown;
 };
 
-type DemoTaskUpdatePayload = {
+type GuiTaskUpdatePayload = {
   status?: unknown;
   assignee?: unknown;
   result?: unknown;
 };
 
-type DemoCardMovePayload = {
+type GuiCardMovePayload = {
   column?: unknown;
   owner?: unknown;
 };
@@ -483,11 +500,19 @@ type AgendaPayload = {
 };
 
 const DEFAULT_AGENT: Agent = {
-  id: "demo-agent",
-  name: "Demo Agent",
-  role: "Local BYOA demo agent",
+  id: "king-agent",
+  name: "King Agent",
+  role: "Local BYOA agent",
   engine: "codex",
   lifecycle: "on-demand"
+};
+
+const DEFAULT_CONVERSATION: Conversation = {
+  id: "king-convo",
+  title: "all",
+  kind: "group",
+  created_at: 0,
+  updated_at: 0
 };
 
 const STANDARD_ARTIFACT_KINDS = new Set([
@@ -531,1122 +556,10 @@ const DEFAULT_EVALUATION_CRITERIA: EvaluationCriteria[] = [
 const REVIEW_COVERAGE_GATE = 95;
 const LOOP_EVENT_BUFFER_CAPACITY = 100;
 
-const legacyHtml = `<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>King 本地 Agent 控制台</title>
-  <style>
-    :root {
-      --primary: #00d992;
-      --primary-soft: #2fd6a1;
-      --primary-deep: #10b981;
-      --canvas: #101010;
-      --canvas-soft: #1a1a1a;
-      --hairline: #3d3a39;
-      --ink: #f2f2f2;
-      --ink-strong: #ffffff;
-      --body: #bdbdbd;
-      --mute: #8b949e;
-      --code: #f5f6f7;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      background: var(--canvas);
-      color: var(--ink);
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      font-feature-settings: "calt", "rlig";
-    }
-    main { max-width: 1380px; margin: 0 auto; padding: 32px; }
-    h1, h2, h3, p { margin: 0; }
-    h1 { color: var(--ink-strong); font-size: 60px; font-weight: 400; line-height: 60px; letter-spacing: -0.65px; max-width: 760px; }
-    h2 { color: var(--ink-strong); font-size: 24px; font-weight: 700; line-height: 32px; letter-spacing: -0.6px; }
-    h3 { color: var(--ink-strong); font-size: 16px; font-weight: 600; line-height: 24px; }
-    p { color: var(--body); font-size: 16px; line-height: 26px; }
-    code, pre, .mono, .metric strong, .chip, .activity-type { font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
-    button, input, textarea, select { font: inherit; }
-    button {
-      min-height: 44px;
-      border-radius: 6px;
-      border: 1px solid var(--hairline);
-      padding: 10px 16px;
-      background: var(--canvas);
-      color: var(--ink);
-      cursor: pointer;
-    }
-    button:hover { border-color: var(--primary-soft); }
-    .primary { background: var(--primary); border-color: var(--primary); color: #101010; font-weight: 600; }
-    .ghost { border-color: transparent; color: var(--primary-soft); }
-    input, textarea, select {
-      width: 100%;
-      min-height: 44px;
-      border: 1px solid var(--hairline);
-      border-radius: 6px;
-      background: var(--canvas-soft);
-      color: var(--ink);
-      padding: 10px 12px;
-    }
-    textarea { min-height: 112px; resize: vertical; line-height: 22px; }
-    label { color: var(--mute); font-size: 12px; line-height: 16px; }
-    pre {
-      overflow: auto;
-      margin: 0;
-      border: 1px solid var(--hairline);
-      border-radius: 8px;
-      background: var(--canvas-soft);
-      color: var(--code);
-      padding: 16px;
-      font-size: 13px;
-      line-height: 18px;
-    }
-    .eyebrow {
-      color: var(--primary);
-      font-size: 14px;
-      font-weight: 600;
-      line-height: 20px;
-      letter-spacing: 2px;
-    }
-    .hero { padding: 48px 0 28px; border-bottom: 1px dashed rgba(79, 93, 117, 0.4); }
-    .hero p { margin-top: 18px; max-width: 720px; font-size: 18px; line-height: 28px; }
-    .status-bar {
-      position: sticky;
-      top: 0;
-      z-index: 10;
-      display: grid;
-      grid-template-columns: minmax(180px, 1.2fr) repeat(5, minmax(110px, 1fr));
-      gap: 1px;
-      margin: 24px 0 0;
-      border: 1px solid var(--hairline);
-      border-radius: 8px;
-      background: var(--hairline);
-      overflow: hidden;
-    }
-    .status-cell { background: var(--canvas); padding: 14px 16px; min-width: 0; }
-    .status-cell span { display: block; color: var(--mute); font-size: 12px; line-height: 16px; }
-    .status-cell strong { display: block; margin-top: 4px; color: var(--ink-strong); font-size: 13px; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      min-height: 28px;
-      border: 1px solid var(--hairline);
-      border-radius: 9999px;
-      padding: 5px 10px;
-      color: var(--ink);
-      font-size: 14px;
-      line-height: 20px;
-    }
-    .pill.live { border-color: var(--primary); color: var(--primary); }
-    .dot { width: 7px; height: 7px; border-radius: 9999px; background: var(--mute); }
-    .live .dot { background: var(--primary); }
-    .grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 0.74fr); gap: 24px; padding: 32px 0; }
-    .chat-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 24px; padding: 32px 0; align-items: start; }
-    .stack { display: grid; gap: 24px; }
-    .card {
-      border: 1px solid var(--hairline);
-      border-radius: 8px;
-      background: var(--canvas);
-      padding: 24px;
-    }
-    .card.featured { border-width: 3px; }
-    .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
-    .subtle { color: var(--mute); font-size: 14px; line-height: 20px; }
-    .row { display: flex; flex-wrap: wrap; gap: 10px; }
-    .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-    .field { display: grid; gap: 6px; }
-    .chips { display: flex; flex-wrap: wrap; gap: 8px; }
-    .chip {
-      display: inline-flex;
-      align-items: center;
-      border: 1px solid var(--hairline);
-      border-radius: 6px;
-      padding: 4px 8px;
-      color: var(--code);
-      background: var(--canvas-soft);
-      font-size: 13px;
-      line-height: 18px;
-    }
-    .metric-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; border: 1px solid var(--hairline); background: var(--hairline); border-radius: 8px; overflow: hidden; }
-    .metric { background: var(--canvas); padding: 14px; min-width: 0; }
-    .metric span { color: var(--mute); font-size: 12px; line-height: 16px; }
-    .metric strong { display: block; margin-top: 5px; color: var(--ink-strong); font-size: 24px; line-height: 32px; font-weight: 550; }
-    .classification {
-      display: inline-flex;
-      align-items: center;
-      border-radius: 9999px;
-      padding: 6px 10px;
-      background: rgba(0, 217, 146, 0.08);
-      color: var(--primary);
-      border: 1px solid var(--primary);
-      font-size: 14px;
-      line-height: 20px;
-      font-weight: 600;
-    }
-    .activity-list, .message-list, .compact-list { display: grid; gap: 10px; }
-    .chat-card { min-height: 680px; display: grid; grid-template-rows: auto minmax(320px, 1fr) auto; }
-    .chat-window {
-      display: grid;
-      align-content: end;
-      gap: 14px;
-      min-height: 420px;
-      max-height: 620px;
-      overflow: auto;
-      border: 1px solid var(--hairline);
-      border-radius: 8px;
-      background: var(--canvas-soft);
-      padding: 18px;
-    }
-    .bubble {
-      max-width: 78%;
-      border: 1px solid var(--hairline);
-      border-radius: 8px;
-      padding: 12px 14px;
-      background: var(--canvas);
-    }
-    .bubble.human { justify-self: end; border-color: var(--primary); }
-    .bubble.agent { justify-self: start; }
-    .bubble.system { justify-self: center; max-width: 92%; border-style: dashed; }
-    .bubble-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
-    .bubble-name { color: var(--ink-strong); font-size: 14px; font-weight: 600; line-height: 20px; }
-    .bubble-body { color: var(--body); font-size: 15px; line-height: 24px; white-space: pre-wrap; word-break: break-word; }
-    .composer { display: grid; gap: 12px; margin-top: 16px; }
-    .composer textarea { min-height: 96px; }
-    .composer-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-    .side-card { padding: 18px; }
-    .activity, .message, .compact-row {
-      border: 1px solid var(--hairline);
-      border-radius: 8px;
-      padding: 12px;
-      background: var(--canvas);
-    }
-    .activity-top, .message-top, .compact-top { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 6px; }
-    .activity-type { color: var(--primary-soft); font-size: 12px; line-height: 16px; }
-    .time { color: var(--mute); font-size: 12px; line-height: 16px; white-space: nowrap; }
-    .message.human { border-left: 2px solid var(--primary); }
-    .message.agent { border-left: 2px solid var(--hairline); }
-    .message-body, .activity-body, .compact-body { color: var(--body); font-size: 14px; line-height: 20px; word-break: break-word; }
-    .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 16px; }
-    .tab { min-height: 36px; padding: 7px 12px; font-size: 14px; }
-    .tab.active { background: var(--primary); border-color: var(--primary); color: #101010; font-weight: 600; }
-    .hidden { display: none !important; }
-    .debug-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
-    .green-divider { border-top: 2px solid var(--primary); margin: 8px 0 24px; }
-    @media (max-width: 1023px) {
-      main { padding: 24px; }
-      h1 { font-size: 42px; line-height: 44px; }
-      .grid, .chat-layout { grid-template-columns: 1fr; }
-      .status-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); position: static; }
-    }
-    @media (max-width: 767px) {
-      main { padding: 18px; }
-      h1 { font-size: 32px; line-height: 36px; letter-spacing: 0; }
-      .fields, .metric-grid, .status-bar { grid-template-columns: 1fr; }
-      .card { padding: 18px; }
-    }
-  </style>
-</head>
-<body>
-<main>
-  <section class="hero">
-    <div class="eyebrow">本地 AGENT 运行台</div>
-    <h1>King 本地 Agent 控制台</h1>
-    <p>把这台电脑上的 Claude 或 Codex CLI 接入云端 Worker，然后在这里发消息、派任务、看运行状态和处理结果。</p>
-  </section>
+const styles = "    :root {\n      --accent: #ffd633;\n      --rail: #ffd83d;\n      --sidebar: #fbf4e6;\n      --active: #f15b93;\n      --canvas: #ffffff;\n      --panel: #fffaf0;\n      --line: #111111;\n      --soft-line: #d7d1c5;\n      --ink: #171717;\n      --body: #303030;\n      --muted: #7d7a73;\n      --avatar: #c8b6ff;\n      --shadow: rgba(17,17,17,0.16) 0 14px 36px;\n    }\n    * { box-sizing: border-box; }\n    body {\n      margin: 0;\n      background: var(--canvas);\n      color: var(--ink);\n      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n      font-size: 12px;\n      line-height: 1.35;\n      overflow: hidden;\n    }\n    h1, h2, h3, p { margin: 0; }\n    h1 { font-size: 17px; line-height: 1.1; }\n    h2 { font-size: 15px; line-height: 1.2; }\n    h3 { font-size: 13px; line-height: 1.2; }\n    p { color: var(--body); }\n    button, textarea, select, input { font: inherit; }\n    * {\n      scrollbar-width: thin;\n      scrollbar-color: var(--line) var(--accent);\n    }\n    *::-webkit-scrollbar {\n      width: 13px;\n      height: 13px;\n    }\n    *::-webkit-scrollbar-track {\n      background: var(--accent);\n      border-left: 1px solid var(--line);\n    }\n    *::-webkit-scrollbar-thumb {\n      background: var(--line);\n      border: 3px solid var(--accent);\n    }\n    *::-webkit-scrollbar-corner { background: var(--accent); }\n    button {\n      min-height: 27px;\n      border: 1px solid var(--line);\n      border-radius: 0;\n      padding: 4px 9px;\n      background: var(--canvas);\n      color: var(--ink);\n      font-weight: 800;\n      cursor: pointer;\n    }\n    button:hover, button.primary { background: var(--accent); }\n    button.icon {\n      width: 27px;\n      min-width: 27px;\n      padding: 0;\n      display: grid;\n      place-items: center;\n    }\n    textarea, input, select {\n      width: 100%;\n      border: 1px solid var(--line);\n      border-radius: 0;\n      background: var(--canvas);\n      color: var(--ink);\n      padding: 8px;\n    }\n    textarea {\n      min-height: 54px;\n      resize: vertical;\n      line-height: 1.45;\n    }\n    label {\n      color: var(--muted);\n      font-size: 10px;\n      font-weight: 900;\n      text-transform: uppercase;\n    }\n    .app {\n      height: 100vh;\n      min-height: 100vh;\n      display: grid;\n      grid-template-columns: 42px 180px minmax(0, 1fr);\n      background: var(--canvas);\n    }\n    .rail {\n      display: grid;\n      grid-template-rows: auto 1fr;\n      gap: 12px;\n      border-right: 2px solid var(--line);\n      background: var(--rail);\n      padding: 8px 6px;\n    }\n    .logo {\n      width: 27px;\n      display: grid;\n      grid-template-columns: 1fr;\n      gap: 6px;\n    }\n    .logo span {\n      width: 27px;\n      height: 27px;\n      display: grid;\n      place-items: center;\n      background: var(--line);\n      color: var(--accent);\n      font-size: 10px;\n      font-weight: 900;\n    }\n    .rail .icon { background: transparent; border-color: transparent; }\n    .rail .icon.active { background: var(--canvas); border-color: var(--line); }\n    .windows {\n      min-width: 0;\n      border-right: 2px solid var(--line);\n      background: var(--sidebar);\n      padding: 8px 6px;\n      overflow: hidden;\n      display: grid;\n      grid-template-rows: auto minmax(0, 1fr);\n      gap: 8px;\n    }\n    .windows-head {\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 8px;\n      padding: 0 2px 8px;\n      border-bottom: 1px solid var(--soft-line);\n      font-weight: 900;\n    }\n    .window-list {\n      min-height: 0;\n      overflow: auto;\n      display: grid;\n      align-content: start;\n      gap: 5px;\n    }\n    .window-item {\n      display: grid;\n      grid-template-columns: minmax(0, 1fr) auto auto;\n      gap: 6px;\n      align-items: center;\n      min-height: 32px;\n      padding: 5px 6px;\n      border: 1px solid transparent;\n      background: transparent;\n      text-align: left;\n      font-weight: 800;\n    }\n    .window-select {\n      min-width: 0;\n      min-height: 0;\n      padding: 0;\n      border: 0;\n      background: transparent;\n      text-align: left;\n      font-weight: 900;\n    }\n    .window-item.active {\n      border-color: var(--line);\n      background: var(--active);\n    }\n    .window-delete {\n      width: 18px;\n      min-width: 18px;\n      min-height: 18px;\n      padding: 0;\n      border-color: var(--line);\n      background: var(--canvas);\n      color: var(--line);\n      line-height: 1;\n    }\n    .window-delete:hover { background: var(--accent); }\n    .window-name {\n      overflow: hidden;\n      text-overflow: ellipsis;\n      white-space: nowrap;\n    }\n    .window-meta {\n      color: var(--muted);\n      font-size: 10px;\n      font-weight: 900;\n    }\n    .sidebar {\n      display: none;\n      min-width: 0;\n      border-right: 2px solid var(--line);\n      background: var(--sidebar);\n      padding: 9px 5px;\n      overflow: hidden;\n    }\n    .side-title {\n      display: flex;\n      justify-content: space-between;\n      align-items: center;\n      padding: 0 4px 11px;\n      border-bottom: 1px solid var(--soft-line);\n      margin-bottom: 8px;\n    }\n    .side-section { display: grid; gap: 3px; margin: 12px 0; }\n    .side-label {\n      padding: 0 7px;\n      color: var(--muted);\n      font-size: 10px;\n      font-weight: 900;\n      letter-spacing: 0.03em;\n      text-transform: uppercase;\n    }\n    .side-link, .channel {\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 8px;\n      min-height: 25px;\n      padding: 4px 6px;\n      border: 1px solid transparent;\n      color: var(--body);\n      text-decoration: none;\n      white-space: nowrap;\n      overflow: hidden;\n    }\n    .channel.active {\n      background: var(--active);\n      border-color: var(--line);\n      color: var(--line);\n      font-weight: 900;\n    }\n    .badge { color: var(--muted); font-size: 10px; font-weight: 900; }\n    .main {\n      min-width: 0;\n      min-height: 0;\n      height: 100vh;\n      display: grid;\n      grid-template-rows: auto auto minmax(0, 1fr);\n    }\n    .topbar {\n      height: 38px;\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 14px;\n      border-bottom: 2px solid var(--line);\n      padding: 6px 12px;\n    }\n    .channel-head {\n      display: grid;\n      grid-template-columns: 21px minmax(0, auto);\n      gap: 8px;\n      align-items: center;\n      min-width: 0;\n    }\n    .hash {\n      width: 21px;\n      height: 21px;\n      display: grid;\n      place-items: center;\n      background: var(--accent);\n      border: 1px solid var(--line);\n      font-weight: 900;\n    }\n    .channel-name { font-weight: 900; line-height: 1; }\n    .channel-desc {\n      color: var(--muted);\n      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;\n      font-size: 10px;\n      overflow: hidden;\n      text-overflow: ellipsis;\n      white-space: nowrap;\n    }\n    .top-actions { display: flex; gap: 6px; }\n    .tabs {\n      height: 24px;\n      display: flex;\n      align-items: stretch;\n      border-bottom: 2px solid var(--line);\n    }\n    .tab {\n      min-height: 0;\n      padding: 3px 12px;\n      border-width: 0 1px 0 0;\n      background: var(--canvas);\n      font-size: 11px;\n    }\n    .tab.active { background: var(--accent); }\n    .workspace {\n      min-height: 0;\n      overflow: auto;\n      background: var(--canvas);\n    }\n    .panel { display: none; min-height: 100%; }\n    .panel.active { display: block; }\n    .chat-panel {\n      position: relative;\n      min-height: 100%;\n      padding: 14px 0 124px;\n    }\n    .message-list {\n      display: grid;\n      gap: 11px;\n      width: 100%;\n      padding: 0 18px;\n    }\n    .system-line {\n      color: #aaa49a;\n      font-size: 10px;\n      text-align: center;\n      padding: 4px 0;\n    }\n    .post {\n      display: grid;\n      grid-template-columns: 24px minmax(0, 1fr);\n      gap: 8px;\n      padding: 8px;\n      border: 1px solid transparent;\n    }\n    .post.highlight { border-color: var(--line); }\n    .avatar {\n      width: 22px;\n      height: 22px;\n      display: grid;\n      place-items: center;\n      border: 1px solid var(--line);\n      background: var(--avatar);\n      color: var(--line);\n      font-size: 12px;\n      font-weight: 900;\n    }\n    .post-top {\n      display: flex;\n      align-items: baseline;\n      gap: 6px;\n      min-width: 0;\n      margin-bottom: 3px;\n    }\n    .author { font-weight: 900; }\n    .time { color: var(--muted); font-size: 10px; white-space: nowrap; }\n    .post-body {\n      color: var(--body);\n      line-height: 1.45;\n      white-space: pre-wrap;\n      word-break: break-word;\n    }\n    .jump {\n      position: sticky;\n      bottom: 104px;\n      display: none;\n      width: max-content;\n      margin: 16px auto;\n      box-shadow: var(--shadow);\n    }\n    .jump.visible { display: block; }\n    .composer {\n      position: fixed;\n      right: 16px;\n      bottom: 14px;\n      left: 238px;\n      z-index: 5;\n      display: grid;\n      grid-template-columns: minmax(0, 1fr) auto;\n      gap: 8px;\n      width: auto;\n      max-width: none;\n      border: 2px solid var(--line);\n      background: var(--canvas);\n      padding: 8px;\n    }\n    .composer textarea {\n      min-height: 44px;\n      max-height: 110px;\n      border: 0;\n      padding: 6px;\n    }\n    .composer button:disabled {\n      opacity: 0.62;\n      cursor: wait;\n    }\n    .tab-panel {\n      max-width: 920px;\n      padding: 18px;\n      gap: 10px;\n    }\n    .tab-panel.active { display: grid; }\n    .task-row {\n      display: grid;\n      gap: 5px;\n      max-width: 720px;\n      border: 1px solid var(--line);\n      padding: 10px;\n    }\n    .task-top {\n      display: flex;\n      align-items: baseline;\n      justify-content: space-between;\n      gap: 10px;\n    }\n    .model-grid { display: grid; gap: 10px; }\n    .model-row {\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 12px;\n      border-top: 1px solid var(--soft-line);\n      padding-top: 8px;\n      color: var(--body);\n    }\n    .model-row:first-child { border-top: 0; padding-top: 0; }\n    .available { color: #cc2f68; font-weight: 900; }\n    .unavailable { color: var(--muted); }\n    .cmd {\n      border: 1px solid var(--line);\n      background: var(--panel);\n      padding: 10px;\n      color: var(--body);\n      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;\n      font-size: 11px;\n      line-height: 1.5;\n      overflow: auto;\n      white-space: pre-wrap;\n      word-break: break-word;\n    }\n    .side-card {\n      display: grid;\n      gap: 10px;\n      border: 1px solid var(--line);\n      padding: 10px;\n    }\n    .settings-actions {\n      display: flex;\n      justify-content: flex-end;\n      gap: 8px;\n    }\n    .field { display: grid; gap: 5px; }\n    .muted { color: var(--muted); font-size: 11px; }\n    dialog {\n      width: min(520px, calc(100vw - 24px));\n      max-height: min(760px, calc(100vh - 24px));\n      border: 2px solid var(--line);\n      border-radius: 0;\n      padding: 0;\n      box-shadow: var(--shadow);\n      overflow: hidden;\n    }\n    dialog::backdrop { background: rgba(0,0,0,0.48); }\n    .computer-dialog { width: min(680px, calc(100vw - 24px)); }\n    .window-dialog { width: min(440px, calc(100vw - 24px)); }\n    .modal-form { margin: 0; }\n    .modal-head {\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 16px;\n      padding: 12px;\n      border-bottom: 2px solid var(--line);\n    }\n    .modal-body {\n      display: grid;\n      gap: 12px;\n      padding: 12px;\n      overflow: auto;\n      max-height: calc(100vh - 120px);\n    }\n    .computer-flow {\n      display: grid;\n      gap: 20px;\n      padding: 32px;\n    }\n    .computer-kicker {\n      color: var(--muted);\n      font-size: 11px;\n      font-weight: 900;\n      letter-spacing: 0.14em;\n      text-transform: uppercase;\n    }\n    .computer-title {\n      font-size: 20px;\n      line-height: 1.15;\n      text-transform: uppercase;\n    }\n    .computer-lead {\n      display: grid;\n      grid-template-columns: 36px minmax(0, 1fr);\n      gap: 14px;\n      align-items: start;\n      color: var(--body);\n      font-size: 15px;\n      line-height: 1.5;\n    }\n    .computer-icon {\n      width: 32px;\n      height: 32px;\n      display: grid;\n      place-items: center;\n      border: 2px solid var(--line);\n      background: var(--accent);\n      font-weight: 900;\n    }\n    .computer-muted {\n      margin-top: 8px;\n      color: var(--muted);\n      font-size: 12px;\n      line-height: 1.45;\n    }\n    .computer-rule { border-top: 2px solid var(--soft-line); }\n    .computer-actions {\n      display: flex;\n      align-items: center;\n      justify-content: flex-end;\n      gap: 12px;\n      flex-wrap: wrap;\n    }\n    .computer-actions.between { justify-content: space-between; }\n    .check-row {\n      display: flex;\n      align-items: center;\n      gap: 8px;\n      font-weight: 800;\n      color: var(--body);\n    }\n    .check-row input {\n      width: 16px;\n      height: 16px;\n      padding: 0;\n      accent-color: var(--accent);\n    }\n    .choice-grid {\n      display: grid;\n      grid-template-columns: repeat(2, minmax(0, 1fr));\n      gap: 10px;\n    }\n    .computer-choice {\n      display: grid;\n      grid-template-columns: 28px minmax(0, 1fr);\n      gap: 10px;\n      min-height: 82px;\n      border: 2px solid var(--line);\n      padding: 14px;\n      background: var(--canvas);\n      text-align: left;\n    }\n    .computer-choice.active { background: var(--accent); }\n    .computer-choice.disabled {\n      border-style: dashed;\n      color: var(--muted);\n      opacity: 0.56;\n      cursor: default;\n    }\n    .computer-choice-title {\n      display: block;\n      font-size: 14px;\n      text-transform: uppercase;\n    }\n    .connect-row {\n      display: grid;\n      grid-template-columns: minmax(0, 1fr) auto;\n      gap: 10px;\n      align-items: center;\n    }\n    .connect-stack {\n      display: grid;\n      gap: 8px;\n      min-width: 0;\n    }\n    .connect-help {\n      color: var(--body);\n      font-size: 12px;\n      font-weight: 900;\n    }\n    .connect-command {\n      border: 2px solid var(--line);\n      background: #080808;\n      color: #a7d66d;\n      padding: 14px;\n      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;\n      font-size: 12px;\n      line-height: 1.5;\n      white-space: pre-wrap;\n      word-break: break-word;\n    }\n    .connect-status {\n      display: flex;\n      align-items: center;\n      gap: 10px;\n      border: 2px solid var(--line);\n      background: #fff3c4;\n      padding: 14px;\n      font-weight: 900;\n    }\n    .status-dot {\n      width: 10px;\n      height: 10px;\n      border: 2px solid var(--line);\n      border-radius: 50%;\n      background: #ffad7a;\n    }\n    .status-dot.online { background: #74d67b; }\n    .button-shadow { box-shadow: 4px 5px 0 var(--line); }\n    button.primary-pink {\n      background: var(--active);\n      min-height: 36px;\n      padding: 8px 14px;\n      font-size: 14px;\n    }\n    button.disabled-action {\n      background: #edf5df;\n      color: var(--muted);\n      cursor: default;\n    }\n    @media (max-width: 760px) {\n      .app { grid-template-columns: 36px 132px minmax(0, 1fr); }\n      .logo {\n        width: 24px;\n        grid-template-columns: 1fr;\n      }\n      .logo span {\n        width: 22px;\n        height: 16px;\n        font-size: 10px;\n      }\n      .message-list { padding: 0 10px; }\n      .composer { left: 178px; right: 10px; width: auto; }\n      .top-actions .hide-mobile { display: none; }\n      .post { max-width: 100%; }\n      .computer-flow { padding: 22px; }\n      .choice-grid, .connect-row { grid-template-columns: 1fr; }\n    }\n";
 
-  <section class="status-bar" aria-label="Runtime status">
-    <div class="status-cell"><span>连接状态</span><strong><span id="statusPill" class="pill"><span class="dot"></span> 未配对</span></strong></div>
-    <div class="status-cell"><span>最近心跳</span><strong id="heartbeatStat">未收到</strong></div>
-    <div class="status-cell"><span>运行引擎</span><strong id="engineStat">自动</strong></div>
-    <div class="status-cell"><span>运行模式</span><strong id="lifecycleStat">按需启动</strong></div>
-    <div class="status-cell"><span>待读消息</span><strong id="unreadStat">0</strong></div>
-    <div class="status-cell"><span>失败次数</span><strong id="failedStat">0</strong></div>
-  </section>
+const clientScript = "const base = location.origin;\nlet pairCommand = '';\nlet pairCommandPrimary = '';\nlet pairCommandStart = '';\nlet computerStep = 'intro';\nlet lastConnection = { paired: false, online: false };\nlet promptedForComputer = false;\nlet visibleMessageCount = 20;\nlet lastMessageTotal = 0;\nlet loadingOlderMessages = false;\nlet sendingMessage = false;\nlet shouldStickToBottom = true;\nlet activeConversationId = localStorage.getItem('king:activeConversationId') || 'king-convo';\n\nfunction escapeHtml(value) {\n  return String(value ?? '').replace(/[&<>\"']/g, function(ch) {\n    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' })[ch];\n  });\n}\nfunction formatTime(value) {\n  if (!value) return '未收到';\n  return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });\n}\nfunction lifecycleLabel(value) {\n  return ({ 'on-demand': '按需启动', '24/7': '持续在线', idle_cached: '空闲保活', disabled: '停用' })[value] || value || '按需启动';\n}\nfunction taskStatusLabel(value) {\n  return ({ pending: '待分配', assigned: '已分配', in_progress: '进行中', review: '待评审', done: '已完成', failed: '失败', blocked: '被阻塞' })[value] || value || '未知';\n}\nfunction reasonLabel(reason) {\n  return String(reason || '')\n    .replace(/(\\\\\\\\d+) unread message\\\\\\\\(s\\\\\\\\) pending/g, '$1 条消息等待本地 AI 处理')\n    .replace(/(\\\\\\\\d+) failed run\\\\\\\\(s\\\\\\\\)/g, '$1 次运行失败')\n    .replace('no state changes detected', '等待下一条消息。');\n}\nasync function request(path, options) {\n  const res = await fetch(path, options);\n  if (!res.ok) throw new Error(await res.text());\n  return res.headers.get('Content-Type') && res.headers.get('Content-Type').includes('application/json') ? res.json() : res.text();\n}\nfunction openSettings() {\n  document.getElementById('settingsDialog').showModal();\n}\nfunction closeSettings() {\n  document.getElementById('settingsDialog').close();\n}\nfunction closeComputerDialog() {\n  document.getElementById('computerDialog').close();\n}\nasync function openComputerFlow(step) {\n  computerStep = step || 'intro';\n  const settings = document.getElementById('settingsDialog');\n  if (settings.open) settings.close();\n  renderComputerFlow();\n  const dialog = document.getElementById('computerDialog');\n  if (!dialog.open) dialog.showModal();\n  if (!pairCommand) await loadPairCommand();\n}\nasync function loadPairCommand() {\n  const summary = await request('/gui/summary');\n  if (!summary.pairingCode) return;\n  pairCommandPrimary = 'king agent computer --pair ' + summary.pairingCode + ' --server ' + base;\n  pairCommandStart = 'king agent computer --server ' + base;\n  pairCommand = pairCommandPrimary + '\\n' + pairCommandStart;\n  lastConnection = summary.connection || lastConnection;\n  if (document.getElementById('computerDialog').open && computerStep === 'connect') renderComputerFlow();\n}\nfunction dismissComputerIntro() {\n  const checkbox = document.getElementById('dontRemindComputer');\n  if (checkbox && checkbox.checked) localStorage.setItem('king:addComputerDismissed', '1');\n  closeComputerDialog();\n}\nfunction renderComputerFlow() {\n  const connected = Boolean(lastConnection.online);\n  const paired = Boolean(lastConnection.paired);\n  const connectionText = connected ? 'Computer connected.' : paired ? 'Computer paired. Waiting for it to come online...' : 'Waiting for computer to connect...';\n  const flow = document.getElementById('computerFlow');\n  if (computerStep === 'select') {\n    flow.innerHTML =\n      '<div class=\"computer-actions\"><button class=\"icon button-shadow\" onclick=\"closeComputerDialog()\" aria-label=\"Close\">×</button></div>' +\n      '<h2 class=\"computer-title\">Add Computer</h2>' +\n      '<div class=\"choice-grid\">' +\n      '<button class=\"computer-choice active\" onclick=\"openComputerFlow(&quot;connect&quot;)\"><span class=\"computer-icon\">▭</span><span><strong class=\"computer-choice-title\">Your Computer</strong><span class=\"computer-muted\">Run agents on your own computer</span></span></button>' +\n      '<button class=\"computer-choice disabled\" type=\"button\"><span class=\"computer-icon\">☁</span><span><strong class=\"computer-choice-title\">Cloud Computer</strong><span class=\"computer-muted\">Coming soon</span></span></button>' +\n      '</div>' +\n      '<div class=\"computer-actions\"><button class=\"button-shadow\" onclick=\"closeComputerDialog()\">Cancel</button><button class=\"primary-pink button-shadow\" onclick=\"openComputerFlow(&quot;connect&quot;)\">Next</button></div>';\n    return;\n  }\n  if (computerStep === 'connect') {\n    flow.innerHTML =\n      '<div class=\"computer-actions\"><button class=\"icon button-shadow\" onclick=\"closeComputerDialog()\" aria-label=\"Close\">×</button></div>' +\n      '<h2 class=\"computer-title\">Connect Computer</h2>' +\n      '<p><strong>&gt;_ Run this command on your computer to connect:</strong></p>' +\n      '<div class=\"connect-row\"><div class=\"connect-stack\">' +\n      '<div class=\"connect-help\">First-time pairing: run this once to attach this browser session.</div>' +\n      '<pre class=\"connect-command\">' + escapeHtml(pairCommandPrimary || 'Loading pairing code...') + '</pre>' +\n      '<div class=\"connect-help\">Already paired: use this later to start the local computer runtime.</div>' +\n      '<pre class=\"connect-command\">' + escapeHtml(pairCommandStart || 'Loading start command...') + '</pre></div><button class=\"icon button-shadow\" onclick=\"copyPairCommand()\" aria-label=\"Copy commands\">□</button></div>' +\n      '<div class=\"connect-status\"><span class=\"status-dot' + (connected ? ' online' : '') + '\"></span><span>' + connectionText + '</span></div>' +\n      '<div class=\"computer-actions\"><button class=\"button-shadow\" onclick=\"closeComputerDialog()\">Cancel</button><button class=\"' + (connected ? 'primary-pink' : 'disabled-action') + ' button-shadow\" onclick=\"' + (connected ? 'closeComputerDialog()' : 'refresh()') + '\">' + (connected ? 'Done' : 'Done') + '</button></div>';\n    return;\n  }\n  flow.innerHTML =\n    '<div><div class=\"computer-kicker\">Meet King</div><h2 class=\"computer-title\">Add a Computer</h2></div>' +\n    '<div class=\"computer-lead\"><span class=\"computer-icon\">▭</span><div><p>Your agents need somewhere to run. Connect a computer and they will come online there.</p><p class=\"computer-muted\">Need an agent runtime installed: Claude Code, Codex CLI, Kimi CLI, Copilot CLI, Cursor CLI, Gemini CLI, OpenCode, or Pi.</p></div></div>' +\n    '<div class=\"computer-rule\"></div>' +\n    '<div class=\"computer-actions between\"><label class=\"check-row\"><input id=\"dontRemindComputer\" type=\"checkbox\" />Do not remind me again</label><span class=\"computer-actions\"><button class=\"button-shadow\" onclick=\"dismissComputerIntro()\">Skip</button><button class=\"primary-pink button-shadow\" onclick=\"openComputerFlow(&quot;select&quot;)\">▭ Add Computer</button></span></div>';\n}\nfunction showPanel(name) {\n  ['chat', 'tasks', 'files'].forEach(function(panel) {\n    document.getElementById('panel-' + panel).classList.toggle('active', panel === name);\n    document.querySelector('[data-panel=\"' + panel + '\"]').classList.toggle('active', panel === name);\n  });\n}\nfunction scrollToBottom() {\n  const workspace = document.querySelector('.workspace');\n  workspace.scrollTop = workspace.scrollHeight;\n  shouldStickToBottom = true;\n  updateBackToBottom();\n}\nfunction updateBackToBottom() {\n  const workspace = document.querySelector('.workspace');\n  const jump = document.querySelector('.jump');\n  const distance = workspace.scrollHeight - workspace.clientHeight - workspace.scrollTop;\n  const away = distance > 180;\n  shouldStickToBottom = !away;\n  jump.classList.toggle('visible', away);\n}\nasync function handleWorkspaceScroll() {\n  updateBackToBottom();\n  const workspace = document.querySelector('.workspace');\n  if (loadingOlderMessages || workspace.scrollTop > 24 || visibleMessageCount >= lastMessageTotal) return;\n  loadingOlderMessages = true;\n  const beforeHeight = workspace.scrollHeight;\n  const beforeTop = workspace.scrollTop;\n  visibleMessageCount = Math.min(visibleMessageCount + 20, lastMessageTotal);\n  await refresh({ preserveScroll: true });\n  workspace.scrollTop = workspace.scrollHeight - beforeHeight + beforeTop;\n  loadingOlderMessages = false;\n}\nasync function copyPairCommand() {\n  if (!pairCommand) return;\n  await navigator.clipboard.writeText(pairCommand).catch(function() {});\n}\nasync function sendMessage() {\n  if (sendingMessage) return;\n  const input = document.getElementById('body');\n  const button = document.getElementById('sendButton');\n  const body = input.value.trim();\n  if (!body) return;\n  sendingMessage = true;\n  input.value = '';\n  input.blur();\n  button.disabled = true;\n  button.textContent = 'Sending';\n  try {\n    await request('/gui/message', {\n      method: 'POST',\n      headers: { 'Content-Type': 'application/json' },\n      body: JSON.stringify({ body, conversationId: activeConversationId })\n    });\n    visibleMessageCount = 20;\n    shouldStickToBottom = true;\n    await refresh();\n  } catch (error) {\n    input.value = body;\n    throw error;\n  } finally {\n    sendingMessage = false;\n    button.disabled = false;\n    button.textContent = 'Send';\n  }\n}\nasync function clearMessages() {\n  await request('/gui/clear-messages', { method: 'POST' });\n  visibleMessageCount = 20;\n  shouldStickToBottom = true;\n  await refresh();\n}\nasync function saveAgentConfig() {\n  await request('/gui/agent-config', {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify({\n      name: document.getElementById('agentName').value,\n      role: document.getElementById('agentRole').value,\n      engine: document.getElementById('engine').value,\n      lifecycle: 'on-demand',\n      model: document.getElementById('model').value,\n      fastModel: document.getElementById('fastModel').value\n    })\n  });\n  await refresh();\n}\nfunction renderMessages(state, options) {\n  const allRows = (state.messages || []).filter(function(message) { return message.conversation_id === activeConversationId; });\n  if (allRows.length > lastMessageTotal) visibleMessageCount = 20;\n  lastMessageTotal = allRows.length;\n  visibleMessageCount = Math.min(Math.max(visibleMessageCount, 20), Math.max(lastMessageTotal, 20));\n  const rows = allRows.slice(-visibleMessageCount);\n  const hasOlder = rows.length < allRows.length;\n  const unread = rows.filter(function(message) { return !(message.readBy || []).includes('king-agent') && message.author_kind === 'human'; }).length;\n  const olderLine = hasOlder ? 'Pull down or scroll to top to load older messages...' : 'No older messages';\n  const html = rows.length ? rows.map(function(message) {\n    if (message.author_kind === 'system') {\n      return '<div class=\"system-line\">' + escapeHtml(message.body) + '</div>';\n    }\n    const initial = message.author_kind === 'agent' ? 'A' : '人';\n    const name = message.author_kind === 'agent' ? (message.author_name || 'AI') : (message.author_name || 'you');\n    const unreadClass = message.author_kind === 'human' && !(message.readBy || []).includes('king-agent') ? ' highlight' : '';\n    return '<article class=\"post' + unreadClass + '\"><div class=\"avatar\">' + initial + '</div><div><div class=\"post-top\"><span class=\"author\">' + escapeHtml(name) + '</span><span class=\"time\">' + formatTime(message.created_at) + '</span></div><div class=\"post-body\">' + escapeHtml(message.body) + '</div></div></article>';\n  }).join('') : '';\n  document.getElementById('chatWindow').innerHTML = '<div class=\"system-line\">' + olderLine + '</div>' + html;\n  if (options && options.preserveScroll) updateBackToBottom();\n  else if (shouldStickToBottom) scrollToBottom();\n  else updateBackToBottom();\n}\nfunction selectConversation(id) {\n  activeConversationId = id || 'king-convo';\n  localStorage.setItem('king:activeConversationId', activeConversationId);\n  visibleMessageCount = 20;\n  shouldStickToBottom = true;\n  refresh();\n}\nfunction createConversation() {\n  const input = document.getElementById('newWindowTitle');\n  input.value = '';\n  const dialog = document.getElementById('newWindowDialog');\n  if (!dialog.open) dialog.showModal();\n  setTimeout(function() { input.focus(); }, 0);\n}\nfunction closeNewWindowDialog() {\n  document.getElementById('newWindowDialog').close();\n}\nasync function submitConversation(event) {\n  event.preventDefault();\n  const input = document.getElementById('newWindowTitle');\n  const title = input.value.trim();\n  const submit = document.getElementById('newWindowSubmit');\n  submit.disabled = true;\n  submit.textContent = 'Creating';\n  try {\n    const result = await request('/gui/conversations', {\n      method: 'POST',\n      headers: { 'Content-Type': 'application/json' },\n      body: JSON.stringify({ title })\n    });\n    activeConversationId = result.conversation.id;\n    localStorage.setItem('king:activeConversationId', activeConversationId);\n    visibleMessageCount = 20;\n    shouldStickToBottom = true;\n    closeNewWindowDialog();\n    await refresh();\n  } finally {\n    submit.disabled = false;\n    submit.textContent = 'Create';\n  }\n}\nfunction activeConversationStatus(summary, active) {\n  const state = summary.state || {};\n  const typing = (state.typingLog || []).slice().reverse().find(function(row) { return row.conversationId === active.id && !row.done; });\n  const thinking = (state.thinkingLog || []).slice().reverse().find(function(row) { return row.action === 'mark' && (row.conversationIds || []).includes(active.id); });\n  if (typing) return 'agent 正在输入...';\n  if (thinking) return 'agent 正在处理...';\n  if ((active.unread || 0) > 0) return '等待本地 agent 回复';\n  return 'General channel for all members';\n}\nfunction renderConversations(summary) {\n  const conversations = summary.conversations || [];\n  if (conversations.length && !conversations.some(function(row) { return row.id === activeConversationId; })) activeConversationId = conversations[0].id;\n  const active = conversations.find(function(row) { return row.id === activeConversationId; }) || conversations[0] || { id: 'king-convo', title: 'all' };\n  document.querySelector('.channel-name').textContent = active.title || active.id;\n  document.querySelector('.composer textarea').placeholder = 'Message #' + (active.title || active.id);\n  document.querySelector('.hash').textContent = active.id === 'king-convo' ? '#' : '~';\n  document.getElementById('routeSummary').textContent = activeConversationStatus(summary, active);\n  document.getElementById('conversationList').innerHTML = conversations.map(function(row) {\n    const deletable = row.id !== 'king-convo';\n    return '<div class=\"window-item' + (row.id === activeConversationId ? ' active' : '') + '\"><button class=\"window-select\" onclick=\"selectConversation(&quot;' + escapeHtml(row.id) + '&quot;)\"><span class=\"window-name\">' + escapeHtml(row.title || row.id) + '</span></button><span class=\"window-meta\">' + escapeHtml(row.unread || 0) + '</span>' + (deletable ? '<button class=\"window-delete\" onclick=\"deleteConversation(event, &quot;' + escapeHtml(row.id) + '&quot;)\" aria-label=\"Delete window\">×</button>' : '') + '</div>';\n  }).join('');\n}\nasync function deleteConversation(event, id) {\n  event.stopPropagation();\n  await request('/gui/conversations/' + encodeURIComponent(id) + '/delete', { method: 'POST' });\n  if (activeConversationId === id) {\n    activeConversationId = 'king-convo';\n    localStorage.setItem('king:activeConversationId', activeConversationId);\n  }\n  visibleMessageCount = 20;\n  shouldStickToBottom = true;\n  await refresh();\n}\nfunction renderTasks(state) {\n  const tasks = state.tasks || [];\n  document.getElementById('taskBadge').textContent = String(tasks.filter(function(task) { return task.status !== 'done'; }).length);\n  document.getElementById('panel-tasks').innerHTML = tasks.length ? tasks.slice().reverse().map(function(task) {\n    return '<div class=\"task-row\"><div class=\"task-top\"><h3>' + escapeHtml(task.title) + '</h3><span class=\"time\">' + escapeHtml(taskStatusLabel(task.status)) + ' P' + escapeHtml(task.priority) + '</span></div><p>' + escapeHtml(task.description || ((task.scope && task.scope.paths || []).join(', ')) || 'No description') + '</p></div>';\n  }).join('') : '<p class=\"muted\">No tasks yet.</p>';\n  const artifacts = state.artifacts || [];\n  document.getElementById('panel-files').innerHTML = artifacts.length ? artifacts.slice().reverse().map(function(artifact) {\n    return '<div class=\"task-row\"><div class=\"task-top\"><h3>' + escapeHtml(artifact.path || artifact.name || 'artifact') + '</h3><span class=\"time\">' + escapeHtml(artifact.kind || 'file') + '</span></div><p>' + escapeHtml(artifact.source || artifact.confidence || '') + '</p></div>';\n  }).join('') : '<p class=\"muted\">No files yet.</p>';\n}\nfunction renderSummary(summary) {\n  const connection = summary.connection || {};\n  const observation = summary.observation || { counts: {}, reasons: [] };\n  const counts = observation.counts || {};\n  const agent = summary.agent || {};\n  lastConnection = connection;\n  const heartbeatStat = document.getElementById('heartbeatStat');\n  if (heartbeatStat) heartbeatStat.textContent = '最近心跳：' + (connection.lastHeartbeatAt ? formatTime(connection.lastHeartbeatAt) : '未收到');\n  document.getElementById('unreadStat').textContent = String(counts.unreadMessages || 0);\n  document.getElementById('failedStat').textContent = String(counts.failedRuns || 0);\n  document.getElementById('activityBadge').textContent = String((counts.unreadMessages || 0) + (counts.failedRuns || 0));\n  renderConversations({ ...summary, state: window.__lastState || {} });\n  const observationReasons = document.getElementById('observationReasons');\n  if (observationReasons) observationReasons.textContent = (observation.reasons || []).map(reasonLabel).join('；') || '等待下一条消息。';\n  if (summary.pairingCode) {\n    pairCommandPrimary = 'king agent computer --pair ' + summary.pairingCode + ' --server ' + base;\n  pairCommandStart = 'king agent computer --server ' + base;\n  pairCommand = pairCommandPrimary + '\\n' + pairCommandStart;\n    if (document.getElementById('computerDialog').open) renderComputerFlow();\n  }\n  if (!connection.paired && !promptedForComputer && !localStorage.getItem('king:addComputerDismissed')) {\n    promptedForComputer = true;\n    setTimeout(function() {\n      if (!document.getElementById('settingsDialog').open && !document.getElementById('computerDialog').open) openComputerFlow('intro');\n    }, 250);\n  }\n  const engines = summary.availableEngines || [];\n  document.getElementById('engine').innerHTML = engines.length ? engines.map(function(engine) {\n    return '<option value=\"' + escapeHtml(engine) + '\"' + (engine === agent.engine ? ' selected' : '') + '>' + escapeHtml(engine) + '</option>';\n  }).join('') : '<option value=\"\">请先配对</option>';\n  document.getElementById('agentName').value = agent.name || 'King Agent';\n  document.getElementById('agentRole').value = agent.role || 'Local BYOA agent';\n  document.getElementById('model').value = agent.model === 'default' ? '' : (agent.model || '');\n  document.getElementById('fastModel').value = agent.fastModel === 'default' ? '' : (agent.fastModel || '');\n  const modelRows = ['claude', 'codex'].map(function(engine) {\n    const available = engines.includes(engine);\n    const active = agent.engine === engine;\n    const label = active && !available ? '当前配置，未检测到本机' : available ? '可用' : '未检测到';\n    return '<div class=\"model-row\"><span>' + engine + (active ? ' · 当前' : '') + '</span><span class=\"' + (available ? 'available' : 'unavailable') + '\">' + label + '</span></div>';\n  }).join('');\n  document.getElementById('modelStatus').innerHTML = modelRows + '<div class=\"model-row\"><span>运行模式</span><span>' + lifecycleLabel(agent.lifecycle) + '</span></div>';\n}\nasync function refresh(options) {\n  const results = await Promise.all([\n    request('/gui/summary'),\n    request('/gui/state')\n  ]);\n  window.__lastState = results[1];\n  renderSummary(results[0]);\n  renderMessages(results[1], options || {});\n  renderTasks(results[1]);\n}\nrefresh();\ndocument.querySelector('.workspace').addEventListener('scroll', handleWorkspaceScroll);\nsetInterval(refresh, 3500);\n";
 
-  <section class="chat-layout">
-    <section class="card featured chat-card">
-      <div class="card-head">
-        <div>
-          <div class="eyebrow">对话</div>
-          <h2>给本地 AI 发消息</h2>
-          <p class="subtle" id="routeSummary" style="margin-top:6px">暂无待处理消息</p>
-        </div>
-        <button class="ghost" onclick="refresh()">刷新</button>
-      </div>
-      <div id="chatWindow" class="chat-window"></div>
-      <div class="composer">
-        <label for="body">输入消息</label>
-        <textarea id="body" placeholder="问本地 Agent 一个问题，或让它帮你处理当前项目。">请用一句话回复，确认本地 demo runtime 已经连上。</textarea>
-        <div class="composer-actions">
-          <div class="row">
-            <button class="primary" onclick="sendMessage()">发送给 AI</button>
-            <button onclick="markConversationRead()">标记已读</button>
-            <button onclick="clearMessages()">清空对话</button>
-          </div>
-          <span class="subtle">发送后，本地守护进程会唤醒 Claude/Codex，并把回复写回这里。</span>
-        </div>
-      </div>
-    </section>
-
-    <aside class="stack">
-      <section class="card side-card">
-        <div class="card-head">
-          <div>
-            <div class="eyebrow">第一步：连接本机</div>
-            <h2>配对这台电脑</h2>
-          </div>
-          <button class="primary" onclick="copyPairCommand()">复制命令</button>
-        </div>
-        <pre id="cmd"></pre>
-        <div class="green-divider"></div>
-        <div class="fields">
-          <div class="field">
-            <label>本机可用引擎</label>
-            <div id="engines" class="chips"></div>
-          </div>
-          <div class="field">
-            <label>Agent 工作目录根路径</label>
-            <div id="agentWorkspaceRoot" class="chip">默认独立工作目录</div>
-          </div>
-        </div>
-        <div class="field" style="margin-top:12px">
-          <label>允许访问的项目目录</label>
-          <div id="workspaces" class="chips"></div>
-        </div>
-      </section>
-
-      <section class="card side-card">
-        <div class="card-head">
-          <div>
-            <div class="eyebrow">第二步：配置 AGENT</div>
-            <h2>本地 Agent 设置</h2>
-          </div>
-          <button class="primary" onclick="saveAgentConfig()">应用</button>
-        </div>
-        <div class="fields">
-          <div class="field">
-            <label for="engine">使用哪个引擎</label>
-            <select id="engine"></select>
-          </div>
-          <div class="field">
-            <label for="lifecycle">运行模式</label>
-            <select id="lifecycle">
-              <option value="on-demand">按需启动</option>
-              <option value="24/7">持续在线</option>
-              <option value="idle_cached">空闲保活</option>
-              <option value="disabled">停用</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="model">主模型覆盖</label>
-            <input id="model" placeholder="使用 CLI 默认模型" />
-          </div>
-          <div class="field">
-            <label for="fastModel">快速模型覆盖</label>
-            <input id="fastModel" placeholder="使用默认小模型" />
-          </div>
-        </div>
-        <p class="subtle" id="applyState" style="margin-top:12px">设置会在下一次本地守护进程轮询或重启后生效。</p>
-      </section>
-
-      <section class="card side-card">
-        <div class="card-head">
-          <div>
-            <div class="eyebrow">运行观察</div>
-            <h2>当前状态</h2>
-          </div>
-          <div id="classification" class="classification">空闲</div>
-        </div>
-        <p id="observationReasons" class="subtle">暂时没有状态变化</p>
-        <div class="metric-grid" style="margin-top:16px">
-          <div class="metric"><span>待读</span><strong id="metricUnread">0</strong></div>
-          <div class="metric"><span>阻塞</span><strong id="metricBlocked">0</strong></div>
-          <div class="metric"><span>进行中任务</span><strong id="metricTasks">0</strong></div>
-          <div class="metric"><span>变更包</span><strong id="metricCapsules">0</strong></div>
-          <div class="metric"><span>产物</span><strong id="metricArtifacts">0</strong></div>
-          <div class="metric"><span>失败</span><strong id="metricFailures">0</strong></div>
-        </div>
-      </section>
-
-      <section class="card side-card">
-        <div class="card-head">
-          <div>
-            <div class="eyebrow">时间线</div>
-            <h2>最近事件</h2>
-          </div>
-        </div>
-        <div id="activity" class="activity-list"></div>
-      </section>
-    </aside>
-  </section>
-
-  <section class="card">
-    <div class="card-head">
-      <div>
-        <div class="eyebrow">高级功能</div>
-        <h2>任务、卡片、变更包、产物和调试</h2>
-      </div>
-    </div>
-    <div class="fields" style="margin-bottom:16px">
-      <div class="field">
-        <label for="taskTitle">任务标题</label>
-        <input id="taskTitle" placeholder="优化 demo 控制台页面" />
-      </div>
-      <div class="field">
-        <label for="taskPaths">限定代码路径</label>
-        <input id="taskPaths" placeholder="apps/demo-worker/src/index.ts" />
-      </div>
-      <div class="field">
-        <label for="taskDescription">任务说明</label>
-        <textarea id="taskDescription" placeholder="希望本地 Agent 做什么？"></textarea>
-      </div>
-      <div class="field" style="align-self:end">
-        <div class="row">
-          <button class="primary" onclick="createTask()">创建任务并唤醒</button>
-          <button onclick="createCard()">创建卡片</button>
-        </div>
-      </div>
-    </div>
-    <div class="tabs">
-      <button class="tab active" data-tab="tasks" onclick="showTab('tasks')">任务</button>
-      <button class="tab" data-tab="cards" onclick="showTab('cards')">卡片</button>
-      <button class="tab" data-tab="capsules" onclick="showTab('capsules')">变更包</button>
-      <button class="tab" data-tab="artifacts" onclick="showTab('artifacts')">产物</button>
-      <button class="tab" data-tab="debug" onclick="showTab('debug')">调试 JSON</button>
-    </div>
-    <div id="tab-tasks" class="compact-list"></div>
-    <div id="tab-cards" class="compact-list hidden"></div>
-    <div id="tab-capsules" class="compact-list hidden"></div>
-    <div id="tab-artifacts" class="compact-list hidden"></div>
-    <div id="tab-debug" class="hidden">
-      <div class="debug-actions">
-        <button onclick="exportState()">导出状态</button>
-        <button onclick="importState()">导入状态</button>
-        <button onclick="resetState()">重置状态</button>
-      </div>
-      <textarea id="snapshot" placeholder="把导出的 snapshot JSON 粘贴到这里"></textarea>
-      <pre id="state" style="margin-top:12px"></pre>
-    </div>
-  </section>
-</main>
-<script>
-const base = location.origin;
-const pairCommand = 'king agent computer --pair demo --server ' + base + '\\nking agent computer --server ' + base;
-let currentState = null;
-let currentSummary = null;
-let currentActivity = [];
-document.getElementById('cmd').textContent = pairCommand;
-
-function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>"']/g, function(ch) {
-    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
-  });
-}
-function formatTime(value) {
-  if (!value) return '未收到';
-  return new Date(value).toLocaleTimeString();
-}
-function lifecycleLabel(value) {
-  return ({ 'on-demand': '按需启动', '24/7': '持续在线', idle_cached: '空闲保活', disabled: '停用' })[value] || value || '按需启动';
-}
-function classificationLabel(value) {
-  return ({ productive: '有进展', idle: '空闲', blocked: '有阻塞', backlog_stuck: '有待处理消息', error: '运行异常' })[value] || value || '空闲';
-}
-function taskStatusLabel(value) {
-  return ({ pending: '待分配', assigned: '已分配', in_progress: '进行中', review: '待评审', done: '已完成', failed: '失败', blocked: '被阻塞' })[value] || value || '未知';
-}
-function cardColumnLabel(value) {
-  return ({ todo: '待办', doing: '进行中', done: '已完成' })[value] || value || '未知';
-}
-function activityTypeLabel(value) {
-  if (value === 'message.human') return '用户消息';
-  if (value === 'message.agent') return 'Agent 回复';
-  if (value === 'runtime.status') return '运行状态';
-  if (value === 'runtime.cli') return 'CLI 写回';
-  if (value === 'runtime.notice') return '运行通知';
-  if (value === 'runtime.triage') return '消息判断';
-  if (value === 'queue.backlog') return '任务已入队';
-  if (value === 'task.transition') return '任务状态变化';
-  if (String(value).startsWith('run.')) return '运行记录';
-  if (String(value).startsWith('typing.')) return '输入状态';
-  if (String(value).startsWith('thinking.')) return '思考状态';
-  return value || '事件';
-}
-function activitySummaryLabel(item) {
-  const body = item && item.body;
-  if (item.type === 'queue.backlog') {
-    const taskId = body && body.taskId ? String(body.taskId).slice(0, 12) : '';
-    return taskId ? '新任务已进入本地 Agent 待办：' + taskId : '新任务已进入本地 Agent 待办。';
-  }
-  if (item.type === 'task.transition') {
-    return '任务状态变化：' + taskStatusLabel(body && body.from) + ' -> ' + taskStatusLabel(body && body.to);
-  }
-  if (item.type === 'message.human' || item.type === 'message.agent') {
-    return typeof item.summary === 'string' ? item.summary.replace(/^Demo Human:/, '用户：').replace(/^Demo Agent:/, 'Agent：') : activityBody(item);
-  }
-  if (String(item.type || '').startsWith('run.')) {
-    return '运行记录已更新。';
-  }
-  return activityBody(item);
-}
-function reasonLabel(reason) {
-  return String(reason || '')
-    .replace(/(\\d+) unread message\\(s\\) pending/g, '$1 条消息等待处理')
-    .replace(/(\\d+) blocked task\\(s\\) by dependencies/g, '$1 个任务被依赖阻塞')
-    .replace(/(\\d+) failed run\\(s\\)/g, '$1 次运行失败')
-    .replace(/(\\d+) artifact\\(s\\) recorded/g, '已记录 $1 个产物')
-    .replace(/(\\d+) capsule\\(s\\) in review/g, '$1 个变更包等待评审')
-    .replace(/(\\d+) task\\(s\\) advanced/g, '$1 个任务有进展')
-    .replace('no state changes detected', '暂时没有状态变化');
-}
-function chip(value) {
-  return '<span class="chip">' + escapeHtml(value) + '</span>';
-}
-async function request(path, options) {
-  const res = await fetch(path, options);
-  if (!res.ok) throw new Error(await res.text());
-  return res.headers.get('Content-Type') && res.headers.get('Content-Type').includes('application/json') ? res.json() : res.text();
-}
-async function copyPairCommand() {
-  await navigator.clipboard.writeText(pairCommand).catch(function() {});
-}
-async function sendMessage() {
-  const input = document.getElementById('body');
-  const body = input.value.trim();
-  if (!body) return;
-  await request('/demo/message', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ body: body })
-  });
-  input.value = '';
-  await refresh();
-}
-async function createTask() {
-  await request('/demo/task', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      title: document.getElementById('taskTitle').value,
-      description: document.getElementById('taskDescription').value,
-      paths: document.getElementById('taskPaths').value,
-      wake: true
-    })
-  });
-  await refresh();
-}
-async function createCard() {
-  await request('/demo/card', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      title: document.getElementById('taskTitle').value || 'Demo card',
-      allowedPaths: document.getElementById('taskPaths').value.split(',').map(function(path) { return path.trim(); }).filter(Boolean)
-    })
-  });
-  await refresh();
-}
-async function saveAgentConfig() {
-  await request('/demo/agent-config', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      engine: document.getElementById('engine').value,
-      lifecycle: document.getElementById('lifecycle').value,
-      model: document.getElementById('model').value,
-      fastModel: document.getElementById('fastModel').value
-    })
-  });
-  await refresh();
-}
-async function markConversationRead() {
-  await request('/demo/conversation/mark-read', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ conversationId: 'demo-convo' })
-  });
-  await refresh();
-}
-async function clearMessages() {
-  await request('/demo/clear-messages', { method: 'POST' });
-  await refresh();
-}
-async function resetState() {
-  await request('/demo/reset-state', { method: 'POST' });
-  await refresh();
-}
-async function exportState() {
-  const snapshot = await request('/demo/export-state');
-  document.getElementById('snapshot').value = JSON.stringify(snapshot, null, 2);
-}
-async function importState() {
-  const raw = document.getElementById('snapshot').value;
-  await request('/demo/import-state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: raw });
-  await refresh();
-}
-function observeState(data) {
-  return data && data.observation ? data.observation : { classification: 'idle', reasons: ['暂时没有状态变化'], counts: { unreadMessages: 0, blockedTasks: 0, activeTasks: 0, openCapsules: 0, inReviewCapsules: 0, artifacts: 0, failedRuns: 0 } };
-}
-function renderSummary(summary) {
-  const observation = observeState(summary);
-  const agent = summary.agent || {};
-  const connection = summary.connection || {};
-  const counts = observation.counts || {};
-  const paired = connection.paired;
-  const statusPill = document.getElementById('statusPill');
-  statusPill.className = paired ? 'pill live' : 'pill';
-  statusPill.innerHTML = '<span class="dot"></span> ' + (paired ? (connection.online ? '已连接' : '已配对但离线') : '未配对');
-  document.getElementById('heartbeatStat').textContent = connection.lastHeartbeatAt ? formatTime(connection.lastHeartbeatAt) : '未收到';
-  document.getElementById('engineStat').textContent = agent.engine || '自动';
-  document.getElementById('lifecycleStat').textContent = lifecycleLabel(agent.lifecycle);
-  document.getElementById('unreadStat').textContent = String(counts.unreadMessages || 0);
-  document.getElementById('failedStat').textContent = String(counts.failedRuns || 0);
-  document.getElementById('classification').textContent = classificationLabel(observation.classification);
-  document.getElementById('observationReasons').textContent = (observation.reasons || []).map(reasonLabel).join('；');
-  document.getElementById('metricUnread').textContent = String(counts.unreadMessages || 0);
-  document.getElementById('metricBlocked').textContent = String(counts.blockedTasks || 0);
-  document.getElementById('metricTasks').textContent = String(counts.activeTasks || 0);
-  document.getElementById('metricCapsules').textContent = String((counts.openCapsules || 0) + (counts.inReviewCapsules || 0));
-  document.getElementById('metricArtifacts').textContent = String(counts.artifacts || 0);
-  document.getElementById('metricFailures').textContent = String(counts.failedRuns || 0);
-  document.getElementById('routeSummary').textContent = summary.routeSummary ? '下一条：' + summary.routeSummary.replace(/\\[[^\\]]+\\]\\s*/, '').slice(0, 80) : '暂无待处理消息';
-  const engines = summary.availableEngines || [];
-  document.getElementById('engines').innerHTML = engines.length ? engines.map(chip).join('') : '<span class="subtle">先在本机执行上面的配对命令。</span>';
-  document.getElementById('engine').innerHTML = engines.length ? engines.map(function(engine) {
-    return '<option value="' + escapeHtml(engine) + '"' + (engine === agent.engine ? ' selected' : '') + '>' + escapeHtml(engine) + '</option>';
-  }).join('') : '<option value="">请先配对</option>';
-  document.getElementById('model').value = agent.model === 'default' ? '' : (agent.model || '');
-  document.getElementById('fastModel').value = agent.fastModel === 'default' ? '' : (agent.fastModel || '');
-  document.getElementById('lifecycle').value = agent.lifecycle || 'on-demand';
-  const capabilities = summary.capabilities || {};
-  const root = capabilities.agentWorkspaceRoot || '默认独立工作目录';
-  document.getElementById('agentWorkspaceRoot').textContent = root;
-  const workspaces = capabilities.workspaces || [];
-  document.getElementById('workspaces').innerHTML = workspaces.length ? workspaces.map(chip).join('') : '<span class="subtle">本机暂未上报可访问项目目录。</span>';
-  const updatedAt = summary.agentConfigUpdatedAt ? formatTime(summary.agentConfigUpdatedAt) : '从未应用';
-  document.getElementById('applyState').textContent = '最近应用：' + updatedAt + '。本地守护进程最多约 60 秒同步一次，也可以重启后立即生效。';
-}
-function renderMessages(state) {
-  const rows = (state.messages || []).slice(-20);
-  const unread = rows.filter(function(message) { return !(message.readBy || []).includes('demo-agent') && message.author_kind === 'human'; }).length;
-  const waiting = unread > 0 && !rows.slice().reverse().some(function(message) { return message.author_kind === 'agent'; });
-  const html = rows.length ? rows.map(function(message) {
-    const cls = message.author_kind === 'human' ? 'human' : message.author_kind === 'agent' ? 'agent' : 'system';
-    const name = message.author_kind === 'human' ? '你' : message.author_kind === 'agent' ? '本地 AI' : '系统';
-    return '<div class="bubble ' + cls + '"><div class="bubble-top"><span class="bubble-name">' + escapeHtml(name) + '</span><span class="time">' + formatTime(message.created_at) + '</span></div><div class="bubble-body">' + escapeHtml(message.body) + '</div></div>';
-  }).join('') : '<div class="bubble system"><div class="bubble-body">还没有消息。输入一句话，发送给本地 AI。</div></div>';
-  document.getElementById('chatWindow').innerHTML = html + (waiting ? '<div class="bubble agent"><div class="bubble-top"><span class="bubble-name">本地 AI</span></div><div class="bubble-body">已唤醒，等待本地 Claude/Codex 回复...</div></div>' : '');
-  document.getElementById('chatWindow').scrollTop = document.getElementById('chatWindow').scrollHeight;
-}
-function activityBody(item) {
-  if (typeof item.summary === 'string') return item.summary;
-  if (typeof item.body === 'string') return item.body;
-  return JSON.stringify(item.body || item, null, 0);
-}
-function renderActivity(rows) {
-  document.getElementById('activity').innerHTML = rows.length ? rows.map(function(item) {
-    return '<div class="activity"><div class="activity-top"><span class="activity-type">' + escapeHtml(activityTypeLabel(item.type)) + '</span><span class="time">' + formatTime(item.at) + '</span></div><div class="activity-body">' + escapeHtml(activitySummaryLabel(item)) + '</div></div>';
-  }).join('') : '<p class="subtle">还没有运行事件。</p>';
-}
-function compactRow(title, meta, body, actions) {
-  return '<div class="compact-row"><div class="compact-top"><h3>' + escapeHtml(title) + '</h3><span class="chip">' + escapeHtml(meta) + '</span></div><div class="compact-body">' + escapeHtml(body || '') + '</div>' + (actions || '') + '</div>';
-}
-function renderBoard(state) {
-  document.getElementById('tab-tasks').innerHTML = (state.tasks || []).length ? state.tasks.slice().reverse().map(function(task) {
-    const actions = '<div class="row" style="margin-top:10px"><button onclick="updateTask(\\'' + task.id + '\\',\\'in_progress\\')">开始</button><button onclick="updateTask(\\'' + task.id + '\\',\\'review\\')">送审</button><button onclick="updateTask(\\'' + task.id + '\\',\\'done\\')">完成</button></div>';
-    return compactRow(task.title, taskStatusLabel(task.status) + ' P' + task.priority, task.description || ((task.scope && task.scope.paths || []).join(', ')), actions);
-  }).join('') : '<p class="subtle">还没有任务。</p>';
-  document.getElementById('tab-cards').innerHTML = (state.cards || []).length ? state.cards.slice().reverse().map(function(card) {
-    const actions = '<div class="row" style="margin-top:10px"><button onclick="moveCard(\\'' + card.id + '\\',\\'todo\\')">待办</button><button onclick="moveCard(\\'' + card.id + '\\',\\'doing\\')">进行中</button><button onclick="moveCard(\\'' + card.id + '\\',\\'done\\')">完成</button></div>';
-    return compactRow(card.title, cardColumnLabel(card.column), (card.allowedPaths || []).join(', '), actions);
-  }).join('') : '<p class="subtle">还没有卡片。</p>';
-  document.getElementById('tab-capsules').innerHTML = (state.capsules || []).length ? state.capsules.slice().reverse().map(function(capsule) {
-    return compactRow(capsule.goal, capsule.status, (capsule.allowedPaths || []).join(', '), '');
-  }).join('') : '<p class="subtle">还没有变更包。</p>';
-  document.getElementById('tab-artifacts').innerHTML = (state.artifacts || []).length ? state.artifacts.slice().reverse().map(function(artifact) {
-    return compactRow(artifact.path, artifact.kind + ' ' + artifact.confidence, artifact.source, '');
-  }).join('') : '<p class="subtle">还没有产物。</p>';
-}
-async function updateTask(id, status) {
-  await request('/demo/task/' + encodeURIComponent(id) + '/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: status }) });
-  await refresh();
-}
-async function moveCard(id, column) {
-  await request('/demo/card/' + encodeURIComponent(id) + '/move', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ column: column }) });
-  await refresh();
-}
-function showTab(name) {
-  ['tasks', 'cards', 'capsules', 'artifacts', 'debug'].forEach(function(tab) {
-    document.getElementById('tab-' + tab).classList.toggle('hidden', tab !== name);
-    document.querySelector('[data-tab="' + tab + '"]').classList.toggle('active', tab === name);
-  });
-}
-async function refresh() {
-  const results = await Promise.all([
-    request('/demo/summary'),
-    request('/demo/activity?limit=40'),
-    request('/demo/state')
-  ]);
-  currentSummary = results[0];
-  currentActivity = results[1].rows || [];
-  currentState = results[2];
-  renderSummary(currentSummary);
-  renderMessages(currentState);
-  renderActivity(currentActivity);
-  renderBoard(currentState);
-  document.getElementById('state').textContent = JSON.stringify(currentState, null, 2);
-}
-refresh();
-setInterval(refresh, 4000);
-</script>
-</body>
-</html>`;
-
-const html = `<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>King AI 对话</title>
-  <style>
-    :root {
-      --primary: #ff385c;
-      --primary-active: #e00b41;
-      --canvas: #ffffff;
-      --surface-soft: #f7f7f7;
-      --surface-strong: #f2f2f2;
-      --hairline: #dddddd;
-      --hairline-soft: #ebebeb;
-      --ink: #222222;
-      --body: #3f3f3f;
-      --muted: #6a6a6a;
-      --muted-soft: #929292;
-      --on-primary: #ffffff;
-      --shadow: rgba(0,0,0,0.02) 0 0 0 1px, rgba(0,0,0,0.04) 0 2px 6px 0, rgba(0,0,0,0.1) 0 4px 8px 0;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      background: var(--canvas);
-      color: var(--ink);
-      font-family: "Airbnb Cereal VF", Circular, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
-    }
-    main {
-      width: min(760px, 100vw);
-      height: 100vh;
-      margin: 0 auto;
-      display: grid;
-      grid-template-rows: auto minmax(0, 1fr) auto;
-      padding: 0;
-      background: var(--canvas);
-    }
-    header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      border-bottom: 1px solid var(--hairline-soft);
-      padding: 14px 16px;
-      background: var(--canvas);
-    }
-    h1 { margin: 0; font-size: 22px; line-height: 1.18; font-weight: 600; letter-spacing: -0.44px; }
-    h2 { margin: 0; font-size: 20px; line-height: 1.2; font-weight: 600; letter-spacing: -0.18px; }
-    p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.43; }
-    button, textarea, select, input { font: inherit; }
-    button {
-      min-height: 48px;
-      border: 0;
-      border-radius: 8px;
-      padding: 14px 24px;
-      background: var(--primary);
-      color: var(--on-primary);
-      font-size: 16px;
-      line-height: 1.25;
-      font-weight: 500;
-      cursor: pointer;
-    }
-    button:active { background: var(--primary-active); }
-    button.secondary {
-      background: var(--canvas);
-      color: var(--ink);
-      border: 1px solid var(--ink);
-    }
-    button.tertiary {
-      min-height: auto;
-      padding: 0;
-      background: transparent;
-      color: var(--ink);
-      text-decoration: underline;
-    }
-    .brand { display: grid; gap: 2px; min-width: 0; }
-    .brand p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .status-strip {
-      display: flex;
-      align-items: center;
-      justify-content: flex-end;
-      gap: 10px;
-      flex-wrap: wrap;
-    }
-    .pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      min-height: 36px;
-      border: 1px solid var(--hairline);
-      border-radius: 9999px;
-      padding: 8px 14px;
-      background: var(--canvas);
-      color: var(--ink);
-      font-size: 14px;
-      line-height: 1.29;
-      font-weight: 500;
-    }
-    .dot { width: 8px; height: 8px; border-radius: 9999px; background: var(--muted-soft); }
-    .pill.online .dot { background: var(--primary); }
-    .chat-shell {
-      min-height: 0;
-      display: grid;
-      grid-template-rows: minmax(0, 1fr);
-    }
-    .chat-card {
-      display: grid;
-      grid-template-rows: minmax(0, 1fr);
-      overflow: hidden;
-      background: var(--surface-soft);
-    }
-    .chat-window {
-      min-height: 0;
-      overflow: auto;
-      display: grid;
-      align-content: end;
-      gap: 12px;
-      padding: 16px;
-      background: var(--surface-soft);
-    }
-    .bubble {
-      max-width: 76%;
-      border-radius: 14px;
-      padding: 14px 16px;
-      background: var(--canvas);
-      box-shadow: rgba(0,0,0,0.02) 0 0 0 1px;
-    }
-    .bubble.human {
-      justify-self: end;
-      background: var(--primary);
-      color: var(--on-primary);
-    }
-    .bubble.agent { justify-self: start; }
-    .bubble.system { justify-self: center; max-width: 90%; color: var(--muted); }
-    .bubble-top {
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      margin-bottom: 6px;
-      font-size: 13px;
-      line-height: 1.23;
-      font-weight: 500;
-    }
-    .bubble.human .time { color: rgba(255,255,255,0.82); }
-    .time { color: var(--muted); white-space: nowrap; }
-    .bubble-body { font-size: 16px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
-    .composer {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 12px;
-      padding: 16px;
-      border-top: 1px solid var(--hairline-soft);
-      background: var(--canvas);
-    }
-    textarea {
-      min-height: 56px;
-      max-height: 160px;
-      resize: vertical;
-      border: 1px solid var(--hairline);
-      border-radius: 14px;
-      padding: 16px;
-      color: var(--ink);
-      background: var(--canvas);
-      font-size: 16px;
-      line-height: 1.5;
-    }
-    textarea:focus, select:focus, input:focus {
-      outline: 0;
-      border: 2px solid var(--ink);
-      padding: 15px;
-    }
-    .settings-button {
-      min-width: 48px;
-      width: 48px;
-      padding: 0;
-      border-radius: 9999px;
-      background: var(--surface-strong);
-      color: var(--ink);
-    }
-    .side { display: grid; gap: 16px; align-content: start; }
-    .side-card { padding: 20px; display: grid; gap: 14px; }
-    .field { display: grid; gap: 8px; }
-    label { color: var(--muted); font-size: 14px; line-height: 1.43; font-weight: 500; }
-    select, input {
-      width: 100%;
-      min-height: 48px;
-      border: 1px solid var(--hairline);
-      border-radius: 9999px;
-      padding: 0 16px;
-      background: var(--canvas);
-      color: var(--ink);
-      font-size: 14px;
-      line-height: 1.43;
-    }
-    .model-grid { display: grid; gap: 10px; }
-    .model-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      border-top: 1px solid var(--hairline-soft);
-      padding-top: 12px;
-      color: var(--body);
-      font-size: 14px;
-      line-height: 1.43;
-    }
-    .model-row:first-child { border-top: 0; padding-top: 0; }
-    .available { color: var(--primary); font-weight: 600; }
-    .unavailable { color: var(--muted-soft); }
-    .cmd {
-      border-radius: 14px;
-      background: var(--surface-soft);
-      padding: 14px;
-      color: var(--body);
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 13px;
-      line-height: 1.4;
-      overflow: auto;
-    }
-    .sub-actions { display: flex; gap: 10px; flex-wrap: wrap; }
-    dialog {
-      width: min(520px, calc(100vw - 24px));
-      max-height: min(760px, calc(100vh - 24px));
-      border: 0;
-      border-radius: 14px;
-      padding: 0;
-      box-shadow: var(--shadow);
-      overflow: hidden;
-    }
-    dialog::backdrop { background: rgba(0,0,0,0.5); }
-    .modal-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-      padding: 20px;
-      border-bottom: 1px solid var(--hairline-soft);
-    }
-    .modal-body {
-      display: grid;
-      gap: 16px;
-      padding: 20px;
-      overflow: auto;
-      max-height: calc(100vh - 120px);
-    }
-    .modal-close {
-      min-width: 40px;
-      width: 40px;
-      min-height: 40px;
-      padding: 0;
-      border-radius: 9999px;
-      background: var(--surface-strong);
-      color: var(--ink);
-    }
-    @media (max-width: 900px) {
-      main { width: 100vw; }
-      h1 { font-size: 20px; }
-      .brand p { max-width: calc(100vw - 96px); }
-      .composer { padding: 12px; gap: 8px; }
-      .composer button { padding: 14px 18px; }
-      .bubble { max-width: 86%; }
-      .chat-window { padding: 12px; }
-    }
-  </style>
-</head>
-<body>
-<main>
-  <header>
-    <div class="brand">
-      <h1>King AI 对话</h1>
-      <p id="routeSummary">输入一段文本，发送给本地 AI。</p>
-    </div>
-    <button class="settings-button" onclick="openSettings()" aria-label="打开设置">···</button>
-  </header>
-
-  <section class="chat-shell">
-    <section class="chat-card">
-      <div id="chatWindow" class="chat-window"></div>
-    </section>
-  </section>
-
-  <div class="composer">
-    <textarea id="body" placeholder="输入你想让 AI 回复的内容...">你好，请用一句中文回复，确认你已收到消息。</textarea>
-    <button onclick="sendMessage()">发送</button>
-  </div>
-</main>
-
-<dialog id="settingsDialog">
-  <div class="modal-head">
-    <h2>设置</h2>
-    <button class="modal-close" onclick="closeSettings()" aria-label="关闭设置">×</button>
-  </div>
-  <div class="modal-body">
-    <section class="side-card">
-      <h2>模型状态</h2>
-      <div class="model-grid" id="modelStatus"></div>
-    </section>
-    <section class="side-card">
-      <h2>切换模型</h2>
-      <div class="field">
-        <label for="engine">使用哪个本地 CLI</label>
-        <select id="engine"></select>
-      </div>
-      <div class="field">
-        <label for="model">主模型</label>
-        <input id="model" placeholder="例如 opus / gpt-5，留空使用默认" />
-      </div>
-      <div class="field">
-        <label for="fastModel">快速模型</label>
-        <input id="fastModel" placeholder="留空使用默认小模型" />
-      </div>
-      <button onclick="saveAgentConfig()">应用模型</button>
-    </section>
-    <section class="side-card">
-      <h2>连接本机</h2>
-      <p id="heartbeatStat">最近心跳：未收到</p>
-      <p id="observationReasons">等待本地 Agent 连接。</p>
-      <div class="cmd" id="cmd"></div>
-      <div class="sub-actions">
-        <button class="secondary" onclick="copyPairCommand()">复制命令</button>
-        <button class="tertiary" onclick="refresh()">刷新状态</button>
-        <button class="tertiary" onclick="clearMessages()">清空对话</button>
-      </div>
-      <p>待读 <strong id="unreadStat">0</strong> · 失败 <strong id="failedStat">0</strong></p>
-    </section>
-  </div>
-</dialog>
-<script>
-const base = location.origin;
-const pairCommand = 'king agent computer --pair demo --server ' + base + '\\nking agent computer --server ' + base;
-document.getElementById('cmd').textContent = pairCommand;
-
-function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>"']/g, function(ch) {
-    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
-  });
-}
-function formatTime(value) {
-  if (!value) return '未收到';
-  return new Date(value).toLocaleTimeString();
-}
-function lifecycleLabel(value) {
-  return ({ 'on-demand': '按需启动', '24/7': '持续在线', idle_cached: '空闲保活', disabled: '停用' })[value] || value || '按需启动';
-}
-function reasonLabel(reason) {
-  return String(reason || '')
-    .replace(/(\\d+) unread message\\(s\\) pending/g, '$1 条消息等待本地 AI 处理')
-    .replace(/(\\d+) failed run\\(s\\)/g, '$1 次运行失败')
-    .replace('no state changes detected', '等待下一条消息。');
-}
-async function request(path, options) {
-  const res = await fetch(path, options);
-  if (!res.ok) throw new Error(await res.text());
-  return res.headers.get('Content-Type') && res.headers.get('Content-Type').includes('application/json') ? res.json() : res.text();
-}
-function openSettings() {
-  document.getElementById('settingsDialog').showModal();
-}
-function closeSettings() {
-  document.getElementById('settingsDialog').close();
-}
-async function copyPairCommand() {
-  await navigator.clipboard.writeText(pairCommand).catch(function() {});
-}
-async function sendMessage() {
-  const input = document.getElementById('body');
-  const body = input.value.trim();
-  if (!body) return;
-  await request('/demo/message', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ body })
-  });
-  input.value = '';
-  await refresh();
-}
-async function clearMessages() {
-  await request('/demo/clear-messages', { method: 'POST' });
-  await refresh();
-}
-async function saveAgentConfig() {
-  await request('/demo/agent-config', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      engine: document.getElementById('engine').value,
-      lifecycle: 'on-demand',
-      model: document.getElementById('model').value,
-      fastModel: document.getElementById('fastModel').value
-    })
-  });
-  await refresh();
-}
-function renderMessages(state) {
-  const rows = (state.messages || []).slice(-30);
-  const unread = rows.filter(function(message) { return !(message.readBy || []).includes('demo-agent') && message.author_kind === 'human'; }).length;
-  const waiting = unread > 0 && !rows.slice().reverse().some(function(message) { return message.author_kind === 'agent'; });
-  const html = rows.length ? rows.map(function(message) {
-    const cls = message.author_kind === 'human' ? 'human' : message.author_kind === 'agent' ? 'agent' : 'system';
-    const name = message.author_kind === 'human' ? '你' : message.author_kind === 'agent' ? 'AI' : '系统';
-    return '<div class="bubble ' + cls + '"><div class="bubble-top"><span>' + escapeHtml(name) + '</span><span class="time">' + formatTime(message.created_at) + '</span></div><div class="bubble-body">' + escapeHtml(message.body) + '</div></div>';
-  }).join('') : '<div class="bubble system"><div class="bubble-body">还没有消息。输入一句话，发送给本地 AI。</div></div>';
-  document.getElementById('chatWindow').innerHTML = html + (waiting ? '<div class="bubble agent"><div class="bubble-top"><span>AI</span></div><div class="bubble-body">已唤醒，等待本地 Claude/Codex 回复...</div></div>' : '');
-  document.getElementById('chatWindow').scrollTop = document.getElementById('chatWindow').scrollHeight;
-}
-function renderSummary(summary) {
-  const connection = summary.connection || {};
-  const observation = summary.observation || { counts: {}, reasons: [] };
-  const counts = observation.counts || {};
-  const agent = summary.agent || {};
-  const paired = connection.paired;
-  document.getElementById('heartbeatStat').textContent = '最近心跳：' + (connection.lastHeartbeatAt ? formatTime(connection.lastHeartbeatAt) : '未收到');
-  document.getElementById('unreadStat').textContent = String(counts.unreadMessages || 0);
-  document.getElementById('failedStat').textContent = String(counts.failedRuns || 0);
-  document.getElementById('routeSummary').textContent = counts.unreadMessages ? '消息已发送，等待本地 AI 回复。' : '输入一段文本，发送给本地 AI。';
-  document.getElementById('observationReasons').textContent = (observation.reasons || []).map(reasonLabel).join('；') || '等待下一条消息。';
-  const engines = summary.availableEngines || [];
-  document.getElementById('engine').innerHTML = engines.length ? engines.map(function(engine) {
-    return '<option value="' + escapeHtml(engine) + '"' + (engine === agent.engine ? ' selected' : '') + '>' + escapeHtml(engine) + '</option>';
-  }).join('') : '<option value="">请先配对</option>';
-  document.getElementById('model').value = agent.model === 'default' ? '' : (agent.model || '');
-  document.getElementById('fastModel').value = agent.fastModel === 'default' ? '' : (agent.fastModel || '');
-  const modelRows = ['claude', 'codex'].map(function(engine) {
-    const available = engines.includes(engine);
-    const active = agent.engine === engine;
-    const label = active && !available ? '当前配置，未检测到本机' : available ? '可用' : '未检测到';
-    return '<div class="model-row"><span>' + engine + (active ? ' · 当前' : '') + '</span><span class="' + (available ? 'available' : 'unavailable') + '">' + label + '</span></div>';
-  }).join('');
-  document.getElementById('modelStatus').innerHTML = modelRows + '<div class="model-row"><span>运行模式</span><span>' + lifecycleLabel(agent.lifecycle) + '</span></div>';
-}
-async function refresh() {
-  const results = await Promise.all([
-    request('/demo/summary'),
-    request('/demo/state')
-  ]);
-  renderSummary(results[0]);
-  renderMessages(results[1]);
-}
-refresh();
-setInterval(refresh, 3500);
-</script>
-</body>
-</html>`;
 
 function json(data: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(data, null, 2), {
@@ -1660,7 +573,7 @@ function isAgentLifecycle(value: unknown): value is AgentLifecycle {
 }
 
 function stateId(env: Bindings): DurableObjectStub {
-  return env.DEMO_STATE.get(env.DEMO_STATE.idFromName("global"));
+  return env.GUI_STATE.get(env.GUI_STATE.idFromName("global"));
 }
 
 function bearer(c: { req: { header(name: string): string | undefined } }): string {
@@ -1671,11 +584,11 @@ function bearer(c: { req: { header(name: string): string | undefined } }): strin
 const app = new Hono<Env>();
 app.use("*", cors());
 
-app.get("/", (c) => c.html(html));
+app.get("/", (c) => c.html(renderPage(styles, clientScript)));
+app.get("/favicon.ico", () => new Response(null, { status: 204 }));
 
 app.post("/api/computers/pair", async (c) => {
   const body = await c.req.json().catch(() => ({}));
-  if (body.code !== "demo") return c.json({ error: "invalid pairing code; use demo" }, 401);
   const stub = stateId(c.env);
   return stub.fetch("https://state/pair", { method: "POST", body: JSON.stringify(body) });
 });
@@ -1784,50 +697,58 @@ app.post("/runtime/conversation/mark-read", async (c) => stateId(c.env).fetch("h
   body: JSON.stringify(await c.req.json())
 }));
 
-app.get("/demo/state", (c) => stateId(c.env).fetch("https://state/demo-state"));
-app.get("/demo/summary", (c) => stateId(c.env).fetch("https://state/demo-summary"));
-app.get("/demo/activity", (c) => stateId(c.env).fetch(`https://state/demo-activity?${new URL(c.req.url).searchParams.toString()}`));
-app.get("/demo/export-state", (c) => stateId(c.env).fetch("https://state/demo-export-state"));
-app.post("/demo/import-state", async (c) => stateId(c.env).fetch("https://state/demo-import-state", {
+app.get("/gui/state", (c) => stateId(c.env).fetch("https://state/gui-state"));
+app.get("/gui/summary", (c) => stateId(c.env).fetch("https://state/gui-summary"));
+app.get("/gui/activity", (c) => stateId(c.env).fetch(`https://state/gui-activity?${new URL(c.req.url).searchParams.toString()}`));
+app.get("/gui/export-state", (c) => stateId(c.env).fetch("https://state/gui-export-state"));
+app.post("/gui/import-state", async (c) => stateId(c.env).fetch("https://state/gui-import-state", {
   method: "POST",
   body: JSON.stringify(await c.req.json().catch(() => null))
 }));
-app.post("/demo/reset-state", (c) => stateId(c.env).fetch("https://state/demo-reset-state", { method: "POST" }));
-app.post("/demo/message", async (c) => stateId(c.env).fetch("https://state/demo-message", {
+app.post("/gui/reset-state", (c) => stateId(c.env).fetch("https://state/gui-reset-state", { method: "POST" }));
+app.post("/gui/message", async (c) => stateId(c.env).fetch("https://state/gui-message", {
   method: "POST",
   body: JSON.stringify(await c.req.json().catch(() => ({})))
 }));
-app.post("/demo/clear-messages", (c) => stateId(c.env).fetch("https://state/demo-clear-messages", { method: "POST" }));
-app.post("/demo/agent-config", async (c) => stateId(c.env).fetch("https://state/demo-agent-config", {
+app.post("/gui/conversations", async (c) => stateId(c.env).fetch("https://state/gui-conversations", {
   method: "POST",
   body: JSON.stringify(await c.req.json().catch(() => ({})))
 }));
-app.post("/demo/card", async (c) => stateId(c.env).fetch("https://state/demo-card", {
+app.post("/gui/conversations/:conversationId/delete", (c) => stateId(c.env).fetch(`https://state/gui-conversations/${c.req.param("conversationId")}/delete`, { method: "POST" }));
+app.post("/gui/clear-messages", async (c) => stateId(c.env).fetch("https://state/gui-clear-messages", {
   method: "POST",
   body: JSON.stringify(await c.req.json().catch(() => ({})))
 }));
-app.post("/demo/task", async (c) => stateId(c.env).fetch("https://state/demo-task", {
+app.post("/gui/agent-config", async (c) => stateId(c.env).fetch("https://state/gui-agent-config", {
   method: "POST",
   body: JSON.stringify(await c.req.json().catch(() => ({})))
 }));
-app.post("/demo/task/:taskId/update", async (c) => stateId(c.env).fetch(`https://state/demo-task/${c.req.param("taskId")}/update`, {
+app.post("/gui/card", async (c) => stateId(c.env).fetch("https://state/gui-card", {
   method: "POST",
   body: JSON.stringify(await c.req.json().catch(() => ({})))
 }));
-app.post("/demo/card/:cardId/move", async (c) => stateId(c.env).fetch(`https://state/demo-card/${c.req.param("cardId")}/move`, {
+app.post("/gui/task", async (c) => stateId(c.env).fetch("https://state/gui-task", {
   method: "POST",
   body: JSON.stringify(await c.req.json().catch(() => ({})))
 }));
-app.post("/demo/conversation/mark-read", async (c) => stateId(c.env).fetch("https://state/demo-conversation/mark-read", {
+app.post("/gui/task/:taskId/update", async (c) => stateId(c.env).fetch(`https://state/gui-task/${c.req.param("taskId")}/update`, {
   method: "POST",
   body: JSON.stringify(await c.req.json().catch(() => ({})))
 }));
-app.post("/demo/wake", async (c) => stateId(c.env).fetch("https://state/demo-wake", {
+app.post("/gui/card/:cardId/move", async (c) => stateId(c.env).fetch(`https://state/gui-card/${c.req.param("cardId")}/move`, {
+  method: "POST",
+  body: JSON.stringify(await c.req.json().catch(() => ({})))
+}));
+app.post("/gui/conversation/mark-read", async (c) => stateId(c.env).fetch("https://state/gui-conversation/mark-read", {
+  method: "POST",
+  body: JSON.stringify(await c.req.json().catch(() => ({})))
+}));
+app.post("/gui/wake", async (c) => stateId(c.env).fetch("https://state/gui-wake", {
   method: "POST",
   body: JSON.stringify(await c.req.json().catch(() => ({})))
 }));
 
-export class DemoState implements DurableObject {
+export class GuiState implements DurableObject {
   private waiters = new Set<WritableStreamDefaultWriter<Uint8Array>>();
 
   constructor(private state: DurableObjectState) {}
@@ -1845,7 +766,7 @@ export class DemoState implements DurableObject {
     if (path === "/agenda") return this.authRuntime(request, async () => this.agenda());
     if (path === "/roster") return this.authRuntime(request, async () => this.roster());
     if (path === "/preamble") return this.authRuntime(request, async () => this.preamble(url.searchParams));
-    if (path === "/cli") return this.authRuntime(request, async () => this.cli(await request.json() as { argv?: string[] }));
+    if (path === "/cli") return this.authRuntime(request, async () => this.cli(await request.json() as { argv?: string[]; agentId?: string }));
     if (path === "/mark-read") return this.authRuntime(request, async () => this.markRead(await request.json() as { conversationId?: string; upToMessageId?: string }));
     if (path === "/status") return this.authRuntime(request, async () => this.status(await request.json() as { status?: string }));
     if (path === "/typing") return this.authRuntime(request, async () => this.typing(await request.json() as { conversationId?: string; done?: boolean }));
@@ -1857,28 +778,33 @@ export class DemoState implements DurableObject {
     if (path === "/runs") return this.authRuntime(request, async () => this.startRun(await request.json().catch(() => null)));
     if (path.startsWith("/runs/") && path.endsWith("/heartbeat")) return this.authRuntime(request, async () => this.runAction(path.split("/")[2] || "run", "heartbeat"));
     if (path.startsWith("/runs/") && path.endsWith("/finish")) return this.authRuntime(request, async () => this.runAction(path.split("/")[2] || "run", "finish", await request.json().catch(() => null)));
-    if (path === "/demo-state") return json(await this.get());
-    if (path === "/demo-summary") return this.demoSummary();
-    if (path === "/demo-activity") return this.demoActivity(url.searchParams);
-    if (path === "/demo-export-state") return json(this.snapshot(await this.get()));
-    if (path === "/demo-import-state") return this.importSnapshot(await request.json().catch(() => null));
-    if (path === "/demo-reset-state") return this.resetState();
-    if (path === "/demo-message") return this.demoMessage(await request.json() as { body?: string });
-    if (path === "/demo-clear-messages") return this.clearMessages();
-    if (path === "/demo-agent-config") return this.agentConfig(await request.json() as AgentConfigPayload);
-    if (path === "/demo-card") return this.createCard(await request.json().catch(() => ({})) as { title?: string; assignee?: string; allowedPaths?: string[] });
-    if (path === "/demo-task") return this.createTask(await request.json().catch(() => ({})) as DemoTaskPayload);
-    if (path.startsWith("/demo-task/") && path.endsWith("/update")) return this.updateTask(path.split("/")[2], await request.json().catch(() => ({})) as DemoTaskUpdatePayload);
-    if (path.startsWith("/demo-card/") && path.endsWith("/move")) return this.moveCard(path.split("/")[2], await request.json().catch(() => ({})) as DemoCardMovePayload);
-    if (path === "/demo-conversation/mark-read") return this.demoMarkRead(await request.json().catch(() => ({})) as { conversationId?: string; upToMessageId?: string });
-    if (path === "/demo-wake") return this.demoWake(await request.json().catch(() => ({})));
+    if (path === "/gui-state") return json(await this.get());
+    if (path === "/gui-summary") return this.guiSummary();
+    if (path === "/gui-activity") return this.guiActivity(url.searchParams);
+    if (path === "/gui-export-state") return json(this.snapshot(await this.get()));
+    if (path === "/gui-import-state") return this.importSnapshot(await request.json().catch(() => null));
+    if (path === "/gui-reset-state") return this.resetState();
+    if (path === "/gui-message") return this.guiMessage(await request.json() as { body?: string; conversationId?: string });
+    if (path === "/gui-conversations") return this.guiConversation(await request.json().catch(() => ({})) as { title?: unknown });
+    if (path.startsWith("/gui-conversations/") && path.endsWith("/delete")) return this.guiDeleteConversation(path.split("/")[2]);
+    if (path === "/gui-clear-messages") return this.clearMessages(await request.json().catch(() => ({})) as { conversationId?: string });
+    if (path === "/gui-agent-config") return this.agentConfig(await request.json() as AgentConfigPayload);
+    if (path === "/gui-card") return this.createCard(await request.json().catch(() => ({})) as { title?: string; assignee?: string; allowedPaths?: string[] });
+    if (path === "/gui-task") return this.createTask(await request.json().catch(() => ({})) as GuiTaskPayload);
+    if (path.startsWith("/gui-task/") && path.endsWith("/update")) return this.updateTask(path.split("/")[2], await request.json().catch(() => ({})) as GuiTaskUpdatePayload);
+    if (path.startsWith("/gui-card/") && path.endsWith("/move")) return this.moveCard(path.split("/")[2], await request.json().catch(() => ({})) as GuiCardMovePayload);
+    if (path === "/gui-conversation/mark-read") return this.guiMarkRead(await request.json().catch(() => ({})) as { conversationId?: string; upToMessageId?: string });
+    if (path === "/gui-wake") return this.guiWake(await request.json().catch(() => ({})));
     return json({ error: "not found" }, { status: 404 });
   }
 
   private async get(): Promise<State> {
     const saved = await this.state.storage.get<State>("state");
     if (saved) {
-      return this.normalizeState(saved);
+      const shouldPersist = !saved.pairingCode;
+      const normalized = this.normalizeState(saved);
+      if (shouldPersist) await this.put(normalized);
+      return normalized;
     }
     const initial = this.freshState();
     await this.put(initial);
@@ -1887,12 +813,14 @@ export class DemoState implements DurableObject {
 
   private freshState(): State {
     const initial: State = {
-      computerId: "demo-computer",
+      computerId: "king-computer",
       deviceToken: crypto.randomUUID(),
       runtimeToken: crypto.randomUUID(),
+      pairingCode: crypto.randomUUID(),
       availableEngines: [],
       capabilities: { workspaces: [] },
       agents: [DEFAULT_AGENT],
+      conversations: [{ ...DEFAULT_CONVERSATION, created_at: Date.now(), updated_at: Date.now() }],
       messages: [],
       cliLog: [],
       statusLog: [],
@@ -1900,7 +828,7 @@ export class DemoState implements DurableObject {
       thinkingLog: [],
       eventLog: [],
       eventRoutes: [],
-      loopRunId: "run-demo",
+      loopRunId: "run-gui",
       currentLoop: 0,
       loopEvents: [],
       noticeLog: [],
@@ -1933,6 +861,8 @@ export class DemoState implements DurableObject {
 
   private normalizeState(saved: State): State {
     saved.initiatives ??= [];
+    saved.pairingCode ??= crypto.randomUUID();
+    saved.runtimeToken ??= crypto.randomUUID();
     saved.capsules ??= [];
     saved.approvals ??= [];
     saved.mergeQueue ??= [];
@@ -1940,7 +870,7 @@ export class DemoState implements DurableObject {
     saved.runFeedback ??= [];
     saved.reviews ??= [];
     saved.eventRoutes ??= [];
-    saved.loopRunId ??= "run-demo";
+    saved.loopRunId ??= "run-gui";
     saved.currentLoop ??= 0;
     saved.loopEvents ??= [];
     saved.cards ??= [];
@@ -1953,6 +883,7 @@ export class DemoState implements DurableObject {
     saved.reactions ??= [];
     saved.composing ??= [];
     saved.agents = Array.isArray(saved.agents) && saved.agents.length ? saved.agents : [DEFAULT_AGENT];
+    saved.conversations = normalizeConversations(saved.conversations, saved.messages ?? []);
     saved.messages ??= [];
     saved.cliLog ??= [];
     saved.statusLog ??= [];
@@ -1969,7 +900,7 @@ export class DemoState implements DurableObject {
 
   private snapshot(state: State): StateSnapshot {
     return {
-      schema: "king.demo-state.v1",
+      schema: "king.gui-state.v1",
       exportedAt: Date.now(),
       state
     };
@@ -1978,11 +909,11 @@ export class DemoState implements DurableObject {
   private async importSnapshot(payload: unknown): Promise<Response> {
     if (!payload || typeof payload !== "object") return json({ error: "expected state snapshot JSON" }, { status: 400 });
     const record = payload as Partial<StateSnapshot> & { state?: unknown };
-    if (record.schema !== "king.demo-state.v1" || !record.state || typeof record.state !== "object") {
+    if (record.schema !== "king.gui-state.v1" || !record.state || typeof record.state !== "object") {
       return json({ error: "unsupported or malformed state snapshot" }, { status: 400 });
     }
     const incoming = this.normalizeState(record.state as State);
-    if (!incoming.computerId || !incoming.deviceToken || !incoming.runtimeToken) {
+    if (!incoming.computerId || !incoming.deviceToken || !incoming.runtimeToken || !incoming.pairingCode) {
       return json({ error: "snapshot is missing pairing tokens" }, { status: 400 });
     }
     await this.put(incoming);
@@ -1999,6 +930,9 @@ export class DemoState implements DurableObject {
 
   private async pair(payload?: PairPayload): Promise<Response> {
     const state = await this.get();
+    if (typeof payload?.code !== "string" || payload.code !== state.pairingCode) {
+      return json({ error: "invalid pairing code" }, { status: 401 });
+    }
     state.availableEngines = Array.isArray(payload?.engines) ? payload.engines.filter((engine): engine is string => typeof engine === "string") : [];
     state.capabilities = normalizeCapabilities(payload?.capabilities);
     await this.put(state);
@@ -2019,7 +953,7 @@ export class DemoState implements DurableObject {
     return json({ ok: true, at: state.lastHeartbeat.at });
   }
 
-  private async demoSummary(): Promise<Response> {
+  private async guiSummary(): Promise<Response> {
     const state = await this.get();
     const agent = state.agents[0] ?? DEFAULT_AGENT;
     const agentSummary = agentStateSummary(state, agent);
@@ -2029,7 +963,7 @@ export class DemoState implements DurableObject {
     const lastHeartbeatAt = state.lastHeartbeat?.at;
     const paired = state.availableEngines.length > 0;
     const online = Boolean(lastHeartbeatAt && Date.now() - lastHeartbeatAt < 90_000);
-    const unread = state.messages.filter((message) => !message.readBy.includes(DEFAULT_AGENT.id));
+    const unread = unreadMessagesFor(state, DEFAULT_AGENT.id);
     return json({
       connection: {
         paired,
@@ -2038,6 +972,8 @@ export class DemoState implements DurableObject {
         lastHeartbeatAt,
         version: state.lastHeartbeat?.version
       },
+      pairingCode: state.pairingCode,
+      conversations: conversationSummaries(state),
       availableEngines: state.availableEngines,
       capabilities: state.capabilities,
       agent: agentSummary,
@@ -2052,7 +988,7 @@ export class DemoState implements DurableObject {
     });
   }
 
-  private async demoActivity(params: URLSearchParams): Promise<Response> {
+  private async guiActivity(params: URLSearchParams): Promise<Response> {
     const state = await this.get();
     const limit = Math.min(100, Math.max(1, Number.parseInt(params.get("limit") || "40", 10) || 40));
     const rows = [
@@ -2143,7 +1079,7 @@ export class DemoState implements DurableObject {
 
   private async inbox(): Promise<Response> {
     const state = await this.get();
-    const unread = state.messages.filter((m) => !m.readBy.includes(DEFAULT_AGENT.id));
+    const unread = unreadMessagesFor(state, DEFAULT_AGENT.id);
     return json({
       rows: sortRuntimeMessages(unread, DEFAULT_AGENT.id).map((item) => item.row),
       routeSummary: formatMessageRouteSummary(unread, DEFAULT_AGENT.id)
@@ -2152,7 +1088,7 @@ export class DemoState implements DurableObject {
 
   private async triage(): Promise<Response> {
     const state = await this.get();
-    const unread = state.messages.filter((m) => !m.readBy.includes(DEFAULT_AGENT.id));
+    const unread = unreadMessagesFor(state, DEFAULT_AGENT.id);
     const routed = sortRuntimeMessages(unread, DEFAULT_AGENT.id);
     const top = routed[0];
     return json({
@@ -2161,8 +1097,8 @@ export class DemoState implements DurableObject {
       routeSummary: formatMessageRouteSummary(unread, DEFAULT_AGENT.id),
       verdict: unread.length ? {
         actionable: top ? top.route !== "ignore" : true,
-        reason: top ? `demo unread message routed ${messageRouteTag(top)}` : "demo unread message",
-        promptNote: "Handle the highest-priority routed message first. Reply through king reply demo-convo --file notes/reply.md or a short inline reply.",
+        reason: top ? `gui unread message routed ${messageRouteTag(top)}` : "gui unread message",
+        promptNote: "Handle the highest-priority routed message first. Reply through king reply king-convo --file notes/reply.md or a short inline reply.",
         routeHint: top?.route,
         priority: top?.priority
       } : { actionable: false, reason: "inbox empty", routeHint: "ignore", priority: "normal" }
@@ -2213,12 +1149,14 @@ export class DemoState implements DurableObject {
     } satisfies AgendaPayload);
   }
 
-  private async cli(payload: { argv?: string[] }): Promise<Response> {
+  private async cli(payload: { argv?: string[]; agentId?: string; engine?: string }): Promise<Response> {
     const argv = payload.argv ?? [];
     const state = await this.get();
+    const actor = state.agents.find((agent) => agent.id === payload.agentId) ?? DEFAULT_AGENT;
+    const authorEngine = activeRunEngine(state) ?? normalizeEngineId(payload.engine) ?? actor.engine;
     let result = "";
     if (argv[0] === "reply") {
-      const conversationId = argv[1] || "demo-convo";
+      const conversationId = argv[1] || "king-convo";
       const quoteIdx = argv.indexOf("--quote");
       const quoted = quoteIdx >= 0 ? argv[quoteIdx + 1] : undefined;
       const bodyArgs = argv.slice(2).filter((_, idx) => {
@@ -2226,33 +1164,56 @@ export class DemoState implements DurableObject {
         return absoluteIdx !== quoteIdx && absoluteIdx !== quoteIdx + 1;
       });
       const body = bodyArgs.join(" ").trim() || "(empty reply)";
-      state.messages.push({
-        id: `msg-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        conversation_id: conversationId,
-        conversation_title: "Demo Conversation",
-        conversation_kind: "direct",
-        author_name: DEFAULT_AGENT.name,
+      const conversation = ensureConversation(state, conversationId);
+      const now = Date.now();
+      const pending = [...state.messages].reverse().find((message) =>
+        message.conversation_id === conversation.id &&
+        message.author_kind === "agent" &&
+        message.status === "pending"
+      );
+      const reply: Message = {
+        id: `msg-${now}-${Math.random().toString(36).slice(2)}`,
+        conversation_id: conversation.id,
+        conversation_title: conversation.title,
+        conversation_kind: conversation.kind,
+        author_name: actor.name,
         author_kind: "agent",
+        author_engine: authorEngine,
+        status: "done",
         kind: "message",
         body,
         quoted_message_id: quoted,
-        created_at: Date.now(),
+        created_at: now,
         readBy: [DEFAULT_AGENT.id]
-      });
+      };
+      if (pending) {
+        Object.assign(pending, {
+          author_name: reply.author_name,
+          author_engine: reply.author_engine,
+          status: reply.status,
+          body: reply.body,
+          quoted_message_id: reply.quoted_message_id,
+          created_at: reply.created_at,
+          readBy: reply.readBy
+        });
+      } else {
+        state.messages.push(reply);
+      }
+      conversation.updated_at = now;
       result = "reply posted";
     } else if (argv[0] === "state") {
       result = await this.stateCommand(state, argv.slice(1));
     } else if (argv[0] === "inbox") {
-      result = JSON.stringify(state.messages.filter((m) => !m.readBy.includes(DEFAULT_AGENT.id)), null, 2);
+      result = JSON.stringify(unreadMessagesFor(state, DEFAULT_AGENT.id), null, 2);
     } else if (argv[0] === "messages") {
-      const conversationId = argv[1] || "demo-convo";
+      const conversationId = argv[1] || "king-convo";
       const tailIdx = argv.indexOf("--tail");
       const tail = tailIdx >= 0 ? Number(argv[tailIdx + 1]) : 0;
-      const rows = state.messages.filter((m) => m.conversation_id === conversationId);
+      const rows = state.messages.filter((m) => m.conversation_id === conversationId && isRuntimeVisibleMessage(m));
       result = JSON.stringify(tail > 0 ? rows.slice(-tail) : rows, null, 2);
     } else if (argv[0] === "glance") {
-      const conversationId = argv[1] || "demo-convo";
-      const rows = state.messages.filter((m) => m.conversation_id === conversationId).slice(-10);
+      const conversationId = argv[1] || "king-convo";
+      const rows = state.messages.filter((m) => m.conversation_id === conversationId && isRuntimeVisibleMessage(m)).slice(-10);
       const now = Date.now();
       state.composing = state.composing.filter((claim) => claim.expires_at > now);
       const composing = state.composing
@@ -2285,7 +1246,7 @@ export class DemoState implements DurableObject {
           role: agent.role,
           engine: agent.engine ?? "auto"
         })),
-        { id: "demo-human", name: "Demo Human", kind: "human", role: "Runtime operator", engine: undefined }
+        { id: "gui-human", name: "King Human", kind: "human", role: "Runtime operator", engine: undefined }
       ];
       const filtered = query
         ? rows.filter((row) => [row.id, row.name, row.kind, row.role, row.engine].filter(Boolean).join(" ").toLowerCase().includes(query))
@@ -2354,7 +1315,7 @@ export class DemoState implements DurableObject {
       result = JSON.stringify((await this.agenda().then((res) => res.json())) as AgendaPayload, null, 2);
     } else if (argv[0] === "help" || argv[0] === "--help") {
       result = [
-        "king demo commands:",
+        "king gui commands:",
         "  king inbox",
         "  king messages <conversationId> [--tail n]",
         "  king glance <conversationId>",
@@ -2394,9 +1355,9 @@ export class DemoState implements DurableObject {
         "  king safety check|request|list|get|approve|deny <action|approvalId>"
       ].join("\n");
     } else {
-      result = `demo runtime received: ${argv.join(" ")}`;
+      result = `gui runtime received: ${argv.join(" ")}`;
     }
-    state.cliLog.push({ at: Date.now(), agentId: DEFAULT_AGENT.id, argv, result });
+    state.cliLog.push({ at: Date.now(), agentId: actor.id, argv, result });
     await this.put(state);
     return json({ exitCode: 0, text: result });
   }
@@ -2475,8 +1436,8 @@ export class DemoState implements DurableObject {
 
   private agentsCommand(state: State, args: string[]): string {
     const cmd = args[0];
-    if (cmd === "spawn") return "agent spawn is not supported by this single-agent demo runtime";
-    if (cmd === "destroy") return "agent destroy is not supported by this single-agent demo runtime";
+    if (cmd === "spawn") return "agent spawn is not supported by this single-agent gui runtime";
+    if (cmd === "destroy") return "agent destroy is not supported by this single-agent gui runtime";
     const agents = state.agents.map((agent) => agentStateSummary(state, agent));
     if (agents.length === 0) return "No agents configured.";
     return ["Agent Matrix:", "-".repeat(56), ...agents.map(formatAgentMatrixLine)].join("\n");
@@ -2503,7 +1464,7 @@ export class DemoState implements DurableObject {
   private loopCommand(state: State, args: string[]): string {
     const cmd = args[0] || "recent";
     if (cmd === "tick") {
-      const runId = readOption(args, "--run") || state.loopRunId || "run-demo";
+      const runId = readOption(args, "--run") || state.loopRunId || "run-gui";
       state.loopRunId = runId;
       state.currentLoop += 1;
       pushLoopEvent(state, { type: "loop.tick", runId, loop: state.currentLoop });
@@ -3091,6 +2052,7 @@ export class DemoState implements DurableObject {
       target,
       fromName: DEFAULT_AGENT.name,
       fromKind: "agent",
+      fromEngine: DEFAULT_AGENT.engine,
       body,
       priority: "normal",
       messageType: "message"
@@ -3112,6 +2074,7 @@ export class DemoState implements DurableObject {
       target,
       fromName: DEFAULT_AGENT.name,
       fromKind: "agent",
+      fromEngine: DEFAULT_AGENT.engine,
       body,
       priority: args.includes("--steer") ? "steer" : "normal",
       messageType
@@ -3123,7 +2086,7 @@ export class DemoState implements DurableObject {
   private recvCommand(state: State, args: string[]): string {
     const agentId = readOption(args, "--agent") || DEFAULT_AGENT.id;
     const routedRows = sortRuntimeMessages(
-      state.messages.filter((message) => (!message.to_agent_id || message.to_agent_id === agentId) && !message.readBy.includes(agentId)),
+      state.messages.filter((message) => isRuntimeVisibleMessage(message) && (!message.to_agent_id || message.to_agent_id === agentId) && !message.readBy.includes(agentId)),
       agentId
     )
       .slice(0, 10);
@@ -3143,6 +2106,7 @@ export class DemoState implements DurableObject {
       target,
       fromName: DEFAULT_AGENT.name,
       fromKind: "agent",
+      fromEngine: DEFAULT_AGENT.engine,
       body,
       priority: "steer",
       messageType: "decision"
@@ -3406,13 +2370,13 @@ export class DemoState implements DurableObject {
       const action = args[1];
       if (!isSafetyAction(action)) return `usage: king safety check <action>\nknown actions: ${Array.from(SAFETY_ACTIONS).join(", ")}`;
       return safetyCheck(action).allowed
-        ? `allowed: ${action} does not require approval in this demo gate`
+        ? `allowed: ${action} does not require approval in this gui gate`
         : `approval required: ${action}`;
     }
     if (cmd === "request") {
       const action = args[1];
       if (!isSafetyAction(action)) return "usage: king safety request <action> [--reason text] [--context json]";
-      if (safetyCheck(action).allowed) return `allowed: ${action} does not require approval in this demo gate`;
+      if (safetyCheck(action).allowed) return `allowed: ${action} does not require approval in this gui gate`;
       const request: ApprovalRequest = {
         id: `approval-${Date.now()}-${Math.random().toString(36).slice(2)}`,
         action,
@@ -3548,34 +2512,82 @@ export class DemoState implements DurableObject {
     return json({ ok: true });
   }
 
-  private async demoMessage(payload: { body?: string }): Promise<Response> {
+  private async guiConversation(payload: { title?: unknown }): Promise<Response> {
     const state = await this.get();
+    const now = Date.now();
+    const title = typeof payload.title === "string" && payload.title.trim() ? payload.title.trim() : `事务 ${state.conversations.length + 1}`;
+    const maxOrder = Math.max(0, ...state.conversations.map((conversation) => conversation.order ?? 0));
+    const order = Math.max(maxOrder + 1, now * 1000);
+    const conversation: Conversation = {
+      id: `convo-${now}-${Math.random().toString(36).slice(2)}`,
+      title,
+      kind: "group",
+      created_at: now,
+      updated_at: now,
+      order
+    };
+    state.conversations.push(conversation);
+    await this.put(state);
+    return json({ ok: true, conversation });
+  }
+
+  private async guiDeleteConversation(conversationId?: string): Promise<Response> {
+    if (!conversationId || conversationId === DEFAULT_CONVERSATION.id) return json({ error: "default conversation cannot be deleted" }, { status: 400 });
+    const state = await this.get();
+    const before = state.conversations.length;
+    state.conversations = state.conversations.filter((conversation) => conversation.id !== conversationId);
+    state.messages = state.messages.filter((message) => message.conversation_id !== conversationId);
+    await this.put(state);
+    return json({ ok: true, deleted: before !== state.conversations.length });
+  }
+
+  private async guiMessage(payload: { body?: string; conversationId?: string }): Promise<Response> {
+    const state = await this.get();
+    const conversation = ensureConversation(state, payload.conversationId || DEFAULT_CONVERSATION.id);
+    const now = Date.now();
     const message: Message = {
-      id: `msg-${Date.now()}`,
-      conversation_id: "demo-convo",
-      conversation_title: "Demo Conversation",
-      conversation_kind: "direct",
-      author_name: "Demo Human",
+      id: `msg-${now}`,
+      conversation_id: conversation.id,
+      conversation_title: conversation.title,
+      conversation_kind: conversation.kind,
+      author_name: "King Human",
       author_kind: "human",
       kind: "message",
-      body: payload.body || "Hello from the local demo runtime.",
-      created_at: Date.now(),
+      body: payload.body || "Hello from the local gui runtime.",
+      created_at: now,
       readBy: []
     };
+    const pendingReply: Message = {
+      id: `msg-${now}-pending`,
+      conversation_id: conversation.id,
+      conversation_title: conversation.title,
+      conversation_kind: conversation.kind,
+      author_name: state.agents[0]?.name || DEFAULT_AGENT.name,
+      author_kind: "agent",
+      author_engine: state.agents[0]?.engine || DEFAULT_AGENT.engine,
+      status: "pending",
+      kind: "message",
+      body: "AI 正在处理...",
+      created_at: now + 1,
+      readBy: [DEFAULT_AGENT.id]
+    };
+    state.messages = state.messages.filter((row) => !(row.conversation_id === conversation.id && row.status === "pending"));
+    conversation.updated_at = now;
     state.messages.push(message);
+    state.messages.push(pendingReply);
     await this.put(state);
-    await this.broadcast({ event: "wake", data: { conversationId: message.conversation_id, at: Date.now() } });
+    this.broadcast({ event: "wake", data: { conversationId: message.conversation_id, at: now } });
     return json({ ok: true, message });
   }
 
-  private async demoWake(payload: unknown): Promise<Response> {
+  private async guiWake(payload: unknown): Promise<Response> {
     await this.broadcast({ event: "wake", data: { ...(payload && typeof payload === "object" ? payload as Record<string, unknown> : {}), at: Date.now() } });
     return json({ ok: true });
   }
 
-  private async demoMarkRead(payload: { conversationId?: string; upToMessageId?: string }): Promise<Response> {
+  private async guiMarkRead(payload: { conversationId?: string; upToMessageId?: string }): Promise<Response> {
     return this.markRead({
-      conversationId: payload.conversationId || "demo-convo",
+      conversationId: payload.conversationId || "king-convo",
       upToMessageId: payload.upToMessageId
     });
   }
@@ -3596,13 +2608,13 @@ export class DemoState implements DurableObject {
   private async createCard(payload: { title?: string; assignee?: string; allowedPaths?: string[] }): Promise<Response> {
     const state = await this.get();
     const allowedPaths = Array.isArray(payload.allowedPaths) ? payload.allowedPaths.filter((path): path is string => typeof path === "string") : [];
-    const card = this.newCard(state, payload.title || "Demo card", payload.assignee, allowedPaths);
+    const card = this.newCard(state, payload.title || "Gui card", payload.assignee, allowedPaths);
     await this.put(state);
     await this.broadcast({ event: "wake", data: { agenda: true, cardId: card.id, at: Date.now() } });
     return json({ ok: true, card });
   }
 
-  private async moveCard(cardId: string | undefined, payload: DemoCardMovePayload): Promise<Response> {
+  private async moveCard(cardId: string | undefined, payload: GuiCardMovePayload): Promise<Response> {
     const state = await this.get();
     if (!cardId) return json({ error: "card not found" }, { status: 404 });
     const card = state.cards.find((row) => row.id === cardId || row.id.startsWith(cardId));
@@ -3620,9 +2632,9 @@ export class DemoState implements DurableObject {
     return json({ ok: true, card });
   }
 
-  private async createTask(payload: DemoTaskPayload): Promise<Response> {
+  private async createTask(payload: GuiTaskPayload): Promise<Response> {
     const state = await this.get();
-    const title = typeof payload.title === "string" && payload.title.trim() ? payload.title.trim() : "Demo task";
+    const title = typeof payload.title === "string" && payload.title.trim() ? payload.title.trim() : "Gui task";
     const description = typeof payload.description === "string" && payload.description.trim() ? payload.description.trim() : undefined;
     const assignee = typeof payload.assignee === "string" && payload.assignee.trim() ? payload.assignee.trim() : DEFAULT_AGENT.id;
     const priority = typeof payload.priority === "number"
@@ -3646,15 +2658,15 @@ export class DemoState implements DurableObject {
       type: "queue.backlog",
       agent: assignee,
       taskId: task.id,
-      pendingMessages: state.messages.filter((message) => !message.readBy.includes(assignee)).length,
-      payload: { taskId: task.id, source: "demo-ui" }
+      pendingMessages: unreadMessagesFor(state, assignee).length,
+      payload: { taskId: task.id, source: "gui-ui" }
     });
     await this.put(state);
     if (payload.wake !== false) await this.broadcast({ event: "wake", data: { agenda: true, taskId: task.id, at: Date.now() } });
     return json({ ok: true, task });
   }
 
-  private async updateTask(taskId: string | undefined, payload: DemoTaskUpdatePayload): Promise<Response> {
+  private async updateTask(taskId: string | undefined, payload: GuiTaskUpdatePayload): Promise<Response> {
     const state = await this.get();
     const task = findTask(state, taskId);
     if (!task) return json({ error: `task not found: ${taskId || ""}` }, { status: 404 });
@@ -3684,6 +2696,7 @@ export class DemoState implements DurableObject {
     target: string;
     fromName: string;
     fromKind: Message["author_kind"];
+    fromEngine?: Message["author_engine"];
     body: string;
     priority: "normal" | "steer";
     messageType: "message" | "decision" | "blocker";
@@ -3696,6 +2709,7 @@ export class DemoState implements DurableObject {
       conversation_kind: "direct",
       author_name: args.fromName,
       author_kind: args.fromKind,
+      author_engine: args.fromEngine,
       kind: "message",
       body: args.body,
       priority: args.priority,
@@ -3707,8 +2721,20 @@ export class DemoState implements DurableObject {
     };
   }
 
-  private async clearMessages(): Promise<Response> {
+  private async clearMessages(payload?: { conversationId?: string }): Promise<Response> {
     const state = await this.get();
+    const conversationId = typeof payload?.conversationId === "string" ? payload.conversationId.trim() : "";
+    if (conversationId) {
+      state.messages = state.messages.filter((message) => message.conversation_id !== conversationId);
+      state.cliLog = state.cliLog.filter((row) => !row.argv.includes(conversationId));
+      state.typingLog = state.typingLog.filter((row) => row.conversationId !== conversationId);
+      state.thinkingLog = state.thinkingLog.filter((row) => !row.conversationIds.includes(conversationId));
+      const conversation = state.conversations.find((row) => row.id === conversationId);
+      if (conversation) conversation.updated_at = Date.now();
+      await this.put(state);
+      await this.broadcast({ event: "wake", data: { clearedConversationId: conversationId, at: Date.now() } });
+      return json({ ok: true, conversationId });
+    }
     state.messages = [];
     state.cliLog = [];
     state.statusLog = [];
@@ -3716,7 +2742,7 @@ export class DemoState implements DurableObject {
     state.thinkingLog = [];
     state.eventLog = [];
     state.eventRoutes = [];
-    state.loopRunId = "run-demo";
+    state.loopRunId = "run-gui";
     state.currentLoop = 0;
     state.loopEvents = [];
     state.noticeLog = [];
@@ -3745,40 +2771,143 @@ export class DemoState implements DurableObject {
 
   private async agentConfig(payload: AgentConfigPayload): Promise<Response> {
     const state = await this.get();
+    const previous = state.agents[0] ?? DEFAULT_AGENT;
     const engine = typeof payload.engine === "string" && state.availableEngines.includes(payload.engine) ? payload.engine : state.agents[0]?.engine;
+    const name = typeof payload.name === "string" ? payload.name.trim() : "";
+    const role = typeof payload.role === "string" ? payload.role.trim() : "";
     const model = typeof payload.model === "string" ? payload.model.trim() : "";
     const fastModel = typeof payload.fastModel === "string" ? payload.fastModel.trim() : "";
     const lifecycle = isAgentLifecycle(payload.lifecycle)
       ? payload.lifecycle
       : state.agents[0]?.lifecycle ?? DEFAULT_AGENT.lifecycle;
-    state.agents = [{
+    const nextAgent = {
       ...DEFAULT_AGENT,
-      ...state.agents[0],
+      ...previous,
+      name: name || state.agents[0]?.name || DEFAULT_AGENT.name,
+      role: role || state.agents[0]?.role || DEFAULT_AGENT.role,
       engine: engine === "claude" || engine === "codex" ? engine : DEFAULT_AGENT.engine,
       lifecycle,
       model: model || undefined,
       fastModel: fastModel || undefined
-    }];
+    };
+    const changed =
+      previous.name !== nextAgent.name ||
+      previous.role !== nextAgent.role ||
+      previous.engine !== nextAgent.engine ||
+      previous.lifecycle !== nextAgent.lifecycle ||
+      previous.model !== nextAgent.model ||
+      previous.fastModel !== nextAgent.fastModel;
+    state.agents = [nextAgent];
     state.agentConfigUpdatedAt = Date.now();
+    if (changed) state.runtimeToken = crypto.randomUUID();
     await this.put(state);
     return json({ ok: true, agent: state.agents[0] });
   }
 
   private async broadcast(evt: { event: string; data: unknown }): Promise<void> {
     const frame = encode(`event: ${evt.event}\ndata: ${JSON.stringify(evt.data)}\n\n`);
-    for (const writer of [...this.waiters]) {
+    await Promise.all([...this.waiters].map(async (writer) => {
       try {
-        await writer.write(frame);
+        await Promise.race([
+          writer.write(frame),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("sse write timeout")), 1000))
+        ]);
       } catch {
         this.waiters.delete(writer);
       }
-    }
+    }));
   }
 }
 
 function token(request: Request): string {
   const raw = request.headers.get("Authorization") || "";
   return raw.startsWith("Bearer ") ? raw.slice("Bearer ".length) : "";
+}
+
+function normalizeConversations(input: unknown, messages: Message[]): Conversation[] {
+  const now = Date.now();
+  const byId = new Map<string, Conversation>();
+  if (Array.isArray(input)) {
+    for (const item of input) {
+      if (!item || typeof item !== "object") continue;
+      const row = item as Partial<Conversation>;
+      if (typeof row.id !== "string" || !row.id.trim()) continue;
+      byId.set(row.id, {
+        id: row.id,
+        title: typeof row.title === "string" && row.title.trim() ? row.title.trim() : row.id,
+        kind: row.kind === "direct" ? "direct" : "group",
+        created_at: typeof row.created_at === "number" ? row.created_at : now,
+        updated_at: typeof row.updated_at === "number" ? row.updated_at : now,
+        order: typeof row.order === "number" ? row.order : undefined
+      });
+    }
+  }
+  byId.set(DEFAULT_CONVERSATION.id, {
+    ...DEFAULT_CONVERSATION,
+    ...byId.get(DEFAULT_CONVERSATION.id),
+    title: byId.get(DEFAULT_CONVERSATION.id)?.title || DEFAULT_CONVERSATION.title,
+    created_at: byId.get(DEFAULT_CONVERSATION.id)?.created_at || now,
+    updated_at: byId.get(DEFAULT_CONVERSATION.id)?.updated_at || now
+  });
+  for (const message of messages) {
+    const existing = byId.get(message.conversation_id);
+    if (existing) {
+      existing.updated_at = Math.max(existing.updated_at, message.created_at);
+      continue;
+    }
+    byId.set(message.conversation_id, {
+      id: message.conversation_id,
+      title: message.conversation_title || message.conversation_id,
+      kind: message.conversation_kind || "group",
+      created_at: message.created_at,
+      updated_at: message.created_at
+    });
+  }
+  return [...byId.values()].sort(compareConversations);
+}
+
+function ensureConversation(state: State, id: string): Conversation {
+  const conversationId = id.trim() || DEFAULT_CONVERSATION.id;
+  const found = state.conversations.find((row) => row.id === conversationId);
+  if (found) return found;
+  const now = Date.now();
+  const conversation: Conversation = {
+    id: conversationId,
+    title: conversationId === DEFAULT_CONVERSATION.id ? DEFAULT_CONVERSATION.title : conversationId,
+    kind: "group",
+    created_at: now,
+    updated_at: now
+  };
+  state.conversations.push(conversation);
+  return conversation;
+}
+
+function conversationSummaries(state: State): Array<Conversation & { unread: number; messages: number }> {
+  return state.conversations.slice().sort(compareConversations).map((conversation) => {
+    const rows = state.messages.filter((message) => message.conversation_id === conversation.id && isRuntimeVisibleMessage(message));
+    return {
+      ...conversation,
+      unread: rows.filter((message) => !message.readBy.includes(DEFAULT_AGENT.id) && message.author_kind === "human").length,
+      messages: rows.length
+    };
+  });
+}
+
+function isRuntimeVisibleMessage(message: Message): boolean {
+  return message.status !== "pending";
+}
+
+function unreadMessagesFor(state: State, agentId: string): Message[] {
+  return state.messages.filter((message) => isRuntimeVisibleMessage(message) && !message.readBy.includes(agentId));
+}
+
+function compareConversations(a: Conversation, b: Conversation): number {
+  if (a.id === DEFAULT_CONVERSATION.id) return -1;
+  if (b.id === DEFAULT_CONVERSATION.id) return 1;
+  return (b.order ?? b.created_at) - (a.order ?? a.created_at)
+    || b.updated_at - a.updated_at
+    || b.created_at - a.created_at
+    || b.id.localeCompare(a.id);
 }
 
 function normalizeCapabilities(input: unknown): { workspaces: string[]; agentWorkspaceRoot?: string } {
@@ -3821,6 +2950,17 @@ function runtimeBodyEngine(body: unknown): string | undefined {
   return typeof engine === "string" ? engine : undefined;
 }
 
+function normalizeEngineId(value: unknown): Agent["engine"] | undefined {
+  return value === "claude" || value === "codex" ? value : undefined;
+}
+
+function activeRunEngine(state: State): Agent["engine"] | undefined {
+  const lastRunStart = state.runLog.slice().reverse().find((row) => row.action === "start");
+  const lastRunFinish = state.runLog.slice().reverse().find((row) => row.action === "finish");
+  if (!lastRunStart || (lastRunFinish && lastRunFinish.at >= lastRunStart.at)) return undefined;
+  return normalizeEngineId(runtimeBodyEngine(lastRunStart?.body));
+}
+
 function summarizeUnknown(value: unknown): string {
   if (typeof value === "string") return value;
   if (!value || typeof value !== "object") return String(value ?? "");
@@ -3844,7 +2984,7 @@ function agentStateSummary(state: State, agent: Agent): AgentStateSummary {
     status,
     model: agent.model ?? "default",
     fastModel: agent.fastModel ?? "default",
-    unreadMessages: state.messages.filter((message) => !message.readBy.includes(agent.id)).length,
+    unreadMessages: unreadMessagesFor(state, agent.id).length,
     openClaims: state.claims.filter((claim) => claim.owner === agent.id).length,
     activeCards: state.cards.filter((card) => card.column !== "done" && (card.assignee === agent.id || card.claimedBy === agent.id)).length,
     openTasks: state.tasks.filter((task) => task.status !== "done" && (!task.assignee || task.assignee === agent.id)).length,
@@ -3880,7 +3020,7 @@ function buildRuntimePreamble(
     `## Runtime Context (Loop #${state.currentLoop})`,
     `Agent: ${agent.id} (${agent.name})`,
     `Reason: ${options.reason}`,
-    `Run ID: ${options.runId || state.loopRunId || "run-demo"}`
+    `Run ID: ${options.runId || state.loopRunId || "run-gui"}`
   ];
   if (options.steerReason) {
     lines.push("");
@@ -3907,8 +3047,7 @@ function buildRuntimePreamble(
     ).length;
     if (total > tasks.length) lines.push(`- ...and ${total - tasks.length} more task(s)`);
   }
-  const unread = state.messages
-    .filter((message) => !message.readBy.includes(agent.id))
+  const unread = unreadMessagesFor(state, agent.id)
     .slice(-5);
   if (unread.length > 0) {
     lines.push("");
@@ -4024,7 +3163,7 @@ function pushLoopEvent(
 ): LoopEvent {
   const full: LoopEvent = {
     ...event,
-    runId: event.runId || state.loopRunId || "run-demo",
+    runId: event.runId || state.loopRunId || "run-gui",
     loop: event.loop ?? state.currentLoop,
     timestamp: event.timestamp || new Date().toISOString()
   };
@@ -4047,7 +3186,7 @@ function isLoopEventType(value: string | undefined): value is LoopEventType {
 }
 
 function buildEventLoopSnapshot(state: State): LoopSnapshot {
-  const runId = state.loopRunId || "run-demo";
+  const runId = state.loopRunId || "run-gui";
   const loop = state.currentLoop;
   const currentEvents = state.loopEvents.filter((event) => event.runId === runId && event.loop === loop);
   const reasons: string[] = [];
@@ -4084,6 +3223,7 @@ function buildEventLoopSnapshot(state: State): LoopSnapshot {
 
 function countPendingMessages(state: State, agentId: string): number {
   return state.messages.filter((message) =>
+    isRuntimeVisibleMessage(message) &&
     message.to_agent_id === agentId &&
     !message.readBy.includes(agentId)
   ).length;
@@ -4100,7 +3240,7 @@ function formatLoopEventLine(event: LoopEvent): string {
 }
 
 function buildLoopSnapshot(state: State): LoopSnapshot {
-  const unreadMessages = state.messages.filter((message) => !message.readBy.includes(DEFAULT_AGENT.id)).length;
+  const unreadMessages = unreadMessagesFor(state, DEFAULT_AGENT.id).length;
   const blockedTasks = state.tasks.filter((task) => taskVisibleStatus(state, task) === "blocked").length;
   const activeTasks = state.tasks.filter((task) => taskVisibleStatus(state, task) !== "done").length;
   const openCapsules = state.capsules.filter((capsule) => capsule.status === "open").length;
@@ -4525,7 +3665,7 @@ function isKnownArtifactSource(source: string): boolean {
     source.startsWith("api:") ||
     source === "cross_validated" ||
     source === "marketing" ||
-    source === "demo-agent" ||
+    source === "king-agent" ||
     source === "original";
 }
 

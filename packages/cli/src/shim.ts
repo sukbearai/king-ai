@@ -38,7 +38,7 @@ const SHIM = `#!/usr/bin/env node
   const res = await fetch(url + '/cli', {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ argv })
+    body: JSON.stringify({ argv, agentId: process.env.KING_AGENT_ID || undefined, engine: process.env.KING_AGENT_ENGINE || undefined })
   })
   if (!res.ok) {
     const text = await res.text().catch(() => '')

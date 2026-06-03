@@ -6,6 +6,7 @@ import {
   buildChatDelta,
   appendRuntimePreamble,
   buildRuntimePreambleSection,
+  agentSessionFile,
   formatTriageNote,
   formatSteerPrompt,
   isContextOverflow,
@@ -19,6 +20,11 @@ import {
   swallowTurnRejection,
   visibleEngineError
 } from "../src/runner.js";
+
+test("agentSessionFile scopes session ids by engine", () => {
+  assert.match(agentSessionFile("king-agent", "claude"), /king-agent\.claude\.session$/);
+  assert.match(agentSessionFile("king-agent", "codex"), /king-agent\.codex\.session$/);
+});
 
 test("Semaphore queues callers beyond the concurrency limit", async () => {
   const sem = new Semaphore(1);

@@ -1,5 +1,5 @@
 {
-  "name": "@king/demo-worker",
+  "name": "@king/gui-worker",
   "version": "0.1.0",
   "private": true,
   "type": "module",
