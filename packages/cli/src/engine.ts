@@ -1,0 +1,1045 @@
+import { execFileSync, spawn } from "node:child_process";
+import { access, mkdir, writeFile } from "node:fs/promises";
+import { existsSync, writeFileSync } from "node:fs";
+import { join, delimiter as PATH_DELIMITER } from "node:path";
+import type {
+  EngineAdapter,
+  EngineClassifyArgs,
+  EngineId,
+  EngineProbeArgs,
+  EngineResult,
+  EngineRunArgs,
+  EngineSession,
+  EngineUsage
+} from "./types.js";
+import { cleanLine, stripLoneSurrogates } from "./text.js";
+
+const IS_WIN = process.platform === "win32";
+const DOCTOR_PROMPT = "Connectivity check. Reply with exactly: OK";
+const MAX_FAILURE_CHARS = 4000;
+const TURN_TIMEOUT_MS = Number(process.env.KING_TURN_TIMEOUT_MS) || 0;
+const SESSION_TIMEOUT_MS = Number(process.env.KING_SESSION_TIMEOUT_MS) || 0;
+
+export function splitExtraArgs(raw: string | undefined): string[] {
+  if (!raw) return [];
+  const args: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | null = null;
+  let escaping = false;
+  for (const ch of raw) {
+    if (escaping) {
+      current += ch;
+      escaping = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaping = true;
+      continue;
+    }
+    if (quote) {
+      if (ch === quote) quote = null;
+      else current += ch;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (current) {
+        args.push(current);
+        current = "";
+      }
+      continue;
+    }
+    current += ch;
+  }
+  if (escaping) current += "\\";
+  if (current) args.push(current);
+  return args;
+}
+
+function envExtraArgs(...names: string[]): string[] {
+  for (const name of names) {
+    const args = splitExtraArgs(process.env[name]);
+    if (args.length) return args;
+  }
+  return [];
+}
+
+function pushTail(lines: string[], line: string, max = 80): void {
+  lines.push(line);
+  if (lines.length > max) lines.splice(0, lines.length - max);
+}
+
+function textOfContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => {
+      if (typeof part === "string") return part;
+      if (
+        part &&
+        typeof part === "object" &&
+        "type" in part &&
+        part.type === "text" &&
+        "text" in part &&
+        typeof part.text === "string"
+      ) {
+        return part.text;
+      }
+      return "";
+    })
+    .filter(Boolean)
+    .join(" ");
+}
+
+export function formatEngineLogLine(engine: EngineId, line: string): string | null {
+  const cleaned = cleanLine(line);
+  if (!cleaned) return null;
+  if (!cleaned.startsWith("{")) return cleaned;
+  try {
+    const obj = JSON.parse(cleaned) as Record<string, unknown>;
+    if (engine === "claude") {
+      if (obj.type === "system" && obj.subtype === "init") return "[claude] session initialized";
+      if (obj.type === "assistant") {
+        const message = obj.message as { content?: unknown } | undefined;
+        const text = textOfContent(message?.content).replace(/\s+/g, " ").trim();
+        return text ? `[claude] ${text.slice(0, 500)}` : null;
+      }
+      if (obj.type === "user") {
+        const message = obj.message as { content?: unknown } | undefined;
+        const text = textOfContent(message?.content).replace(/\s+/g, " ").trim();
+        return text ? `[tool] ${text.slice(0, 500)}` : null;
+      }
+      if (obj.type === "result") {
+        if (obj.is_error === true) return `[claude] failed: ${String(obj.result ?? "error").slice(0, 500)}`;
+        return "[claude] turn completed";
+      }
+      if (obj.subtype === "status" && obj.status === "compacting") return "[claude] native context compaction started";
+      if (obj.subtype === "compact_boundary") return "[claude] native context compaction finished";
+      return null;
+    }
+    if (engine === "codex") {
+      if (process.env.KING_CODEX_VERBOSE === "1") return cleaned;
+      const method = typeof obj.method === "string" ? obj.method : "";
+      const params = obj.params as { item?: { type?: unknown; command?: unknown; text?: unknown } } | undefined;
+      const item = params?.item;
+      if (method === "item/started" && item?.type === "commandExecution" && typeof item.command === "string") {
+        return `[codex] $ ${item.command.replace(/\s+/g, " ").slice(0, 500)}`;
+      }
+      if (method === "item/completed" && item?.type === "agentMessage" && typeof item.text === "string") {
+        return `[codex] ${item.text.replace(/\s+/g, " ").slice(0, 500)}`;
+      }
+      if (method === "turn/completed") return "[codex] turn completed";
+      return null;
+    }
+  } catch {
+    return cleaned;
+  }
+  return cleaned;
+}
+
+function resolveSpawn(bin: string): { command: string; shell: boolean; wantsStdinPrompt: boolean } {
+  if (!IS_WIN) return { command: bin, shell: false, wantsStdinPrompt: false };
+  const exts = (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
+  for (const dir of (process.env.PATH ?? "").split(PATH_DELIMITER)) {
+    for (const ext of ["", ...exts]) {
+      const candidate = join(dir, bin + ext);
+      if (existsSync(candidate)) {
+        const batch = /\.(cmd|bat)$/i.test(candidate);
+        return { command: candidate, shell: batch, wantsStdinPrompt: batch };
+      }
+    }
+  }
+  return { command: bin, shell: true, wantsStdinPrompt: true };
+}
+
+export async function binOnPath(bin: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const probe = spawn(IS_WIN ? "where" : "which", [bin], { stdio: "ignore" });
+    probe.on("error", () => resolve(false));
+    probe.on("close", (code) => resolve(code === 0));
+  });
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function ensureCommonHome(home: string): Promise<void> {
+  await mkdir(join(home, "memory"), { recursive: true });
+  await mkdir(join(home, "notes"), { recursive: true });
+  await mkdir(join(home, "workspace"), { recursive: true });
+  const index = join(home, "memory", "MEMORY.md");
+  if (!(await exists(index))) {
+    await writeFile(
+      index,
+      "# Memory index\n\nOne line per durable fact, pointing at the file that holds it:\n`- [Title](file.md) - one-line hook`\n\nWrite the fact itself in its own `memory/<topic>.md` file; keep this index short.\n",
+      "utf8"
+    );
+  }
+}
+
+export function personaHeader(persona: { id: string; name: string; role?: string }): string {
+  return `# ${persona.name}${persona.role ? ` - ${persona.role}` : ""}
+
+You are ${persona.name}, a teammate running from this local agent home.
+
+This directory is your private home and working directory. It persists across wakes and is yours alone.
+
+Layout:
+- CLAUDE.md this file; keep it short.
+- memory/ durable notes indexed by memory/MEMORY.md.
+- notes/ scratch notes and reply drafts.
+- .claude/skills/ your skills.
+- workspace/ project files, clones, downloads, builds, and temporary work. Use workspace/ for project work instead of cluttering the home root.
+
+Privacy boundary:
+- Stay inside this home directory unless the operator explicitly asks otherwise in this runtime.
+- Do not read, list, search, quote, summarize, or send files outside this home directory.
+- If a task seems to need a file outside this home, ask in the runtime first.
+
+Use the \`king\` command on PATH to interact with the remote runtime.
+`;
+}
+
+function failurePreview(exitCode: number, signalName: NodeJS.Signals | null, stderr: string[], stdout: string[]): string {
+  const detail = [...stderr, ...stdout].join("\n").trim();
+  const prefix = signalName ? `process terminated by ${signalName}` : `process exited with code ${exitCode}`;
+  return detail ? `${prefix}\n${detail}`.slice(0, MAX_FAILURE_CHARS) : prefix;
+}
+
+export function claudeStreamUserMessage(text: string): string {
+  return JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "text", text: stripLoneSurrogates(text) }] } }) + "\n";
+}
+
+export interface CodexAppEventState {
+  activeTurnId: string | null;
+  steerGate: boolean;
+}
+
+export interface CodexAppEventResult {
+  logs: string[];
+  activeTurnId: string | null;
+  steerGate: boolean;
+  turnCompletedError?: string;
+  usage?: unknown;
+  threadId?: string;
+}
+
+function unknownRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
+function nestedRecord(value: unknown, key: string): Record<string, unknown> | null {
+  return unknownRecord(unknownRecord(value)?.[key]);
+}
+
+function errorMessage(value: unknown, fallback: string): string {
+  const rec = unknownRecord(value);
+  const nested = unknownRecord(rec?.error);
+  const message = rec?.message ?? nested?.message;
+  return typeof message === "string" && message.trim() ? message.slice(0, MAX_FAILURE_CHARS) : fallback;
+}
+
+export function reduceCodexAppEvent(state: CodexAppEventState, msg: Record<string, unknown>): CodexAppEventResult {
+  const logs: string[] = [];
+  let activeTurnId = state.activeTurnId;
+  let steerGate = state.steerGate;
+  const method = typeof msg.method === "string" ? msg.method : "";
+  const result = unknownRecord(msg.result);
+  const params = unknownRecord(msg.params);
+  const threadId = nestedRecord(result, "thread")?.id ?? (method === "thread/started" ? nestedRecord(params, "thread")?.id : undefined);
+  const turnId = nestedRecord(result, "turn")?.id ?? result?.turnId ?? (method === "turn/started" ? nestedRecord(params, "turn")?.id : undefined);
+
+  if (typeof turnId === "string") {
+    activeTurnId = turnId;
+    steerGate = false;
+  }
+
+  if (method === "thread/tokenUsage/updated") {
+    return { logs, activeTurnId, steerGate, usage: nestedRecord(params, "tokenUsage")?.total };
+  }
+
+  if (method === "account/rateLimits/updated") {
+    const pct = unknownRecord(nestedRecord(params, "rateLimits")?.primary)?.usedPercent;
+    if (typeof pct === "number" && pct >= 90) logs.push(`[codex] account rate limit at ${Math.round(pct)}% - turns will start failing when it reaches 100%`);
+    return { logs, activeTurnId, steerGate };
+  }
+
+  if (method === "item/started" || method === "item/completed") {
+    const item = nestedRecord(params, "item");
+    const type = item?.type;
+    if (type === "contextCompaction") {
+      logs.push(`[codex] native context compaction ${method === "item/started" ? "started" : "finished"}`);
+    } else if (item && type === "commandExecution" && method === "item/started" && typeof item.command === "string") {
+      logs.push(`[codex] $ ${item.command.replace(/\s+/g, " ").slice(0, 200)}`);
+    } else if (item && type === "agentMessage" && method === "item/completed" && typeof item.text === "string" && item.text.trim()) {
+      logs.push(`[codex] ${item.text.replace(/\s+/g, " ").slice(0, 200)}`);
+    }
+    if (method === "item/completed") steerGate = true;
+    return { logs, activeTurnId, steerGate };
+  }
+
+  if (method === "item/agentMessage/delta" || method === "item/reasoning/textDelta" || method === "item/reasoning/summaryTextDelta") {
+    return { logs, activeTurnId, steerGate: false };
+  }
+
+  if (method === "turn/completed") {
+    const turn = nestedRecord(params, "turn") ?? nestedRecord(result, "turn");
+    const failed = turn?.status === "failed" ? String(nestedRecord(turn, "error")?.message ?? "codex turn failed") : undefined;
+    return { logs, activeTurnId: null, steerGate: false, turnCompletedError: failed };
+  }
+
+  return { logs, activeTurnId, steerGate, threadId: typeof threadId === "string" ? threadId : undefined };
+}
+
+function spawnCapture(
+  bin: string,
+  args: string[],
+  opts: { cwd: string; env: NodeJS.ProcessEnv; signal: AbortSignal; shell?: boolean; stdinText?: string; onLog?: (line: string) => void }
+): Promise<{ text: string; error?: string; usage?: EngineUsage }> {
+  return new Promise((resolve) => {
+    const child = spawn(bin, args, {
+      cwd: opts.cwd,
+      env: opts.env,
+      stdio: [opts.stdinText == null ? "ignore" : "pipe", "pipe", "pipe"],
+      shell: opts.shell ?? false
+    });
+    if (opts.stdinText != null) {
+      child.stdin?.write(opts.stdinText);
+      child.stdin?.end();
+    }
+    const onAbort = () => child.kill("SIGTERM");
+    opts.signal.addEventListener("abort", onAbort, { once: true });
+    let stdout = "";
+    const stderr: string[] = [];
+    child.stdout?.on("data", (buf) => {
+      const text = buf.toString("utf8");
+      stdout += text;
+      const line = cleanLine(text);
+      if (line) opts.onLog?.(line);
+    });
+    child.stderr?.on("data", (buf) => {
+      for (const raw of buf.toString("utf8").split("\n")) {
+        const line = cleanLine(raw);
+        if (line) stderr.push(line);
+      }
+    });
+    child.on("error", (err) => {
+      opts.signal.removeEventListener("abort", onAbort);
+      resolve({ text: "", error: err.message });
+    });
+    child.on("close", (code, signalName) => {
+      opts.signal.removeEventListener("abort", onAbort);
+      const exitCode = code ?? (signalName ? 128 : 1);
+      resolve({
+        text: stdout.trim(),
+        error: exitCode === 0 ? undefined : failurePreview(exitCode, signalName, stderr, [])
+      });
+    });
+  });
+}
+
+function spawnEngine(
+  bin: string,
+  args: string[],
+  opts: EngineRunArgs & { shell?: boolean; stdinText?: string }
+): Promise<EngineResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(bin, args, {
+      cwd: opts.home,
+      env: opts.env,
+      stdio: [opts.stdinText == null ? "ignore" : "pipe", "pipe", "pipe"],
+      shell: opts.shell ?? false
+    });
+    if (opts.stdinText != null) {
+      child.stdin?.write(opts.stdinText);
+      child.stdin?.end();
+    }
+
+    const stderr: string[] = [];
+    const stdout: string[] = [];
+    let sessionId: string | null = null;
+    let usage: EngineUsage | undefined;
+    let model: string | null = null;
+    let timer: NodeJS.Timeout | null = null;
+    const onAbort = () => child.kill("SIGTERM");
+    opts.signal.addEventListener("abort", onAbort, { once: true });
+    if (TURN_TIMEOUT_MS > 0) timer = setTimeout(onAbort, TURN_TIMEOUT_MS);
+
+    child.stdout?.on("data", (buf) => {
+      for (const raw of buf.toString("utf8").split("\n")) {
+        const line = cleanLine(raw);
+        if (!line) continue;
+        stdout.push(line);
+        opts.onLog(line);
+        if (!line.startsWith("{")) continue;
+        try {
+          const obj = JSON.parse(line) as Record<string, unknown>;
+          if (typeof obj.session_id === "string") sessionId = obj.session_id;
+          if (obj.type === "result" && typeof obj.usage === "object") usage = obj.usage as EngineUsage;
+          const message = obj.message as { model?: unknown } | undefined;
+          if (typeof obj.model === "string") model = obj.model;
+          if (typeof message?.model === "string") model = message.model;
+        } catch {
+          // Ignore non-event JSON.
+        }
+      }
+    });
+    child.stderr?.on("data", (buf) => {
+      for (const raw of buf.toString("utf8").split("\n")) {
+        const line = cleanLine(raw);
+        if (!line) continue;
+        stderr.push(line);
+        opts.onLog(line);
+      }
+    });
+    child.on("error", reject);
+    child.on("close", (code, signalName) => {
+      if (timer) clearTimeout(timer);
+      opts.signal.removeEventListener("abort", onAbort);
+      const exitCode = code ?? (signalName ? 128 : 1);
+      resolve({
+        exitCode,
+        error: exitCode === 0 ? undefined : failurePreview(exitCode, signalName, stderr, stdout),
+        sessionId,
+        usage,
+        model
+      });
+    });
+  });
+}
+
+class ClaudeSession implements EngineSession {
+  private readonly child: ReturnType<typeof spawn>;
+  private outBuf = "";
+  private pending: {
+    resolve: (result: EngineResult) => void;
+    stdout: string[];
+    stderr: string[];
+    timer: NodeJS.Timeout | null;
+  } | null = null;
+  private exited = false;
+  private exitCode = 0;
+  private sid: string | null = null;
+  private currentModel: string | null = null;
+  private stderrTail: string[] = [];
+  private stdoutTail: string[] = [];
+  private steerQueue: string[] = [];
+
+  constructor(
+    bin: string,
+    args: string[],
+    opts: Omit<EngineRunArgs, "prompt" | "signal"> & { shell?: boolean; stdinText?: string },
+    readonly carriesStandingPrompt: boolean
+  ) {
+    this.child = spawn(bin, args, {
+      cwd: opts.home,
+      env: opts.env,
+      stdio: ["pipe", "pipe", "pipe"],
+      shell: opts.shell ?? false
+    });
+    this.child.stdout?.on("data", (buf) => this.onStdout(buf, opts.onLog));
+    this.child.stderr?.on("data", (buf) => this.onStderr(buf, opts.onLog));
+    this.child.on("error", (err) => this.die(1, err.message));
+    this.child.on("close", (code, signalName) => this.die(code ?? (signalName ? 128 : 1), signalName ? `terminated by ${signalName}` : `exited with code ${code ?? 1}`));
+    if (opts.stdinText) this.child.stdin?.write(opts.stdinText);
+  }
+
+  get alive(): boolean {
+    return !this.exited && this.child.stdin?.writable === true;
+  }
+
+  get sessionId(): string | null {
+    return this.sid;
+  }
+
+  send(prompt: string): Promise<EngineResult> {
+    if (this.pending) return Promise.resolve({ exitCode: 1, error: "engine session is already running a turn", sessionId: this.sid });
+    if (!this.alive) {
+      const exitCode = this.exitCode || 1;
+      const detail = failurePreview(exitCode, null, this.stderrTail, this.stdoutTail);
+      return Promise.resolve({ exitCode, error: detail || "engine session is not alive", sessionId: this.sid });
+    }
+    return new Promise((resolve) => {
+      const pending = { resolve, stdout: [] as string[], stderr: [] as string[], timer: null as NodeJS.Timeout | null };
+      if (SESSION_TIMEOUT_MS > 0) {
+        pending.timer = setTimeout(() => {
+          this.settle({
+            exitCode: 124,
+            error: `engine turn exceeded KING_TURN_TIMEOUT_MS (${Math.round(SESSION_TIMEOUT_MS / 1000)}s) - aborted; session will respawn`,
+            sessionId: this.sid
+          });
+          this.stop();
+        }, SESSION_TIMEOUT_MS);
+        pending.timer.unref?.();
+      }
+      this.pending = pending;
+      this.child.stdin?.write(claudeStreamUserMessage(prompt));
+    });
+  }
+
+  steer(text: string): void {
+    if (!this.pending || !this.alive || !text.trim()) return;
+    this.steerQueue.push(text);
+  }
+
+  stop(): void {
+    this.exited = true;
+    this.child.stdin?.end();
+    this.child.kill("SIGTERM");
+  }
+
+  private onStdout(buf: Buffer, onLog: (line: string) => void): void {
+    this.outBuf += buf.toString("utf8");
+    let nl: number;
+    while ((nl = this.outBuf.indexOf("\n")) >= 0) {
+      const line = cleanLine(this.outBuf.slice(0, nl));
+      this.outBuf = this.outBuf.slice(nl + 1);
+      if (!line) continue;
+      pushTail(this.stdoutTail, line);
+      if (this.pending) pushTail(this.pending.stdout, line);
+      const display = formatEngineLogLine("claude", line);
+      if (display) onLog(display);
+      if (!line.startsWith("{")) continue;
+      try {
+        const obj = JSON.parse(line) as Record<string, unknown>;
+        if (typeof obj.session_id === "string") this.sid = obj.session_id;
+        if (typeof obj.model === "string") this.currentModel = obj.model;
+        const message = obj.message as { model?: unknown } | undefined;
+        if (typeof message?.model === "string") this.currentModel = message.model;
+        if (obj.type === "result") {
+          this.steerQueue = [];
+          const isError = obj.is_error === true;
+          this.settle({
+            exitCode: isError ? 1 : 0,
+            error: isError ? String(obj.result ?? "engine turn error").slice(0, MAX_FAILURE_CHARS) : undefined,
+            sessionId: this.sid,
+            usage: obj.usage && typeof obj.usage === "object" ? (obj.usage as EngineUsage) : undefined,
+            model: this.currentModel
+          });
+        } else if (obj.type === "user") {
+          this.flushSteer();
+        }
+      } catch {
+        // Ignore malformed event JSON.
+      }
+    }
+  }
+
+  private onStderr(buf: Buffer, onLog: (line: string) => void): void {
+    for (const raw of buf.toString("utf8").split("\n")) {
+      const line = cleanLine(raw);
+      if (!line) continue;
+      pushTail(this.stderrTail, line);
+      if (this.pending) pushTail(this.pending.stderr, line);
+      onLog(line);
+    }
+  }
+
+  private flushSteer(): void {
+    if (!this.pending || !this.alive) return;
+    while (this.steerQueue.length > 0) {
+      const text = this.steerQueue.shift();
+      if (!text) continue;
+      try {
+        this.child.stdin?.write(claudeStreamUserMessage(text));
+      } catch {
+        break;
+      }
+    }
+  }
+
+  private settle(result: EngineResult): void {
+    const pending = this.pending;
+    this.pending = null;
+    if (!pending) return;
+    if (pending.timer) clearTimeout(pending.timer);
+    pending.resolve(result);
+  }
+
+  private die(exitCode: number, error: string): void {
+    this.exited = true;
+    this.exitCode = exitCode;
+    const pending = this.pending;
+    if (!pending) return;
+    const detail = failurePreview(exitCode, null, pending.stderr, pending.stdout);
+    this.settle({ exitCode, error: detail || error, sessionId: this.sid });
+  }
+}
+
+function ensureGitRepoForCodex(home: string): void {
+  if (existsSync(join(home, ".git"))) return;
+  const gitEnv = { cwd: home, stdio: "ignore" as const };
+  const identity = ["-c", "user.name=king", "-c", "user.email=king@local", "-c", "commit.gpgsign=false"];
+  execFileSync("git", ["init"], gitEnv);
+  execFileSync("git", [...identity, "commit", "--allow-empty", "-m", "king init"], gitEnv);
+}
+
+class CodexSession implements EngineSession {
+  private readonly child: ReturnType<typeof spawn>;
+  private outBuf = "";
+  private reqId = 0;
+  private initializeId: number | null = null;
+  private threadReqId: number | null = null;
+  private turnStart = { input: 0, cached: 0, output: 0 };
+  private usage = { input: 0, cached: 0, output: 0 };
+  private pending: { resolve: (result: EngineResult) => void; timer: NodeJS.Timeout | null } | null = null;
+  private queuedPrompt: string | null = null;
+  private ready = false;
+  private exited = false;
+  private exitCode = 0;
+  private threadId: string | null = null;
+  private threadWasResume = false;
+  private activeTurnId: string | null = null;
+  private steerGate = false;
+  private stderrTail: string[] = [];
+  private stdoutTail: string[] = [];
+  readonly carriesStandingPrompt: boolean;
+
+  constructor(bin: string, args: string[], private readonly opts: Omit<EngineRunArgs, "prompt" | "signal">) {
+    this.threadId = opts.resumeSessionId ?? null;
+    this.carriesStandingPrompt = !!opts.standingPrompt;
+    this.child = spawn(bin, args, { cwd: opts.home, env: opts.env, stdio: ["pipe", "pipe", "pipe"] });
+    this.child.stdout?.on("data", (buf) => this.onStdout(buf));
+    this.child.stderr?.on("data", (buf) => {
+      for (const raw of buf.toString("utf8").split("\n")) {
+        const line = cleanLine(raw);
+        if (!line) continue;
+        pushTail(this.stderrTail, line);
+        opts.onLog(line);
+      }
+    });
+    this.child.on("error", (err) => this.die(1, err.message));
+    this.child.on("close", (code, sig) => this.die(code ?? (sig ? 128 : 1), sig ? `terminated by ${sig}` : `exited with code ${code ?? 1}`));
+    queueMicrotask(() => {
+      this.initializeId = this.req("initialize", { clientInfo: { name: "king", version: "0.1.0" }, capabilities: { experimentalApi: true } });
+    });
+  }
+
+  get alive(): boolean {
+    return !this.exited && this.child.stdin?.writable === true;
+  }
+
+  get sessionId(): string | null {
+    return this.threadId;
+  }
+
+  send(prompt: string): Promise<EngineResult> {
+    if (this.pending) return Promise.resolve({ exitCode: 1, error: "engine session is already running a turn", sessionId: this.threadId });
+    if (!this.alive) {
+      const exitCode = this.exitCode || 1;
+      return Promise.resolve({ exitCode, error: failurePreview(exitCode, null, this.stderrTail, this.stdoutTail), sessionId: this.threadId });
+    }
+    return new Promise((resolve) => {
+      const pending = { resolve, timer: null as NodeJS.Timeout | null };
+      if (SESSION_TIMEOUT_MS > 0) {
+        pending.timer = setTimeout(() => {
+          this.stop();
+          this.settle("engine session timed out", 124);
+        }, SESSION_TIMEOUT_MS);
+        pending.timer.unref?.();
+      }
+      this.pending = pending;
+      this.turnStart = { ...this.usage };
+      if (this.ready && this.threadId) this.startTurn(prompt);
+      else this.queuedPrompt = prompt;
+    });
+  }
+
+  steer(text: string): void {
+    if (!this.threadId || !this.activeTurnId || this.steerGate || !this.alive || !text.trim()) return;
+    this.req("turn/steer", {
+      threadId: this.threadId,
+      expectedTurnId: this.activeTurnId,
+      input: [{ type: "text", text: stripLoneSurrogates(text) }]
+    });
+  }
+
+  stop(): void {
+    this.exited = true;
+    this.child.stdin?.end();
+    this.child.kill("SIGTERM");
+  }
+
+  private nextId(): number {
+    this.reqId += 1;
+    return this.reqId;
+  }
+
+  private req(method: string, params: unknown): number {
+    const id = this.nextId();
+    this.child.stdin?.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
+    return id;
+  }
+
+  private notify(method: string, params: unknown): void {
+    this.child.stdin?.write(JSON.stringify({ jsonrpc: "2.0", method, params }) + "\n");
+  }
+
+  private threadParams(): Record<string, unknown> {
+    return {
+      cwd: this.opts.home,
+      approvalPolicy: "never",
+      sandbox: "danger-full-access",
+      experimentalRawEvents: true,
+      ...(this.opts.standingPrompt ? { developerInstructions: this.opts.standingPrompt } : {}),
+      ...(this.opts.model ? { model: this.opts.model } : {})
+    };
+  }
+
+  private startThread(): void {
+    const params = this.threadParams();
+    this.threadWasResume = !!this.threadId;
+    this.threadReqId = this.threadId
+      ? this.req("thread/resume", { threadId: this.threadId, ...params })
+      : this.req("thread/start", params);
+  }
+
+  private startTurn(prompt: string): void {
+    if (!this.threadId) return;
+    this.req("turn/start", { threadId: this.threadId, input: [{ type: "text", text: stripLoneSurrogates(prompt) }] });
+  }
+
+  private onStdout(buf: Buffer): void {
+    this.outBuf += buf.toString("utf8");
+    let nl: number;
+    while ((nl = this.outBuf.indexOf("\n")) >= 0) {
+      const raw = this.outBuf.slice(0, nl);
+      this.outBuf = this.outBuf.slice(nl + 1);
+      const line = cleanLine(raw);
+      if (!line) continue;
+      pushTail(this.stdoutTail, line);
+      let msg: Record<string, unknown>;
+      try {
+        msg = JSON.parse(line) as Record<string, unknown>;
+      } catch {
+        this.opts.onLog(line);
+        continue;
+      }
+      if (process.env.KING_CODEX_VERBOSE === "1") this.opts.onLog(line);
+      this.handle(msg);
+    }
+  }
+
+  private handle(msg: Record<string, unknown>): void {
+    if (msg.id === this.initializeId) {
+      this.initializeId = null;
+      if (msg.error) return this.settle(errorMessage(msg.error, "codex initialize failed"));
+      this.notify("initialized", {});
+      this.startThread();
+      return;
+    }
+    if (msg.id === this.threadReqId && msg.error) {
+      if (this.threadWasResume) {
+        this.opts.onLog(`[codex] thread/resume failed (${errorMessage(msg.error, "unknown error")}) - starting a fresh thread`);
+        this.threadId = null;
+        this.threadWasResume = false;
+        this.startThread();
+        return;
+      }
+      this.threadReqId = null;
+      this.settle(errorMessage(msg.error, "codex thread start failed"));
+      return;
+    }
+    const method = typeof msg.method === "string" ? msg.method : "";
+    if (method === "error") {
+      this.settle(errorMessage(msg.params, "codex app-server error"));
+      return;
+    }
+    if (msg.error) {
+      this.settle(errorMessage(msg.error, "codex app-server error"));
+      return;
+    }
+
+    const reduced = reduceCodexAppEvent({ activeTurnId: this.activeTurnId, steerGate: this.steerGate }, msg);
+    for (const line of reduced.logs) this.opts.onLog(line);
+    this.activeTurnId = reduced.activeTurnId;
+    this.steerGate = reduced.steerGate;
+    if (reduced.usage) this.updateUsage(reduced.usage);
+    if (reduced.threadId) {
+      this.threadId = reduced.threadId;
+      this.threadReqId = null;
+      this.threadWasResume = false;
+      this.ready = true;
+      if (this.queuedPrompt && this.pending) {
+        const queued = this.queuedPrompt;
+        this.queuedPrompt = null;
+        this.startTurn(queued);
+      }
+    }
+    if (method === "turn/completed") {
+      this.settle(reduced.turnCompletedError);
+    }
+  }
+
+  private updateUsage(total: unknown): void {
+    if (!total || typeof total !== "object") return;
+    const rec = total as Record<string, unknown>;
+    const num = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+    this.usage = {
+      input: Math.max(this.usage.input, num(rec.inputTokens)),
+      cached: Math.max(this.usage.cached, num(rec.cachedInputTokens)),
+      output: Math.max(this.usage.output, num(rec.outputTokens) + num(rec.reasoningOutputTokens))
+    };
+  }
+
+  private turnUsage(): EngineUsage {
+    const inputTotal = Math.max(0, this.usage.input - this.turnStart.input);
+    const cached = Math.max(0, this.usage.cached - this.turnStart.cached);
+    return {
+      input_tokens: Math.max(0, inputTotal - cached),
+      cache_read_input_tokens: cached,
+      output_tokens: Math.max(0, this.usage.output - this.turnStart.output)
+    };
+  }
+
+  private settle(error?: string, exitCode = error ? 1 : 0): void {
+    const pending = this.pending;
+    this.pending = null;
+    if (!pending) return;
+    if (pending.timer) clearTimeout(pending.timer);
+    pending.resolve({
+      exitCode,
+      error,
+      sessionId: this.threadId,
+      usage: this.turnUsage(),
+      model: this.opts.model ?? null
+    });
+  }
+
+  private die(exitCode: number, error: string): void {
+    this.exited = true;
+    this.exitCode = exitCode;
+    const detail = failurePreview(exitCode, null, this.stderrTail, this.stdoutTail);
+    this.settle(detail || error, exitCode);
+  }
+}
+
+class ClaudeAdapter implements EngineAdapter {
+  id: EngineId = "claude";
+  bin = "claude";
+
+  async seedHome(home: string, persona: { id: string; name: string; role?: string }): Promise<void> {
+    await ensureCommonHome(home);
+    await mkdir(join(home, ".claude", "skills"), { recursive: true });
+    const claudeMd = join(home, "CLAUDE.md");
+    if (!(await exists(claudeMd))) await writeFile(claudeMd, personaHeader(persona), "utf8");
+  }
+
+  async classify(args: EngineClassifyArgs): Promise<{ text: string; error?: string; usage?: EngineUsage }> {
+    const extra = envExtraArgs("KING_TRIAGE_ARGS");
+    const model = ["--model", args.model || "haiku"];
+    const { command, shell, wantsStdinPrompt } = resolveSpawn(this.bin);
+    const usingJson = extra.length === 0;
+    const base = extra.length ? [...extra, "-p"] : ["-p", ...model, "--output-format", "json", "--dangerously-skip-permissions", "--strict-mcp-config"];
+    const argv = wantsStdinPrompt ? base : extra.length ? [...base, args.prompt] : ["-p", args.prompt, ...base.slice(1)];
+    const res = await spawnCapture(command, argv, {
+      cwd: args.cwd,
+      env: { ...args.env, MAX_THINKING_TOKENS: "0" },
+      signal: args.signal,
+      shell,
+      stdinText: wantsStdinPrompt ? args.prompt : undefined,
+      onLog: args.onLog
+    });
+    if (res.error || !usingJson) return res;
+    try {
+      const parsed = JSON.parse(res.text) as { result?: string; usage?: EngineUsage };
+      return { text: parsed.result ?? res.text, usage: parsed.usage };
+    } catch {
+      return res;
+    }
+  }
+
+  probe(args: EngineProbeArgs): Promise<{ text: string; error?: string }> {
+    const model = args.tier === "small" ? ["--model", "haiku"] : [];
+    const { command, shell, wantsStdinPrompt } = resolveSpawn(this.bin);
+    const base = ["-p", ...model, "--output-format", "text", "--dangerously-skip-permissions", "--strict-mcp-config"];
+    const argv = wantsStdinPrompt ? base : ["-p", DOCTOR_PROMPT, ...base.slice(1)];
+    return spawnCapture(command, argv, {
+      cwd: args.cwd,
+      env: { ...args.env, MAX_THINKING_TOKENS: "0" },
+      signal: args.signal,
+      shell,
+      stdinText: wantsStdinPrompt ? DOCTOR_PROMPT : undefined
+    });
+  }
+
+  run(args: EngineRunArgs): Promise<EngineResult> {
+    const extra = envExtraArgs("KING_CLAUDE_ARGS");
+    const model = args.model ? ["--model", args.model] : [];
+    const resume = args.resumeSessionId ? ["--resume", args.resumeSessionId] : [];
+    const { command, shell, wantsStdinPrompt } = resolveSpawn(this.bin);
+    const base = extra.length ? [...extra, ...resume, "-p"] : ["-p", ...resume, ...model, "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions"];
+    const argv = wantsStdinPrompt ? base : extra.length ? [...base, args.prompt] : ["-p", args.prompt, ...base.slice(1)];
+    const env: NodeJS.ProcessEnv = { ...args.env, MAX_THINKING_TOKENS: args.env.MAX_THINKING_TOKENS ?? "0" };
+    if (args.fastModel) env.ANTHROPIC_SMALL_FAST_MODEL = args.fastModel;
+    return spawnEngine(command, argv, {
+      ...args,
+      env,
+      shell,
+      stdinText: wantsStdinPrompt ? args.prompt : undefined
+    });
+  }
+
+  startSession(args: Omit<EngineRunArgs, "prompt" | "signal">): EngineSession | null {
+    if (IS_WIN || envExtraArgs("KING_CLAUDE_ARGS").length) return null;
+    const model = args.model ? ["--model", args.model] : [];
+    const resume = args.resumeSessionId ? ["--resume", args.resumeSessionId] : [];
+    const standingFile = join(args.home, ".king-standing-prompt.md");
+    let systemPrompt: string[] = [];
+    let carriesStandingPrompt = false;
+    if (args.standingPrompt) {
+      try {
+        writeFileSync(standingFile, args.standingPrompt, { mode: 0o600 });
+        systemPrompt = ["--append-system-prompt-file", standingFile];
+        carriesStandingPrompt = true;
+      } catch {
+        systemPrompt = [];
+      }
+    }
+    const argv = [
+      "-p",
+      "--input-format",
+      "stream-json",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      ...resume,
+      ...systemPrompt,
+      ...model,
+      "--dangerously-skip-permissions"
+    ];
+    const env: NodeJS.ProcessEnv = { ...args.env, MAX_THINKING_TOKENS: args.env.MAX_THINKING_TOKENS ?? "0" };
+    if (args.fastModel) env.ANTHROPIC_SMALL_FAST_MODEL = args.fastModel;
+    return new ClaudeSession(this.bin, argv, { ...args, env }, carriesStandingPrompt);
+  }
+}
+
+class CodexAdapter implements EngineAdapter {
+  id: EngineId = "codex";
+  bin = "codex";
+
+  async seedHome(home: string, persona: { id: string; name: string; role?: string }): Promise<void> {
+    await ensureCommonHome(home);
+    const agentsMd = join(home, "AGENTS.md");
+    if (!(await exists(agentsMd))) await writeFile(agentsMd, personaHeader(persona), "utf8");
+  }
+
+  classify(args: EngineClassifyArgs): Promise<{ text: string; error?: string }> {
+    const extra = envExtraArgs("KING_TRIAGE_ARGS");
+    const model = ["--model", args.model || "gpt-5.4-mini"];
+    const { command, shell } = resolveSpawn(this.bin);
+    const argv = extra.length ? ["exec", ...extra, args.prompt] : ["exec", ...model, "--skip-git-repo-check", args.prompt];
+    return spawnCapture(command, argv, {
+      cwd: args.cwd,
+      env: args.env,
+      signal: args.signal,
+      shell,
+      onLog: args.onLog
+    });
+  }
+
+  probe(args: EngineProbeArgs): Promise<{ text: string; error?: string }> {
+    const model = args.tier === "small" ? ["--model", "gpt-5.4-mini"] : [];
+    const { command, shell } = resolveSpawn(this.bin);
+    return spawnCapture(command, ["exec", ...model, "--skip-git-repo-check", DOCTOR_PROMPT], {
+      cwd: args.cwd,
+      env: args.env,
+      signal: args.signal,
+      shell
+    });
+  }
+
+  run(args: EngineRunArgs): Promise<EngineResult> {
+    const extra = envExtraArgs("KING_CODEX_ARGS");
+    const model = args.model ? ["--model", args.model] : [];
+    const { command, shell } = resolveSpawn(this.bin);
+    const base = extra.length ? extra : ["--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check"];
+    return spawnEngine(command, ["exec", ...model, ...base, args.prompt], {
+      ...args,
+      shell
+    });
+  }
+
+  startSession(args: Omit<EngineRunArgs, "prompt" | "signal">): EngineSession | null {
+    if (
+      IS_WIN ||
+      envExtraArgs("KING_CODEX_ARGS").length ||
+      process.env.KING_CODEX_NO_APP_SERVER === "1"
+    ) return null;
+    try {
+      ensureGitRepoForCodex(args.home);
+    } catch (err) {
+      args.onLog(`[codex] could not initialize git repo for app-server: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
+    return new CodexSession(this.bin, ["app-server", "--listen", "stdio://"], args);
+  }
+}
+
+export const ADAPTERS: Record<EngineId, EngineAdapter> = {
+  claude: new ClaudeAdapter(),
+  codex: new CodexAdapter()
+};
+
+export function getAdapter(id: EngineId): EngineAdapter {
+  return ADAPTERS[id];
+}
+
+export async function detectEngines(): Promise<EngineId[]> {
+  const entries = await Promise.all(
+    (Object.keys(ADAPTERS) as EngineId[]).map(async (id) => ((await binOnPath(ADAPTERS[id].bin)) ? id : null))
+  );
+  return entries.filter((id): id is EngineId => id != null);
+}
+
+function parseResponseMode(value: unknown): "me" | "each" | "one-of-us" | undefined {
+  return value === "me" || value === "each" || value === "one-of-us" ? value : undefined;
+}
+
+function extractJsonObject(text: string): string {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const body = fenced ? fenced[1] : text;
+  const start = body.indexOf("{");
+  const end = body.lastIndexOf("}");
+  return start >= 0 && end > start ? body.slice(start, end + 1) : body.trim();
+}
+
+function salvageTriage(text: string): { actionable: boolean; reason?: string; promptNote?: string; responseMode?: "me" | "each" | "one-of-us" } | null {
+  const actionable = text.match(/"actionable"\s*:\s*(true|false)/i);
+  if (!actionable) return null;
+  const reason = text.match(/"reason"\s*:\s*"((?:[^"\\]|\\.)*)"/i);
+  const promptNote = text.match(/"prompt_?note"\s*:\s*"((?:[^"\\]|\\.)*)"/i);
+  const responseMode = text.match(/"response_?mode"\s*:\s*"(me|each|one-of-us)"/i);
+  return {
+    actionable: actionable[1].toLowerCase() === "true",
+    reason: reason ? reason[1].replace(/\\"/g, '"').slice(0, 500) : "recovered from partial triage output",
+    promptNote: promptNote ? promptNote[1].replace(/\\"/g, '"').slice(0, 1200) : undefined,
+    responseMode: parseResponseMode(responseMode?.[1])
+  };
+}
+
+export function parseTriage(text: string): { actionable: boolean; reason?: string; promptNote?: string; responseMode?: "me" | "each" | "one-of-us" } | null {
+  const cleaned = stripLoneSurrogates(text).trim();
+  const raw = extractJsonObject(cleaned);
+  try {
+    const obj = JSON.parse(raw) as { actionable?: unknown; reason?: unknown; promptNote?: unknown; prompt_note?: unknown; responseMode?: unknown; response_mode?: unknown };
+    if (typeof obj.actionable !== "boolean") return salvageTriage(cleaned);
+    return {
+      actionable: obj.actionable,
+      reason: typeof obj.reason === "string" ? obj.reason.slice(0, 500) : undefined,
+      promptNote: typeof obj.promptNote === "string" ? obj.promptNote.slice(0, 1200) : typeof obj.prompt_note === "string" ? obj.prompt_note.slice(0, 1200) : undefined,
+      responseMode: parseResponseMode(obj.responseMode ?? obj.response_mode)
+    };
+  } catch {
+    return salvageTriage(cleaned);
+  }
+}

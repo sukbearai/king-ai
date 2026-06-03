@@ -1,0 +1,45 @@
+{
+  "name": "@suwujs/king",
+  "version": "0.1.0",
+  "description": "A local BYOA agent daemon that bridges remote runtime events to Claude or Codex CLI.",
+  "type": "module",
+  "bin": {
+    "king": "dist/src/cli.js"
+  },
+  "exports": {
+    "./host-sdk": {
+      "types": "./dist/src/host-sdk.d.ts",
+      "default": "./dist/src/host-sdk.js"
+    },
+    "./cron": {
+      "types": "./dist/src/cron.d.ts",
+      "default": "./dist/src/cron.js"
+    },
+    "./message-routing": {
+      "types": "./dist/src/message-routing.d.ts",
+      "default": "./dist/src/message-routing.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test dist/test/*.test.js",
+    "verify": "pnpm build && pnpm test",
+    "dev": "tsx src/cli.ts"
+  },
+  "files": [
+    "dist/src",
+    "../../README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "cleye": "^2.6.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260602.1",
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

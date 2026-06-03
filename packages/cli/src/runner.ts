@@ -1,0 +1,1097 @@
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { delimiter, join } from "node:path";
+import { api, runtimeGet, runtimePost } from "./api.js";
+import { AGENTS_ROOT, SESSIONS_DIR, TRIAGE_DIR } from "./paths.js";
+import { formatEngineLogLine, getAdapter, parseTriage } from "./engine.js";
+import { parseSseStream } from "./sse.js";
+import { writeShim } from "./shim.js";
+import type { AgentConfig, ComputerConfig, EngineAdapter, EngineId, EngineSession, RuntimeRun, TriageVerdict } from "./types.js";
+import { authFailureHint, concise, hashText, isRateLimited } from "./text.js";
+import { agentWorkspaceRoot, detectLocalCapabilities, formatWorkspacePolicy } from "./workspace.js";
+import { formatWorktreePlanForPrompt, planAgentWorktrees } from "./worktree.js";
+import type { RunningAgentState } from "./service.js";
+import { checkTokenBudget, emptyAgentRunStats, recordAgentRunStats, tokenBudgetFromEnv } from "./usage.js";
+import type { AgentRunStats } from "./usage.js";
+import { normalizeAgentLifecycle, runtimeLifecycleNote } from "./lifecycle.js";
+import { installSharedSkills } from "./shared-skills.js";
+import type { SharedSkillSnapshot } from "./shared-skills.js";
+import { linkHostHomeEntries } from "./host-home.js";
+import type { HostHomeEntry } from "./host-home.js";
+import { formatMessageRouteSummary, messageRouteTag, sortRuntimeMessages } from "./message-routing.js";
+import { engineRemediationAdvice } from "./remediation.js";
+import type { RemediationAdvice } from "./remediation.js";
+import { validateAgentConfig } from "./agent-config-validation.js";
+import type { AgentConfigWarning } from "./agent-config-validation.js";
+
+const TOKEN_REFRESH_SKEW_MS = 5 * 60 * 1000;
+const INBOX_POLL_MS = Number(process.env.KING_INBOX_POLL_MS) || 20_000;
+const WAKE_DEBOUNCE_MS = Number(process.env.KING_WAKE_DEBOUNCE_MS) || 2500;
+const RUN_HEARTBEAT_MS = Number(process.env.KING_RUN_HEARTBEAT_MS) || 60_000;
+const TRIAGE_TIMEOUT_MS = Number(process.env.KING_TRIAGE_TIMEOUT_MS) || 30_000;
+const ENGINE_BACKOFF_MS = Number(process.env.KING_ENGINE_BACKOFF_MS) || 60_000;
+const TRIAGE_BACKOFF_MAX_MS = Number(process.env.KING_TRIAGE_BACKOFF_MAX_MS) || 600_000;
+const BIG_BRAIN_SPAWN_JITTER_MS = Number(process.env.KING_BYOA_BIG_BRAIN_SPAWN_JITTER_MS) || 1500;
+const TRIAGE_SPAWN_JITTER_MS = Number(process.env.KING_BYOA_TRIAGE_SPAWN_JITTER_MS) || 500;
+const AGENDA_QUIET_MS = Number(process.env.KING_AGENDA_QUIET_MS) || 180_000;
+const AGENDA_CHECK_MS = Number(process.env.KING_AGENDA_CHECK_MS) || 120_000;
+const NESTED_ENV_BLOCKLIST = [
+  "CODEX_CI",
+  "CODEX_SANDBOX_NETWORK_DISABLED",
+  "CODEX_THREAD_ID",
+  "CLAUDECODE",
+  "CLAUDE_CODE_ENTRYPOINT",
+  "CLAUDE_CODE_SSE_PORT",
+  "KING_AGENT_RUNTIME_URL",
+  "KING_AGENT_RUNTIME_TOKEN",
+  "KING_AGENT_RUNTIME_TOKEN_FILE",
+  "KING_AGENT_ID",
+  "KING_AGENT_HOME",
+  "KING_AGENT_WORKSPACE_ROOT",
+  "KING_AGENT_WORKSPACES",
+  "KING_AGENT_WORKTREE_PLAN",
+  "KING_AGENT_SKILL_SNAPSHOT_ID",
+  "KING_AGENT_SKILL_SNAPSHOT_PATH",
+  "KING_AGENT_SKILL_SNAPSHOT_MANIFEST"
+] as const;
+
+interface InboxRow {
+  id?: string;
+  conversation_id?: string;
+  conversation_title?: string;
+  conversation_kind?: string;
+  conversation_topic?: string;
+  author_name?: string;
+  author_kind?: string;
+  kind?: string;
+  body?: string;
+  priority?: string;
+  message_type?: string;
+  to_agent_id?: string;
+  created_at?: number;
+}
+
+interface InboxPayload {
+  rows?: InboxRow[];
+}
+
+interface TriagePayload {
+  verdict?: TriageVerdict;
+  instructions?: string;
+  input?: string;
+}
+
+interface AgendaPayload {
+  actionable?: boolean;
+  brief?: string;
+  focus?: string;
+}
+
+interface RuntimePreamblePayload {
+  text?: string;
+}
+
+export class Semaphore {
+  private inFlight = 0;
+  private readonly waiters: Array<() => void> = [];
+
+  constructor(private readonly max: number) {}
+
+  async acquire(): Promise<void> {
+    if (this.inFlight < this.max) {
+      this.inFlight += 1;
+      return;
+    }
+    await new Promise<void>((resolve) => this.waiters.push(resolve));
+    this.inFlight += 1;
+  }
+
+  release(): void {
+    this.inFlight = Math.max(0, this.inFlight - 1);
+    const next = this.waiters.shift();
+    if (next) next();
+  }
+
+  get queueDepth(): number {
+    return this.waiters.length;
+  }
+}
+
+function envConcurrency(name: string, fallback: number): number {
+  const n = Number(process.env[name] || fallback);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+}
+
+const bigBrainSem = new Semaphore(envConcurrency("KING_BYOA_MAX_CONCURRENT_BIG_BRAIN", 2));
+const triageSem = new Semaphore(envConcurrency("KING_BYOA_MAX_CONCURRENT_TRIAGE", 4));
+
+function usageForRuntime(usage: unknown): unknown {
+  if (!usage || typeof usage !== "object") return null;
+  return usage;
+}
+
+export function sanitizeNestedEngineEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const clean = { ...env };
+  for (const key of NESTED_ENV_BLOCKLIST) delete clean[key];
+  for (const key of Object.keys(clean)) {
+    if (key.startsWith("ORCA_") || key.startsWith("OPENAI_CODEX_")) delete clean[key];
+  }
+  return clean;
+}
+
+export function selectSteerMessage(rows: InboxRow[], conversationId: string, agentId: string, lastSteeredMsgId?: string | null): InboxRow | null {
+  const inConversation = sortRuntimeMessages(rows.filter((row) => row.conversation_id === conversationId), agentId)
+    .filter((item) => item.route === "steer" || item.route === "respond")
+    .map((item) => item.row);
+  if (inConversation.length === 0) return null;
+  return inConversation.find((row) => row.id && row.id !== lastSteeredMsgId) ?? null;
+}
+
+export function formatSteerPrompt(row: InboxRow, conversationId: string, agentId = row.to_agent_id ?? ""): string {
+  const who = row.author_name ?? "someone";
+  const body = (row.body ?? "").replace(/\s+/g, " ").slice(0, 300);
+  const routed = sortRuntimeMessages([row], agentId)[0];
+  const tag = routed ? messageRouteTag(routed) : "message";
+  return `A ${tag} runtime message arrived while you work. Answer it briefly if it needs you, then resume your current task. ${who} in ${conversationId}: "${body}". Reply one line now with: king reply ${conversationId} 'text'. Then continue what you were doing.`;
+}
+
+export function buildStandingPrompt(workspaces: string[] = [], agentRoot?: string, worktreeNote = ""): string {
+  return `You are a local BYOA teammate agent with your own voice. Use the king CLI on PATH to interact with the runtime.
+
+Privacy boundary: this machine belongs to the operator. Stay inside your private agent home unless the operator explicitly asks otherwise in this runtime.
+${formatWorkspacePolicy(workspaces, agentRoot)}
+${worktreeNote}
+
+Shared skills: when KING_SHARED_SKILLS is configured, the daemon copies every skill directory containing SKILL.md into .claude/skills and .codex/skills in this agent home before starting you.
+The daemon also writes an activation snapshot under .king/skill-snapshots, or KING_SKILL_SNAPSHOTS_DIR when configured, so a run can audit exactly which skill files were available.
+
+Host home entries: when KING_HOST_HOME_ENTRIES is configured, the operator has explicitly linked selected host-home dotfiles or dot directories into this agent home. Treat them as sensitive credentials/configuration and use them only for the runtime task.
+
+Memory: durable memory lives in memory/MEMORY.md and detail files under memory/. When asked to remember something, write it to a memory file and add a one-line pointer to MEMORY.md.
+
+Coordination:
+- Before you commit a reply or shared tool action, run king glance <conversationId>. Treat the composing list as raised hands ordered by who started first.
+- If another teammate already posted the same angle, do not repeat it. React, stay silent, or build on it only when you add something new.
+- If a teammate has an earlier composing claim and your planned reply or shared tool action is redundant, wait and glance again until their claim clears or their reply lands.
+- For shared resources, especially doc create, calendar create, group-level mutations, games, moderation, or one concrete deliverable, announce or claim before doing the work. Prefer king card claim <cardId> for real work and king claim <name> --in <conversationId> for short-lived locks.
+- Trust board cards and claims over your memory. If a card is done or someone owns the same lock, do not duplicate the work.
+- For sequence, relay, round-robin, no-duplicates, or "who starts" tasks, continue from the newest visible message. Never restart the count or fork the opener.
+
+Posting: for replies with backticks, code, $, quotes, or multiple lines, write a draft under notes/ and send it with king reply <conversationId> --file notes/reply.md or king reply <conversationId> --file notes/reply.md. For short plain text, king reply <conversationId> '<text>' is fine. When answering a specific message, use --quote <messageId>. Address teammates by @<agent-id>, not by display name.
+
+Expressiveness: King clients can render Skype shortcode text such as (smile), (clap), (ok), (think), (coffee), or (wfh). Use at most one when it genuinely helps tone; plain text is usually better.
+
+Drive what you own forward. Multi-step turns are fine. If someone DMs you mid-task, answer briefly and continue. If progress is waiting on someone else, send one short follow-up and schedule a check-back with king calendar create '<chase>' --at <iso> --assignee <your-agent-id> --prompt '<what future-you should do>'.
+
+Useful runtime commands include king inbox, messages <conversationId> --tail 30, glance <conversationId>, roster, participants, contacts, whoami, agenda, observe [--json], initiative create|list|get|update, task list|create|update|done, capsule create|list|mine|get|update, artifact put|list|get, hypothesis create|list|update, context get|set|list, send <agentId> <message>, recv [--agent agent-id], escalate <message>, calendar list, card list, dm <agentId> <text>, react <messageId> <emoji>, and doc list|create|show.`;
+}
+
+export function shouldStopEngineOnBeginStop(): boolean {
+  return false;
+}
+
+export function visibleEngineError(engine: EngineId, home: string, exitCode: number, detail?: string): string {
+  const raw = concise(detail || `process exited with code ${exitCode}`);
+  const redacted = raw.split(home).join("<agent home>").split(homedir()).join("~");
+  return `local ${engine} failed (exit ${exitCode}): ${redacted}`;
+}
+
+export function formatTriageNote(triage?: TriageVerdict | null): string {
+  if (!triage) return "";
+  const state = triage.actionable === false ? "not relevant" : "relevant";
+  const source = triage.source ?? "server";
+  const note = triage.promptNote?.trim();
+  const reason = triage.reason?.trim();
+  const responseMode =
+    triage.responseMode === "me"
+      ? "Response mode: me - this wake is specifically for you; answer if the message needs a response."
+      : triage.responseMode === "each"
+        ? "Response mode: each - every relevant teammate may contribute their own distinct reply."
+        : triage.responseMode === "one-of-us"
+          ? "Response mode: one-of-us - coordinate with glance/claims so only one teammate handles the reply."
+          : "";
+  return [
+    `Small-brain inbox triage (${state}, ${source}).`,
+    responseMode,
+    triage.routeHint ? `Route hint: ${triage.routeHint}.` : "",
+    triage.priority ? `Priority: ${triage.priority}.` : "",
+    note ? `Instruction: ${note}` : "",
+    reason ? `Reason: ${reason.slice(0, 500)}` : ""
+  ].filter(Boolean).join("\n");
+}
+
+export function buildChatDelta(digest: string, memoryDigest: string, rosterDigest: string, triage?: TriageVerdict | null): string {
+  const triageNote = formatTriageNote(triage);
+  return `You've been woken because there's new runtime activity, and local triage already decided whether you should respond. If triage marked it relevant, your job is to act, not re-litigate whether to wake.
+
+${triageNote ? `${triageNote}\n\n` : ""}Your unread messages (ALREADY FETCHED - no need to re-run king inbox or messages just to reread these; do run king glance before posting in a group to catch anything posted while you compose):
+${digest || "(none)"}
+
+Your memory index (memory/MEMORY.md):
+${memoryDigest || "(empty)"}
+
+Your team right now (trust over memory - use these current ids for @mentions and king dm):
+${rosterDigest || "(unavailable)"}`;
+}
+
+export function buildAgendaDelta(brief: string, memoryDigest: string, rosterDigest: string): string {
+  return `You've been woken by your own agenda: assigned board work, due calendar items, or follow-up work. The system already triaged that there is real work to progress, so act on one timely item instead of re-deciding whether to wake.
+
+For quiet conversations, first decide if they are genuinely waiting or already concluded. If concluded, do not post; reviving a finished thread is noise. Only when someone is plainly waiting, send at most one useful follow-up.
+
+Agenda:
+${brief}
+
+Your memory index (memory/MEMORY.md):
+${memoryDigest || "(empty)"}
+
+Your team right now (trust over memory - use these current ids for @mentions and king dm):
+${rosterDigest || "(unavailable)"}`;
+}
+
+export function buildRuntimePreambleSection(preamble?: string): string {
+  const text = preamble?.trim();
+  if (!text) return "";
+  return `Runtime preamble (current system context):
+${text.slice(0, 4000)}`;
+}
+
+export function appendRuntimePreamble(delta: string, preamble?: string): string {
+  const section = buildRuntimePreambleSection(preamble);
+  return section ? `${section}\n\n${delta}` : delta;
+}
+
+const CONTEXT_OVERFLOW_RE = /context window|context length|context_length_exceeded|maximum context|reached its context|prompt is too long|input is too long|too many tokens/i;
+const POISONED_BODY_RE = /no (?:low|high) surrogate|unpaired surrogate|lone surrogate|surrogate in string|request body is not valid json/i;
+
+export function isContextOverflow(error: string): boolean {
+  return CONTEXT_OVERFLOW_RE.test(error);
+}
+
+export function isPoisonedTranscript(error: string): boolean {
+  return POISONED_BODY_RE.test(error);
+}
+
+export function mustResetSession(error: string, hadResume: boolean): boolean {
+  if (isContextOverflow(error)) return true;
+  if (isPoisonedTranscript(error)) return true;
+  if (hadResume && /resume|session|conversation/i.test(error)) return true;
+  return false;
+}
+
+export function sessionResetReason(error: string): string {
+  if (isContextOverflow(error)) return "engine hit its context-window limit";
+  if (isPoisonedTranscript(error)) return "transcript poisoned by a malformed character";
+  return "engine session problem";
+}
+
+export function swallowTurnRejection(task: Promise<void>, onError: (message: string) => void): void {
+  void task.catch((err) => {
+    onError(err instanceof Error ? err.message : String(err));
+  });
+}
+
+export class AgentRunner {
+  private readonly home: string;
+  private readonly binDir: string;
+  private readonly sessionFile: string;
+  private readonly adapter: EngineAdapter;
+  private token = "";
+  private tokenExpiresAt = 0;
+  private pollTimer: NodeJS.Timeout | null = null;
+  private wakeDebounceTimer: NodeJS.Timeout | null = null;
+  private busy = false;
+  private pendingRerun = false;
+  private stopped = false;
+  private sessionId: string | null = null;
+  private engineSession: EngineSession | null = null;
+  private engineBackoffUntil = 0;
+  private triageBackoffUntil = 0;
+  private triageTroubleStreak = 0;
+  private lastWakeConvo: string | null = null;
+  private lastTurnEndedAt = 0;
+  private lastAgendaCheckAt = 0;
+  private sideSteering = false;
+  private lastSteeredMsgId: string | null = null;
+  private runStats: AgentRunStats = emptyAgentRunStats();
+  private lastBudgetEventState: "warning" | "exceeded" | null = null;
+  private sharedSkillSnapshot: SharedSkillSnapshot | undefined;
+  private hostHomeEntries: HostHomeEntry[] = [];
+  private remediation: RemediationAdvice | null = null;
+
+  constructor(
+    private readonly cfg: ComputerConfig,
+    private readonly agent: AgentConfig,
+    engine: EngineId,
+    private readonly availableEngines: EngineId[] = [engine],
+    private readonly onStateChange?: () => void
+  ) {
+    this.home = join(AGENTS_ROOT, agent.id);
+    this.binDir = join(this.home, "bin");
+    this.sessionFile = join(SESSIONS_DIR, `${agent.id}.session`);
+    this.adapter = getAdapter(engine);
+  }
+
+  get isBusy(): boolean {
+    return this.busy;
+  }
+
+  runningState(): RunningAgentState {
+    return {
+      id: this.agent.id,
+      name: this.agent.name,
+      engine: this.adapter.id,
+      lifecycle: normalizeAgentLifecycle(this.agent.lifecycle),
+      status: this.busy ? "running" : "idle",
+      model: this.agent.model,
+      sharedSkillSnapshot: this.sharedSkillSnapshot
+        ? {
+            id: this.sharedSkillSnapshot.id,
+            root: this.sharedSkillSnapshot.root,
+            manifestPath: this.sharedSkillSnapshot.manifestPath,
+            skills: this.sharedSkillSnapshot.skills.map((skill) => skill.name)
+          }
+        : null,
+      hostHomeEntries: this.hostHomeEntries,
+      workspaceRoot: this.workspaceRoot(),
+      worktreePlans: this.worktreePlans(),
+      runStats: this.runStats,
+      tokenBudget: checkTokenBudget(this.runStats, tokenBudgetFromEnv()),
+      remediation: this.remediation,
+      configWarnings: this.configWarnings(),
+      updatedAt: new Date().toISOString()
+    };
+  }
+
+  private configWarnings(): AgentConfigWarning[] {
+    return validateAgentConfig(this.agent, this.adapter.id, this.availableEngines);
+  }
+
+  private notifyStateChange(): void {
+    this.onStateChange?.();
+  }
+
+  private workspaceRoot(): string {
+    return agentWorkspaceRoot(this.agent.id, this.home);
+  }
+
+  private worktreePlans() {
+    return planAgentWorktrees({
+      agentId: this.agent.id,
+      workspaces: detectLocalCapabilities().workspaces,
+      baseRoot: this.workspaceRoot()
+    });
+  }
+
+  configMatches(agent: AgentConfig, engine: EngineId): boolean {
+    return (
+      this.adapter.id === engine &&
+      this.agent.name === agent.name &&
+      this.agent.role === agent.role &&
+      this.agent.model === agent.model &&
+      this.agent.fastModel === agent.fastModel &&
+      normalizeAgentLifecycle(this.agent.lifecycle) === normalizeAgentLifecycle(agent.lifecycle)
+    );
+  }
+
+  async start(): Promise<void> {
+    await this.adapter.seedHome(this.home, this.agent);
+    this.hostHomeEntries = await linkHostHomeEntries(this.home);
+    const sharedSkills = await installSharedSkills(this.home);
+    this.sharedSkillSnapshot = sharedSkills.snapshot;
+    await mkdir(this.workspaceRoot(), { recursive: true });
+    await writeShim(this.binDir);
+    await this.loadSessionId();
+    await this.publishEvent("agent.started", {
+      engine: this.adapter.id,
+      lifecycle: normalizeAgentLifecycle(this.agent.lifecycle),
+      lifecycleNote: runtimeLifecycleNote(normalizeAgentLifecycle(this.agent.lifecycle)),
+      home: this.home,
+      workspaces: detectLocalCapabilities().workspaces,
+      worktreePlans: this.worktreePlans(),
+      sharedSkillRoots: sharedSkills.sourceRoots,
+      sharedSkills: sharedSkills.installed.map((skill) => skill.name),
+      sharedSkillSnapshot: sharedSkills.snapshot
+        ? {
+            id: sharedSkills.snapshot.id,
+            root: sharedSkills.snapshot.root,
+            manifestPath: sharedSkills.snapshot.manifestPath,
+            skills: sharedSkills.snapshot.skills.map((skill) => skill.name)
+          }
+        : null,
+      hostHomeEntries: this.hostHomeEntries
+    }, "info", `${this.agent.name} started`);
+    void this.streamLoop();
+    this.pollTimer = setInterval(() => {
+      if (!this.busy && !this.stopped) this.scheduleWake("poll");
+    }, INBOX_POLL_MS);
+  }
+
+  beginStop(): void {
+    this.stopped = true;
+    if (this.pollTimer) clearInterval(this.pollTimer);
+    if (this.wakeDebounceTimer) clearTimeout(this.wakeDebounceTimer);
+    this.pollTimer = null;
+    this.wakeDebounceTimer = null;
+  }
+
+  stop(): void {
+    this.beginStop();
+    this.engineSession?.stop();
+    this.engineSession = null;
+  }
+
+  scheduleWake(reason: string, conversationId?: string | null): void {
+    if (this.stopped) return;
+    if (conversationId) this.lastWakeConvo = conversationId;
+    if (this.busy) {
+      this.pendingRerun = true;
+      this.kickTurn(reason);
+      if (conversationId) void this.maybeSteer(conversationId);
+      return;
+    }
+    if (this.wakeDebounceTimer) return;
+    this.wakeDebounceTimer = setTimeout(() => {
+      this.wakeDebounceTimer = null;
+      this.kickTurn(reason);
+    }, WAKE_DEBOUNCE_MS);
+    this.wakeDebounceTimer.unref?.();
+  }
+
+  private kickTurn(reason: string): void {
+    swallowTurnRejection(this.runTurn(reason), (message) => {
+      console.error(`[${this.agent.id}/${this.adapter.id}] runTurn rejected (swallowed): ${message}`);
+    });
+  }
+
+  private steerRunningTurn(text: string): void {
+    if (!this.busy || !this.engineSession?.alive || !text.trim()) return;
+    this.engineSession.steer(text);
+  }
+
+  private async maybeSteer(conversationId: string): Promise<void> {
+    const session = this.engineSession;
+    if (!session?.alive || this.sideSteering) return;
+    this.sideSteering = true;
+    try {
+      const token = await this.ensureToken();
+      const inbox = await runtimeGet<InboxPayload>(this.cfg.serverUrl, "/inbox?probe=1", token);
+      const latest = selectSteerMessage(inbox?.rows ?? [], conversationId, this.agent.id, this.lastSteeredMsgId);
+      if (!latest?.id) return;
+      this.lastSteeredMsgId = latest.id;
+      session.steer(formatSteerPrompt(latest, conversationId, this.agent.id));
+      console.log(`[${this.agent.id}/${this.adapter.id}] steered live turn for ${conversationId}`);
+    } catch {
+      // Best-effort only; the normal coalesced rerun still handles the inbox.
+    } finally {
+      this.sideSteering = false;
+    }
+  }
+
+  private async ensureToken(): Promise<string> {
+    if (this.token && Date.now() < this.tokenExpiresAt - TOKEN_REFRESH_SKEW_MS) return this.token;
+    const minted = await api<{ token: string; expiresInSeconds: number }>(
+      this.cfg.serverUrl,
+      `/api/agents/${this.agent.id}/runtime-token`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${this.cfg.deviceToken}` },
+        body: "{}"
+      }
+    );
+    this.token = minted.token;
+    this.tokenExpiresAt = Date.now() + minted.expiresInSeconds * 1000;
+    await mkdir(this.binDir, { recursive: true });
+    await writeFile(join(this.binDir, ".runtime-token"), this.token, { mode: 0o600 });
+    return this.token;
+  }
+
+  private engineEnv(): NodeJS.ProcessEnv {
+    const capabilities = detectLocalCapabilities();
+    return {
+      ...sanitizeNestedEngineEnv(process.env),
+      PATH: `${this.binDir}:${process.env.PATH ?? ""}`,
+      KING_AGENT_RUNTIME_URL: `${this.cfg.serverUrl}/runtime`,
+      KING_AGENT_RUNTIME_TOKEN: this.token,
+      KING_AGENT_RUNTIME_TOKEN_FILE: join(this.binDir, ".runtime-token"),
+      KING_AGENT_ID: this.agent.id,
+      KING_AGENT_HOME: this.home,
+      KING_AGENT_WORKSPACE_ROOT: this.workspaceRoot(),
+      KING_AGENT_WORKSPACES: capabilities.workspaces.join(delimiter),
+      KING_AGENT_WORKTREE_PLAN: JSON.stringify(this.worktreePlans()),
+      KING_AGENT_SKILL_SNAPSHOT_ID: this.sharedSkillSnapshot?.id ?? "",
+      KING_AGENT_SKILL_SNAPSHOT_PATH: this.sharedSkillSnapshot?.root ?? "",
+      KING_AGENT_SKILL_SNAPSHOT_MANIFEST: this.sharedSkillSnapshot?.manifestPath ?? ""
+    };
+  }
+
+  private standingPrompt(): string {
+    return buildStandingPrompt(detectLocalCapabilities().workspaces, this.workspaceRoot(), formatWorktreePlanForPrompt(this.worktreePlans()));
+  }
+
+  private async memoryDigest(): Promise<string> {
+    try {
+      const text = (await readFile(join(this.home, "memory", "MEMORY.md"), "utf8")).trim();
+      return text.length > 4000 ? `${text.slice(0, 4000)}\n...(truncated; open memory/MEMORY.md for the rest)` : text;
+    } catch {
+      return "";
+    }
+  }
+
+  private async loadSessionId(): Promise<void> {
+    try {
+      const s = (await readFile(this.sessionFile, "utf8")).trim();
+      if (s) this.sessionId = s;
+    } catch {
+      this.sessionId = null;
+    }
+  }
+
+  private async setSessionId(id?: string | null): Promise<void> {
+    if (id === this.sessionId) return;
+    if (!id) {
+      await this.clearSessionId();
+      return;
+    }
+    this.sessionId = id;
+    await mkdir(SESSIONS_DIR, { recursive: true });
+    await writeFile(this.sessionFile, id, "utf8");
+  }
+
+  private async clearSessionId(): Promise<void> {
+    this.sessionId = null;
+    await rm(this.sessionFile, { force: true });
+  }
+
+  private async resetEngineSession(reason: string): Promise<void> {
+    console.warn(`[${this.agent.id}/${this.adapter.id}] ${reason}; starting a fresh engine session next wake`);
+    await this.clearSessionId();
+    this.engineSession?.stop();
+    this.engineSession = null;
+  }
+
+  private beatRun(token: string, runId?: string): () => void {
+    if (!runId) return () => undefined;
+    const beat = () => void runtimePost(this.cfg.serverUrl, `/runs/${runId}/heartbeat`, token, {});
+    beat();
+    const timer = setInterval(beat, RUN_HEARTBEAT_MS);
+    return () => clearInterval(timer);
+  }
+
+  private async failureConversationIds(token: string, preferred?: string | null): Promise<string[]> {
+    if (preferred) return [preferred];
+    const inbox = await runtimeGet<InboxPayload>(this.cfg.serverUrl, "/inbox?probe=1", token);
+    const ids = new Set<string>();
+    for (const row of inbox?.rows ?? []) {
+      if (row.conversation_id) ids.add(row.conversation_id);
+      if (ids.size >= 5) break;
+    }
+    return [...ids];
+  }
+
+  private async publishEngineFailure(args: { token: string; runId?: string; conversationId?: string | null; error: string; exitCode: number }): Promise<void> {
+    await runtimePost(this.cfg.serverUrl, "/events", args.token, {
+      runId: args.runId,
+      kind: "engine.failed",
+      level: "error",
+      title: `${this.adapter.id} failed`,
+      data: { error: args.error, exitCode: args.exitCode }
+    });
+    const conversationIds = await this.failureConversationIds(args.token, args.conversationId);
+    await Promise.all(
+      conversationIds.map((conversationId) =>
+        runtimePost(this.cfg.serverUrl, "/notices", args.token, {
+          conversationId,
+          agentId: this.agent.id,
+          noticeKind: "byoa_engine_failed",
+          text: `${this.agent.name} could not run on local ${this.adapter.id}: ${args.error}\n${authFailureHint(this.adapter.id, args.error)}`,
+          dedupeKey: `byoa_engine_failed:${this.agent.id}:${conversationId}:${hashText(args.error)}`,
+          dedupeTtlSec: 900
+        })
+      )
+    );
+  }
+
+  private async publishEvent(kind: string, data: Record<string, unknown>, level = "info", title?: string): Promise<void> {
+    try {
+      const token = await this.ensureToken();
+      await runtimePost(this.cfg.serverUrl, "/events", token, {
+        kind,
+        level,
+        title: title ?? kind,
+        agentId: this.agent.id,
+        engine: this.adapter.id,
+        data
+      });
+    } catch {
+      // Events are observability only; never block agent execution on them.
+    }
+  }
+
+  private async publishBudgetEvent(token: string, runId?: string): Promise<void> {
+    const check = checkTokenBudget(this.runStats, tokenBudgetFromEnv());
+    if (!check || check.state === "ok") {
+      this.lastBudgetEventState = null;
+      return;
+    }
+    if (check.state === this.lastBudgetEventState) return;
+    this.lastBudgetEventState = check.state;
+    await runtimePost(this.cfg.serverUrl, "/events", token, {
+      runId,
+      kind: check.exceeded ? "agent.budget_exceeded" : "agent.budget_warning",
+      level: check.exceeded ? "error" : "warn",
+      title: `${this.agent.name} token budget ${check.state}`,
+      agentId: this.agent.id,
+      engine: this.adapter.id,
+      data: check
+    });
+  }
+
+  private triageModel(): string {
+    return process.env.KING_TRIAGE_MODEL || (this.adapter.id === "claude" ? "haiku" : "gpt-5.4-mini");
+  }
+
+  private async recordTriageUsage(token: string, verdict: TriageVerdict, usage: unknown): Promise<void> {
+    await runtimePost(this.cfg.serverUrl, "/triage", token, {
+      source: `byoa-${this.adapter.id}`,
+      model: this.triageModel(),
+      actionable: verdict.actionable,
+      reason: verdict.reason ?? "",
+      responseMode: verdict.responseMode,
+      usage: usageForRuntime(usage)
+    });
+  }
+
+  private async inboxTriage(token: string): Promise<TriageVerdict | null> {
+    const payload = await runtimeGet<TriagePayload>(this.cfg.serverUrl, "/inbox-triage/payload", token);
+    if (!payload) return null;
+    if (payload.verdict) return payload.verdict;
+    if (!payload.instructions || !payload.input) return null;
+
+    const jitter = Math.floor(Math.random() * TRIAGE_SPAWN_JITTER_MS);
+    if (jitter > 0) await new Promise((resolve) => setTimeout(resolve, jitter));
+    await triageSem.acquire();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TRIAGE_TIMEOUT_MS);
+    try {
+      await mkdir(TRIAGE_DIR, { recursive: true });
+      const res = await this.adapter.classify({
+        cwd: TRIAGE_DIR,
+        prompt: `${payload.instructions}\n\n${payload.input}`,
+        env: this.engineEnv(),
+        model: process.env.KING_TRIAGE_MODEL,
+        signal: controller.signal
+      });
+      if (res.error || !res.text.trim()) {
+        const errText = res.error || "no output";
+        if (controller.signal.aborted || isRateLimited(errText)) {
+          return { actionable: false, source: "rate-limited", reason: `triage rate-limited (${errText.slice(0, 120)}); backing off` };
+        }
+        return {
+          actionable: true,
+          source: "fail-open",
+          reason: `local triage failed (${errText.slice(0, 120)}); fail open`,
+          promptNote: "Local small-brain triage failed; read the inbox/context yourself and respond only if a human needs you. Do not silently ack unread human messages unless the thread clearly shows they are irrelevant or already handled."
+        };
+      }
+      const parsed = parseTriage(res.text);
+      if (parsed) {
+        const verdict = { ...parsed, source: "local" };
+        void this.recordTriageUsage(token, verdict, res.usage);
+        return verdict;
+      }
+      return {
+        actionable: true,
+        source: "fail-open",
+        reason: "local triage produced no usable verdict; fail open",
+        promptNote: "Local small-brain triage gave no clear verdict; read the inbox/context yourself and respond only if a human needs you."
+      };
+    } finally {
+      clearTimeout(timer);
+      triageSem.release();
+    }
+  }
+
+  private async snapshotUnread(token: string): Promise<{ seen: Map<string, string>; digest: string; hasReal: boolean }> {
+    const inbox = await runtimeGet<InboxPayload>(this.cfg.serverUrl, "/inbox", token);
+    const rows = inbox?.rows ?? [];
+    const seen = new Map<string, string>();
+    const lines: string[] = [];
+    let hasReal = false;
+    const headered = new Set<string>();
+    for (const row of [...rows].sort((a, b) => (a.created_at ?? 0) - (b.created_at ?? 0))) {
+      if (row.conversation_id && row.id) seen.set(row.conversation_id, row.id);
+    }
+    const routedRows = sortRuntimeMessages(rows, this.agent.id);
+    const routeSummary = formatMessageRouteSummary(rows, this.agent.id, 10);
+    if (routeSummary) {
+      lines.push("Priority route:");
+      for (const line of routeSummary.split("\n")) lines.push(`  ${line}`);
+    }
+    for (const routed of routedRows) {
+      const row = routed.row;
+      if (!row.conversation_id) continue;
+      if (row.kind !== "system") hasReal = true;
+      if (!headered.has(row.conversation_id)) {
+        headered.add(row.conversation_id);
+        lines.push(`# ${row.conversation_id}${row.conversation_title ? ` "${row.conversation_title}"` : ""}`);
+      }
+      const who = row.author_name ?? "someone";
+      const body = row.kind === "system" ? "[system]" : (row.body ?? "").replace(/\s+/g, " ").slice(0, 600);
+      lines.push(`  [${row.id ?? "?"}] [${messageRouteTag(routed)}] ${who}: ${body}`);
+    }
+    return { seen, digest: lines.slice(-40).join("\n"), hasReal };
+  }
+
+  private async ackSeen(token: string, seen: Map<string, string>): Promise<void> {
+    await Promise.all(
+      [...seen].map(([conversationId, upToMessageId]) =>
+        runtimePost(this.cfg.serverUrl, "/conversation/mark-read", token, { conversationId, upToMessageId })
+      )
+    );
+  }
+
+  private async rosterDigest(token: string): Promise<string> {
+    const payload = await runtimeGet<{ roster?: string }>(this.cfg.serverUrl, "/roster", token);
+    return typeof payload?.roster === "string" ? payload.roster.trim().slice(0, 4000) : "";
+  }
+
+  private async runtimePreamble(token: string, reason: string, runId?: string, steerReason?: string): Promise<string> {
+    const params = new URLSearchParams({
+      agent: this.agent.id,
+      reason
+    });
+    if (runId) params.set("runId", runId);
+    if (steerReason) params.set("steerReason", steerReason);
+    const payload = await runtimeGet<RuntimePreamblePayload>(this.cfg.serverUrl, `/preamble?${params.toString()}`, token);
+    return typeof payload?.text === "string" ? payload.text.trim().slice(0, 4000) : "";
+  }
+
+  private promptForTurn(digest: string, memoryDigest: string, rosterDigest: string, preamble: string, triage?: TriageVerdict | null): string {
+    const delta = appendRuntimePreamble(buildChatDelta(digest, memoryDigest, rosterDigest, triage), preamble);
+    if (this.engineSession?.carriesStandingPrompt) return delta;
+    return `${this.standingPrompt()}
+
+${delta}`;
+  }
+
+  private promptForAgenda(brief: string, memoryDigest: string, rosterDigest: string, preamble: string): string {
+    const delta = appendRuntimePreamble(buildAgendaDelta(brief, memoryDigest, rosterDigest), preamble);
+    if (this.engineSession?.carriesStandingPrompt) return delta;
+    return `${this.standingPrompt()}
+
+${delta}`;
+  }
+
+  private logEngineLine(line: string): void {
+    const display = formatEngineLogLine(this.adapter.id, line);
+    if (display) console.log(`[${this.agent.id}/${this.adapter.id}] ${display.slice(0, 500)}`);
+  }
+
+  private ensureEngineSession(): EngineSession | null {
+    if (this.engineSession && this.engineSession.alive) return this.engineSession;
+    this.engineSession = this.adapter.startSession?.({
+      home: this.home,
+      env: this.engineEnv(),
+      model: this.agent.model,
+      fastModel: this.agent.fastModel,
+      resumeSessionId: this.sessionId,
+      standingPrompt: this.standingPrompt(),
+      onLog: (line) => this.logEngineLine(line)
+    }) ?? null;
+    return this.engineSession;
+  }
+
+  private async runTurn(reason: string): Promise<void> {
+    if (this.busy) {
+      this.pendingRerun = true;
+      return;
+    }
+    this.busy = true;
+    try {
+      do {
+        this.pendingRerun = false;
+        if (Date.now() < this.triageBackoffUntil) break;
+        if (Date.now() < this.engineBackoffUntil) break;
+        const token = await this.ensureToken();
+        const activeConversationId = this.lastWakeConvo;
+        this.lastWakeConvo = null;
+        await this.publishEvent("turn.check", { reason, conversationId: activeConversationId });
+        const { seen, digest, hasReal } = await this.snapshotUnread(token);
+        if (!hasReal) {
+          await this.ackSeen(token, seen);
+          await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" });
+          await this.maybeAgendaTurn(token);
+          continue;
+        }
+
+        const triage = await this.inboxTriage(token);
+        if (triage?.source === "rate-limited") {
+          this.triageTroubleStreak += 1;
+          const backoff = Math.min(TRIAGE_BACKOFF_MAX_MS, 30_000 * 2 ** (this.triageTroubleStreak - 1));
+          this.triageBackoffUntil = Date.now() + backoff;
+          console.warn(`[${this.agent.id}/${this.adapter.id}] triage rate-limited; backing off ${Math.round(backoff / 1000)}s without acking unread`);
+          await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" });
+          break;
+        }
+        if (triage?.source !== "fail-open") {
+          this.triageTroubleStreak = 0;
+          this.triageBackoffUntil = 0;
+        }
+        if (triage?.actionable === false) {
+          await this.ackSeen(token, seen);
+          await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" });
+          await this.maybeAgendaTurn(token);
+          continue;
+        }
+
+        await runtimePost(this.cfg.serverUrl, "/status", token, { status: "thinking" });
+        let typingTimer: NodeJS.Timeout | null = null;
+        const typingConvo = activeConversationId;
+        if (typingConvo) {
+          const ping = () => {
+            void runtimePost(this.cfg.serverUrl, "/typing", token, { conversationId: typingConvo, done: false });
+            void runtimePost(this.cfg.serverUrl, "/thinking/mark", token, { conversationIds: [typingConvo], ttlSec: 60 });
+          };
+          ping();
+          typingTimer = setInterval(ping, 6000);
+        }
+        const run = await runtimePost<RuntimeRun>(this.cfg.serverUrl, "/runs", token, {
+          trigger: { source: reason, engine: this.adapter.id }
+        });
+        await this.publishEvent("turn.started", { reason, runId: run?.runId, conversationId: activeConversationId });
+        const stopBeat = this.beatRun(token, run?.runId);
+        let error: string | undefined;
+        let exitCode = 0;
+        let turnModel: string | null | undefined;
+        let turnUsage: unknown;
+        const runStartedAt = Date.now();
+        const jitter = Math.floor(Math.random() * BIG_BRAIN_SPAWN_JITTER_MS);
+        if (jitter > 0) await new Promise((resolve) => setTimeout(resolve, jitter));
+        await bigBrainSem.acquire();
+        try {
+          const [memory, roster, preamble] = await Promise.all([
+            this.memoryDigest(),
+            this.rosterDigest(token),
+            this.runtimePreamble(token, reason, run?.runId)
+          ]);
+          const prompt = this.promptForTurn(digest, memory, roster, preamble, triage);
+          const controller = new AbortController();
+          const resumeSessionId = this.sessionId;
+          const session = this.ensureEngineSession();
+          const result = session
+            ? await session.send(prompt)
+            : await this.adapter.run({
+                home: this.home,
+                prompt,
+                env: this.engineEnv(),
+                model: this.agent.model,
+                fastModel: this.agent.fastModel,
+                resumeSessionId: this.sessionId,
+                standingPrompt: this.standingPrompt(),
+                signal: controller.signal,
+                onLog: (line) => this.logEngineLine(line)
+              });
+          exitCode = result.exitCode;
+          turnModel = result.model;
+          turnUsage = result.usage;
+          if (result.error) this.remediation = engineRemediationAdvice(this.adapter.id, result.error);
+          else this.remediation = null;
+          this.notifyStateChange();
+          error = result.error ? visibleEngineError(this.adapter.id, this.home, exitCode, result.error) : undefined;
+          if (result.sessionId) await this.setSessionId(result.sessionId);
+          if (session && !session.alive) this.engineSession = null;
+          if (error && mustResetSession(error, !!resumeSessionId)) await this.resetEngineSession(sessionResetReason(error));
+        } finally {
+          bigBrainSem.release();
+          stopBeat();
+          if (typingTimer) clearInterval(typingTimer);
+          if (typingConvo) {
+            await runtimePost(this.cfg.serverUrl, "/typing", token, { conversationId: typingConvo, done: true });
+            await runtimePost(this.cfg.serverUrl, "/thinking/unmark", token, { conversationIds: [typingConvo] });
+          }
+        }
+
+        if (error) {
+          if (isRateLimited(error)) this.engineBackoffUntil = Date.now() + ENGINE_BACKOFF_MS;
+          if (!isRateLimited(error)) {
+            await this.publishEngineFailure({ token, runId: run?.runId, conversationId: typingConvo, error, exitCode });
+          }
+        } else {
+          await this.ackSeen(token, seen);
+        }
+        await runtimePost(this.cfg.serverUrl, `/runs/${run?.runId}/finish`, token, {
+          status: error ? "failed" : "completed",
+          summary: error ?? `local ${this.adapter.id} completed`,
+          error,
+          exitCode,
+          model: turnModel ?? this.agent.model,
+          usage: turnUsage ?? null
+        });
+        const durationMs = Date.now() - runStartedAt;
+        this.runStats = recordAgentRunStats(this.runStats, {
+          status: error ? "failed" : "completed",
+          usage: turnUsage && typeof turnUsage === "object" ? turnUsage : null,
+          durationMs,
+          model: turnModel ?? this.agent.model ?? null
+        });
+        this.notifyStateChange();
+        await this.publishBudgetEvent(token, run?.runId);
+        await this.publishEvent(error ? "turn.failed" : "turn.completed", {
+          reason,
+          runId: run?.runId,
+          conversationId: typingConvo,
+          exitCode,
+          model: turnModel ?? this.agent.model ?? null,
+          usage: turnUsage ?? null,
+          durationMs
+        }, error ? "error" : "info");
+        await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" });
+        this.lastTurnEndedAt = Date.now();
+      } while (this.pendingRerun && !this.stopped);
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  private async maybeAgendaTurn(token: string): Promise<void> {
+    const now = Date.now();
+    if (now - this.lastTurnEndedAt < AGENDA_QUIET_MS) return;
+    if (now - this.lastAgendaCheckAt < AGENDA_CHECK_MS) return;
+    this.lastAgendaCheckAt = now;
+    if (Date.now() < this.engineBackoffUntil) return;
+    const agenda = await runtimeGet<AgendaPayload>(this.cfg.serverUrl, "/agenda", token);
+    if (!agenda?.actionable || !agenda.brief) return;
+    console.log(`[${this.agent.id}/${this.adapter.id}] agenda turn START${agenda.focus ? ` ${agenda.focus}` : ""}`);
+    await this.publishEvent("agenda.started", { focus: agenda.focus ?? null });
+    await runtimePost(this.cfg.serverUrl, "/status", token, { status: "thinking" });
+    const run = await runtimePost<RuntimeRun>(this.cfg.serverUrl, "/runs", token, {
+      trigger: { source: "agenda", engine: this.adapter.id }
+    });
+    const stopBeat = this.beatRun(token, run?.runId);
+    let error: string | undefined;
+    let exitCode = 0;
+    let turnModel: string | null | undefined;
+    let turnUsage: unknown;
+    const runStartedAt = Date.now();
+    const jitter = Math.floor(Math.random() * BIG_BRAIN_SPAWN_JITTER_MS);
+    if (jitter > 0) await new Promise((resolve) => setTimeout(resolve, jitter));
+    await bigBrainSem.acquire();
+    try {
+      const [memory, roster, preamble] = await Promise.all([
+        this.memoryDigest(),
+        this.rosterDigest(token),
+        this.runtimePreamble(token, "agenda", run?.runId)
+      ]);
+      const prompt = this.promptForAgenda(agenda.brief, memory, roster, preamble);
+      const controller = new AbortController();
+      const resumeSessionId = this.sessionId;
+      const session = this.ensureEngineSession();
+      const result = session
+        ? await session.send(prompt)
+        : await this.adapter.run({
+            home: this.home,
+            prompt,
+            env: this.engineEnv(),
+            model: this.agent.model,
+            fastModel: this.agent.fastModel,
+            resumeSessionId: this.sessionId,
+            standingPrompt: this.standingPrompt(),
+            signal: controller.signal,
+            onLog: (line) => this.logEngineLine(line)
+          });
+      exitCode = result.exitCode;
+      turnModel = result.model;
+      turnUsage = result.usage;
+      if (result.error) this.remediation = engineRemediationAdvice(this.adapter.id, result.error);
+      else this.remediation = null;
+      this.notifyStateChange();
+      error = result.error ? visibleEngineError(this.adapter.id, this.home, exitCode, result.error) : undefined;
+      if (result.sessionId) await this.setSessionId(result.sessionId);
+      if (session && !session.alive) this.engineSession = null;
+      if (error && mustResetSession(error, !!resumeSessionId)) await this.resetEngineSession(sessionResetReason(error));
+    } finally {
+      bigBrainSem.release();
+      stopBeat();
+    }
+    if (error) {
+      if (isRateLimited(error)) this.engineBackoffUntil = Date.now() + ENGINE_BACKOFF_MS;
+      if (!isRateLimited(error)) {
+        await runtimePost(this.cfg.serverUrl, "/events", token, {
+          runId: run?.runId,
+          kind: "agenda.failed",
+          level: "error",
+          title: `${this.adapter.id} agenda failed`,
+          data: { error }
+        });
+      }
+    }
+    await runtimePost(this.cfg.serverUrl, `/runs/${run?.runId}/finish`, token, {
+      status: error ? "failed" : "completed",
+      summary: error ?? `agenda ${this.adapter.id} completed`,
+      error,
+      exitCode,
+      model: turnModel ?? this.agent.model,
+      usage: turnUsage ?? null
+    });
+    const durationMs = Date.now() - runStartedAt;
+    this.runStats = recordAgentRunStats(this.runStats, {
+      status: error ? "failed" : "completed",
+      usage: turnUsage && typeof turnUsage === "object" ? turnUsage : null,
+      durationMs,
+      model: turnModel ?? this.agent.model ?? null
+    });
+    this.notifyStateChange();
+    await this.publishBudgetEvent(token, run?.runId);
+    await this.publishEvent(error ? "agenda.failed" : "agenda.completed", {
+      runId: run?.runId,
+      focus: agenda.focus ?? null,
+      exitCode,
+      model: turnModel ?? this.agent.model ?? null,
+      usage: turnUsage ?? null,
+      durationMs
+    }, error ? "error" : "info");
+    await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" });
+    this.lastTurnEndedAt = Date.now();
+  }
+
+  private async streamLoop(): Promise<void> {
+    let backoff = 1000;
+    while (!this.stopped) {
+      try {
+        const token = await this.ensureToken();
+        const res = await fetch(`${this.cfg.serverUrl}/runtime/wake-stream`, {
+          headers: { Authorization: `Bearer ${token}`, Accept: "text/event-stream" }
+        });
+        if (!res.ok || !res.body) throw new Error(`wake-stream HTTP ${res.status}`);
+        backoff = 1000;
+        this.scheduleWake("reconnect-catchup");
+        for await (const evt of parseSseStream(res.body)) {
+          if (this.stopped) break;
+          if (evt.event !== "wake" && evt.event !== "steer") continue;
+          let conversationId: string | null = null;
+          try {
+            const data = evt.data ? (JSON.parse(evt.data) as { conversationId?: unknown }) : {};
+            conversationId = typeof data.conversationId === "string" ? data.conversationId : null;
+          } catch {
+            conversationId = null;
+          }
+          if (evt.event === "steer") {
+            if (conversationId) void this.maybeSteer(conversationId);
+            else {
+              const steerText = evt.data ? `New runtime steering event: ${evt.data}` : "New runtime steering event.";
+              this.steerRunningTurn(steerText);
+            }
+          }
+          await this.publishEvent("wake.received", { event: evt.event, conversationId });
+          this.scheduleWake(`sse-${evt.event}`, conversationId);
+        }
+      } catch (err) {
+        if (this.stopped) break;
+        console.warn(`[${this.agent.id}] stream error: ${err instanceof Error ? err.message : String(err)}; retry in ${backoff}ms`);
+        await new Promise((resolve) => setTimeout(resolve, backoff));
+        backoff = Math.min(backoff * 2, 30_000);
+      }
+    }
+  }
+}

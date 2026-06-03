@@ -1,0 +1,11 @@
+name = "king-demo"
+main = "src/index.ts"
+compatibility_date = "2026-06-02"
+
+[[durable_objects.bindings]]
+name = "DEMO_STATE"
+class_name = "DemoState"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["DemoState"]
