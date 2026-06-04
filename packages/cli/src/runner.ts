@@ -1129,6 +1129,14 @@ ${delta}`;
           headers: { Authorization: `Bearer ${token}`, Accept: "text/event-stream", ...tenantHeader(this.cfg.tenantId) },
           signal: this.wakeStreamController.signal
         });
+        if (isWakeStreamAuthFailure(res.status)) {
+          const message = `wake-stream HTTP ${res.status}`;
+          this.token = "";
+          this.tokenExpiresAt = 0;
+          console.error(`[${this.agent.id}/${this.adapter.id}] ${message}; authentication failed, stopping wake stream`);
+          await this.publishEvent("wake.stream.auth_failed", { status: res.status, error: message }, "error");
+          break;
+        }
         if (!res.ok || !res.body) throw new Error(`wake-stream HTTP ${res.status}`);
         console.log(`[${this.agent.id}/${this.adapter.id}] wake-stream connected`);
         await this.publishEvent("wake.stream.connected", { backoffMs: backoff });
@@ -1180,4 +1188,8 @@ export function abortWakeStream(controller: AbortController | null): void {
 export function replaceWakeStreamController(controller: AbortController | null): AbortController {
   abortWakeStream(controller);
   return new AbortController();
+}
+
+export function isWakeStreamAuthFailure(status: number): boolean {
+  return status === 401 || status === 403;
 }

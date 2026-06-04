@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { betterAuth } from "better-auth";
 import { D1Dialect } from "kysely-d1";
+import { render as renderMarkdownHtml } from "@comark/html";
 import { renderPage } from "./page.js";
 import { cronMatches, parseCron } from "@suwujs/king/cron";
 import { formatMessageRouteSummary, messageRouteTag, sortRuntimeMessages } from "@suwujs/king/message-routing";
@@ -68,6 +69,7 @@ type Message = {
   status?: "pending" | "done";
   kind: "message" | "system";
   body: string;
+  body_html?: string;
   priority?: "normal" | "steer";
   message_type?: "message" | "decision" | "blocker";
   to_agent_id?: string;
@@ -1389,7 +1391,7 @@ export class GuiState implements DurableObject {
     if (path === "/runs") return this.authRuntime(request, async () => this.startRun(await request.json().catch(() => null)));
     if (path.startsWith("/runs/") && path.endsWith("/heartbeat")) return this.authRuntime(request, async () => this.runAction(path.split("/")[2] || "run", "heartbeat"));
     if (path.startsWith("/runs/") && path.endsWith("/finish")) return this.authRuntime(request, async () => this.runAction(path.split("/")[2] || "run", "finish", await request.json().catch(() => null)));
-    if (path === "/gui-state") return json(await this.get());
+    if (path === "/gui-state") return json(await stateForGui(await this.get()));
     if (path === "/gui-summary") return this.guiSummary(request);
     if (path === "/gui-activity") return this.guiActivity(url.searchParams);
     if (path === "/gui-export-state") return json(this.snapshot(await this.get()));
@@ -1834,7 +1836,8 @@ export class GuiState implements DurableObject {
       const pending = [...state.messages].reverse().find((message) =>
         message.conversation_id === conversation.id &&
         message.author_kind === "agent" &&
-        message.status === "pending"
+        message.status === "pending" &&
+        pendingBelongsToAgent(message, actor)
       );
       const reply: Message = {
         id: `msg-${now}-${Math.random().toString(36).slice(2)}`,
@@ -1859,6 +1862,7 @@ export class GuiState implements DurableObject {
           body: reply.body,
           quoted_message_id: reply.quoted_message_id,
           created_at: reply.created_at,
+          to_agent_id: undefined,
           readBy: reply.readBy
         });
       } else {
@@ -2207,8 +2211,9 @@ export class GuiState implements DurableObject {
       return tasks.map((task) => formatTaskLine(state, task)).join("\n") + `\n\n${tasks.length} task(s)`;
     }
     if (cmd === "get") {
-      const task = findTask(state, args[1]);
-      return task ? JSON.stringify(task, null, 2) : `task not found: ${args[1] || ""}`;
+      const lookup = lookupTask(state, args[1]);
+      if (!lookup.task) return lookup.error;
+      return JSON.stringify(lookup.task, null, 2);
     }
     if (cmd === "create") {
       const title = stripOptions(args.slice(1), ["--assign", "--assignee", "--priority", "--parent", "--after", "--path", "--pattern", "--desc", "--initiative", "--capsule", "--subsystem", "--profile", "--owner-role", "--reviewer-role", "--acceptance", "--blocked-by"]).join(" ").trim();
@@ -2241,8 +2246,9 @@ export class GuiState implements DurableObject {
         (conflicts.length ? `\nWarnings: ${conflicts.join("; ")}` : "");
     }
     if (cmd === "update") {
-      const task = findTask(state, args[1]);
-      if (!task) return `task not found: ${args[1] || ""}`;
+      const lookup = lookupTask(state, args[1]);
+      if (!lookup.task) return lookup.error;
+      const task = lookup.task;
       const status = readOption(args, "--status");
       if (status && !isTaskStatus(status)) return `invalid task status: ${status}`;
       const nextStatus: TaskStatus = status && isTaskStatus(status) ? status : task.status;
@@ -2278,8 +2284,9 @@ export class GuiState implements DurableObject {
       return `Task ${task.id} updated [${task.status}]`;
     }
     if (cmd === "done") {
-      const task = findTask(state, args[1]);
-      if (!task) return `task not found: ${args[1] || ""}`;
+      const lookup = lookupTask(state, args[1]);
+      if (!lookup.task) return lookup.error;
+      const task = lookup.task;
       const review = readOption(args, "--review");
       const reason = readOption(args, "--reason");
       const artifactIds = parseCsvOption(args, "--artifact") ?? parseCsvOption(args, "--artifacts");
@@ -2512,7 +2519,7 @@ export class GuiState implements DurableObject {
           capsule.status = "merged";
           capsule.updated_at = request.updatedAt;
         }
-        const task = findTask(state, request.taskId);
+        const task = lookupTask(state, request.taskId).task;
         if (task) {
           task.status = "done";
           task.result = task.result || `merged via ${request.id}`;
@@ -3308,10 +3315,15 @@ export class GuiState implements DurableObject {
       status: "pending",
       kind: "message",
       body: "AI 正在处理...",
+      to_agent_id: targetAgent.id,
       created_at: now + 1,
       readBy: [targetAgent.id]
     };
-    state.messages = state.messages.filter((row) => !(row.conversation_id === conversation.id && row.status === "pending"));
+    state.messages = state.messages.filter((row) => !(
+      row.conversation_id === conversation.id &&
+      row.status === "pending" &&
+      pendingBelongsToAgent(row, targetAgent)
+    ));
     conversation.updated_at = now;
     state.messages.push(message);
     state.messages.push(pendingReply);
@@ -3424,8 +3436,9 @@ export class GuiState implements DurableObject {
 
   private async updateTask(taskId: string | undefined, payload: GuiTaskUpdatePayload): Promise<Response> {
     const state = await this.get();
-    const task = findTask(state, taskId);
-    if (!task) return json({ error: `task not found: ${taskId || ""}` }, { status: 404 });
+    const lookup = lookupTask(state, taskId);
+    if (!lookup.task) return json({ error: lookup.error }, { status: lookup.ambiguous ? 409 : 404 });
+    const task = lookup.task;
     const previousStatus = task.status;
     if (typeof payload.status === "string") {
       if (!isTaskStatus(payload.status)) return json({ error: `invalid task status: ${payload.status}` }, { status: 400 });
@@ -3656,11 +3669,92 @@ function normalizeRuntimeTokens(value: Record<string, string> | undefined): Reco
 }
 
 function normalizeMessages(messages: Message[]): Message[] {
-  return messages.map((message) => ({
+  return messages.map(({ body_html: _bodyHtml, ...message }) => ({
     ...message,
     to_agent_id: normalizeAgentId(message.to_agent_id),
     readBy: [...new Set((message.readBy ?? []).map(normalizeAgentId).filter((id): id is string => Boolean(id)))]
   }));
+}
+
+const SAFE_MARKDOWN_TAGS = new Set([
+  "a",
+  "blockquote",
+  "br",
+  "code",
+  "del",
+  "em",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "hr",
+  "li",
+  "ol",
+  "p",
+  "pre",
+  "strong",
+  "table",
+  "tbody",
+  "td",
+  "th",
+  "thead",
+  "tr",
+  "ul"
+]);
+
+const SAFE_URI_PATTERN = /^(https?:|mailto:|\/(?!\/)|#)/i;
+
+function sanitizeMarkdownHtml(html: string): string {
+  return html
+    .replace(/<\s*script\b[\s\S]*?<\s*\/\s*script\s*>/gi, "")
+    .replace(/<\s*style\b[\s\S]*?<\s*\/\s*style\s*>/gi, "")
+    .replace(/<\/?([a-zA-Z][\w:-]*)([^>]*)>/g, (tag, rawName: string, rawAttrs: string) => {
+      const name = rawName.toLowerCase();
+      if (!SAFE_MARKDOWN_TAGS.has(name)) return "";
+      if (tag.startsWith("</")) return `</${name}>`;
+      const attrs = name === "a" ? sanitizeLinkAttributes(rawAttrs) : "";
+      const selfClosing = tag.endsWith("/>") || name === "br" || name === "hr";
+      return `<${name}${attrs}${selfClosing ? " />" : ">"}`;
+    });
+}
+
+function sanitizeLinkAttributes(rawAttrs: string): string {
+  const hrefMatch = rawAttrs.match(/\shref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+  const href = decodeHtmlAttribute(hrefMatch?.[1] ?? hrefMatch?.[2] ?? hrefMatch?.[3] ?? "").trim();
+  if (!href || !SAFE_URI_PATTERN.test(href)) return "";
+  return ` href="${escapeHtmlAttribute(href)}" target="_blank" rel="noreferrer noopener"`;
+}
+
+function decodeHtmlAttribute(value: string): string {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'");
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return value.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[ch] ?? ch);
+}
+
+async function renderMessageMarkdown(message: Message): Promise<Message> {
+  if (message.status === "pending" || message.kind === "system") return { ...message };
+  try {
+    const rendered = await renderMarkdownHtml(message.body || "");
+    return { ...message, body_html: sanitizeMarkdownHtml(rendered) };
+  } catch {
+    return { ...message };
+  }
+}
+
+async function stateForGui(state: State): Promise<State> {
+  return {
+    ...state,
+    messages: await Promise.all(state.messages.map(renderMessageMarkdown))
+  };
 }
 
 function normalizeTasks(tasks: Task[]): Task[] {
@@ -3808,7 +3902,7 @@ function defaultTeamAgents(): Agent[] {
 }
 
 function defaultTeamAgentIds(): string[] {
-  return [DEFAULT_AGENT.id, "dev", "reviewer"];
+  return DEFAULT_TEAM_AGENTS.map((agent) => agent.id);
 }
 
 function normalizeTeamMode(value: unknown): NonNullable<Conversation["teamMode"]> {
@@ -4704,9 +4798,33 @@ function taskScopeFromArgs(args: string[]): Task["scope"] | undefined {
   return { paths, patterns };
 }
 
+type TaskLookupResult = {
+  task?: Task;
+  error: string;
+  ambiguous: boolean;
+};
+
+function lookupTask(state: State, id: string | undefined): TaskLookupResult {
+  if (!id) return { error: "task id required", ambiguous: false };
+  const exact = state.tasks.find((task) => task.id === id);
+  if (exact) return { task: exact, error: "", ambiguous: false };
+  const matches = state.tasks.filter((task) => task.id.startsWith(id));
+  if (matches.length === 1) return { task: matches[0], error: "", ambiguous: false };
+  if (matches.length > 1) {
+    const options = matches.slice(0, 8).map((task) => task.id).join(", ");
+    const suffix = matches.length > 8 ? `, ... ${matches.length - 8} more` : "";
+    return { error: `ambiguous task id: ${id}; matches: ${options}${suffix}`, ambiguous: true };
+  }
+  return { error: `task not found: ${id}`, ambiguous: false };
+}
+
 function findTask(state: State, id: string | undefined): Task | undefined {
-  if (!id) return undefined;
-  return state.tasks.find((task) => task.id === id || task.id.startsWith(id));
+  return lookupTask(state, id).task;
+}
+
+function pendingBelongsToAgent(message: Message, agent: Agent): boolean {
+  if (message.to_agent_id) return message.to_agent_id === agent.id;
+  return message.author_name === agent.name;
 }
 
 function taskIdsMatch(left: string, right: string): boolean {

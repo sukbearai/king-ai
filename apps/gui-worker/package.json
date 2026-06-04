@@ -11,8 +11,10 @@
     "deploy": "wrangler deploy --config wrangler.toml"
   },
   "dependencies": {
+    "@comark/html": "^0.4.0",
     "@suwujs/king": "workspace:*",
     "better-auth": "^1.6.14",
+    "comark": "^0.4.0",
     "hono": "^4.12.23",
     "kysely": "^0.28.17",
     "kysely-d1": "^0.4.0"

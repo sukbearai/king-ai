@@ -82,6 +82,68 @@ export function renderPage(styles: string, clientScript: string): string {
       font-size: 10px;
       white-space: nowrap;
     }
+    .post-body {
+      color: var(--body);
+      line-height: 1.45;
+      word-break: break-word;
+    }
+    .post-body.plain { white-space: pre-wrap; }
+    .post-body.markdown-body {
+      display: grid;
+      gap: 7px;
+      white-space: normal;
+    }
+    .post-body.markdown-body > * { margin: 0; }
+    .post-body.markdown-body ul,
+    .post-body.markdown-body ol {
+      display: grid;
+      gap: 3px;
+      padding-left: 20px;
+    }
+    .post-body.markdown-body blockquote {
+      border-left: 3px solid var(--soft-line);
+      padding-left: 10px;
+      color: var(--muted);
+    }
+    .post-body.markdown-body pre,
+    .post-body.markdown-body code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+    }
+    .post-body.markdown-body pre {
+      overflow: auto;
+      max-width: 100%;
+      border: 1px solid var(--soft-line);
+      background: var(--panel);
+      padding: 8px;
+      white-space: pre;
+    }
+    .post-body.markdown-body code {
+      background: var(--panel);
+      border: 1px solid var(--soft-line);
+      padding: 1px 3px;
+    }
+    .post-body.markdown-body pre code {
+      border: 0;
+      padding: 0;
+      background: transparent;
+    }
+    .post-body.markdown-body table {
+      display: block;
+      width: max-content;
+      max-width: 100%;
+      overflow: auto;
+      border-collapse: collapse;
+    }
+    .post-body.markdown-body th,
+    .post-body.markdown-body td {
+      border: 1px solid var(--soft-line);
+      padding: 4px 6px;
+    }
+    .post-body.markdown-body a {
+      color: #0b6bcb;
+      font-weight: 800;
+    }
     .post.pending .post-body {
       display: inline-flex;
       align-items: center;
@@ -121,11 +183,11 @@ export function renderPage(styles: string, clientScript: string): string {
     .team-agent {
       flex: 0 0 auto;
       display: grid;
-      grid-template-columns: auto minmax(0, 1fr) auto;
+      grid-template-columns: auto minmax(0, 1fr) auto auto;
       align-items: center;
       gap: 6px;
-      min-width: 132px;
-      max-width: 210px;
+      min-width: 166px;
+      max-width: 240px;
       border: 2px solid var(--line);
       background: #fff;
       padding: 4px 7px;
@@ -139,10 +201,15 @@ export function renderPage(styles: string, clientScript: string): string {
       border: 1px solid var(--line);
       background: var(--muted);
     }
-    .team-dot.active { background: var(--accent); }
+    .team-dot.active { background: #5c9f96; }
     .team-name {
       overflow: hidden;
       text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .team-status {
+      color: #5c9f96;
+      font-size: 10px;
       white-space: nowrap;
     }
     .team-meta {
@@ -153,6 +220,13 @@ export function renderPage(styles: string, clientScript: string): string {
     }
     .app {
       grid-template-columns: 180px minmax(0, 1fr);
+    }
+    .main {
+      grid-template-rows: auto auto auto minmax(0, 1fr);
+    }
+    .workspace {
+      min-width: 0;
+      overflow-x: hidden;
     }
     .composer {
       left: 196px;
@@ -166,6 +240,16 @@ export function renderPage(styles: string, clientScript: string): string {
       gap: 6px;
       align-items: center;
       background: var(--canvas);
+    }
+    .composer-tools .jump {
+      position: static;
+      display: none;
+      width: auto;
+      margin: 0;
+      box-shadow: none;
+    }
+    .composer-tools .jump.visible {
+      display: inline-flex;
     }
     .composer-tools button {
       min-height: 24px;
@@ -411,7 +495,7 @@ export function renderPage(styles: string, clientScript: string): string {
       padding: 4px 12px;
     }
     body.mobile-layout .chat-panel {
-      padding: 10px 0 100px;
+      padding: 10px 0 156px;
     }
     body.mobile-layout .message-list {
       padding: 0 10px;
@@ -442,9 +526,6 @@ export function renderPage(styles: string, clientScript: string): string {
       font-size: 14px;
       line-height: 1.5;
     }
-    body.mobile-layout .jump {
-      bottom: 112px;
-    }
     body.mobile-layout .composer {
       left: 8px;
       right: 8px;
@@ -455,13 +536,18 @@ export function renderPage(styles: string, clientScript: string): string {
       padding: 10px;
     }
     body.mobile-layout .composer-tools {
-      bottom: calc(100% + 14px);
-      right: 10px;
+      position: absolute;
+      bottom: calc(100% + 8px);
+      right: 0;
+      justify-content: flex-end;
+      background: var(--canvas);
     }
     #panel-tasks.tab-panel,
     #panel-files.tab-panel,
     #panel-decisions.tab-panel {
+      width: 100%;
       max-width: none;
+      min-width: 0;
       padding: 0;
       gap: 0;
     }
@@ -473,9 +559,12 @@ export function renderPage(styles: string, clientScript: string): string {
     .task-board {
       display: grid;
       gap: 16px;
-      min-height: 100%;
-      padding: 18px;
+      min-width: 0;
+      max-width: 100%;
+      min-height: 0;
+      padding: 24px 18px 40px;
       align-content: start;
+      overflow-x: hidden;
     }
     .task-board-head {
       display: flex;
@@ -483,7 +572,8 @@ export function renderPage(styles: string, clientScript: string): string {
       justify-content: space-between;
       gap: 12px;
       flex-wrap: wrap;
-      max-width: 1140px;
+      width: 100%;
+      max-width: 100%;
     }
     .task-count {
       display: inline-flex;
@@ -519,9 +609,10 @@ export function renderPage(styles: string, clientScript: string): string {
     }
     .task-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
       gap: 10px;
-      max-width: 1140px;
+      width: 100%;
+      max-width: 100%;
     }
     .task-card {
       display: grid;
@@ -597,8 +688,11 @@ export function renderPage(styles: string, clientScript: string): string {
     }
     .task-empty {
       display: grid;
-      place-items: center;
-      min-height: 220px;
+      place-items: start center;
+      width: 100%;
+      max-width: 100%;
+      min-height: 120px;
+      padding-top: 42px;
       color: var(--muted);
       font-size: 12px;
       font-weight: 800;
@@ -652,6 +746,10 @@ export function renderPage(styles: string, clientScript: string): string {
     body.mobile-layout .composer button {
       min-width: 54px;
       padding: 6px 10px;
+    }
+    body.mobile-layout .composer-tools button {
+      min-height: 28px;
+      padding: 4px 10px;
     }
     body.mobile-layout .task-board {
       padding: 10px 10px 24px;
@@ -736,7 +834,7 @@ const TRANSLATIONS = {
     singleAgent: '单 Agent',
     singleAgentDesc: '只让负责人回复',
     defaultTeam: '默认团队',
-    defaultTeamDesc: 'CEO + Dev + Reviewer',
+    defaultTeamDesc: '7 个 agent',
     customTeam: '自定义',
     customTeamDesc: '选择参与角色',
     windowTeam: '参与角色',
@@ -760,6 +858,7 @@ const TRANSLATIONS = {
     waitingAgent: '等待本地 agent 回复',
     agentThinking: 'agent 正在处理...',
     agentTyping: 'agent 正在输入...',
+    backToBottom: '↓ 回到底部',
     loadOlder: '向上滚动加载更早消息...',
     noOlderMessages: '没有更早消息',
     channelDesc: '所有成员的通用频道',
@@ -791,6 +890,13 @@ const TRANSLATIONS = {
     taskEventReview: '提交评审',
     taskEventCompleted: '已完成',
     taskEventChanges: '需修改',
+    agentStatusRunning: '运行中',
+    agentStatusThinking: '思考中',
+    agentStatusUnread: '未读',
+    agentStatusTasks: '任务',
+    agentStatusCards: '卡片',
+    agentStatusIdle: '空闲',
+    agentStatusAvailable: '可用',
     artifactsLabel: '产物',
     revisionLabel: '退回原因',
     mainModelPlaceholder: '例如 opus / gpt-5，留空使用默认',
@@ -834,7 +940,7 @@ const TRANSLATIONS = {
     singleAgent: 'Single agent',
     singleAgentDesc: 'Only the owner replies',
     defaultTeam: 'Default team',
-    defaultTeamDesc: 'CEO + Dev + Reviewer',
+    defaultTeamDesc: '7 agents',
     customTeam: 'Custom',
     customTeamDesc: 'Choose roles',
     windowTeam: 'Roles',
@@ -858,6 +964,7 @@ const TRANSLATIONS = {
     waitingAgent: 'Waiting for local agent',
     agentThinking: 'agent is processing...',
     agentTyping: 'agent is typing...',
+    backToBottom: '↓ Back to bottom',
     loadOlder: 'Scroll to top to load older messages...',
     noOlderMessages: 'No older messages',
     channelDesc: 'General channel for all members',
@@ -889,6 +996,13 @@ const TRANSLATIONS = {
     taskEventReview: 'Review',
     taskEventCompleted: 'Completed',
     taskEventChanges: 'Changes',
+    agentStatusRunning: 'Running',
+    agentStatusThinking: 'Thinking',
+    agentStatusUnread: 'Unread',
+    agentStatusTasks: 'Tasks',
+    agentStatusCards: 'Cards',
+    agentStatusIdle: 'Idle',
+    agentStatusAvailable: 'Available',
     artifactsLabel: 'Artifacts',
     revisionLabel: 'Revision',
     mainModelPlaceholder: 'e.g. opus / gpt-5, blank means default',
@@ -940,7 +1054,7 @@ function setLanguage(lang) {
   applyLanguage();
   refresh();
 }
-const mobileQuery = window.matchMedia('(max-width: 760px)');
+const mobileQuery = window.matchMedia('(max-width: 820px)');
 function syncMobileLayout() {
   document.body.classList.toggle('mobile-layout', mobileQuery.matches);
 }
@@ -950,6 +1064,8 @@ if (mobileQuery.addEventListener) {
 } else if (mobileQuery.addListener) {
   mobileQuery.addListener(syncMobileLayout);
 }
+const workspaceEl = document.querySelector('.workspace');
+if (workspaceEl) workspaceEl.addEventListener('scroll', updateBackToBottom);
 let pendingRevealTimer = 0;
 function pendingDisplayDelayMs(message) {
   const id = String(message.id || '');
@@ -981,6 +1097,27 @@ function schedulePendingReveal(rows) {
     pendingRevealTimer = 0;
     refresh();
   }, Math.max(250, Math.min.apply(Math, remaining)));
+}
+function workspaceScroller() {
+  return document.querySelector('.workspace');
+}
+scrollToBottom = function() {
+  const workspace = workspaceScroller();
+  if (!workspace) return;
+  workspace.scrollTop = workspace.scrollHeight;
+  shouldStickToBottom = true;
+  updateBackToBottom();
+};
+function updateBackToBottom() {
+  const workspace = workspaceScroller();
+  const jumpButton = document.querySelector('.composer-tools .jump');
+  if (!workspace || !jumpButton || !document.getElementById('panel-chat').classList.contains('active')) {
+    if (jumpButton) jumpButton.classList.remove('visible');
+    return;
+  }
+  const distanceFromBottom = workspace.scrollHeight - workspace.clientHeight - workspace.scrollTop;
+  shouldStickToBottom = distanceFromBottom < 80;
+  jumpButton.classList.toggle('visible', !shouldStickToBottom);
 }
 function copyText(value, button) {
   if (!value) return;
@@ -1045,7 +1182,7 @@ function conversationTeamLabel(summary, active) {
   const snapshot = active.teamSnapshot || {};
   const mode = snapshot.mode || active.teamMode || 'team';
   const snapshotAgents = snapshot.agents || [];
-  const ids = snapshot.teamAgentIds && snapshot.teamAgentIds.length ? snapshot.teamAgentIds : active.teamAgentIds && active.teamAgentIds.length ? active.teamAgentIds : ['king-ceo', 'dev', 'reviewer'];
+  const ids = snapshot.teamAgentIds && snapshot.teamAgentIds.length ? snapshot.teamAgentIds : active.teamAgentIds && active.teamAgentIds.length ? active.teamAgentIds : ['king-ceo', 'dev', 'reviewer', 'tester', 'ops', 'researcher', 'doc-writer'];
   const names = ids.map(function(id) {
     const agent = snapshotAgents.find(function(row) { return row.id === id; });
     return agent && (agent.name || agent.id) || agentDisplayName(summary, id);
@@ -1059,6 +1196,8 @@ function setTaskFilter(mode) {
   taskFilterMode = mode === 'done' || mode === 'active' ? mode : 'all';
   localStorage.setItem('king:taskFilter', taskFilterMode);
   renderTasks(window.__lastState || { tasks: [], artifacts: [] });
+  const workspace = document.querySelector('.workspace');
+  if (workspace) workspace.scrollTop = 0;
 }
 function taskMatchesFilter(task) {
   if (taskFilterMode === 'done') return task.status === 'done';
@@ -1287,8 +1426,10 @@ renderMessages = function(state, options) {
     const initial = message.author_kind === 'agent' ? displayInitial(message.author_name || 'AI', 'A') : currentHumanInitial();
     const unreadClass = message.author_kind === 'human' && !(message.readBy || []).includes('king-ceo') ? ' highlight' : '';
     const pendingClass = message.status === 'pending' ? ' pending' : '';
-    const bodyHtml = message.status === 'pending' ? '<span class="typing-dots"><span></span><span></span><span></span></span><span>' + escapeHtml(t('agentThinking')) + '</span>' : escapeHtml(message.body);
-    return '<article class="post' + pendingClass + unreadClass + '"><div class="avatar">' + escapeHtml(initial) + '</div><div><div class="post-top"><span class="author">' + authorHtml(message) + '</span><span class="time">' + formatTime(message.created_at) + '</span></div><div class="post-body">' + bodyHtml + '</div></div></article>';
+    const renderedBody = message.body_html || '';
+    const bodyHtml = message.status === 'pending' ? '<span class="typing-dots"><span></span><span></span><span></span></span><span>' + escapeHtml(t('agentThinking')) + '</span>' : (renderedBody || escapeHtml(message.body));
+    const bodyClass = renderedBody && message.status !== 'pending' ? 'post-body markdown-body' : 'post-body plain';
+    return '<article class="post' + pendingClass + unreadClass + '"><div class="avatar">' + escapeHtml(initial) + '</div><div><div class="post-top"><span class="author">' + authorHtml(message) + '</span><span class="time">' + formatTime(message.created_at) + '</span></div><div class="' + bodyClass + '">' + bodyHtml + '</div></div></article>';
   }).join('');
   const chatWindow = document.getElementById('chatWindow');
   chatWindow.classList.toggle('empty-state', !visibleRows.length);
@@ -1312,9 +1453,6 @@ function currentAgents() {
   const summary = window.__lastSummary || {};
   return summary.agents || summary.activeAgents || (summary.agent ? [summary.agent] : []);
 }
-function defaultTeamAgentIdsForUi() {
-  return ['king-ceo', 'dev', 'reviewer'];
-}
 function selectedWindowMode() {
   const checked = document.querySelector('input[name="newWindowMode"]:checked');
   return checked ? checked.value : 'team';
@@ -1332,7 +1470,7 @@ function renderAgentOptions() {
   if (checks) {
     checks.innerHTML = agents.map(function(agent) {
       const fixed = agent.id === 'king-ceo';
-      const checked = fixed || defaultTeamAgentIdsForUi().includes(agent.id) ? ' checked' : '';
+      const checked = fixed ? ' checked' : '';
       const disabled = fixed ? ' disabled' : '';
       return '<label class="agent-check"><input type="checkbox" name="newWindowTeamAgent" value="' + escapeHtml(agent.id) + '"' + checked + disabled + ' /><span>' + escapeHtml(agent.name || agent.id) + '</span></label>';
     }).join('');
@@ -1419,17 +1557,78 @@ function teamStatusClass(agent) {
   const active = (agent.status === 'running' || agent.status === 'thinking' || (agent.unreadMessages || 0) > 0 || (agent.openTasks || 0) > 0 || (agent.activeCards || 0) > 0);
   return active ? ' active' : '';
 }
+function teamActivityTitle(agent, label, meta) {
+  const reasons = [];
+  if (agent.status === 'running' || agent.status === 'thinking') reasons.push(teamStatusText(agent));
+  if ((agent.unreadMessages || 0) > 0) reasons.push(t('agentStatusUnread') + ' ' + agent.unreadMessages);
+  if ((agent.openTasks || 0) > 0) reasons.push(t('agentStatusTasks') + ' ' + agent.openTasks);
+  if ((agent.activeCards || 0) > 0) reasons.push(t('agentStatusCards') + ' ' + agent.activeCards);
+  return label + ' · ' + (reasons.join(' · ') || teamStatusText(agent)) + ' · ' + meta;
+}
+function teamStatusText(agent) {
+  if (agent.status === 'running') return t('agentStatusRunning');
+  if (agent.status === 'thinking') return t('agentStatusThinking');
+  if ((agent.unreadMessages || 0) > 0) return t('agentStatusUnread');
+  if ((agent.openTasks || 0) > 0) return t('agentStatusTasks');
+  if ((agent.activeCards || 0) > 0) return t('agentStatusCards');
+  return translatedAgentStatus(agent.status);
+}
+function translatedAgentStatus(status) {
+  const value = String(status || '').toLowerCase();
+  if (!value || value === 'idle') return t('agentStatusIdle');
+  if (value === 'avail' || value === 'available' || value === 'online' || value === 'ready') return t('agentStatusAvailable');
+  if (value === 'running') return t('agentStatusRunning');
+  if (value === 'thinking') return t('agentStatusThinking');
+  return status;
+}
+function agentMatchKey(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+function findAgentByName(summary, name) {
+  const key = agentMatchKey(name);
+  const agents = summary.agents || [];
+  return agents.find(function(agent) {
+    return agentMatchKey(agent.id) === key || agentMatchKey(agent.name) === key;
+  });
+}
+function currentRoomAgents(summary) {
+  const seen = new Set();
+  const agents = [];
+  function add(agent) {
+    if (!agent) return;
+    const key = agent.id || agent.name;
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    agents.push(agent);
+  }
+  (summary.activeAgents || []).forEach(add);
+  const state = window.__lastState || {};
+  (state.messages || []).forEach(function(message) {
+    if (message.conversation_id !== activeConversationId || message.author_kind !== 'agent') return;
+    add(findAgentByName(summary, message.author_name) || {
+      id: 'room-' + agentMatchKey(message.author_name),
+      name: message.author_name || 'agent',
+      status: 'idle',
+      unreadMessages: 0,
+      openTasks: 0,
+      activeCards: 0
+    });
+  });
+  if (!agents.length && summary.agent) add(summary.agent);
+  return agents;
+}
 function renderTeamStrip(summary) {
-  const team = summary.activeAgents || summary.agents || (summary.agent ? [summary.agent] : []);
+  const team = currentRoomAgents(summary);
   const strip = document.getElementById('teamStrip');
   if (!strip) return;
   const agentsHtml = team.map(function(agent) {
     const label = agent.name || agent.id || 'agent';
     const meta = 'u' + (agent.unreadMessages || 0) + ' t' + (agent.openTasks || 0);
-    const title = label + ' · ' + (agent.status || 'idle') + ' · ' + meta;
+    const title = teamActivityTitle(agent, label, meta);
     return '<div class="team-agent" title="' + escapeHtml(title) + '">' +
       '<span class="team-dot' + teamStatusClass(agent) + '"></span>' +
       '<span class="team-name">' + escapeHtml(label) + '</span>' +
+      '<span class="team-status">' + escapeHtml(teamStatusText(agent)) + '</span>' +
       '<span class="team-meta">' + escapeHtml(meta) + '</span>' +
       '</div>';
   }).join('');
@@ -1520,6 +1719,9 @@ showPanel = function(name) {
     if (panelEl) panelEl.classList.toggle('active', panel === name);
     if (tabEl) tabEl.classList.toggle('active', panel === name);
   });
+  const workspace = document.querySelector('.workspace');
+  if (workspace) workspace.scrollTop = 0;
+  updateBackToBottom();
 };
 refresh = async function(options) {
   const results = await Promise.all([
@@ -1611,9 +1813,9 @@ refresh();
             <section class="workspace">
               <section id="panel-chat" class="panel active chat-panel">
                 <div id="chatWindow" class="message-list"></div>
-                <button class="jump" onclick="scrollToBottom()">↓ Back to bottom</button>
                 <div class="composer">
                   <div class="composer-tools">
+                    <button class="jump" onclick="scrollToBottom()" data-i18n="backToBottom">↓ Back to bottom</button>
                     <button id="clearButton" onclick="clearMessages()" data-i18n="clearScreen">Clear</button>
                     <button onclick="refresh()" data-i18n="refresh">Refresh</button>
                   </div>
@@ -1687,7 +1889,7 @@ refresh();
                   <label class="mode-option">
                     <input type="radio" name="newWindowMode" value="team" checked onchange="syncNewWindowMode()" />
                     <span class="mode-title" data-i18n="defaultTeam">Default team</span>
-                    <span class="mode-desc" data-i18n="defaultTeamDesc">CEO + Dev + Reviewer</span>
+                    <span class="mode-desc" data-i18n="defaultTeamDesc">7 agents</span>
                   </label>
                   <label class="mode-option">
                     <input type="radio" name="newWindowMode" value="custom" onchange="syncNewWindowMode()" />

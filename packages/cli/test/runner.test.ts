@@ -12,6 +12,7 @@ import {
   formatSteerPrompt,
   isContextOverflow,
   isPoisonedTranscript,
+  isWakeStreamAuthFailure,
   mustResetSession,
   parseWakeEventInfo,
   selectSteerMessage,
@@ -235,6 +236,13 @@ test("wake stream controller helpers abort stale streams", () => {
   assert.equal(second.signal.aborted, true);
   abortWakeStream(second);
   assert.equal(second.signal.aborted, true);
+});
+
+test("wake stream auth failures are terminal statuses", () => {
+  assert.equal(isWakeStreamAuthFailure(401), true);
+  assert.equal(isWakeStreamAuthFailure(403), true);
+  assert.equal(isWakeStreamAuthFailure(500), false);
+  assert.equal(isWakeStreamAuthFailure(429), false);
 });
 
 test("visibleEngineError redacts local home paths before publishing", () => {

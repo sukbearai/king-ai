@@ -211,6 +211,28 @@ test("gui messages use the authenticated user display name", async () => {
   assert.match((await callCli(["contacts", "octo"])).text, /gui-human\tOcto\thuman\tRuntime operator/);
 });
 
+test("gui state renders message markdown with sanitized Comark html", async () => {
+  const bindings = env();
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    body: JSON.stringify({ body: "**bold** [ok](https://example.com) <script>alert(1)</script> [bad](javascript:alert(1))" })
+  }), bindings);
+
+  const state = await json<{ messages: { author_kind: string; body: string; body_html?: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  const human = state.messages.find((message) => message.author_kind === "human");
+  assert.equal(human?.body.includes("**bold**"), true);
+  assert.match(human?.body_html ?? "", /<strong>bold<\/strong>/);
+  assert.match(human?.body_html ?? "", /<a href="https:\/\/example\.com" target="_blank" rel="noreferrer noopener">ok<\/a>/);
+  assert.doesNotMatch(human?.body_html ?? "", /<script|href="javascript:/i);
+
+  const exported = await json<{ state: { messages: { body_html?: string }[] } }>(
+    await worker.fetch(new Request("https://gui/gui/export-state"), bindings)
+  );
+  assert.equal(exported.state.messages.some((message) => message.body_html), false);
+});
+
 test("gui runtime marks read only through the requested message", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["claude", "codex"] });
@@ -376,6 +398,7 @@ test("gui wake events target the assigned collaborator", async () => {
 test("new gui windows carry a collaboration team", async () => {
   const bindings = env();
   await pairComputer(bindings, { engines: ["codex"] });
+  const defaultTeamAgentIds = ["king-ceo", "dev", "reviewer", "tester", "ops", "researcher", "doc-writer"];
   const createdWindow = await json<{
     conversation: { id: string; coordinatorAgentId?: string; teamAgentIds?: string[]; teamSnapshot?: { mode: string; teamAgentIds: string[]; agents: { id: string }[] } };
   }>(
@@ -386,9 +409,9 @@ test("new gui windows carry a collaboration team", async () => {
   );
 
   assert.equal(createdWindow.conversation.coordinatorAgentId, "king-ceo");
-  assert.deepEqual(createdWindow.conversation.teamAgentIds, ["king-ceo", "dev", "reviewer"]);
+  assert.deepEqual(createdWindow.conversation.teamAgentIds, defaultTeamAgentIds);
   assert.equal(createdWindow.conversation.teamSnapshot?.mode, "team");
-  assert.deepEqual(createdWindow.conversation.teamSnapshot?.agents.map((agent) => agent.id), ["king-ceo", "dev", "reviewer"]);
+  assert.deepEqual(createdWindow.conversation.teamSnapshot?.agents.map((agent) => agent.id), defaultTeamAgentIds);
 
   await worker.fetch(new Request("https://gui/gui/message", {
     method: "POST",
@@ -408,8 +431,8 @@ test("new gui windows carry a collaboration team", async () => {
     activeAgents: { id: string }[];
   }>(await worker.fetch(new Request(`https://gui/gui/summary?conversationId=${createdWindow.conversation.id}`), bindings));
   assert.equal(summary.activeConversation?.id, createdWindow.conversation.id);
-  assert.deepEqual(summary.activeConversation?.teamAgentIds, ["king-ceo", "dev", "reviewer"]);
-  assert.deepEqual(summary.activeAgents.map((agent) => agent.id), ["king-ceo", "dev", "reviewer"]);
+  assert.deepEqual(summary.activeConversation?.teamAgentIds, defaultTeamAgentIds);
+  assert.deepEqual(summary.activeAgents.map((agent) => agent.id), defaultTeamAgentIds);
 });
 
 test("gui windows can choose single and custom collaboration teams", async () => {
@@ -1051,6 +1074,54 @@ test("gui messages show a pending agent placeholder until runtime reply replaces
   ]);
 });
 
+test("runtime replies only replace pending placeholders for the executing agent", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const ceoToken = await json<{ token: string }>(await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${paired.deviceToken}` }
+  }), bindings));
+  const devToken = await json<{ token: string }>(await worker.fetch(new Request("https://gui/api/agents/dev/runtime-token", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${paired.deviceToken}` }
+  }), bindings));
+
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    body: JSON.stringify({ body: "please coordinate" })
+  }), bindings);
+
+  await json<{ text: string }>(await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${devToken.token}` },
+    body: JSON.stringify({ agentId: "dev", argv: ["reply", "king-convo", "dev status"] })
+  }), bindings));
+
+  let state = await json<{ messages: { author_name: string; author_kind: string; body: string; status?: string; to_agent_id?: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  assert.deepEqual(state.messages.filter((row) => row.author_kind !== "system").map((row) => [row.author_name, row.body, row.status, row.to_agent_id]), [
+    ["King Human", "please coordinate", undefined, "king-ceo"],
+    ["King CEO", "AI 正在处理...", "pending", "king-ceo"],
+    ["Dev", "dev status", "done", undefined]
+  ]);
+
+  await json<{ text: string }>(await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${ceoToken.token}` },
+    body: JSON.stringify({ agentId: "king-ceo", argv: ["reply", "king-convo", "ceo close"] })
+  }), bindings));
+
+  state = await json<{ messages: { author_name: string; author_kind: string; body: string; status?: string; to_agent_id?: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  assert.deepEqual(state.messages.filter((row) => row.author_kind !== "system").map((row) => [row.author_name, row.body, row.status, row.to_agent_id]), [
+    ["King Human", "please coordinate", undefined, "king-ceo"],
+    ["King CEO", "ceo close", "done", undefined],
+    ["Dev", "dev status", "done", undefined]
+  ]);
+});
+
 test("runtime replies use the executing agent display name", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["claude"] });
@@ -1199,6 +1270,7 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /# all/);
   assert.match(html, /id="chatWindow"/);
   assert.match(html, /id="settingsDialog"/);
+  assert.match(html, /\.main\s*\{[\s\S]*grid-template-rows:\s*auto auto auto minmax\(0, 1fr\)/);
   assert.match(html, /function currentHumanName/);
   assert.match(html, /function displayInitial/);
   assert.match(html, /displayInitial\(message\.author_name \|\| 'AI', 'A'\)/);
@@ -1214,6 +1286,8 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.doesNotMatch(html, /data-agent-role-id/);
   assert.doesNotMatch(html, /onchange="renderRolePrompts\(\)"/);
   assert.match(html, /const fixed = agent\.id === 'king-ceo'/);
+  assert.match(html, /const checked = fixed \? ' checked' : ''/);
+  assert.doesNotMatch(html, /function defaultTeamAgentIdsForUi/);
   assert.match(html, /\.agent-check\s*\{[\s\S]*color:\s*var\(--ink\)/);
   assert.match(html, /\.agent-check input\s*\{[\s\S]*width:\s*16px/);
   assert.match(html, /function syncNewWindowMode/);
@@ -1236,12 +1310,16 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /mobile-layout/);
   assert.match(html, /body\.mobile-layout \.app[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\)/);
   assert.doesNotMatch(html, /body\.mobile-layout \.rail/);
-  assert.match(html, /matchMedia\('\(max-width:\s*760px\)'\)/);
+  assert.match(html, /matchMedia\('\(max-width:\s*820px\)'\)/);
   assert.match(html, /window-delete/);
   assert.match(html, /function deleteConversation/);
   assert.match(html, /id="clearButton"/);
   assert.match(html, /function clearMessages/);
   assert.match(html, /renderMessages = function/);
+  assert.match(html, /\.post-body\.markdown-body/);
+  assert.match(html, /const renderedBody = message\.body_html \|\| ''/);
+  assert.match(html, /renderedBody \|\| escapeHtml\(message\.body\)/);
+  assert.match(html, /'post-body markdown-body'/);
   assert.match(html, /\.message-list\.empty-state\s*\{[\s\S]*position:\s*sticky/);
   assert.match(html, /function pendingDisplayDelayMs/);
   assert.match(html, /return 3000 \+ hash/);
@@ -1251,9 +1329,12 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /window\.setTimeout\(function\(\) \{[\s\S]*refresh\(\);/);
   assert.match(html, /const visibleRows = rows\.filter\(shouldRenderChatMessage\)/);
   assert.match(html, /\.task-board\s*\{[\s\S]*display:\s*grid/);
+  assert.match(html, /\.task-board\s*\{[\s\S]*overflow-x:\s*hidden/);
+  assert.match(html, /#panel-tasks\.tab-panel,[\s\S]*#panel-files\.tab-panel,[\s\S]*#panel-decisions\.tab-panel\s*\{[\s\S]*width:\s*100%/);
+  assert.match(html, /#panel-tasks\.tab-panel,[\s\S]*#panel-files\.tab-panel,[\s\S]*#panel-decisions\.tab-panel\s*\{[\s\S]*max-width:\s*none/);
   assert.match(html, /body\.mobile-layout \.team-strip\s*\{[\s\S]*overflow-x:\s*auto/);
   assert.match(html, /body\.mobile-layout \.team-strip\s*\{[\s\S]*flex-wrap:\s*nowrap/);
-  assert.match(html, /\.task-grid\s*\{[\s\S]*repeat\(auto-fill, minmax\(230px, 1fr\)\)/);
+  assert.match(html, /\.task-grid\s*\{[\s\S]*repeat\(auto-fill, minmax\(min\(300px, 100%\), 1fr\)\)/);
   assert.match(html, /\.task-card\s*\{[\s\S]*min-height:\s*122px/);
   assert.match(html, /body\.mobile-layout \.task-card\s*\{[\s\S]*min-height:\s*0/);
   assert.match(html, /body\.mobile-layout \.task-card p\s*\{[\s\S]*-webkit-line-clamp:\s*2/);
@@ -1318,17 +1399,47 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /id="teamStrip"/);
   assert.match(html, /class="team-agent"/);
   assert.match(html, /function renderTeamStrip/);
+  assert.match(html, /function teamActivityTitle/);
+  assert.match(html, /function currentRoomAgents/);
+  assert.match(html, /function teamStatusText/);
+  assert.match(html, /agentStatusThinking: '思考中'/);
+  assert.match(html, /agentStatusUnread: '未读'/);
+  assert.match(html, /agentStatusIdle: '空闲'/);
+  assert.match(html, /agentStatusAvailable: '可用'/);
+  assert.match(html, /agentStatusThinking: 'Thinking'/);
+  assert.match(html, /agentStatusUnread: 'Unread'/);
+  assert.match(html, /agentStatusAvailable: 'Available'/);
+  assert.match(html, /return t\('agentStatusThinking'\)/);
+  assert.match(html, /return t\('agentStatusUnread'\)/);
+  assert.match(html, /function translatedAgentStatus/);
+  assert.match(html, /value === 'avail' \|\| value === 'available' \|\| value === 'online' \|\| value === 'ready'/);
+  assert.doesNotMatch(html, /\.team-status\s*\{[\s\S]*text-transform:\s*uppercase/);
+  assert.match(html, /findAgentByName\(summary, message\.author_name\)/);
+  assert.match(html, /message\.conversation_id !== activeConversationId \|\| message\.author_kind !== 'agent'/);
+  assert.match(html, /class="team-status"/);
+  assert.match(html, /\.team-dot\.active\s*\{\s*background:\s*#5c9f96/);
   assert.match(html, /ownerRole=/);
   assert.match(html, /reviewerRole=/);
   assert.match(html, /blockedBy=/);
   assert.match(html, /acceptance/);
   assert.match(html, /class="composer-tools"/);
+  assert.match(html, /class="composer-tools"[\s\S]*data-i18n="backToBottom"[\s\S]*data-i18n="clearScreen"[\s\S]*data-i18n="refresh"/);
+  assert.match(html, /backToBottom: '↓ 回到底部'/);
+  assert.match(html, /backToBottom: '↓ Back to bottom'/);
   assert.match(html, /\.composer-tools[\s\S]*position:\s*absolute/);
   assert.match(html, /\.composer-tools[\s\S]*bottom:\s*calc\(100% \+ 10px\)/);
   assert.match(html, /\.composer-tools[\s\S]*background:\s*var\(--canvas\)/);
+  assert.match(html, /\.composer-tools \.jump[\s\S]*position:\s*static/);
+  assert.match(html, /\.composer-tools \.jump\.visible[\s\S]*display:\s*inline-flex/);
+  assert.match(html, /body\.mobile-layout \.chat-panel[\s\S]*padding:\s*10px 0 156px/);
   assert.match(html, /body\.mobile-layout \.composer[\s\S]*bottom:\s*16px/);
-  assert.match(html, /body\.mobile-layout \.composer-tools[\s\S]*bottom:\s*calc\(100% \+ 14px\)/);
+  assert.match(html, /body\.mobile-layout \.composer-tools[\s\S]*position:\s*absolute/);
+  assert.match(html, /body\.mobile-layout \.composer-tools[\s\S]*bottom:\s*calc\(100% \+ 8px\)/);
+  assert.doesNotMatch(html, /body\.mobile-layout \.composer-tools[\s\S]*position:\s*static/);
+  assert.doesNotMatch(html, /let shouldStickToBottom = true;[\s\S]*let shouldStickToBottom = true;/);
   assert.match(html, /function conversationTeamLabel/);
+  assert.match(html, /defaultTeamDesc: '7 个 agent'/);
+  assert.match(html, /defaultTeamDesc: '7 agents'/);
   assert.match(html, /单 Agent：/);
   assert.match(html, /默认团队：/);
   assert.match(html, /自定义团队：/);
@@ -1942,6 +2053,46 @@ test("gui runtime supports task pool commands with dependencies", async () => {
 
   const roster = await callCli(["roster"]);
   assert.match(roster.text, /tasks=1/);
+});
+
+test("gui runtime rejects ambiguous short task id prefixes", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const tokenRes = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  const callCli = async (argv: string[]) => json<{ text: string }>(await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${tokenRes.token}` },
+    body: JSON.stringify({ argv })
+  }), bindings));
+
+  const first = await callCli(["task", "create", "First ambiguous task"]);
+  const second = await callCli(["task", "create", "Second ambiguous task"]);
+  const firstId = first.text.match(/Task (task-[^ ]+) created/)?.[1] ?? "";
+  const secondId = second.text.match(/Task (task-[^ ]+) created/)?.[1] ?? "";
+  assert.notEqual(firstId, "");
+  assert.notEqual(secondId, "");
+
+  assert.match((await callCli(["task", "get", "task-"])).text, /ambiguous task id: task-/);
+  assert.match((await callCli(["task", "update", "task-", "--status", "done"])).text, /ambiguous task id: task-/);
+  assert.match((await callCli(["task", "done", "task-", "wrong task"])).text, /ambiguous task id: task-/);
+
+  const state = await json<{ tasks: { id: string; status: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  assert.equal(state.tasks.find((task) => task.id === firstId)?.status, "pending");
+  assert.equal(state.tasks.find((task) => task.id === secondId)?.status, "pending");
+
+  const guiUpdate = await worker.fetch(new Request("https://gui/gui/task/task-/update", {
+    method: "POST",
+    body: JSON.stringify({ status: "done" })
+  }), bindings);
+  assert.equal(guiUpdate.status, 409);
+  assert.match(await guiUpdate.text(), /ambiguous task id: task-/);
 });
 
 test("gui runtime supports initiative board links across tasks and capsules", async () => {
