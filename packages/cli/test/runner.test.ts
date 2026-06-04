@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  abortWakeStream,
   buildStandingPrompt,
   buildAgendaDelta,
   buildChatDelta,
@@ -18,6 +19,7 @@ import {
   sessionResetReason,
   shouldHandleWakeEvent,
   shouldStopEngineOnBeginStop,
+  replaceWakeStreamController,
   sanitizeNestedEngineEnv,
   swallowTurnRejection,
   visibleEngineError
@@ -221,6 +223,18 @@ test("runtime preamble helpers prepend current system context", () => {
 
 test("beginStop phase preserves in-flight engine sessions", () => {
   assert.equal(shouldStopEngineOnBeginStop(), false);
+});
+
+test("wake stream controller helpers abort stale streams", () => {
+  const first = new AbortController();
+  const second = replaceWakeStreamController(first);
+  assert.equal(first.signal.aborted, true);
+  assert.equal(second.signal.aborted, false);
+
+  abortWakeStream(second);
+  assert.equal(second.signal.aborted, true);
+  abortWakeStream(second);
+  assert.equal(second.signal.aborted, true);
 });
 
 test("visibleEngineError redacts local home paths before publishing", () => {

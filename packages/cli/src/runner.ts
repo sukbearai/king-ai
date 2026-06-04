@@ -336,6 +336,7 @@ export class AgentRunner {
   private tokenExpiresAt = 0;
   private pollTimer: NodeJS.Timeout | null = null;
   private wakeDebounceTimer: NodeJS.Timeout | null = null;
+  private wakeStreamController: AbortController | null = null;
   private busy = false;
   private pendingRerun = false;
   private stopped = false;
@@ -476,6 +477,8 @@ export class AgentRunner {
     this.stopped = true;
     if (this.pollTimer) clearInterval(this.pollTimer);
     if (this.wakeDebounceTimer) clearTimeout(this.wakeDebounceTimer);
+    abortWakeStream(this.wakeStreamController);
+    this.wakeStreamController = null;
     this.pollTimer = null;
     this.wakeDebounceTimer = null;
   }
@@ -1121,8 +1124,10 @@ ${delta}`;
     while (!this.stopped) {
       try {
         const token = await this.ensureToken();
+        this.wakeStreamController = replaceWakeStreamController(this.wakeStreamController);
         const res = await fetch(`${this.cfg.serverUrl}/runtime/wake-stream`, {
-          headers: { Authorization: `Bearer ${token}`, Accept: "text/event-stream", ...tenantHeader(this.cfg.tenantId) }
+          headers: { Authorization: `Bearer ${token}`, Accept: "text/event-stream", ...tenantHeader(this.cfg.tenantId) },
+          signal: this.wakeStreamController.signal
         });
         if (!res.ok || !res.body) throw new Error(`wake-stream HTTP ${res.status}`);
         console.log(`[${this.agent.id}/${this.adapter.id}] wake-stream connected`);
@@ -1160,7 +1165,19 @@ ${delta}`;
         await this.publishEvent("wake.stream.error", { error: message, retryInMs: backoff }, "warn");
         await new Promise((resolve) => setTimeout(resolve, backoff));
         backoff = Math.min(backoff * 2, 30_000);
+      } finally {
+        abortWakeStream(this.wakeStreamController);
+        this.wakeStreamController = null;
       }
     }
   }
+}
+
+export function abortWakeStream(controller: AbortController | null): void {
+  if (controller && !controller.signal.aborted) controller.abort();
+}
+
+export function replaceWakeStreamController(controller: AbortController | null): AbortController {
+  abortWakeStream(controller);
+  return new AbortController();
 }

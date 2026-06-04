@@ -23,3 +23,19 @@ test("parseSseStream parses split SSE blocks", async () => {
     { id: "2", event: "steer", data: "{}" }
   ]);
 });
+
+test("parseSseStream rejects an unterminated frame beyond the buffer limit", async () => {
+  async function* chunks() {
+    yield "data: ";
+    yield "1234567890";
+  }
+
+  await assert.rejects(
+    async () => {
+      for await (const _ of parseSseStream(chunks(), { maxBufferBytes: 8 })) {
+        // Drain the stream.
+      }
+    },
+    /SSE frame exceeded 8 bytes/
+  );
+});

@@ -11,6 +11,7 @@ import type { HostPolicyCheck } from "./host-policy.js";
 import type { HostRunSpecInput, JsonSafeHostLaunchPlan, ProjectRunSpec, ThreadSyncSpec } from "./host-run-spec.js";
 import type { HostRunRequest, HostRunRequestStatus, HostRunSubmitInput, HostRunSubmitResult, HostRunUpdateResult } from "./host-runs.js";
 import type { HostTimelineEvent } from "./host-timeline.js";
+import { DEFAULT_SSE_MAX_BUFFER_BYTES } from "./sse.js";
 import type { EngineId } from "./types.js";
 import type { UsageExpenseRow, UsageSummary } from "./usage.js";
 
@@ -994,6 +995,9 @@ async function* streamSseFrames(body: HostSdkReadableBody): AsyncGenerator<{ eve
   let buffer = "";
   for await (const chunk of readBodyChunks(body)) {
     buffer += decoder.decode(chunk, { stream: true });
+    if (Buffer.byteLength(buffer, "utf8") > DEFAULT_SSE_MAX_BUFFER_BYTES) {
+      throw new Error(`SSE frame exceeded ${DEFAULT_SSE_MAX_BUFFER_BYTES} bytes without a terminator`);
+    }
     let index = buffer.indexOf("\n\n");
     while (index !== -1) {
       const frame = buffer.slice(0, index);

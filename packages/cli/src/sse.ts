@@ -4,12 +4,21 @@ export interface SseEvent {
   id?: string;
 }
 
-export async function* parseSseStream(body: AsyncIterable<Uint8Array | string>): AsyncGenerator<SseEvent> {
+export const DEFAULT_SSE_MAX_BUFFER_BYTES = 1024 * 1024;
+
+export async function* parseSseStream(
+  body: AsyncIterable<Uint8Array | string>,
+  options: { maxBufferBytes?: number } = {}
+): AsyncGenerator<SseEvent> {
   const decoder = new TextDecoder("utf-8");
+  const maxBufferBytes = options.maxBufferBytes ?? DEFAULT_SSE_MAX_BUFFER_BYTES;
   let buf = "";
 
   for await (const chunk of body) {
     buf += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
+    if (Buffer.byteLength(buf, "utf8") > maxBufferBytes) {
+      throw new Error(`SSE frame exceeded ${maxBufferBytes} bytes without a terminator`);
+    }
     let splitAt: number;
     while ((splitAt = buf.indexOf("\n\n")) >= 0) {
       const block = buf.slice(0, splitAt);
