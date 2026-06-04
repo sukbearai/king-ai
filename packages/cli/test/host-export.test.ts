@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { exportHostArtifacts, planHostExport } from "../src/host-export.js";
+import { createHostCapsule } from "../src/host-ledger.js";
 
 function git(repo: string, args: string[]): string {
   return execFileSync("git", ["-C", repo, ...args], { encoding: "utf8" });
@@ -28,7 +29,7 @@ test("planHostExport previews workspace deliverables and dirty repo patches", as
   git(repo, ["commit", "-m", "initial"]);
   await writeFile(join(repo, "app.txt"), "after\n", "utf8");
 
-  const plan = planHostExport({
+  const plan = await planHostExport({
     workspaceRoot: workspace,
     repoRoot: repo,
     outputDir: join(root, "deliverables"),
@@ -86,17 +87,56 @@ test("exportHostArtifacts writes workspace files and repo patch bundle", async (
   assert.equal(result.writtenFiles.some((file) => file.endsWith("meta.json")), true);
 });
 
+test("exportHostArtifacts includes capsule closure metadata", async () => {
+  const root = await mkdtemp(join(tmpdir(), "king-host-export-capsule-"));
+  const workspace = join(root, "workspace");
+  const output = join(root, "deliverables");
+  await mkdir(workspace, { recursive: true });
+  await writeFile(join(workspace, "result.txt"), "done", "utf8");
+  await createHostCapsule({
+    outputDir: output,
+    id: "capsule-1",
+    goal: "Ship scoped result",
+    owner: "dev",
+    branchOrWorktree: "agent/dev",
+    allowedPaths: ["packages/cli/src/host-export.ts"],
+    acceptance: ["export contains capsule metadata"],
+    reviewer: "cto",
+    verificationCommands: ["pnpm --filter @suwujs/king test"]
+  }, () => new Date("2026-06-02T00:00:00.000Z"));
+
+  const plan = await planHostExport({
+    workspaceRoot: workspace,
+    outputDir: output,
+    runId: "run-1",
+    capsuleId: "capsule-1"
+  });
+  assert.equal(plan.capsule?.id, "capsule-1");
+  assert.deepEqual(plan.files, ["workspace/", "capsule.json", "meta.json"]);
+
+  const result = await exportHostArtifacts({
+    workspaceRoot: workspace,
+    outputDir: output,
+    runId: "run-1",
+    capsuleId: "capsule-1"
+  });
+  assert.equal(result.writtenFiles.some((file) => file.endsWith("capsule.json")), true);
+  const meta = JSON.parse(await readFile(join(output, "run-1", "meta.json"), "utf8")) as { capsule?: { id?: string; owner?: string } };
+  assert.equal(meta.capsule?.id, "capsule-1");
+  assert.equal(meta.capsule?.owner, "dev");
+});
+
 test("planHostExport rejects run IDs that are not safe filename segments", async () => {
   const root = await mkdtemp(join(tmpdir(), "king-host-export-unsafe-"));
   const outside = join(root, "outside");
   await mkdir(outside, { recursive: true });
   await writeFile(join(outside, "keep.txt"), "keep", "utf8");
 
-  assert.throws(
+  await assert.rejects(
     () => planHostExport({ outputDir: join(root, "deliverables"), runId: "../../outside" }),
     /runId must be a safe filename segment/
   );
-  assert.throws(
+  await assert.rejects(
     () => planHostExport({ outputDir: join(root, "deliverables"), runId: "nested/run" }),
     /runId must be a safe filename segment/
   );
@@ -107,6 +147,6 @@ test("planHostExport rejects run IDs that are not safe filename segments", async
   assert.equal(existsSync(join(outside, "keep.txt")), true);
 });
 
-test("planHostExport rejects invalid repo roots", () => {
-  assert.throws(() => planHostExport({ repoRoot: "/path/that/does/not/exist" }), /repoRoot does not exist/);
+test("planHostExport rejects invalid repo roots", async () => {
+  await assert.rejects(() => planHostExport({ repoRoot: "/path/that/does/not/exist" }), /repoRoot does not exist/);
 });

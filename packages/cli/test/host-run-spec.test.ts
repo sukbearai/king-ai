@@ -163,6 +163,10 @@ test("createHostLaunchPlan reports launch readiness and preflight issues", async
   assert.equal(ready.layout.resultsPath, join(ready.options.outputDir, "results.tsv"));
   assert.equal(ready.layout.heartbeatPath, join(ready.options.outputDir, ".king", "heartbeat.json"));
   assert.equal(ready.layout.metaPath, join(ready.options.outputDir, "meta.json"));
+  assert.equal(ready.layout.collaborationPath, join(ready.layout.baseDir, "collaboration.json"));
+  assert.equal(ready.layout.tasksPath, join(ready.options.outputDir, "tasks.jsonl"));
+  assert.equal(ready.layout.capsulesPath, join(ready.options.outputDir, "capsules.jsonl"));
+  assert.equal(ready.layout.feedbackPath, join(ready.options.outputDir, "run-feedback.jsonl"));
   assert.equal(ready.layout.sourceConfigPath, join(dir, "agents.json"));
   assert.equal(ready.layout.exists, false);
   assert.deepEqual(ready.availableEngines, ["codex"]);
@@ -268,7 +272,21 @@ test("createHostLaunchPlan reports local layout while honoring explicit workspac
   assert.equal(plan.layout.resultsPath, join(outputDir, "results.tsv"));
   assert.equal(plan.layout.heartbeatPath, join(outputDir, ".king", "heartbeat.json"));
   assert.equal(plan.layout.metaPath, join(outputDir, "meta.json"));
+  assert.equal(plan.layout.collaborationPath, join(plan.layout.baseDir, "collaboration.json"));
+  assert.equal(plan.layout.tasksPath, join(outputDir, "tasks.jsonl"));
+  assert.equal(plan.layout.capsulesPath, join(outputDir, "capsules.jsonl"));
+  assert.equal(plan.layout.feedbackPath, join(outputDir, "run-feedback.jsonl"));
   assert.equal(plan.launchSummary.includes(workspaceRoot), true);
+});
+
+test("createHostLaunchPlan accepts local role profiles", () => {
+  const plan = createHostLaunchPlan({
+    goal: "small team",
+    roleProfile: "small"
+  }, {}, ["codex"]);
+
+  assert.equal(plan.spec.roleProfile, "small");
+  assert.match(plan.summary, /role profile: small/);
 });
 
 test("createHostLaunchPlan exposes King hybrid worker session metadata", () => {

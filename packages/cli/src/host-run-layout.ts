@@ -3,8 +3,10 @@ import { cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { HOST_LOOP_RESULTS_HEADER } from "./host-loop-events.js";
 import { writeHostRunHeartbeat } from "./host-run-heartbeat.js";
+import { defaultTeamSpec } from "./team-workflow.js";
 import type { HostLaunchPlan, HostRunSpecInput } from "./host-run-spec.js";
 import { createHostLaunchPlan, formatHostLaunchPlanSummary, toJsonSafeHostLaunchPlan } from "./host-run-spec.js";
+import { commandText, planAgentWorktrees } from "./worktree.js";
 
 export interface HostRunLayoutInput extends HostRunSpecInput {
   force?: boolean;
@@ -45,6 +47,8 @@ export async function prepareHostRunLayout(
   await mkdir(launchPlan.layout.outputDir, { recursive: true });
   await writeFile(launchPlan.layout.configPath, await buildLocalizedAgentConfig(launchPlan), "utf8");
   writtenFiles.push(launchPlan.layout.configPath);
+  await writeFile(launchPlan.layout.collaborationPath, await buildCollaborationManifest(launchPlan), "utf8");
+  writtenFiles.push(launchPlan.layout.collaborationPath);
 
   if (launchPlan.spec.projectDir) {
     const projectAgents = join(launchPlan.spec.projectDir, "agents");
@@ -89,6 +93,7 @@ export function formatHostRunLayoutResult(plan: HostLaunchPlan, writtenFiles: st
     `config: ${plan.layout.configPath}`,
     `workspace: ${plan.layout.workspaceRoot}`,
     `shared skills: ${plan.layout.sharedSkillsDir}`,
+    `collaboration: ${plan.layout.collaborationPath}`,
     `git root: ${plan.layout.gitRoot}`,
     `written files: ${writtenFiles.length ? writtenFiles.join(", ") : "(none)"}`,
     copiedDirectories.length ? `copied directories: ${copiedDirectories.join(", ")}` : "copied directories: (none)"
@@ -136,6 +141,22 @@ async function writeRunObservationFiles(plan: HostLaunchPlan, force: boolean): P
     await writeFile(plan.layout.metaPath, `${JSON.stringify(createPreparedRunMeta(plan), null, 2)}\n`, "utf8");
     written.push(plan.layout.metaPath);
   }
+  if (force || !existsSync(plan.layout.tasksPath)) {
+    await writeFile(plan.layout.tasksPath, "", "utf8");
+    written.push(plan.layout.tasksPath);
+  }
+  if (force || !existsSync(plan.layout.capsulesPath)) {
+    await writeFile(plan.layout.capsulesPath, "", "utf8");
+    written.push(plan.layout.capsulesPath);
+  }
+  if (force || !existsSync(plan.layout.workflowPath)) {
+    await writeFile(plan.layout.workflowPath, "", "utf8");
+    written.push(plan.layout.workflowPath);
+  }
+  if (force || !existsSync(plan.layout.feedbackPath)) {
+    await writeFile(plan.layout.feedbackPath, "", "utf8");
+    written.push(plan.layout.feedbackPath);
+  }
   return written;
 }
 
@@ -159,7 +180,12 @@ function createPreparedRunMeta(plan: HostLaunchPlan): Record<string, unknown> {
       loopEventsPath: plan.layout.loopEventsPath,
       resultsPath: plan.layout.resultsPath,
       heartbeatPath: plan.layout.heartbeatPath,
-      metaPath: plan.layout.metaPath
+      metaPath: plan.layout.metaPath,
+      collaborationPath: plan.layout.collaborationPath,
+      tasksPath: plan.layout.tasksPath,
+      capsulesPath: plan.layout.capsulesPath,
+      workflowPath: plan.layout.workflowPath,
+      feedbackPath: plan.layout.feedbackPath
     },
     config: {
       source: plan.config.source,
@@ -168,13 +194,88 @@ function createPreparedRunMeta(plan: HostLaunchPlan): Record<string, unknown> {
   };
 }
 
+async function buildCollaborationManifest(plan: HostLaunchPlan): Promise<string> {
+  const config = JSON.parse(await buildLocalizedAgentConfig(plan)) as { agents?: Array<{ id?: string; name?: string; role?: string; roleTemplate?: string; responsibility?: string; handoffPolicy?: unknown; lifecycle?: string; tier?: string; engine?: string }> };
+  const agents = (config.agents ?? []).map((agent) => ({
+    id: agent.id,
+    name: agent.name,
+    role: agent.role,
+    roleTemplate: agent.roleTemplate,
+    responsibility: agent.responsibility,
+    handoffPolicy: agent.handoffPolicy,
+    lifecycle: agent.lifecycle,
+    tier: agent.tier,
+    engine: agent.engine
+  }));
+  const team = defaultTeamSpec(`${plan.runId}-team`, "Host Run Team");
+  const worktreePlans = agents.map((agent) => ({
+    agentId: agent.id,
+    plans: agent.id
+      ? planAgentWorktrees({
+        agentId: agent.id,
+        workspaces: [plan.layout.gitRoot],
+        baseRoot: join(plan.layout.workspaceRoot, agent.id, "worktrees")
+      }).map((worktree) => ({
+        repoRoot: worktree.repoRoot,
+        repoName: worktree.repoName,
+        repoUrl: worktree.repoUrl,
+        branch: worktree.branch,
+        worktreePath: worktree.worktreePath,
+        command: commandText(worktree.command)
+      }))
+      : []
+  }));
+  return `${JSON.stringify({
+    schema: "king.host-run-collaboration.v1",
+    runId: plan.runId,
+    goal: plan.spec.goal,
+    team,
+    agents,
+    governance: {
+      mode: "opt-in",
+      securityBoundary: false,
+      appliesWhen: "actorRole or KING_TEAM_ROLE is supplied",
+      purpose: "route work, record decisions, audit role intent, and keep trusted local automation moving",
+      securityBoundaryNote: "Use OS account isolation, workspace boundaries, runtime tokens, command allowlists, destructive confirmations, and per-agent homes for security."
+    },
+    taskRules: {
+      dependencyField: "dependsOn",
+      blockedUntil: "all referenced tasks are done",
+      localTaskCommands: ["king host task-create", "king host task-list", "king host task-update", "king host agenda"],
+      handoffCommand: "king send <agent> \"<message>\"",
+      humanDecisionCommand: "king host decision-create",
+      routingModes: ["one-of-us", "each", "review-required", "human-decision"],
+      permissionRules: team.permissionPolicy.rules
+    },
+    capsuleRules: {
+      requiredFields: ["owner", "branchOrWorktree", "allowedPaths", "acceptance", "reviewer", "verificationCommands"],
+      defaultReviewer: "reviewer",
+      localCapsuleCommands: ["king host capsule-create", "king host capsule-list", "king host capsule-update"],
+      repoChangePolicy: "keep repository edits inside the agreed capsule scope and record acceptance evidence before marking work done"
+    },
+    workflowObjects: ["initiative", "task", "handoff", "review", "decision", "artifact"],
+    worktreePlans,
+    paths: {
+      configPath: plan.layout.configPath,
+      workspaceRoot: plan.layout.workspaceRoot,
+      sharedSkillsDir: plan.layout.sharedSkillsDir,
+      gitRoot: plan.layout.gitRoot,
+      outputDir: plan.layout.outputDir,
+      loopEventsPath: plan.layout.loopEventsPath,
+      resultsPath: plan.layout.resultsPath,
+      heartbeatPath: plan.layout.heartbeatPath,
+      metaPath: plan.layout.metaPath,
+      tasksPath: plan.layout.tasksPath,
+      capsulesPath: plan.layout.capsulesPath,
+      workflowPath: plan.layout.workflowPath,
+      feedbackPath: plan.layout.feedbackPath
+    }
+  }, null, 2)}\n`;
+}
+
 export function createDefaultHostRunConfigText(plan: HostLaunchPlan): string {
   const engine = plan.effectiveEngine ?? plan.options.engine;
-  const agents = [
-    defaultHostRunAgent(plan, "ceo", "CEO", "24/7", "high", "Turn the run goal into a small backlog, assign work, review progress, and produce a concise final deliverable."),
-    defaultHostRunAgent(plan, "dev", "Dev", "on-demand", "standard", "Implement assigned code, docs, or analysis tasks end-to-end and report exact files or outputs changed."),
-    defaultHostRunAgent(plan, "feedback", "Feedback", "on-demand", "standard", "Review outputs, identify gaps, and convert useful observations into concrete follow-up tasks.")
-  ].map((agent) => ({
+  const agents = defaultHostRunAgents(plan).map((agent) => ({
     ...agent,
     ...(engine ? { engine } : {}),
     ...(plan.options.model && agent.id === "ceo" ? { model: plan.options.model } : {}),
@@ -189,18 +290,46 @@ export function createDefaultHostRunConfigText(plan: HostLaunchPlan): string {
   }, null, 2);
 }
 
+function defaultHostRunAgents(plan: HostLaunchPlan) {
+  const role = (template: string, responsibility: string, reviewerRole?: string) => ({
+    roleTemplate: template,
+    responsibility,
+    handoffPolicy: {
+      mode: reviewerRole ? "review-required" : "one-of-us",
+      reviewerRole,
+      escalation: "coordinator",
+      acceptanceRequired: Boolean(reviewerRole)
+    }
+  });
+  const definitions = {
+    ceo: defaultHostRunAgent(plan, "ceo", "Planner", "24/7", "high", "Turn the run goal into a small backlog, assign work, review progress, and produce a concise final deliverable.", role("planner", "Plan the run, route work to the right role, and close the loop with the human.")),
+    cto: defaultHostRunAgent(plan, "cto", "Reviewer", "on-demand", "high", "Review architecture-sensitive changes, enforce capsule acceptance criteria, and decide whether work is ready to merge.", role("reviewer", "Review scope, correctness, acceptance evidence, and merge readiness.")),
+    dev: defaultHostRunAgent(plan, "dev", "Builder", "on-demand", "standard", "Implement assigned code, docs, or analysis tasks end-to-end and report exact files or outputs changed.", role("builder", "Build assigned work inside the agreed scope and hand off for review.", "reviewer")),
+    devops: defaultHostRunAgent(plan, "devops", "Ops", "on-demand", "standard", "Keep build, test, CI, release, and local environment tasks moving with reproducible commands.", role("ops", "Handle environment, queue, release, audit, and operational safety tasks.", "reviewer")),
+    feedback: defaultHostRunAgent(plan, "feedback", "Researcher", "on-demand", "standard", "Review outputs, identify gaps, and convert useful observations into concrete follow-up tasks.", role("researcher", "Collect evidence, find gaps, and turn observations into structured follow-up tasks.")),
+    marketing: defaultHostRunAgent(plan, "marketing", "Doc Writer", "on-demand", "standard", "Keep user-facing docs, release notes, and product narrative aligned with shipped changes.", role("doc-writer", "Write verified user-facing documentation, release notes, and briefs.", "reviewer")),
+    tester: defaultHostRunAgent(plan, "tester", "Tester", "on-demand", "standard", "Design and run verification, regression, and release-readiness checks with reproducible commands.", role("tester", "Verify assigned work and record commands, evidence, and residual risk.", "reviewer"))
+  };
+  if (plan.spec.roleProfile === "small") return [definitions.ceo, definitions.dev, definitions.cto];
+  if (plan.spec.roleProfile === "engineering") return [definitions.ceo, definitions.cto, definitions.dev, definitions.tester, definitions.devops, definitions.feedback];
+  if (plan.spec.roleProfile === "product") return [definitions.ceo, definitions.feedback, definitions.marketing, definitions.cto];
+  return [definitions.ceo, definitions.dev, definitions.cto, definitions.tester, definitions.devops, definitions.feedback, definitions.marketing];
+}
+
 function defaultHostRunAgent(
   plan: HostLaunchPlan,
   id: string,
   name: string,
   lifecycle: "24/7" | "on-demand",
   tier: "high" | "standard",
-  role: string
+  role: string,
+  workflow?: Record<string, unknown>
 ) {
   return {
     id,
     name,
     role,
+    ...workflow,
     lifecycle,
     tier,
     systemPrompt: `${role}\n\n${defaultHostRunCliInstructions(plan)}`
@@ -210,7 +339,8 @@ function defaultHostRunAgent(
 function defaultHostRunCliInstructions(plan: HostLaunchPlan): string {
   return [
     "Use `king recv` for messages, `king task list` for work state, and `king send <agent> \"<message>\"` to coordinate.",
-    "Use `king send human --type decision \"<question>\"` when a human choice is required.",
+    "Use `king host decision-create` or `king send human --type decision \"<question>\"` when a human choice is required.",
+    "For repository changes, prefer a capsule-shaped handoff: owner, branch/worktree, allowed paths, acceptance criteria, reviewer, and verification commands.",
     `Keep outputs under ${plan.layout.outputDir} unless the task explicitly asks for repository changes.`
   ].join("\n");
 }
@@ -261,6 +391,8 @@ function defaultAgentGuideText(agent: { id?: unknown; name?: unknown; role?: unk
     "",
     "- Read current messages with `king recv` before starting new work.",
     "- Check assigned work with `king task list` and update the team through `king send`.",
+    "- For repository edits, work from a private branch or worktree and keep the changed paths inside the agreed capsule scope.",
+    "- Before marking work done, record the acceptance evidence: commands run, files changed, reviewer needed, and any export path.",
     `- Put files you create under ${plan.layout.outputDir} unless the task explicitly asks for repository changes.`
   ].join("\n") + "\n";
 }

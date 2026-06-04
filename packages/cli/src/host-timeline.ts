@@ -12,6 +12,7 @@ export interface HostTimelineEvent {
   exitCode: number;
   destructive: boolean;
   durationMs: number;
+  actorRole?: string;
   textPreview?: string;
   jsonSummary?: unknown;
   error?: string;
@@ -60,9 +61,10 @@ export function formatHostTimeline(events: HostTimelineEvent[]): string {
   if (events.length === 0) return "no host command events";
   return events.map((event) => {
     const status = event.ok ? "ok" : "failed";
+    const role = event.actorRole ? ` role=${event.actorRole}` : "";
     const destructive = event.destructive ? " destructive" : "";
     const error = event.error ? ` error=${event.error}` : "";
-    return `${event.at} ${event.command} ${status} exit=${event.exitCode}${destructive} ${event.durationMs}ms${error}`;
+    return `${event.at} ${event.command} ${status} exit=${event.exitCode}${role}${destructive} ${event.durationMs}ms${error}`;
   }).join("\n");
 }
 

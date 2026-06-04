@@ -11,6 +11,8 @@ export interface HostRunExecutorSpec {
   command: string;
   input?: unknown;
   format?: "text" | "json";
+  actorRole?: string;
+  trusted?: boolean;
 }
 
 export interface HostRunExecutionResult {
@@ -238,7 +240,9 @@ function normalizeExecutor(value: unknown): HostRunExecutorSpec | undefined {
     kind: "host-command",
     command,
     input: executor.input,
-    format: executor.format === "json" ? "json" : "text"
+    format: executor.format === "json" ? "json" : "text",
+    actorRole: cleanString(executor.actorRole),
+    trusted: executor.trusted === true
   };
 }
 

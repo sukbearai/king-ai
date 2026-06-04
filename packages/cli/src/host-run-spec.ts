@@ -6,6 +6,7 @@ import type { EngineId } from "./types.js";
 
 export type HostRunMode = "run" | "takeover";
 export type HostRunLoopMode = "bounded" | "infinite";
+export type HostRunRoleProfile = "small" | "engineering" | "product" | "full";
 export type CodexReasoningEffort = "low" | "medium" | "high" | "xhigh";
 
 export interface ThreadSyncSpec {
@@ -44,6 +45,7 @@ export interface HostProjectRunSpec {
   bootstrapScript?: string;
   githubToken?: string;
   threadSync?: ThreadSyncSpec;
+  roleProfile: HostRunRoleProfile;
   hooks?: unknown;
 }
 
@@ -115,6 +117,11 @@ export interface HostRunLocalLayoutPlan {
   resultsPath: string;
   heartbeatPath: string;
   metaPath: string;
+  collaborationPath: string;
+  tasksPath: string;
+  capsulesPath: string;
+  workflowPath: string;
+  feedbackPath: string;
   sourceConfigPath?: string;
   exists: boolean;
 }
@@ -188,6 +195,7 @@ export function createHostRunPlan(input: HostRunSpecInput, env: NodeJS.ProcessEn
     bootstrapScript: cleanString(input.bootstrapScript),
     githubToken: cleanString(input.githubToken),
     threadSync: normalizeThreadSync(input.threadSync),
+    roleProfile: normalizeRoleProfile(input.roleProfile),
     hooks: input.hooks
   };
   return {
@@ -278,6 +286,7 @@ export function formatHostRunPlanSummary(plan: Pick<HostRunPlan, "spec" | "optio
   if (plan.spec.workspaceRoot) lines.push(`workspace root: ${plan.spec.workspaceRoot}`);
   if (plan.spec.gitRoot) lines.push(`git root: ${plan.spec.gitRoot}`);
   if (plan.spec.threadSync) lines.push(`thread sync: ${plan.spec.threadSync.threadId}`);
+  lines.push(`role profile: ${plan.spec.roleProfile}`);
   return lines.join("\n");
 }
 
@@ -476,6 +485,11 @@ export function createHostRunLocalLayoutPlan(plan: HostRunPlan, config = createH
     resultsPath: join(outputDir, "results.tsv"),
     heartbeatPath: hostRunHeartbeatPathForOutputDir(outputDir),
     metaPath: join(outputDir, "meta.json"),
+    collaborationPath: join(baseDir, "collaboration.json"),
+    tasksPath: join(outputDir, "tasks.jsonl"),
+    capsulesPath: join(outputDir, "capsules.jsonl"),
+    workflowPath: join(outputDir, "workflow.jsonl"),
+    feedbackPath: join(outputDir, "run-feedback.jsonl"),
     sourceConfigPath: config.path,
     exists: existsSync(baseDir)
   };
@@ -511,6 +525,12 @@ export function createHostRunSessionPlan(plan: HostRunPlan, effectiveEngine?: En
 
 function cleanString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function normalizeRoleProfile(value: unknown): HostRunRoleProfile {
+  if (value === "small" || value === "engineering" || value === "product" || value === "full") return value;
+  if (value === undefined || value === null || value === "") return "full";
+  throw new Error(`invalid role profile: ${String(value)}`);
 }
 
 function safeFilenameSegment(value: string, label: string): string {

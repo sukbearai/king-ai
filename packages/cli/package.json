@@ -18,6 +18,14 @@
     "./message-routing": {
       "types": "./dist/src/message-routing.d.ts",
       "default": "./dist/src/message-routing.js"
+    },
+    "./team-routing": {
+      "types": "./dist/src/team-routing.d.ts",
+      "default": "./dist/src/team-routing.js"
+    },
+    "./team-workflow": {
+      "types": "./dist/src/team-workflow.d.ts",
+      "default": "./dist/src/team-workflow.js"
     }
   },
   "scripts": {

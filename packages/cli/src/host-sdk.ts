@@ -12,7 +12,7 @@ import type { HostRunSpecInput, JsonSafeHostLaunchPlan, ProjectRunSpec, ThreadSy
 import type { HostRunRequest, HostRunRequestStatus, HostRunSubmitInput, HostRunSubmitResult, HostRunUpdateResult } from "./host-runs.js";
 import type { HostTimelineEvent } from "./host-timeline.js";
 import type { EngineId } from "./types.js";
-import type { UsageSummary } from "./usage.js";
+import type { UsageExpenseRow, UsageSummary } from "./usage.js";
 
 export interface HostSdkOptions {
   baseUrl?: string;
@@ -231,6 +231,11 @@ export interface HostDoctorResponse {
   exitCode: number;
 }
 
+export interface HostExpensesResponse {
+  expenses: UsageExpenseRow[];
+  usage: UsageSummary;
+}
+
 export interface HostRunRequestsResponse {
   requests: HostRunRequest[];
 }
@@ -342,6 +347,7 @@ export function createHostSdk(options: HostSdkOptions = {}) {
     statusStream: (streamOptions?: HostSdkStatusStreamOptions) => streamHostStatus(fetchImpl, baseUrl, streamOptions),
     events: () => getJson<HostEventsResponse>(fetchImpl, baseUrl, "/events"),
     usage: () => getJson<HostCommandResult & { json?: UsageSummary }>(fetchImpl, baseUrl, "/usage"),
+    expenses: () => getJson<HostCommandResult & { json?: HostExpensesResponse }>(fetchImpl, baseUrl, "/expenses"),
     doctor: () => getJson<HostCommandResult & { json?: HostDoctorResponse }>(fetchImpl, baseUrl, "/doctor"),
     commands: () => getJson<HostCommandsResponse>(fetchImpl, baseUrl, "/commands"),
     capabilities: () => getJson<HostCapabilitiesResponse>(fetchImpl, baseUrl, "/capabilities"),

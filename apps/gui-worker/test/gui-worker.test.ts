@@ -99,7 +99,7 @@ test("gui runtime isolates state by tenant identity", async () => {
   }), bindings);
 
   const aliceToken = await json<{ token: string }>(
-    await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
       method: "POST",
       headers: { Authorization: `Bearer ${alicePaired.deviceToken}`, "X-King-Tenant": aliceSummary.tenantId }
     }), bindings)
@@ -111,7 +111,7 @@ test("gui runtime isolates state by tenant identity", async () => {
   );
   assert.equal(aliceInbox.rows[0]?.body, "alice only");
 
-  const crossTenantToken = await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+  const crossTenantToken = await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
     method: "POST",
     headers: { Authorization: `Bearer ${alicePaired.deviceToken}`, "X-King-Tenant": bobSummary.tenantId }
   }), bindings);
@@ -133,7 +133,10 @@ test("gui requires login when Better Auth is configured", async () => {
 
   const html = await worker.fetch(new Request("https://gui/"), bindings);
   assert.equal(html.status, 401);
-  assert.match(await html.text(), /Continue with GitHub/);
+  const body = await html.text();
+  assert.match(body, /Continue with GitHub/);
+  assert.match(body, /<svg class="github-icon" viewBox="0 0 16 16" aria-hidden="true">/);
+  assert.doesNotMatch(body, /<span class="github-icon">G<\/span>/);
 
   const state = await worker.fetch(new Request("https://gui/gui/state"), bindings);
   assert.equal(state.status, 401);
@@ -165,6 +168,49 @@ test("gui uses Better Auth user identity as tenant", async () => {
   assert.deepEqual(summary.currentUser, { id: "github-1", email: "octo@example.com", name: "Octo" });
 });
 
+test("gui messages use the authenticated user display name", async () => {
+  const bindings = env(undefined, { KING_TEST_AUTH_USER: "1" });
+  const headers = {
+    "X-King-Test-User": JSON.stringify({ id: "github-1", email: "octo@example.com", name: "Octo" })
+  };
+  const summary = await json<{ pairingCode: string; tenantId: string }>(
+    await worker.fetch(new Request("https://gui/gui/summary", { headers }), bindings)
+  );
+  const paired = await json<{ deviceToken: string }>(
+    await worker.fetch(new Request("https://gui/api/computers/pair", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ code: summary.pairingCode, engines: ["codex"] })
+    }), bindings)
+  );
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ body: "hello from octo" })
+  }), bindings);
+
+  const state = await json<{ messages: { author_name: string; author_kind: string; body: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state", { headers }), bindings)
+  );
+  const human = state.messages.find((row) => row.author_kind === "human");
+  assert.equal(human?.author_name, "Octo");
+
+  const tokenRes = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}`, "X-King-Tenant": summary.tenantId }
+    }), bindings)
+  );
+  const callCli = async (argv: string[]) => json<{ text: string }>(await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${tokenRes.token}`, "X-King-Tenant": summary.tenantId },
+    body: JSON.stringify({ argv })
+  }), bindings));
+
+  assert.match((await callCli(["glance", "king-convo"])).text, /Octo: hello from octo/);
+  assert.match((await callCli(["contacts", "octo"])).text, /gui-human\tOcto\thuman\tRuntime operator/);
+});
+
 test("gui runtime marks read only through the requested message", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["claude", "codex"] });
@@ -174,7 +220,7 @@ test("gui runtime marks read only through the requested message", async () => {
   assert.deepEqual(guiState.availableEngines, ["claude", "codex"]);
 
   const tokenRes = await json<{ token: string }>(
-    await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
       method: "POST",
       headers: { Authorization: `Bearer ${paired.deviceToken}` }
     }), bindings)
@@ -209,6 +255,458 @@ test("gui runtime marks read only through the requested message", async () => {
   );
   assert.deepEqual(inbox.rows.map((row) => row.body), ["second"]);
   assert.match(inbox.routeSummary ?? "", /respond\/normal\/msg/);
+});
+
+test("gui all window routes team collaboration across CEO, dev, and reviewer agents", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const ceoToken = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  const devToken = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/dev/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  const reviewerToken = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/reviewer/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+
+  const agents = await json<{ id: string; name: string }[]>(
+    await worker.fetch(new Request("https://gui/api/computers/me/agents", {
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  assert.deepEqual(agents.map((agent) => agent.id).slice(0, 3), ["king-ceo", "dev", "reviewer"]);
+  assert.equal(agents.some((agent) => agent.id === "tester"), true);
+  assert.equal(agents.some((agent) => agent.id === "ops"), true);
+  assert.equal(agents.some((agent) => agent.id === "researcher"), true);
+  assert.equal(agents.some((agent) => agent.id === "doc-writer"), true);
+
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    body: JSON.stringify({ body: "请团队实现多角色协作" })
+  }), bindings);
+
+  const ceoInbox = await json<{ rows: { body: string; to_agent_id?: string }[] }>(
+    await worker.fetch(new Request("https://gui/runtime/inbox", {
+      headers: { Authorization: `Bearer ${ceoToken.token}` }
+    }), bindings)
+  );
+  assert.equal(ceoInbox.rows[0]?.body, "请团队实现多角色协作");
+  assert.equal(ceoInbox.rows[0]?.to_agent_id, "king-ceo");
+
+  const devInbox = await json<{ rows: { body: string }[] }>(
+    await worker.fetch(new Request("https://gui/runtime/inbox", {
+      headers: { Authorization: `Bearer ${devToken.token}` }
+    }), bindings)
+  );
+  assert.equal(devInbox.rows.some((row) => row.body.includes("Task assigned")), true);
+
+  const afterMessage = await json<{ tasks: { id: string; title: string; assignee?: string; status: string; requestMessageId?: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  const delegatedTask = afterMessage.tasks.find((task) => task.title.includes("请团队实现多角色协作"));
+  assert.equal(delegatedTask?.assignee, "dev");
+  assert.equal(delegatedTask?.status, "assigned");
+
+  const devAgenda = await json<{ actionable: boolean; brief: string }>(
+    await worker.fetch(new Request("https://gui/runtime/agenda", {
+      headers: { Authorization: `Bearer ${devToken.token}` }
+    }), bindings)
+  );
+  assert.equal(devAgenda.actionable, true);
+  assert.match(devAgenda.brief, /请团队实现多角色协作/);
+
+  await json<{ task: { assignee?: string; status: string } }>(
+    await worker.fetch(new Request(`https://gui/gui/task/${delegatedTask?.id}/update`, {
+      method: "POST",
+      body: JSON.stringify({ status: "review", result: "dev ready" })
+    }), bindings)
+  );
+  const reviewerAgenda = await json<{ actionable: boolean; brief: string }>(
+    await worker.fetch(new Request("https://gui/runtime/agenda", {
+      headers: { Authorization: `Bearer ${reviewerToken.token}` }
+    }), bindings)
+  );
+  assert.equal(reviewerAgenda.actionable, true);
+  assert.match(reviewerAgenda.brief, /请团队实现多角色协作/);
+
+  const reviewerInbox = await json<{ rows: { to_agent_id?: string; body: string }[] }>(
+    await worker.fetch(new Request("https://gui/runtime/inbox", {
+      headers: { Authorization: `Bearer ${reviewerToken.token}` }
+    }), bindings)
+  );
+  assert.equal(reviewerInbox.rows.some((row) => row.to_agent_id === "reviewer" && row.body.includes("Task assigned")), true);
+
+  const summary = await json<{ agents: { id: string; unreadMessages: number; openTasks: number }[] }>(
+    await worker.fetch(new Request("https://gui/gui/summary"), bindings)
+  );
+  assert.deepEqual(summary.agents.map((agent) => agent.id).slice(0, 3), ["king-ceo", "dev", "reviewer"]);
+  assert.equal(summary.agents.some((agent) => agent.id === "tester"), true);
+  assert.equal(summary.agents.find((agent) => agent.id === "reviewer")?.openTasks, 1);
+  assert.equal(summary.agents.find((agent) => agent.id === "reviewer")?.unreadMessages, 1);
+});
+
+test("gui wake events target the assigned collaborator", async () => {
+  const bindings = env();
+  await pairComputer(bindings, { engines: ["codex"] });
+  const created = await json<{ task: { id: string } }>(
+    await worker.fetch(new Request("https://gui/gui/task", {
+      method: "POST",
+      body: JSON.stringify({ title: "Target dev wake" })
+    }), bindings)
+  );
+
+  const state = await json<{ wakeLog?: { event: string; data: { agentId?: string; taskId?: string; agenda?: boolean } }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  const wake = state.wakeLog?.find((row) => row.event === "wake" && row.data.taskId === created.task.id);
+  assert.equal(wake?.data.agentId, "dev");
+  assert.equal(wake?.data.agenda, true);
+});
+
+test("new gui windows carry a collaboration team", async () => {
+  const bindings = env();
+  await pairComputer(bindings, { engines: ["codex"] });
+  const createdWindow = await json<{
+    conversation: { id: string; coordinatorAgentId?: string; teamAgentIds?: string[]; teamSnapshot?: { mode: string; teamAgentIds: string[]; agents: { id: string }[] } };
+  }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({ title: "Feature Room" })
+    }), bindings)
+  );
+
+  assert.equal(createdWindow.conversation.coordinatorAgentId, "king-ceo");
+  assert.deepEqual(createdWindow.conversation.teamAgentIds, ["king-ceo", "dev", "reviewer"]);
+  assert.equal(createdWindow.conversation.teamSnapshot?.mode, "team");
+  assert.deepEqual(createdWindow.conversation.teamSnapshot?.agents.map((agent) => agent.id), ["king-ceo", "dev", "reviewer"]);
+
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    body: JSON.stringify({ conversationId: createdWindow.conversation.id, body: "窗口内协作一下" })
+  }), bindings);
+
+  const state = await json<{
+    messages: { conversation_id: string; body: string; to_agent_id?: string }[];
+    wakeLog?: { event: string; data: { conversationId?: string; agentId?: string } }[];
+  }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
+  const message = state.messages.find((row) => row.conversation_id === createdWindow.conversation.id && row.body === "窗口内协作一下");
+  assert.equal(message?.to_agent_id, "king-ceo");
+  assert.equal(state.wakeLog?.some((row) => row.event === "wake" && row.data.conversationId === createdWindow.conversation.id && row.data.agentId === "king-ceo"), true);
+
+  const summary = await json<{
+    activeConversation?: { id: string; coordinatorAgentId?: string; teamAgentIds?: string[] };
+    activeAgents: { id: string }[];
+  }>(await worker.fetch(new Request(`https://gui/gui/summary?conversationId=${createdWindow.conversation.id}`), bindings));
+  assert.equal(summary.activeConversation?.id, createdWindow.conversation.id);
+  assert.deepEqual(summary.activeConversation?.teamAgentIds, ["king-ceo", "dev", "reviewer"]);
+  assert.deepEqual(summary.activeAgents.map((agent) => agent.id), ["king-ceo", "dev", "reviewer"]);
+});
+
+test("gui windows can choose single and custom collaboration teams", async () => {
+  const bindings = env();
+  await pairComputer(bindings, { engines: ["codex"] });
+  const single = await json<{
+    conversation: { id: string; teamMode?: string; coordinatorAgentId?: string; teamAgentIds?: string[] };
+  }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({ title: "Solo Room", teamMode: "single", coordinatorAgentId: "dev" })
+    }), bindings)
+  );
+  assert.equal(single.conversation.teamMode, "single");
+  assert.equal(single.conversation.coordinatorAgentId, "king-ceo");
+  assert.deepEqual(single.conversation.teamAgentIds, ["king-ceo"]);
+
+  const custom = await json<{
+    conversation: { id: string; teamMode?: string; coordinatorAgentId?: string; teamAgentIds?: string[]; teamSnapshot?: { agents: { id: string; role: string }[] } };
+  }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({
+        title: "Custom Room",
+        teamMode: "custom",
+        coordinatorAgentId: "dev",
+        teamAgentIds: ["reviewer"],
+        agentRoles: { reviewer: "Review only this room." }
+      })
+    }), bindings)
+  );
+  assert.equal(custom.conversation.teamMode, "custom");
+  assert.equal(custom.conversation.coordinatorAgentId, "king-ceo");
+  assert.deepEqual(custom.conversation.teamAgentIds, ["king-ceo", "reviewer"]);
+  assert.equal(custom.conversation.teamSnapshot?.agents.find((agent) => agent.id === "reviewer")?.role, "Review only this room.");
+
+  const updateResponse = await worker.fetch(new Request(`https://gui/gui/conversations/${custom.conversation.id}/team`, {
+      method: "POST",
+      body: JSON.stringify({ teamMode: "single", coordinatorAgentId: "reviewer", agentRoles: { dev: "Build the thing.", reviewer: "Review the thing." } })
+    }), bindings);
+  assert.equal(updateResponse.status, 409);
+  const state = await json<{ agents: { id: string; role: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  assert.notEqual(state.agents.find((agent) => agent.id === "dev")?.role, "Build the thing.");
+  assert.notEqual(state.agents.find((agent) => agent.id === "reviewer")?.role, "Review the thing.");
+});
+
+test("single-agent gui windows keep requests with King CEO", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const devToken = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/dev/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  const room = await json<{ conversation: { id: string } }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({ title: "Solo Room", teamMode: "single" })
+    }), bindings)
+  );
+
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    body: JSON.stringify({ conversationId: room.conversation.id, body: "只让负责人处理" })
+  }), bindings);
+
+  const state = await json<{
+    tasks: { conversationId?: string }[];
+    messages: { conversation_id: string; to_agent_id?: string; body: string }[];
+    wakeLog?: { event: string; data: { conversationId?: string; agentId?: string; agenda?: boolean } }[];
+  }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
+  assert.equal(state.tasks.some((task) => task.conversationId === room.conversation.id), false);
+  assert.equal(state.messages.some((row) => row.conversation_id === room.conversation.id && row.to_agent_id === "dev"), false);
+  assert.equal(state.wakeLog?.some((row) => row.event === "wake" && row.data.conversationId === room.conversation.id && row.data.agentId === "king-ceo"), true);
+  assert.equal(state.wakeLog?.some((row) => row.event === "wake" && row.data.conversationId === room.conversation.id && row.data.agentId === "dev"), false);
+
+  const devInbox = await json<{ rows: { body: string }[] }>(
+    await worker.fetch(new Request("https://gui/runtime/inbox", {
+      headers: { Authorization: `Bearer ${devToken.token}` }
+    }), bindings)
+  );
+  assert.deepEqual(devInbox.rows, []);
+});
+
+test("custom gui windows can include dev without reviewer", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const devToken = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/dev/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  const room = await json<{ conversation: { id: string; teamAgentIds?: string[] } }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({ title: "Dev Only Room", teamMode: "custom", teamAgentIds: ["dev"] })
+    }), bindings)
+  );
+  assert.deepEqual(room.conversation.teamAgentIds, ["king-ceo", "dev"]);
+
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    body: JSON.stringify({ conversationId: room.conversation.id, body: "让 dev 做但不评审" })
+  }), bindings);
+
+  const afterMessage = await json<{
+    tasks: { id: string; status: string; assignee?: string; conversationId?: string; coordinatorAgentId?: string; reviewerAgentId?: string }[];
+    messages: { conversation_id: string; to_agent_id?: string; body: string }[];
+  }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
+  const task = afterMessage.tasks.find((row) => row.conversationId === room.conversation.id);
+  assert.equal(task?.status, "assigned");
+  assert.equal(task?.assignee, "dev");
+  assert.equal(task?.coordinatorAgentId, "king-ceo");
+  assert.equal(task?.reviewerAgentId, undefined);
+  assert.equal(afterMessage.messages.some((row) => row.conversation_id === room.conversation.id && row.to_agent_id === "reviewer"), false);
+
+  const done = await json<{ text: string }>(await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${devToken.token}` },
+    body: JSON.stringify({ argv: ["task", "done", task?.id ?? "", "dev finished"] })
+  }), bindings));
+  assert.match(done.text, /returned to king-ceo/);
+
+  const afterDone = await json<{
+    tasks: { id: string; status: string; assignee?: string; result?: string }[];
+    messages: { conversation_id: string; author_name: string; to_agent_id?: string; body: string }[];
+  }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
+  const doneTask = afterDone.tasks.find((row) => row.id === task?.id);
+  assert.equal(doneTask?.status, "done");
+  assert.equal(doneTask?.assignee, "king-ceo");
+  assert.equal(doneTask?.result, "dev finished");
+  assert.equal(afterDone.messages.some((row) => row.conversation_id === room.conversation.id && row.to_agent_id === "king-ceo" && row.author_name === "Dev" && row.body.includes("Task completed")), true);
+  assert.equal(afterDone.messages.some((row) => row.conversation_id === room.conversation.id && row.to_agent_id === "reviewer"), false);
+});
+
+test("custom gui windows route work by role capability", async () => {
+  const bindings = env();
+  await pairComputer(bindings, { engines: ["codex"] });
+  const room = await json<{ conversation: { id: string; teamAgentIds?: string[] } }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({ title: "Research Room", teamMode: "custom", teamAgentIds: ["dev", "reviewer", "researcher", "tester", "ops"] })
+    }), bindings)
+  );
+  assert.deepEqual(room.conversation.teamAgentIds, ["king-ceo", "dev", "reviewer", "researcher", "tester", "ops"]);
+
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    body: JSON.stringify({ conversationId: room.conversation.id, body: "research competitors and source evidence" })
+  }), bindings);
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    body: JSON.stringify({ conversationId: room.conversation.id, body: "run regression verification tests" })
+  }), bindings);
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    body: JSON.stringify({ conversationId: room.conversation.id, body: "prepare release approval and audit queue" })
+  }), bindings);
+
+  const state = await json<{
+    tasks: { conversationId?: string; assignee?: string; ownerRole?: string; reviewerRole?: string; acceptance?: string[] }[];
+  }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
+  const tasks = state.tasks.filter((task) => task.conversationId === room.conversation.id);
+  assert.equal(tasks.find((task) => task.ownerRole === "researcher")?.assignee, "researcher");
+  assert.equal(tasks.find((task) => task.ownerRole === "tester")?.assignee, "tester");
+  assert.equal(tasks.find((task) => task.ownerRole === "ops")?.assignee, "ops");
+  assert.equal(tasks.every((task) => task.reviewerRole === "reviewer"), true);
+  assert.equal(tasks.every((task) => (task.acceptance ?? []).length > 0), true);
+});
+
+test("gui window requests close the loop through dev, reviewer, and coordinator", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const devToken = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/dev/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  const reviewerToken = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/reviewer/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  const ceoToken = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  const room = await json<{ conversation: { id: string } }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({ title: "闭环房间" })
+    }), bindings)
+  );
+
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    body: JSON.stringify({ conversationId: room.conversation.id, body: "做一个闭环 demo" })
+  }), bindings);
+
+  const afterMessage = await json<{
+    tasks: { id: string; status: string; assignee?: string; conversationId?: string; coordinatorAgentId?: string; reviewerAgentId?: string }[];
+    messages: { conversation_id: string; to_agent_id?: string; body: string; status?: string }[];
+    taskEvents: { taskId: string; type: string; targetAgentId?: string }[];
+  }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
+  const task = afterMessage.tasks.find((row) => row.conversationId === room.conversation.id);
+  assert.equal(task?.status, "assigned");
+  assert.equal(task?.assignee, "dev");
+  assert.equal(task?.coordinatorAgentId, "king-ceo");
+  assert.equal(task?.reviewerAgentId, "reviewer");
+  assert.equal(afterMessage.messages.some((row) => row.conversation_id === room.conversation.id && row.to_agent_id === "dev" && row.body.includes("Task assigned")), true);
+  assert.equal(afterMessage.taskEvents.some((event) => event.taskId === task?.id && event.type === "assigned" && event.targetAgentId === "dev"), true);
+
+  const callDev = async (argv: string[]) => json<{ text: string }>(await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${devToken.token}` },
+    body: JSON.stringify({ argv })
+  }), bindings));
+  const callReviewer = async (argv: string[]) => json<{ text: string }>(await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${reviewerToken.token}` },
+    body: JSON.stringify({ argv })
+  }), bindings));
+  const callCeo = async (argv: string[]) => json<{ text: string }>(await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${ceoToken.token}` },
+    body: JSON.stringify({ argv })
+  }), bindings));
+
+  assert.match((await callDev(["task", "done", task?.id ?? "", "dev result ready"])).text, /submitted for review/);
+  const afterDev = await json<{ tasks: { id: string; status: string; assignee?: string; result?: string }[]; messages: { conversation_id: string; to_agent_id?: string; body: string }[]; taskEvents: { taskId: string; type: string; targetAgentId?: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  const reviewTask = afterDev.tasks.find((row) => row.id === task?.id);
+  assert.equal(reviewTask?.status, "review");
+  assert.equal(reviewTask?.assignee, "reviewer");
+  assert.equal(reviewTask?.result, "dev result ready");
+  assert.equal(afterDev.messages.some((row) => row.conversation_id === room.conversation.id && row.to_agent_id === "reviewer" && row.body.includes("Task assigned")), true);
+  assert.equal(afterDev.taskEvents.some((event) => event.taskId === task?.id && event.type === "submitted_for_review" && event.targetAgentId === "reviewer"), true);
+
+  assert.match((await callReviewer(["task", "done", task?.id ?? "", "--review", "approved", "--artifact", "state-machines-report.md"])).text, /returned to king-ceo/);
+  const afterReview = await json<{ tasks: { id: string; status: string; assignee?: string; result?: string; reviewResult?: string; artifactIds?: string[] }[]; messages: { conversation_id: string; to_agent_id?: string; body: string }[]; taskEvents: { taskId: string; type: string; reviewResult?: string; artifactIds?: string[] }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  const doneTask = afterReview.tasks.find((row) => row.id === task?.id);
+  assert.equal(doneTask?.status, "done");
+  assert.equal(doneTask?.assignee, "king-ceo");
+  assert.equal(doneTask?.result, "dev result ready");
+  assert.equal(doneTask?.reviewResult, "approved");
+  assert.deepEqual(doneTask?.artifactIds, ["state-machines-report.md"]);
+  assert.equal(afterReview.messages.some((row) => row.conversation_id === room.conversation.id && row.to_agent_id === "king-ceo" && row.body.includes("Task completed")), true);
+  assert.equal(afterReview.taskEvents.some((event) => event.taskId === task?.id && event.type === "completed" && event.reviewResult === "approved"), true);
+
+  assert.match((await callCeo(["reply", room.conversation.id, "闭环已完成：review passed"])).text, /reply posted/);
+  const finalState = await json<{ messages: { conversation_id: string; author_name: string; body: string; status?: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  assert.equal(finalState.messages.some((row) => row.conversation_id === room.conversation.id && row.author_name === "King CEO" && row.body.includes("闭环已完成")), true);
+});
+
+test("reviewer can return a task with an explicit revision reason", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const reviewerToken = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/reviewer/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  const task = await json<{ task: { id: string } }>(await worker.fetch(new Request("https://gui/gui/task", {
+    method: "POST",
+    body: JSON.stringify({ title: "需要返工", assignee: "reviewer" })
+  }), bindings));
+
+  const returned = await json<{ text: string }>(await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${reviewerToken.token}` },
+    body: JSON.stringify({ argv: ["task", "done", task.task.id, "--review", "changes_requested", "--reason", "补测试覆盖"] })
+  }), bindings));
+  assert.match(returned.text, /returned to dev/);
+
+  const state = await json<{ tasks: { id: string; status: string; assignee?: string; reviewResult?: string; revisionReason?: string }[]; taskEvents: { taskId: string; type: string; revisionReason?: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  const updated = state.tasks.find((row) => row.id === task.task.id);
+  assert.equal(updated?.status, "assigned");
+  assert.equal(updated?.assignee, "dev");
+  assert.equal(updated?.reviewResult, "changes_requested");
+  assert.equal(updated?.revisionReason, "补测试覆盖");
+  assert.equal(state.taskEvents.some((event) => event.taskId === task.task.id && event.type === "changes_requested" && event.revisionReason === "补测试覆盖"), true);
 });
 
 test("gui runtime clears messages without clearing paired engines", async () => {
@@ -256,7 +754,7 @@ test("gui can clear only the active conversation window", async () => {
   const state = await json<{ messages: { conversation_id: string; body: string; status?: string }[] }>(
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
-  assert.deepEqual(state.messages.map((row) => [row.conversation_id, row.body, row.status]), [
+  assert.deepEqual(state.messages.filter((row) => !row.body.includes("Task assigned")).map((row) => [row.conversation_id, row.body, row.status]), [
     ["king-convo", "default window", undefined],
     ["king-convo", "AI 正在处理...", "pending"]
   ]);
@@ -286,7 +784,7 @@ test("gui supports multiple conversation windows", async () => {
   );
   assert.equal(state.conversations.some((row) => row.id === created.conversation.id && row.title === "发布计划"), true);
   assert.deepEqual(
-    state.messages.map((row) => [row.conversation_id, row.body, row.status]),
+    state.messages.filter((row) => !row.body.includes("Task assigned")).map((row) => [row.conversation_id, row.body, row.status]),
     [
       ["king-convo", "default window", undefined],
       ["king-convo", "AI 正在处理...", "pending"],
@@ -298,8 +796,8 @@ test("gui supports multiple conversation windows", async () => {
   const summary = await json<{ conversations: { id: string; messages: number; unread: number }[] }>(
     await worker.fetch(new Request("https://gui/gui/summary"), bindings)
   );
-  assert.equal(summary.conversations.find((row) => row.id === created.conversation.id)?.messages, 1);
-  assert.equal(summary.conversations.find((row) => row.id === "king-convo")?.messages, 1);
+  assert.equal(summary.conversations.find((row) => row.id === created.conversation.id)?.messages, 2);
+  assert.equal(summary.conversations.find((row) => row.id === "king-convo")?.messages, 2);
 });
 
 test("gui orders new conversation windows near the top", async () => {
@@ -393,7 +891,7 @@ test("gui king state command exports, imports, and resets state snapshots", asyn
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
   const tokenRes = await json<{ token: string }>(
-    await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
       method: "POST",
       headers: { Authorization: `Bearer ${paired.deviceToken}` }
     }), bindings)
@@ -412,17 +910,71 @@ test("gui king state command exports, imports, and resets state snapshots", asyn
   assert.match(snapshotText, /king\.gui-state\.v1/);
 
   assert.match((await callCli(["state", "reset"])).text, /"ok":true|"ok": true/);
-  assert.match((await callCli(["state", "import", snapshotText])).text, /"messages":2|"messages": 2/);
+  assert.match((await callCli(["state", "import", snapshotText])).text, /"messages":3|"messages": 3/);
   const state = await json<{ messages: { body: string }[] }>(
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
   assert.equal(state.messages[0]?.body, "cli snapshot");
 });
 
+test("gui normalizes legacy default agent id and personas", async () => {
+  const bindings = env({
+    computerId: "king-computer",
+    deviceToken: "device-token",
+    runtimeToken: "runtime-token",
+    runtimeTokens: { "king-agent": "legacy-runtime-token" },
+    pairingCode: "pair-code",
+    availableEngines: ["codex"],
+    capabilities: { workspaces: [] },
+    agents: [
+      { id: "king-agent", name: "King Agent", role: "Local BYOA agent", engine: "codex", lifecycle: "on-demand" },
+      { id: "dev", name: "Dev", role: "Implement assigned work, report concrete changes, and move completed tasks to review.", engine: "codex", lifecycle: "on-demand" },
+      { id: "reviewer", name: "Reviewer", role: "Review completed work, identify gaps, and ask for revisions before CEO summarizes.", engine: "codex", lifecycle: "on-demand" },
+      { id: "custom", name: "Custom", role: "Keep my custom role.", engine: "codex", lifecycle: "on-demand" }
+    ],
+    conversations: [{ id: "legacy-room", title: "legacy", kind: "group", created_at: 1, updated_at: 1, coordinatorAgentId: "king-agent", teamAgentIds: ["king-agent", "dev"] }],
+    messages: [],
+    cliLog: [],
+    statusLog: [],
+    typingLog: [],
+    thinkingLog: [],
+    eventLog: [],
+    eventRoutes: [],
+    loopRunId: "run-gui",
+    currentLoop: 0,
+    loopEvents: [],
+    calendar: [],
+    cards: [],
+    claims: [],
+    artifacts: [],
+    sharedContext: [],
+    tasks: [{ id: "legacy-task", title: "Legacy", status: "assigned", assignee: "king-agent", priority: 1, coordinatorAgentId: "king-agent", created_at: 1, updated_at: 1 }]
+  });
+
+  const state = await json<{ agents: { id: string; name: string; role: string }[]; conversations: { coordinatorAgentId?: string; teamAgentIds?: string[] }[]; tasks: { assignee?: string; coordinatorAgentId?: string }[]; runtimeTokens?: Record<string, string> }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  assert.equal(state.agents.some((agent) => agent.id === "king-agent"), false);
+  assert.equal(state.agents.find((agent) => agent.id === "king-ceo")?.name, "King CEO");
+  assert.match(state.agents.find((agent) => agent.id === "king-ceo")?.role ?? "", /Coordinate the conversation/);
+  assert.match(state.agents.find((agent) => agent.id === "dev")?.role ?? "", /Implement only assigned tasks/);
+  assert.match(state.agents.find((agent) => agent.id === "reviewer")?.role ?? "", /Review completed Dev work/);
+  assert.equal(state.agents.find((agent) => agent.id === "custom")?.role, "Keep my custom role.");
+  assert.equal(state.conversations.find((row) => row.coordinatorAgentId === "king-ceo")?.teamAgentIds?.[0], "king-ceo");
+  assert.equal(state.tasks[0]?.assignee, "king-ceo");
+  assert.equal(state.runtimeTokens?.["king-ceo"], "legacy-runtime-token");
+
+  const legacyToken = await json<{ token: string }>(await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+    method: "POST",
+    headers: { Authorization: "Bearer device-token" }
+  }), bindings));
+  assert.equal(typeof legacyToken.token, "string");
+});
+
 test("gui runtime lets the page choose agent engine and models", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["claude", "codex"] });
-  const beforeToken = await json<{ token: string }>(await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+  const beforeToken = await json<{ token: string }>(await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
     method: "POST",
     headers: { Authorization: `Bearer ${paired.deviceToken}` }
   }), bindings));
@@ -456,7 +1008,7 @@ test("gui runtime lets the page choose agent engine and models", async () => {
   }), bindings);
   assert.equal(oldTokenStatus.status, 401);
 
-  const afterToken = await json<{ token: string }>(await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+  const afterToken = await json<{ token: string }>(await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
     method: "POST",
     headers: { Authorization: `Bearer ${paired.deviceToken}` }
   }), bindings));
@@ -466,7 +1018,7 @@ test("gui runtime lets the page choose agent engine and models", async () => {
 test("gui messages show a pending agent placeholder until runtime reply replaces it", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["claude", "codex"] });
-  const token = await json<{ token: string }>(await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+  const token = await json<{ token: string }>(await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
     method: "POST",
     headers: { Authorization: `Bearer ${paired.deviceToken}` }
   }), bindings));
@@ -479,7 +1031,7 @@ test("gui messages show a pending agent placeholder until runtime reply replaces
   let state = await json<{ messages: { author_kind: string; author_engine?: string; body: string; status?: string }[] }>(
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
-  assert.deepEqual(state.messages.map((row) => [row.author_kind, row.author_engine, row.body, row.status]), [
+  assert.deepEqual(state.messages.filter((row) => row.author_kind !== "system").map((row) => [row.author_kind, row.author_engine, row.body, row.status]), [
     ["human", undefined, "hello", undefined],
     ["agent", "codex", "AI 正在处理...", "pending"]
   ]);
@@ -487,13 +1039,13 @@ test("gui messages show a pending agent placeholder until runtime reply replaces
   await json<{ text: string }>(await worker.fetch(new Request("https://gui/runtime/cli", {
     method: "POST",
     headers: { Authorization: `Bearer ${token.token}` },
-    body: JSON.stringify({ agentId: "king-agent", engine: "claude", argv: ["reply", "king-convo", "done"] })
+    body: JSON.stringify({ agentId: "king-ceo", engine: "claude", argv: ["reply", "king-convo", "done"] })
   }), bindings));
 
   state = await json<{ messages: { author_kind: string; author_engine?: string; body: string; status?: string }[] }>(
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
-  assert.deepEqual(state.messages.map((row) => [row.author_kind, row.author_engine, row.body, row.status]), [
+  assert.deepEqual(state.messages.filter((row) => row.author_kind !== "system").map((row) => [row.author_kind, row.author_engine, row.body, row.status]), [
     ["human", undefined, "hello", undefined],
     ["agent", "claude", "done", "done"]
   ]);
@@ -506,7 +1058,7 @@ test("runtime replies use the executing agent display name", async () => {
     method: "POST",
     body: JSON.stringify({ name: "Claude Runner", engine: "claude" })
   }), bindings));
-  const token = await json<{ token: string }>(await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+  const token = await json<{ token: string }>(await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
     method: "POST",
     headers: { Authorization: `Bearer ${paired.deviceToken}` }
   }), bindings));
@@ -514,7 +1066,7 @@ test("runtime replies use the executing agent display name", async () => {
   await json<{ text: string }>(await worker.fetch(new Request("https://gui/runtime/cli", {
     method: "POST",
     headers: { Authorization: `Bearer ${token.token}` },
-    body: JSON.stringify({ agentId: "king-agent", engine: "codex", argv: ["reply", "king-convo", "hello"] })
+    body: JSON.stringify({ agentId: "king-ceo", engine: "codex", argv: ["reply", "king-convo", "hello"] })
   }), bindings));
 
   const state = await json<{ messages: { author_name: string; author_kind: string; author_engine?: string; body: string }[] }>(
@@ -526,7 +1078,7 @@ test("runtime replies use the executing agent display name", async () => {
 test("runtime reply engine prefers the active run engine over stale shim payloads", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["claude", "codex"] });
-  const token = await json<{ token: string }>(await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+  const token = await json<{ token: string }>(await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
     method: "POST",
     headers: { Authorization: `Bearer ${paired.deviceToken}` }
   }), bindings));
@@ -543,13 +1095,13 @@ test("runtime reply engine prefers the active run engine over stale shim payload
   await json<{ text: string }>(await worker.fetch(new Request("https://gui/runtime/cli", {
     method: "POST",
     headers: { Authorization: `Bearer ${token.token}` },
-    body: JSON.stringify({ agentId: "king-agent", engine: "codex", argv: ["reply", "king-convo", "from claude"] })
+    body: JSON.stringify({ agentId: "king-ceo", engine: "codex", argv: ["reply", "king-convo", "from claude"] })
   }), bindings));
 
   const state = await json<{ messages: { author_engine?: string; body: string; status?: string }[] }>(
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
-  assert.deepEqual(state.messages.map((row) => [row.author_engine, row.body, row.status]), [
+  assert.deepEqual(state.messages.filter((row) => !row.body.includes("Task assigned")).map((row) => [row.author_engine, row.body, row.status]), [
     [undefined, "which engine", undefined],
     ["claude", "from claude", "done"]
   ]);
@@ -558,7 +1110,7 @@ test("runtime reply engine prefers the active run engine over stale shim payload
 test("runtime replies fall back to the default agent for unknown agent ids", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["claude"] });
-  const token = await json<{ token: string }>(await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+  const token = await json<{ token: string }>(await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
     method: "POST",
     headers: { Authorization: `Bearer ${paired.deviceToken}` }
   }), bindings));
@@ -572,7 +1124,7 @@ test("runtime replies fall back to the default agent for unknown agent ids", asy
   const state = await json<{ messages: { author_name: string; author_engine?: string }[] }>(
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
-  assert.equal(state.messages[0]?.author_name, "King Agent");
+  assert.equal(state.messages[0]?.author_name, "King CEO");
   assert.equal(state.messages[0]?.author_engine, "codex");
 });
 
@@ -651,12 +1203,25 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /id="computerDialog"/);
   assert.match(html, /id="newWindowDialog"/);
   assert.match(html, /id="newWindowTitle"/);
+  assert.match(html, /name="newWindowMode"/);
+  assert.doesNotMatch(html, /id="newWindowOwner"/);
+  assert.match(html, /id="newWindowTeam"/);
+  assert.match(html, /id="newWindowRolePrompts"/);
+  assert.match(html, /function selectedAgentRoles/);
+  assert.match(html, /function rolePromptAgentsForMode/);
+  assert.match(html, /mode === 'single'\s*\?\s*\['king-ceo'\]/);
+  assert.match(html, /onchange="renderRolePrompts\(\)"/);
+  assert.match(html, /const fixed = agent\.id === 'king-ceo'/);
+  assert.match(html, /\.agent-check\s*\{[\s\S]*color:\s*var\(--ink\)/);
+  assert.match(html, /\.agent-check input\s*\{[\s\S]*width:\s*16px/);
+  assert.match(html, /function syncNewWindowMode/);
   assert.match(html, /function submitConversation/);
   assert.doesNotMatch(html, /prompt\('Window name'\)/);
   assert.match(html, /function openSettings/);
   assert.match(html, /function openComputerFlow/);
-  assert.match(html, /grid-template-columns:\s*42px 180px minmax\(0, 1fr\)/);
+  assert.match(html, /grid-template-columns:\s*180px minmax\(0, 1fr\)/);
   assert.match(html, /class="windows"/);
+  assert.doesNotMatch(html, /class="rail"/);
   assert.match(html, /windows: '窗口'/);
   assert.match(html, /allWindow: '全部'/);
   assert.match(html, /function displayConversationTitle/);
@@ -668,14 +1233,49 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /overflow-x:\s*auto/);
   assert.match(html, /mobile-layout/);
   assert.match(html, /body\.mobile-layout \.app[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\)/);
-  assert.match(html, /body\.mobile-layout \.rail[\s\S]*display:\s*none/);
-  assert.match(html, /body\.mobile-layout \.hide-mobile[\s\S]*display:\s*inline-block !important/);
+  assert.doesNotMatch(html, /body\.mobile-layout \.rail/);
   assert.match(html, /matchMedia\('\(max-width:\s*760px\)'\)/);
   assert.match(html, /window-delete/);
   assert.match(html, /function deleteConversation/);
   assert.match(html, /id="clearButton"/);
   assert.match(html, /function clearMessages/);
   assert.match(html, /renderMessages = function/);
+  assert.match(html, /\.message-list\.empty-state\s*\{[\s\S]*position:\s*sticky/);
+  assert.match(html, /function pendingDisplayDelayMs/);
+  assert.match(html, /return 3000 \+ hash/);
+  assert.match(html, /function shouldRenderChatMessage/);
+  assert.match(html, /Date\.now\(\) - createdAt >= pendingDisplayDelayMs\(message\)/);
+  assert.match(html, /function schedulePendingReveal/);
+  assert.match(html, /window\.setTimeout\(function\(\) \{[\s\S]*refresh\(\);/);
+  assert.match(html, /const visibleRows = rows\.filter\(shouldRenderChatMessage\)/);
+  assert.match(html, /\.task-board\s*\{[\s\S]*display:\s*grid/);
+  assert.match(html, /body\.mobile-layout \.team-strip\s*\{[\s\S]*overflow-x:\s*auto/);
+  assert.match(html, /body\.mobile-layout \.team-strip\s*\{[\s\S]*flex-wrap:\s*nowrap/);
+  assert.match(html, /\.task-grid\s*\{[\s\S]*repeat\(auto-fill, minmax\(230px, 1fr\)\)/);
+  assert.match(html, /\.task-card\s*\{[\s\S]*min-height:\s*122px/);
+  assert.match(html, /body\.mobile-layout \.task-card\s*\{[\s\S]*min-height:\s*0/);
+  assert.match(html, /body\.mobile-layout \.task-card p\s*\{[\s\S]*-webkit-line-clamp:\s*2/);
+  assert.match(html, /let taskFilterMode = localStorage\.getItem\('king:taskFilter'\)/);
+  assert.match(html, /function setTaskFilter\(mode\)/);
+  assert.match(html, /function taskMatchesFilter\(task\)/);
+  assert.match(html, /function isLowSignalTaskText\(value, task\)/);
+  assert.match(html, /\^Handle the human request in/);
+  assert.match(html, /function taskCardHtml\(task\)/);
+  assert.match(html, /function latestTaskEvent\(task\)/);
+  assert.match(html, /message\.payload && message\.payload\.taskEventType/);
+  assert.match(html, /renderTasks = function\(state\)/);
+  assert.match(html, /taskFilterActive: '进行中'/);
+  assert.match(html, /taskStatusInProgress: 'In progress'/);
+  assert.match(html, /class="task-filter"/);
+  assert.match(html, /taskFilterButton\('active', t\('taskFilterActive'\)\)/);
+  assert.match(html, /onclick="setTaskFilter\(&quot;' \+ mode \+ '&quot;\)"/);
+  assert.match(html, /loadOlder: '向上滚动加载更早消息\.\.\.'/);
+  assert.match(html, /noOlderMessages: '没有更早消息'/);
+  assert.match(html, /const olderLine = hasOlder \? t\('loadOlder'\) : t\('noOlderMessages'\)/);
+  assert.match(html, /chatWindow\.classList\.toggle\('empty-state', !visibleRows\.length\)/);
+  assert.match(html, /if \(!visibleRows\.length\) \{[\s\S]*workspace\.scrollTop = 0/);
+  assert.match(html, /shouldStickToBottom && visibleRows\.length/);
+  assert.match(html, /applyLanguage\(\);\s*refresh\(\);/);
   assert.match(html, /class="engine-chip"/);
   assert.match(html, /message\.author_engine/);
   assert.doesNotMatch(html, /<span class="author">AI<\/span><span class="time">now<\/span>/);
@@ -685,12 +1285,13 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /second:\s*'2-digit'/);
   assert.match(html, /height:\s*100vh/);
   assert.match(html, /body\s*\{[\s\S]*overflow:\s*hidden/);
-  assert.match(html, /aria-label="King"><span>K<\/span><\/div>/);
+  assert.doesNotMatch(html, /aria-label="King"><span>K<\/span><\/div>/);
   assert.doesNotMatch(html, /<span>I<\/span><span>N<\/span><span>G<\/span>/);
   assert.match(html, /Model status/);
-  assert.match(html, /Agent persona/);
-  assert.match(html, /id="agentName"/);
-  assert.match(html, /id="agentRole"/);
+  assert.doesNotMatch(html, /Agent persona/);
+  assert.doesNotMatch(html, /Agent 人设/);
+  assert.doesNotMatch(html, /id="agentName"/);
+  assert.doesNotMatch(html, /id="agentRole"/);
   assert.match(html, /id="modelStatus"/);
   assert.match(html, /Message #all/);
   assert.doesNotMatch(html, /agent 电脑怎么弄/);
@@ -712,6 +1313,30 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /function updateBackToBottom/);
   assert.match(html, /summary\.pairingCode/);
   assert.match(html, /summary\.pairingLocator/);
+  assert.match(html, /id="teamStrip"/);
+  assert.match(html, /class="team-agent"/);
+  assert.match(html, /function renderTeamStrip/);
+  assert.match(html, /ownerRole=/);
+  assert.match(html, /reviewerRole=/);
+  assert.match(html, /blockedBy=/);
+  assert.match(html, /acceptance/);
+  assert.match(html, /class="composer-tools"/);
+  assert.match(html, /\.composer-tools[\s\S]*position:\s*absolute/);
+  assert.match(html, /\.composer-tools[\s\S]*bottom:\s*calc\(100% \+ 10px\)/);
+  assert.match(html, /\.composer-tools[\s\S]*background:\s*var\(--canvas\)/);
+  assert.match(html, /body\.mobile-layout \.composer[\s\S]*bottom:\s*16px/);
+  assert.match(html, /body\.mobile-layout \.composer-tools[\s\S]*bottom:\s*calc\(100% \+ 14px\)/);
+  assert.match(html, /function conversationTeamLabel/);
+  assert.match(html, /单 Agent：/);
+  assert.match(html, /默认团队：/);
+  assert.match(html, /自定义团队：/);
+  assert.match(html, /active\.teamMode/);
+  assert.match(html, /active\.teamAgentIds/);
+  assert.match(html, /summary\.agents/);
+  assert.match(html, /summary\.activeAgents/);
+  assert.doesNotMatch(html, /onclick="editActiveConversationTeam\(\)"/);
+  assert.match(html, /\/gui\/summary\?conversationId=/);
+  assert.doesNotMatch(html, /request\('\/gui\/summary'\)/);
   assert.match(html, /king agent computer --pair/);
   assert.match(html, /pairCommandStart = 'king agent computer'/);
   assert.doesNotMatch(html, /Computer pairing/);
@@ -742,7 +1367,7 @@ test("gui ui summary and activity endpoints aggregate console state", async () =
   assert.deepEqual(summary.availableEngines, ["codex"]);
   assert.equal(summary.observation.classification, "backlog_stuck");
   assert.equal(summary.observation.counts.unreadMessages, 1);
-  assert.equal(summary.observation.counts.activeTasks, 1);
+  assert.equal(summary.observation.counts.activeTasks, 2);
   assert.match(summary.routeSummary, /respond\/normal\/msg/);
 
   const activity = await json<{ rows: { type: string; summary: string }[] }>(
@@ -802,7 +1427,7 @@ test("gui runtime supports broader king CLI commands", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["claude", "codex"] });
   const tokenRes = await json<{ token: string }>(
-    await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
       method: "POST",
       headers: { Authorization: `Bearer ${paired.deviceToken}` }
     }), bindings)
@@ -822,9 +1447,10 @@ test("gui runtime supports broader king CLI commands", async () => {
   assert.match((await callCli(["messages", "king-convo", "--tail", "1"])).text, /hello/);
   assert.match((await callCli(["glance", "king-convo"])).text, /King Human: hello/);
   assert.match((await callCli(["agents"])).text, /Agent Matrix:/);
-  assert.match((await callCli(["agents"])).text, /king-agent\s+idle\s+on-demand\s+codex/);
-  assert.match((await callCli(["agents", "spawn", "king-agent", "king-agent-2"])).text, /not supported/);
-  assert.match((await callCli(["roster"])).text, /king-agent\tKing Agent\tLocal BYOA agent\tengine=codex\tlifecycle=on-demand\tstatus=idle/);
+  assert.match((await callCli(["agents"])).text, /king-ceo\s+idle\s+on-demand\s+codex/);
+  assert.match((await callCli(["agents", "spawn", "king-ceo", "king-ceo-2"])).text, /not supported/);
+  assert.match((await callCli(["roster"])).text, /king-ceo\tKing CEO\tCoordinate the conversation: clarify ambiguous human requests/);
+  assert.match((await callCli(["roster"])).text, /engine=codex\tlifecycle=on-demand\tstatus=idle/);
   assert.match((await callCli(["participants"])).text, /unread=1/);
   assert.match((await callCli(["contacts", "operator"])).text, /gui-human\tKing Human\thuman\tRuntime operator/);
   assert.match((await callCli(["whoami"])).text, /"status": "idle"/);
@@ -848,7 +1474,7 @@ test("gui runtime supports send, recv, and escalate message relay commands", asy
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
   const tokenRes = await json<{ token: string }>(
-    await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
       method: "POST",
       headers: { Authorization: `Bearer ${paired.deviceToken}` }
     }), bindings)
@@ -861,18 +1487,18 @@ test("gui runtime supports send, recv, and escalate message relay commands", asy
 
   assert.match((await callCli(["send", "teammate", "please", "review", "--type", "decision", "--steer"])).text, /queued -> teammate \(decision, steer\)/);
   const firstRecv = await callCli(["recv", "--agent", "teammate"]);
-  assert.match(firstRecv.text, /\[steer\/steer\/decision\] King Agent .*please review/);
+  assert.match(firstRecv.text, /\[steer\/steer\/decision\] King CEO .*please review/);
   assert.match((await callCli(["recv", "--agent", "teammate"])).text, /No pending messages/);
 
   assert.match((await callCli(["send", "teammate", "blocked", "on", "API", "--type", "blocker"])).text, /queued -> teammate \(blocker, normal\)/);
-  assert.match((await callCli(["recv", "--agent", "teammate"])).text, /\[steer\/urgent\/blocker\] King Agent .*blocked on API/);
+  assert.match((await callCli(["recv", "--agent", "teammate"])).text, /\[steer\/urgent\/blocker\] King CEO .*blocked on API/);
 
-  assert.match((await callCli(["dm", "teammate", "private", "note"])).text, /dm posted dm-king-agent-teammate/);
+  assert.match((await callCli(["dm", "teammate", "private", "note"])).text, /dm posted dm-king-ceo-teammate/);
   assert.match((await callCli(["recv", "--agent", "other-agent"])).text, /No pending messages/);
-  assert.match((await callCli(["recv", "--agent", "teammate"])).text, /\[steer\/normal\/msg\] King Agent .*private note/);
+  assert.match((await callCli(["recv", "--agent", "teammate"])).text, /\[steer\/normal\/msg\] King CEO .*private note/);
 
-  assert.match((await callCli(["escalate", "need", "human", "choice"])).text, /Escalated to king-agent: msg-.*\(queued\)/);
-  assert.match((await callCli(["recv"])).text, /\[steer\/steer\/decision\] King Agent .*need human choice/);
+  assert.match((await callCli(["escalate", "need", "human", "choice"])).text, /Escalated to king-ceo: msg-.*\(queued\)/);
+  assert.match((await callCli(["recv"])).text, /\[steer\/steer\/decision\] King CEO .*need human choice/);
 
   assert.match((await callCli(["send", "teammate", "normal", "followup"])).text, /queued -> teammate \(message, normal\)/);
   assert.match((await callCli(["send", "teammate", "urgent", "blocker", "--type", "blocker"])).text, /queued -> teammate \(blocker, normal\)/);
@@ -896,7 +1522,7 @@ test("gui runtime routes external events to subscribed agents", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
   const tokenRes = await json<{ token: string }>(
-    await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
       method: "POST",
       headers: { Authorization: `Bearer ${paired.deviceToken}` }
     }), bindings)
@@ -951,7 +1577,7 @@ test("gui runtime records status, typing, thinking, events, and runs", async () 
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["claude"] });
   const tokenRes = await json<{ token: string }>(
-    await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
       method: "POST",
       headers: { Authorization: `Bearer ${paired.deviceToken}` }
     }), bindings)
@@ -985,6 +1611,32 @@ test("gui runtime records status, typing, thinking, events, and runs", async () 
   assert.equal(state.noticeLog.at(-1)?.body.noticeKind, "byoa_engine_failed");
   assert.equal(state.triageLog.at(-1)?.body.source, "byoa-codex");
   assert.deepEqual(state.runLog.map((row) => row.action), ["start", "heartbeat", "finish"]);
+});
+
+test("gui runtime bounds append-only signal logs so persisted state cannot grow without limit", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["claude"] });
+  const tokenRes = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  const auth = { Authorization: `Bearer ${tokenRes.token}`, "Content-Type": "application/json" };
+
+  // STATUS_LOG_CAPACITY is 200; push well past it to prove the log is trimmed, not unbounded.
+  const cap = 200;
+  const pushes = cap + 50;
+  for (let i = 0; i < pushes; i++) {
+    await worker.fetch(new Request("https://gui/runtime/status", { method: "POST", headers: auth, body: JSON.stringify({ status: `s-${i}` }) }), bindings);
+  }
+
+  const state = await json<{ statusLog: { status: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  assert.equal(state.statusLog.length, cap, "statusLog must be capped, not grow with request count");
+  assert.equal(state.statusLog.at(-1)?.status, `s-${pushes - 1}`, "most recent signal is retained");
+  assert.equal(state.statusLog.at(0)?.status, `s-${pushes - cap}`, "oldest entries are dropped FIFO");
 });
 
 test("gui runtime rejects unauthenticated state mutations", async () => {
@@ -1026,7 +1678,7 @@ test("gui runtime classifies loop observability snapshots", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
   const tokenRes = await json<{ token: string }>(
-    await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
       method: "POST",
       headers: { Authorization: `Bearer ${paired.deviceToken}` }
     }), bindings)
@@ -1057,11 +1709,11 @@ test("gui runtime classifies loop observability snapshots", async () => {
   const taskState = await json<{ tasks: { id: string }[] }>(
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
-  assert.equal(taskState.tasks.length, 2);
+  assert.equal(taskState.tasks.length, 3);
   await callCli(["task", "update", taskState.tasks[1]?.id ?? "", "--status", "review"]);
   const productive = await callCli(["observe", "--json"]);
   assert.match(productive.text, /"classification": "productive"/);
-  assert.match(productive.text, /"activeTasks": 2/);
+  assert.match(productive.text, /"activeTasks": 3/);
 
   const run = await json<{ runId: string }>(await worker.fetch(new Request("https://gui/runtime/runs", {
     method: "POST",
@@ -1081,7 +1733,7 @@ test("gui runtime records King loop events", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
   const tokenRes = await json<{ token: string }>(
-    await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
       method: "POST",
       headers: { Authorization: `Bearer ${paired.deviceToken}` }
     }), bindings)
@@ -1102,7 +1754,7 @@ test("gui runtime records King loop events", async () => {
   assert.match((await callCli(["route", "emit", "github_issue", "--source", "github", "{\"title\":\"Loop backlog\"}"])).text, /event routed github_issue -> feedback/);
   assert.match((await callCli(["loop", "recent", "--agent", "feedback"])).text, /queue\.backlog agent=feedback pending=1/);
 
-  const task = await callCli(["task", "create", "Loop task", "--assign", "king-agent"]);
+  const task = await callCli(["task", "create", "Loop task", "--assign", "king-ceo"]);
   const taskId = task.text.match(/Task (task-[^ ]+) created/)?.[1];
   assert.equal(typeof taskId, "string");
   assert.match((await callCli(["task", "update", taskId ?? "", "--status", "review"])).text, /updated \[review\]/);
@@ -1126,7 +1778,7 @@ test("gui runtime exposes King runtime preambles", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
   const tokenRes = await json<{ token: string }>(
-    await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
       method: "POST",
       headers: { Authorization: `Bearer ${paired.deviceToken}` }
     }), bindings)
@@ -1138,17 +1790,18 @@ test("gui runtime exposes King runtime preambles", async () => {
   }), bindings));
 
   assert.match((await callCli(["loop", "tick", "--run", "run-preamble"])).text, /loop tick 1/);
-  assert.match((await callCli(["task", "create", "Summarize runtime", "--assign", "king-agent"])).text, /Task task-/);
+  assert.match((await callCli(["task", "create", "Summarize runtime", "--assign", "king-ceo"])).text, /Task task-/);
   assert.match((await callCli(["context", "set", "decision", "prefer", "runtime", "preamble"])).text, /prefer runtime preamble/);
   await worker.fetch(new Request("https://gui/gui/message", {
     method: "POST",
     body: JSON.stringify({ body: "please summarize current state" })
   }), bindings);
 
-  const preamble = await json<{ text: string }>(await worker.fetch(new Request("https://gui/runtime/preamble?agent=king-agent&reason=wake&runId=run-preamble", {
+  const preamble = await json<{ text: string }>(await worker.fetch(new Request("https://gui/runtime/preamble?agent=king-ceo&reason=wake&runId=run-preamble", {
     headers: { Authorization: `Bearer ${tokenRes.token}` }
   }), bindings));
   assert.match(preamble.text, /Runtime Context \(Loop #1\)/);
+  assert.match(preamble.text, /Role: Coordinate the conversation: clarify ambiguous human requests/);
   assert.match(preamble.text, /Run ID: run-preamble/);
   assert.match(preamble.text, /Current Tasks/);
   assert.match(preamble.text, /Summarize runtime/);
@@ -1157,16 +1810,17 @@ test("gui runtime exposes King runtime preambles", async () => {
   assert.match(preamble.text, /Shared Context/);
   assert.match(preamble.text, /decision: prefer runtime preamble/);
 
-  const cliPreamble = await callCli(["preamble", "--agent", "king-agent", "--reason", "agenda", "--run", "run-preamble"]);
+  const cliPreamble = await callCli(["preamble", "--agent", "king-ceo", "--reason", "agenda", "--run", "run-preamble"]);
   assert.match(cliPreamble.text, /Reason: agenda/);
   assert.match(cliPreamble.text, /Run ID: run-preamble/);
+  assert.match((await callCli(["preamble", "--agent", "dev"])).text, /Role: Implement only assigned tasks/);
 });
 
 test("gui runtime supports board, calendar, claims, roster, and agenda", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["claude", "codex"] });
   const tokenRes = await json<{ token: string }>(
-    await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
       method: "POST",
       headers: { Authorization: `Bearer ${paired.deviceToken}` }
     }), bindings)
@@ -1185,13 +1839,13 @@ test("gui runtime supports board, calendar, claims, roster, and agenda", async (
   assert.match((await callCli(["card", "release", cardId])).text, /card released/);
   assert.match((await callCli(["card", "claim", cardId])).text, /card claimed/);
   assert.match((await callCli(["card", "done", cardId])).text, /card moved/);
-  assert.match((await callCli(["calendar", "create", "Followup", "--at", "2000-01-01T00:00:00.000Z", "--assignee", "king-agent", "--prompt", "check board"])).text, /calendar created/);
+  assert.match((await callCli(["calendar", "create", "Followup", "--at", "2000-01-01T00:00:00.000Z", "--assignee", "king-ceo", "--prompt", "check board"])).text, /calendar created/);
   assert.match((await callCli(["claim", "gui-work", "--in", "king-convo"])).text, /claim created/);
   assert.match((await callCli(["unclaim", "gui-work"])).text, /claim released/);
 
   await worker.fetch(new Request("https://gui/gui/card", {
     method: "POST",
-    body: JSON.stringify({ title: "Agenda card", assignee: "king-agent" })
+    body: JSON.stringify({ title: "Agenda card", assignee: "king-ceo" })
   }), bindings);
   const agenda = await json<{ actionable: boolean; brief: string }>(
     await worker.fetch(new Request("https://gui/runtime/agenda", {
@@ -1212,9 +1866,9 @@ test("gui runtime supports board, calendar, claims, roster, and agenda", async (
       headers: { Authorization: `Bearer ${tokenRes.token}` }
     }), bindings)
   );
-  assert.match(roster.roster, /king-agent/);
+  assert.match(roster.roster, /king-ceo/);
   assert.match(roster.roster, /status=thinking/);
-  assert.equal(roster.agentStates[0]?.id, "king-agent");
+  assert.equal(roster.agentStates[0]?.id, "king-ceo");
   assert.equal(roster.agentStates[0]?.status, "thinking");
   assert.equal(roster.agentStates[0]?.lifecycle, "on-demand");
   assert.equal(roster.agentStates[0]?.engine, "codex");
@@ -1224,7 +1878,7 @@ test("gui runtime supports cron-backed calendar agenda items", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
   const tokenRes = await json<{ token: string }>(
-    await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
       method: "POST",
       headers: { Authorization: `Bearer ${paired.deviceToken}` }
     }), bindings)
@@ -1254,7 +1908,7 @@ test("gui runtime supports task pool commands with dependencies", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
   const tokenRes = await json<{ token: string }>(
-    await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
       method: "POST",
       headers: { Authorization: `Bearer ${paired.deviceToken}` }
     }), bindings)
@@ -1265,7 +1919,7 @@ test("gui runtime supports task pool commands with dependencies", async () => {
     body: JSON.stringify({ argv })
   }), bindings));
 
-  const first = await callCli(["task", "create", "Build foundation", "--assign", "king-agent", "--priority", "2", "--path", "src/runtime"]);
+  const first = await callCli(["task", "create", "Build foundation", "--assign", "king-ceo", "--priority", "2", "--path", "src/runtime"]);
   assert.match(first.text, /Task task-/);
   const firstId = first.text.match(/Task (task-[^ ]+) created/)?.[1];
   assert.equal(typeof firstId, "string");
@@ -1280,7 +1934,7 @@ test("gui runtime supports task pool commands with dependencies", async () => {
   assert.match(blockedList.text, /paths=src\/runtime/);
 
   assert.match((await callCli(["task", "get", firstId ?? ""])).text, /"title": "Build foundation"/);
-  assert.match((await callCli(["task", "update", secondId ?? "", "--assign", "king-agent", "--status", "review", "--result", "ready"])).text, /\[review\]/);
+  assert.match((await callCli(["task", "update", secondId ?? "", "--assign", "king-ceo", "--status", "review", "--result", "ready"])).text, /\[review\]/);
   assert.match((await callCli(["task", "done", firstId ?? "", "foundation", "ready"])).text, /marked done/);
   assert.match((await callCli(["task", "list"])).text, /\[review\].*Ship feature/);
 
@@ -1292,7 +1946,7 @@ test("gui runtime supports initiative board links across tasks and capsules", as
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
   const tokenRes = await json<{ token: string }>(
-    await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
       method: "POST",
       headers: { Authorization: `Bearer ${paired.deviceToken}` }
     }), bindings)
@@ -1355,7 +2009,7 @@ test("gui runtime supports change capsule commands with conflict hints", async (
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
   const tokenRes = await json<{ token: string }>(
-    await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
       method: "POST",
       headers: { Authorization: `Bearer ${paired.deviceToken}` }
     }), bindings)
@@ -1424,7 +2078,7 @@ test("gui runtime supports merge queue state tracking without executing git", as
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
   const tokenRes = await json<{ token: string }>(
-    await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
       method: "POST",
       headers: { Authorization: `Bearer ${paired.deviceToken}` }
     }), bindings)
@@ -1475,7 +2129,7 @@ test("gui runtime records CTO-style review gates for capsules", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
   const tokenRes = await json<{ token: string }>(
-    await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
       method: "POST",
       headers: { Authorization: `Bearer ${paired.deviceToken}` }
     }), bindings)
@@ -1550,7 +2204,7 @@ test("gui runtime supports structured artifact commands", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
   const tokenRes = await json<{ token: string }>(
-    await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
       method: "POST",
       headers: { Authorization: `Bearer ${paired.deviceToken}` }
     }), bindings)
@@ -1570,7 +2224,7 @@ test("gui runtime supports structured artifact commands", async () => {
     "put",
     "--kind", "tech_spec",
     "--path", "runtime/protocol/task-pool",
-    "--source", "king-agent",
+    "--source", "king-ceo",
     "--confidence", "0.75",
     "--task", taskId ?? "",
     "--content", "spec content",
@@ -1603,7 +2257,7 @@ test("gui runtime supports structured artifact commands", async () => {
     "artifact", "put",
     "--kind", "custom_kind",
     "--path", "custom/path",
-    "--source", "king-agent",
+    "--source", "king-ceo",
     "--confidence", "0.9",
     "{\"name\":\"Custom\"}"
   ])).text, /non-standard artifact kind/);
@@ -1611,7 +2265,7 @@ test("gui runtime supports structured artifact commands", async () => {
     "artifact", "put",
     "--kind", "custom_kind",
     "--path", "custom/path",
-    "--source", "king-agent",
+    "--source", "king-ceo",
     "--confidence", "0.9",
     "--allow-nonstandard",
     "{\"name\":\"Custom\"}"
@@ -1638,7 +2292,7 @@ test("gui runtime supports shared context commands", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
   const tokenRes = await json<{ token: string }>(
-    await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
       method: "POST",
       headers: { Authorization: `Bearer ${paired.deviceToken}` }
     }), bindings)
@@ -1660,7 +2314,7 @@ test("gui runtime supports shared context commands", async () => {
   );
   assert.equal(state.context[0]?.key, "decision");
   assert.equal(state.context[0]?.value, "ship artifact store");
-  assert.equal(state.context[0]?.updatedBy, "king-agent");
+  assert.equal(state.context[0]?.updatedBy, "king-ceo");
   assert.equal(typeof state.context[0]?.updatedAt, "number");
   assert.match((await callCli(["context", "delete", "decision"])).text, /Deleted/);
   assert.match((await callCli(["context", "list"])).text, /No context entries/);
@@ -1670,7 +2324,7 @@ test("gui runtime supports hypothesis tracking with artifact evidence", async ()
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
   const tokenRes = await json<{ token: string }>(
-    await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
       method: "POST",
       headers: { Authorization: `Bearer ${paired.deviceToken}` }
     }), bindings)
@@ -1685,7 +2339,7 @@ test("gui runtime supports hypothesis tracking with artifact evidence", async ()
     "artifact", "put",
     "--kind", "market_data",
     "--path", "market/evidence/gui",
-    "--source", "king-agent",
+    "--source", "king-ceo",
     "--confidence", "0.9",
     "{\"name\":\"Evidence\"}"
   ]);
@@ -1724,7 +2378,7 @@ test("gui runtime applies execution plans into scoped tasks", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
   const tokenRes = await json<{ token: string }>(
-    await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
       method: "POST",
       headers: { Authorization: `Bearer ${paired.deviceToken}` }
     }), bindings)
@@ -1781,7 +2435,7 @@ test("gui runtime records structured option evaluations", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
   const tokenRes = await json<{ token: string }>(
-    await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
       method: "POST",
       headers: { Authorization: `Bearer ${paired.deviceToken}` }
     }), bindings)
@@ -1831,7 +2485,7 @@ test("gui runtime tracks run feedback metrics by agent", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
   const tokenRes = await json<{ token: string }>(
-    await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
       method: "POST",
       headers: { Authorization: `Bearer ${paired.deviceToken}` }
     }), bindings)
@@ -1899,7 +2553,7 @@ test("gui runtime supports safety approval gate commands", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
   const tokenRes = await json<{ token: string }>(
-    await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
       method: "POST",
       headers: { Authorization: `Bearer ${paired.deviceToken}` }
     }), bindings)
@@ -1942,7 +2596,7 @@ test("gui runtime detects path conflicts for cards and claims", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
   const tokenRes = await json<{ token: string }>(
-    await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
       method: "POST",
       headers: { Authorization: `Bearer ${paired.deviceToken}` }
     }), bindings)
@@ -1973,7 +2627,7 @@ test("gui runtime supports quotes, reactions, docs, dms, and composing-aware gla
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["claude", "codex"] });
   const tokenRes = await json<{ token: string }>(
-    await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
       method: "POST",
       headers: { Authorization: `Bearer ${paired.deviceToken}` }
     }), bindings)
@@ -1996,7 +2650,7 @@ test("gui runtime supports quotes, reactions, docs, dms, and composing-aware gla
   assert.match((await callCli(["reply", "king-convo", "--quote", messageId, "quoted reply"])).text, /reply posted/);
   assert.match((await callCli(["reply", "king-convo", "line 1\nline 2 with `code` and $var"])).text, /reply posted/);
   assert.match((await callCli(["react", messageId, "(ok)"])).text, /reaction posted/);
-  assert.match((await callCli(["dm", "king-agent", "hello teammate"])).text, /dm posted/);
+  assert.match((await callCli(["dm", "king-ceo", "hello teammate"])).text, /dm posted/);
   assert.match((await callCli(["doc", "create", "Plan", "Ship the gui"])).text, /doc created/);
   assert.match((await callCli(["doc", "list"])).text, /Plan/);
   const docState = await json<{ docs: { id: string }[] }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
@@ -2013,15 +2667,15 @@ test("gui runtime supports quotes, reactions, docs, dms, and composing-aware gla
     body: JSON.stringify({ conversationIds: ["king-convo"] })
   }), bindings);
   const glance = await callCli(["glance", "king-convo"]);
-  assert.match(glance.text, /Claim: shared-work by king-agent/);
-  assert.match(glance.text, /Composing: King Agent/);
+  assert.match(glance.text, /Claim: shared-work by king-ceo/);
+  assert.match(glance.text, /Composing: King CEO/);
   await worker.fetch(new Request("https://gui/runtime/thinking/unmark", {
     method: "POST",
     headers: auth,
     body: JSON.stringify({ conversationIds: ["king-convo"] })
   }), bindings);
   const quietGlance = await callCli(["glance", "king-convo"]);
-  assert.doesNotMatch(quietGlance.text, /Composing: King Agent/);
+  assert.doesNotMatch(quietGlance.text, /Composing: King CEO/);
 
   const finalState = await json<{
     messages: { quoted_message_id?: string; body: string }[];
@@ -2032,4 +2686,138 @@ test("gui runtime supports quotes, reactions, docs, dms, and composing-aware gla
   assert.equal(finalState.messages.some((msg) => msg.body === "line 1\nline 2 with `code` and $var"), true);
   assert.deepEqual(finalState.reactions.map((row) => [row.messageId, row.emoji]), [[messageId, "(ok)"]]);
   assert.deepEqual(finalState.docs.map((doc) => doc.title), ["Plan"]);
+});
+
+test("gui resolves pending human decisions through the decisions endpoint", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const tokenRes = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  const callCli = async (argv: string[]) => json<{ text: string }>(await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${tokenRes.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ argv })
+  }), bindings));
+
+  // An agent escalates a guarded action, creating a pending human decision.
+  const requested = await callCli(["safety", "request", "deploy_production", "--reason", "ship release"]);
+  const approvalId = (requested.text.match(/approval requested (\S+)/) ?? [])[1];
+  assert.equal(typeof approvalId, "string");
+
+  const before = await json<{ approvals: { id: string; status: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  assert.equal(before.approvals.find((row) => row.id === approvalId)?.status, "pending");
+
+  // The human approves it from the GUI decisions view.
+  const resolved = await json<{ ok: boolean; approval: { status: string; resolvedAt?: number } }>(
+    await worker.fetch(new Request(`https://gui/gui/approvals/${approvalId}/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision: "approve" })
+    }), bindings)
+  );
+  assert.equal(resolved.ok, true);
+  assert.equal(resolved.approval.status, "approved");
+  assert.equal(typeof resolved.approval.resolvedAt, "number");
+
+  const after = await json<{ approvals: { id: string; status: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  assert.equal(after.approvals.find((row) => row.id === approvalId)?.status, "approved");
+
+  // A resolved decision cannot be resolved again.
+  const repeat = await worker.fetch(new Request(`https://gui/gui/approvals/${approvalId}/resolve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ decision: "deny" })
+  }), bindings);
+  assert.equal(repeat.status, 409);
+
+  // An unknown decision id is reported as missing.
+  const missing = await worker.fetch(new Request("https://gui/gui/approvals/nope/resolve", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ decision: "approve" })
+  }), bindings);
+  assert.equal(missing.status, 404);
+});
+
+test("gui bridges host workflow decisions when a host url is configured", async () => {
+  const calls: { command?: string; actorRole?: string; input?: Record<string, unknown> }[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("/commands/run")) {
+      const body = init && typeof init.body === "string" ? JSON.parse(init.body) as { command?: string; input?: Record<string, unknown> } : {};
+      calls.push(body);
+      if (body.command === "workflow-list") {
+        return new Response(JSON.stringify({ ok: true, command: "workflow-list", exitCode: 0, text: "", json: { cards: [{ id: "decision-7", kind: "decision", status: "waiting_human", title: "Approve deploy", ownerRole: "ops", decisionBy: "human" }] } }), { headers: { "Content-Type": "application/json" } });
+      }
+      if (body.command === "workflow-update") {
+        return new Response(JSON.stringify({ ok: true, command: "workflow-update", exitCode: 0, text: "", json: { card: { id: body.input?.id, status: body.input?.status } } }), { headers: { "Content-Type": "application/json" } });
+      }
+    }
+    return new Response("not found", { status: 404 });
+  }) as typeof fetch;
+
+  try {
+    // Unconfigured: bridge is a graceful no-op.
+    const unconfigured = await json<{ configured: boolean; cards: unknown[] }>(
+      await worker.fetch(new Request("https://gui/gui/host-decisions"), env())
+    );
+    assert.equal(unconfigured.configured, false);
+    assert.deepEqual(unconfigured.cards, []);
+
+    const bindings = env(undefined, { KING_HOST_URL: "http://127.0.0.1:8799", KING_HOST_OUTPUT_DIR: "deliverables" });
+
+    // Configured: waiting_human host decision cards are surfaced.
+    const listed = await json<{ configured: boolean; cards: { id: string; status: string }[] }>(
+      await worker.fetch(new Request("https://gui/gui/host-decisions"), bindings)
+    );
+    assert.equal(listed.configured, true);
+    assert.equal(listed.cards[0]?.id, "decision-7");
+    const listCall = calls.find((c) => c.command === "workflow-list");
+    assert.equal(listCall?.input?.kind, "decision");
+    assert.equal(listCall?.input?.status, "waiting_human");
+    assert.equal(listCall?.input?.outputDir, "deliverables");
+    assert.equal(listCall?.actorRole, "reviewer");
+
+    // Approving from the GUI proxies a host workflow-update to status=done.
+    const resolved = await json<{ ok: boolean }>(
+      await worker.fetch(new Request("https://gui/gui/host-decisions/decision-7/resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decision: "approve" })
+      }), bindings)
+    );
+    assert.equal(resolved.ok, true);
+    const updateCall = calls.find((c) => c.command === "workflow-update");
+    assert.equal(updateCall?.input?.id, "decision-7");
+    assert.equal(updateCall?.input?.status, "done");
+    assert.equal(updateCall?.actorRole, "reviewer");
+    assert.equal(updateCall?.input?.humanApproved, true);
+    assert.equal(updateCall?.input?.approvedBy, "gui-human");
+
+    // An invalid decision is rejected; resolving without a host url is a 404.
+    const bad = await worker.fetch(new Request("https://gui/gui/host-decisions/decision-7/resolve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision: "maybe" })
+    }), bindings);
+    assert.equal(bad.status, 400);
+
+    const noBridge = await worker.fetch(new Request("https://gui/gui/host-decisions/decision-7/resolve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision: "approve" })
+    }), env());
+    assert.equal(noBridge.status, 404);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });

@@ -19,6 +19,7 @@ export interface HostRunExecuteResult {
 const EXECUTOR_SAFE_COMMANDS = new Set([
   "status",
   "usage",
+  "expenses",
   "events",
   "timeline",
   "policy",
@@ -116,10 +117,12 @@ export async function executeNextHostRunRequest(
   const commandResult = await runHostCommand({
     command,
     format: request.executor.format,
-    input: request.executor.input
+    input: request.executor.input,
+    actorRole: request.executor.actorRole
   }, {
     ...deps,
-    recordTimeline: deps.recordTimeline ?? true
+    recordTimeline: deps.recordTimeline ?? true,
+    enforcePermission: request.executor.trusted === true ? false : deps.enforcePermission
   });
   const completed = await updateHostRunRequest({
     id: request.id,

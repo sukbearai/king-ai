@@ -2,6 +2,8 @@ import { execFileSync } from "node:child_process";
 import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
+import { getHostCapsule } from "./host-ledger.js";
+import type { HostCapsule } from "./host-ledger.js";
 import { isGitRepo } from "./worktree.js";
 
 export interface HostExportInput {
@@ -11,6 +13,8 @@ export interface HostExportInput {
   runId?: string;
   includeWorkspace?: boolean;
   includeRepoPatch?: boolean;
+  capsuleId?: string;
+  capsulesFile?: string;
 }
 
 export interface HostExportPlan {
@@ -21,6 +25,8 @@ export interface HostExportPlan {
   repoRoot?: string;
   includeWorkspace: boolean;
   includeRepoPatch: boolean;
+  capsuleId?: string;
+  capsule?: HostCapsule;
   workspaceFileCount: number;
   repoDirty: boolean;
   files: string[];
@@ -41,13 +47,15 @@ export interface HostExportMeta {
   repoRoot?: string;
   includeWorkspace: boolean;
   includeRepoPatch: boolean;
+  capsuleId?: string;
+  capsule?: HostCapsule;
   workspaceFileCount: number;
   repoDirty: boolean;
   files: string[];
   writtenFiles: string[];
 }
 
-export function planHostExport(input: HostExportInput = {}): HostExportPlan {
+export async function planHostExport(input: HostExportInput = {}): Promise<HostExportPlan> {
   const explicitRunId = cleanString(input.runId);
   const runId = explicitRunId ? safeFilenameSegment(explicitRunId, "runId") : buildExportRunId();
   const outputDir = resolve(cleanString(input.outputDir) || "deliverables");
@@ -56,6 +64,9 @@ export function planHostExport(input: HostExportInput = {}): HostExportPlan {
   const repoRoot = resolveOptionalExistingDir(input.repoRoot, "repoRoot");
   const includeWorkspace = input.includeWorkspace ?? Boolean(workspaceRoot);
   const includeRepoPatch = input.includeRepoPatch ?? Boolean(repoRoot);
+  const capsuleId = cleanString(input.capsuleId);
+  const capsule = capsuleId ? await getHostCapsule({ outputDir, capsulesFile: input.capsulesFile, id: capsuleId }) ?? undefined : undefined;
+  if (capsuleId && !capsule) throw new Error(`host capsule not found: ${capsuleId}`);
   const workspaceFileCount = includeWorkspace && workspaceRoot ? countFiles(workspaceRoot) : 0;
   const repoDirty = includeRepoPatch && repoRoot ? gitStatus(repoRoot).trim().length > 0 : false;
   const files: string[] = [];
@@ -65,6 +76,7 @@ export function planHostExport(input: HostExportInput = {}): HostExportPlan {
     if (gitDiff(repoRoot, false).trim()) files.push("repo.patch");
     if (gitDiff(repoRoot, true).trim()) files.push("repo-staged.patch");
   }
+  if (capsule) files.push("capsule.json");
   files.push("meta.json");
   const plan: HostExportPlan = {
     runId,
@@ -74,6 +86,8 @@ export function planHostExport(input: HostExportInput = {}): HostExportPlan {
     repoRoot,
     includeWorkspace,
     includeRepoPatch,
+    capsuleId,
+    capsule,
     workspaceFileCount,
     repoDirty,
     files,
@@ -84,7 +98,7 @@ export function planHostExport(input: HostExportInput = {}): HostExportPlan {
 }
 
 export async function exportHostArtifacts(input: HostExportInput = {}): Promise<HostExportResult> {
-  const plan = planHostExport(input);
+  const plan = await planHostExport(input);
   const writtenFiles: string[] = [];
   await rm(plan.exportDir, { recursive: true, force: true });
   await mkdir(plan.exportDir, { recursive: true });
@@ -116,13 +130,19 @@ export async function exportHostArtifacts(input: HostExportInput = {}): Promise<
     }
   }
 
+  if (plan.capsule) {
+    const capsulePath = join(plan.exportDir, "capsule.json");
+    await writeFile(capsulePath, `${JSON.stringify(plan.capsule, null, 2)}\n`, "utf8");
+    writtenFiles.push(capsulePath);
+  }
+
   const metaPath = join(plan.exportDir, "meta.json");
   writtenFiles.push(metaPath);
   const meta = createHostExportMeta(plan, writtenFiles);
   await writeFile(metaPath, `${JSON.stringify(meta, null, 2)}\n`, "utf8");
 
   return {
-    ...planHostExport({ ...input, runId: plan.runId, outputDir: plan.outputDir }),
+    ...plan,
     writtenFiles
   };
 }
@@ -132,7 +152,8 @@ export function formatHostExportPlan(plan: HostExportPlan): string {
     `host export: ${plan.runId}`,
     `output: ${plan.exportDir}`,
     `workspace: ${plan.workspaceRoot ?? "(none)"} files=${plan.workspaceFileCount}`,
-    `repo: ${plan.repoRoot ?? "(none)"} dirty=${plan.repoDirty ? "yes" : "no"}`
+    `repo: ${plan.repoRoot ?? "(none)"} dirty=${plan.repoDirty ? "yes" : "no"}`,
+    `capsule: ${plan.capsule?.id ?? "(none)"}`
   ];
   if (plan.files.length) {
     lines.push("planned files:");
@@ -154,6 +175,8 @@ export function createHostExportMeta(plan: HostExportPlan, writtenFiles: string[
     repoRoot: plan.repoRoot,
     includeWorkspace: plan.includeWorkspace,
     includeRepoPatch: plan.includeRepoPatch,
+    capsuleId: plan.capsuleId,
+    capsule: plan.capsule,
     workspaceFileCount: plan.workspaceFileCount,
     repoDirty: plan.repoDirty,
     files: plan.files,

@@ -7,6 +7,9 @@ import { D1Dialect } from "kysely-d1";
 import { renderPage } from "./page.js";
 import { cronMatches, parseCron } from "@suwujs/king/cron";
 import { formatMessageRouteSummary, messageRouteTag, sortRuntimeMessages } from "@suwujs/king/message-routing";
+import { selectOwnerRole } from "@suwujs/king/team-routing";
+import { defaultTeamSpec, requiredCapabilitiesForText, roleTemplateForAgent } from "@suwujs/king/team-workflow";
+import { createHostSdk } from "@suwujs/king/host-sdk";
 
 type Bindings = {
   GUI_STATE: DurableObjectNamespace;
@@ -16,6 +19,8 @@ type Bindings = {
   GITHUB_CLIENT_SECRET?: string;
   BETTER_AUTH_URL?: string;
   KING_TEST_AUTH_USER?: string;
+  KING_HOST_URL?: string;
+  KING_HOST_OUTPUT_DIR?: string;
 };
 
 type Env = {
@@ -79,6 +84,20 @@ type Conversation = {
   created_at: number;
   updated_at: number;
   order?: number;
+  teamMode?: "single" | "team" | "custom";
+  coordinatorAgentId?: string;
+  teamAgentIds?: string[];
+  teamSnapshot?: ConversationTeamSnapshot;
+};
+
+type ConversationAgentSnapshot = Agent;
+
+type ConversationTeamSnapshot = {
+  mode: NonNullable<Conversation["teamMode"]>;
+  coordinatorAgentId: string;
+  teamAgentIds: string[];
+  agents: ConversationAgentSnapshot[];
+  createdAt: number;
 };
 
 type EventRoute = {
@@ -104,7 +123,9 @@ type Card = {
   created_at: number;
 };
 
-type TaskStatus = "pending" | "assigned" | "in_progress" | "review" | "done" | "failed";
+type TaskStatus = "pending" | "assigned" | "in_progress" | "review" | "done" | "failed" | "blocked";
+type TaskReviewResult = "approved" | "changes_requested";
+type TaskEventType = "assigned" | "submitted_for_review" | "completed" | "changes_requested";
 type CapsuleStatus = "open" | "in_review" | "merged" | "abandoned";
 type CapsuleScopeType = "code" | "docs" | "tests" | "ops" | "mixed";
 type MergeStatus = "queued" | "testing" | "merged" | "conflict" | "failed";
@@ -115,17 +136,45 @@ type Task = {
   description?: string;
   status: TaskStatus;
   assignee?: string;
+  ownerRole?: string;
+  reviewerRole?: string;
   priority: number;
   parentId?: string;
   dependsOn?: string[];
+  blockedBy?: string[];
+  acceptance?: string[];
   result?: string;
   initiativeId?: string;
   capsuleId?: string;
   subsystem?: string;
   scope?: { paths?: string[]; patterns?: string[] };
   executionProfile?: string;
+  conversationId?: string;
+  requestMessageId?: string;
+  coordinatorAgentId?: string;
+  reviewerAgentId?: string;
+  reviewResult?: TaskReviewResult;
+  revisionReason?: string;
+  artifactIds?: string[];
+  reviewedByAgentId?: string;
+  reviewedAt?: number;
   created_at: number;
   updated_at: number;
+};
+
+type TaskEvent = {
+  id: string;
+  taskId: string;
+  type: TaskEventType;
+  conversationId?: string;
+  actorAgentId?: string;
+  targetAgentId?: string;
+  summary: string;
+  result?: string;
+  reviewResult?: TaskReviewResult;
+  revisionReason?: string;
+  artifactIds?: string[];
+  created_at: number;
 };
 
 type InitiativeStatus = "active" | "paused" | "completed" | "abandoned";
@@ -421,6 +470,7 @@ type State = {
   computerId: string;
   deviceToken: string;
   runtimeToken: string;
+  runtimeTokens?: Record<string, string>;
   pairingCode: string;
   availableEngines: string[];
   capabilities: { workspaces: string[]; agentWorkspaceRoot?: string };
@@ -430,10 +480,11 @@ type State = {
   conversations: Conversation[];
   messages: Message[];
   cliLog: { at: number; agentId: string; argv: string[]; result: string }[];
-  statusLog: { at: number; status: string }[];
+  statusLog: { at: number; status: string; agentId?: string }[];
   typingLog: { at: number; conversationId?: string; done?: boolean }[];
   thinkingLog: { at: number; action: "mark" | "unmark"; conversationIds: string[] }[];
   eventLog: { at: number; body: unknown }[];
+  wakeLog?: { at: number; event: string; data: unknown }[];
   eventRoutes: EventRoute[];
   loopRunId: string;
   currentLoop: number;
@@ -443,6 +494,7 @@ type State = {
   runLog: { at: number; runId: string; action: "start" | "heartbeat" | "finish"; body?: unknown }[];
   initiatives: Initiative[];
   tasks: Task[];
+  taskEvents: TaskEvent[];
   capsules: ChangeCapsule[];
   mergeQueue: MergeRequest[];
   evaluations: EvaluationRecord[];
@@ -485,15 +537,35 @@ type GuiTaskPayload = {
   title?: unknown;
   description?: unknown;
   assignee?: unknown;
+  ownerRole?: unknown;
+  reviewerRole?: unknown;
   priority?: unknown;
   paths?: unknown;
+  dependsOn?: unknown;
+  blockedBy?: unknown;
+  acceptance?: unknown;
   wake?: unknown;
 };
 
 type GuiTaskUpdatePayload = {
   status?: unknown;
   assignee?: unknown;
+  ownerRole?: unknown;
+  reviewerRole?: unknown;
+  blockedBy?: unknown;
+  acceptance?: unknown;
   result?: unknown;
+  reviewResult?: unknown;
+  revisionReason?: unknown;
+  artifactIds?: unknown;
+};
+
+type GuiConversationPayload = {
+  title?: unknown;
+  teamMode?: unknown;
+  coordinatorAgentId?: unknown;
+  teamAgentIds?: unknown;
+  agentRoles?: unknown;
 };
 
 type GuiCardMovePayload = {
@@ -508,12 +580,64 @@ type AgendaPayload = {
 };
 
 const DEFAULT_AGENT: Agent = {
-  id: "king-agent",
-  name: "King Agent",
-  role: "Local BYOA agent",
+  id: "king-ceo",
+  name: "King CEO",
+  role: "Coordinate the conversation: clarify ambiguous human requests, split work into concrete tasks for available teammates, track progress, and summarize verified results back to the human. Role template: planner.",
   engine: "codex",
   lifecycle: "on-demand"
 };
+
+const DEFAULT_TEAM_AGENTS: Agent[] = [
+  DEFAULT_AGENT,
+  {
+    id: "dev",
+    name: "Dev",
+    role: "Implement only assigned tasks. Make concrete changes, run focused verification, report files changed and command results, then mark the task done so it can be reviewed or returned to King CEO. Role template: builder.",
+    engine: "codex",
+    lifecycle: "on-demand"
+  },
+  {
+    id: "reviewer",
+    name: "Reviewer",
+    role: "Review completed Dev work before King CEO summarizes. Check correctness, regressions, and missing tests; pass verified work back to King CEO or request specific revisions. Role template: reviewer.",
+    engine: "codex",
+    lifecycle: "on-demand"
+  },
+  {
+    id: "tester",
+    name: "Tester",
+    role: "Role template: tester. Run verification and regression checks, record commands, and surface release-readiness risk.",
+    engine: "codex",
+    lifecycle: "on-demand"
+  },
+  {
+    id: "ops",
+    name: "Ops",
+    role: "Role template: ops. Handle queues, release, environment, approval, and audit-sensitive work.",
+    engine: "codex",
+    lifecycle: "on-demand"
+  },
+  {
+    id: "researcher",
+    name: "Researcher",
+    role: "Role template: researcher. Collect evidence, compare options, and produce sourced artifacts with confidence.",
+    engine: "codex",
+    lifecycle: "on-demand"
+  },
+  {
+    id: "doc-writer",
+    name: "Doc Writer",
+    role: "Role template: doc-writer. Write verified briefs, documentation, release notes, and user-facing summaries.",
+    engine: "codex",
+    lifecycle: "on-demand"
+  }
+];
+
+const LEGACY_DEFAULT_AGENT_NAME = "King Agent";
+const LEGACY_DEFAULT_AGENT_ROLE = "Local BYOA agent";
+const LEGACY_DEFAULT_AGENT_ID = "king-agent";
+const LEGACY_DEFAULT_DEV_ROLE = "Implement assigned work, report concrete changes, and move completed tasks to review.";
+const LEGACY_DEFAULT_REVIEWER_ROLE = "Review completed work, identify gaps, and ask for revisions before CEO summarizes.";
 
 const DEFAULT_CONVERSATION: Conversation = {
   id: "king-convo",
@@ -564,9 +688,23 @@ const DEFAULT_EVALUATION_CRITERIA: EvaluationCriteria[] = [
 const REVIEW_COVERAGE_GATE = 95;
 const LOOP_EVENT_BUFFER_CAPACITY = 100;
 
+// Append-only signal/activity logs are bounded so the single persisted State value
+// cannot grow without limit (it is fully (de)serialized on every Durable Object request
+// and is subject to the storage value size limit). High-frequency, ephemeral signals
+// (typing/thinking/status) keep a short window; activity logs keep a longer tail.
+const WAKE_LOG_CAPACITY = 50;
+const STATUS_LOG_CAPACITY = 200;
+const TYPING_LOG_CAPACITY = 200;
+const THINKING_LOG_CAPACITY = 200;
+const EVENT_LOG_CAPACITY = 500;
+const RUN_LOG_CAPACITY = 500;
+const CLI_LOG_CAPACITY = 500;
+const NOTICE_LOG_CAPACITY = 200;
+const TRIAGE_LOG_CAPACITY = 200;
+
 const styles = "    :root {\n      --accent: #ffd633;\n      --rail: #ffd83d;\n      --sidebar: #fbf4e6;\n      --active: #f15b93;\n      --canvas: #ffffff;\n      --panel: #fffaf0;\n      --line: #111111;\n      --soft-line: #d7d1c5;\n      --ink: #171717;\n      --body: #303030;\n      --muted: #7d7a73;\n      --avatar: #c8b6ff;\n      --shadow: rgba(17,17,17,0.16) 0 14px 36px;\n    }\n    * { box-sizing: border-box; }\n    body {\n      margin: 0;\n      background: var(--canvas);\n      color: var(--ink);\n      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n      font-size: 12px;\n      line-height: 1.35;\n      overflow: hidden;\n    }\n    h1, h2, h3, p { margin: 0; }\n    h1 { font-size: 17px; line-height: 1.1; }\n    h2 { font-size: 15px; line-height: 1.2; }\n    h3 { font-size: 13px; line-height: 1.2; }\n    p { color: var(--body); }\n    button, textarea, select, input { font: inherit; }\n    * {\n      scrollbar-width: thin;\n      scrollbar-color: var(--line) var(--accent);\n    }\n    *::-webkit-scrollbar {\n      width: 13px;\n      height: 13px;\n    }\n    *::-webkit-scrollbar-track {\n      background: var(--accent);\n      border-left: 1px solid var(--line);\n    }\n    *::-webkit-scrollbar-thumb {\n      background: var(--line);\n      border: 3px solid var(--accent);\n    }\n    *::-webkit-scrollbar-corner { background: var(--accent); }\n    button {\n      min-height: 27px;\n      border: 1px solid var(--line);\n      border-radius: 0;\n      padding: 4px 9px;\n      background: var(--canvas);\n      color: var(--ink);\n      font-weight: 800;\n      cursor: pointer;\n    }\n    button:hover, button.primary { background: var(--accent); }\n    button.icon {\n      width: 27px;\n      min-width: 27px;\n      padding: 0;\n      display: grid;\n      place-items: center;\n    }\n    textarea, input, select {\n      width: 100%;\n      border: 1px solid var(--line);\n      border-radius: 0;\n      background: var(--canvas);\n      color: var(--ink);\n      padding: 8px;\n    }\n    textarea {\n      min-height: 54px;\n      resize: vertical;\n      line-height: 1.45;\n    }\n    label {\n      color: var(--muted);\n      font-size: 10px;\n      font-weight: 900;\n      text-transform: uppercase;\n    }\n    .app {\n      height: 100vh;\n      min-height: 100vh;\n      display: grid;\n      grid-template-columns: 42px 180px minmax(0, 1fr);\n      background: var(--canvas);\n    }\n    .rail {\n      display: grid;\n      grid-template-rows: auto 1fr;\n      gap: 12px;\n      border-right: 2px solid var(--line);\n      background: var(--rail);\n      padding: 8px 6px;\n    }\n    .logo {\n      width: 27px;\n      display: grid;\n      grid-template-columns: 1fr;\n      gap: 6px;\n    }\n    .logo span {\n      width: 27px;\n      height: 27px;\n      display: grid;\n      place-items: center;\n      background: var(--line);\n      color: var(--accent);\n      font-size: 10px;\n      font-weight: 900;\n    }\n    .rail .icon { background: transparent; border-color: transparent; }\n    .rail .icon.active { background: var(--canvas); border-color: var(--line); }\n    .windows {\n      min-width: 0;\n      border-right: 2px solid var(--line);\n      background: var(--sidebar);\n      padding: 8px 6px;\n      overflow: hidden;\n      display: grid;\n      grid-template-rows: auto minmax(0, 1fr);\n      gap: 8px;\n    }\n    .windows-head {\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 8px;\n      padding: 0 2px 8px;\n      border-bottom: 1px solid var(--soft-line);\n      font-weight: 900;\n    }\n    .window-list {\n      min-height: 0;\n      overflow: auto;\n      display: grid;\n      align-content: start;\n      gap: 5px;\n    }\n    .window-item {\n      display: grid;\n      grid-template-columns: minmax(0, 1fr) auto auto;\n      gap: 6px;\n      align-items: center;\n      min-height: 32px;\n      padding: 5px 6px;\n      border: 1px solid transparent;\n      background: transparent;\n      text-align: left;\n      font-weight: 800;\n    }\n    .window-select {\n      min-width: 0;\n      min-height: 0;\n      padding: 0;\n      border: 0;\n      background: transparent;\n      text-align: left;\n      font-weight: 900;\n    }\n    .window-item.active {\n      border-color: var(--line);\n      background: var(--active);\n    }\n    .window-delete {\n      width: 18px;\n      min-width: 18px;\n      min-height: 18px;\n      padding: 0;\n      border-color: var(--line);\n      background: var(--canvas);\n      color: var(--line);\n      line-height: 1;\n    }\n    .window-delete:hover { background: var(--accent); }\n    .window-name {\n      overflow: hidden;\n      text-overflow: ellipsis;\n      white-space: nowrap;\n    }\n    .window-meta {\n      color: var(--muted);\n      font-size: 10px;\n      font-weight: 900;\n    }\n    .sidebar {\n      display: none;\n      min-width: 0;\n      border-right: 2px solid var(--line);\n      background: var(--sidebar);\n      padding: 9px 5px;\n      overflow: hidden;\n    }\n    .side-title {\n      display: flex;\n      justify-content: space-between;\n      align-items: center;\n      padding: 0 4px 11px;\n      border-bottom: 1px solid var(--soft-line);\n      margin-bottom: 8px;\n    }\n    .side-section { display: grid; gap: 3px; margin: 12px 0; }\n    .side-label {\n      padding: 0 7px;\n      color: var(--muted);\n      font-size: 10px;\n      font-weight: 900;\n      letter-spacing: 0.03em;\n      text-transform: uppercase;\n    }\n    .side-link, .channel {\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 8px;\n      min-height: 25px;\n      padding: 4px 6px;\n      border: 1px solid transparent;\n      color: var(--body);\n      text-decoration: none;\n      white-space: nowrap;\n      overflow: hidden;\n    }\n    .channel.active {\n      background: var(--active);\n      border-color: var(--line);\n      color: var(--line);\n      font-weight: 900;\n    }\n    .badge { color: var(--muted); font-size: 10px; font-weight: 900; }\n    .main {\n      min-width: 0;\n      min-height: 0;\n      height: 100vh;\n      display: grid;\n      grid-template-rows: auto auto minmax(0, 1fr);\n    }\n    .topbar {\n      height: 38px;\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 14px;\n      border-bottom: 2px solid var(--line);\n      padding: 6px 12px;\n    }\n    .channel-head {\n      display: grid;\n      grid-template-columns: 21px minmax(0, auto);\n      gap: 8px;\n      align-items: center;\n      min-width: 0;\n    }\n    .hash {\n      width: 21px;\n      height: 21px;\n      display: grid;\n      place-items: center;\n      background: var(--accent);\n      border: 1px solid var(--line);\n      font-weight: 900;\n    }\n    .channel-name { font-weight: 900; line-height: 1; }\n    .channel-desc {\n      color: var(--muted);\n      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;\n      font-size: 10px;\n      overflow: hidden;\n      text-overflow: ellipsis;\n      white-space: nowrap;\n    }\n    .top-actions { display: flex; gap: 6px; }\n    .tabs {\n      height: 24px;\n      display: flex;\n      align-items: stretch;\n      border-bottom: 2px solid var(--line);\n    }\n    .tab {\n      min-height: 0;\n      padding: 3px 12px;\n      border-width: 0 1px 0 0;\n      background: var(--canvas);\n      font-size: 11px;\n    }\n    .tab.active { background: var(--accent); }\n    .workspace {\n      min-height: 0;\n      overflow: auto;\n      background: var(--canvas);\n    }\n    .panel { display: none; min-height: 100%; }\n    .panel.active { display: block; }\n    .chat-panel {\n      position: relative;\n      min-height: 100%;\n      padding: 14px 0 124px;\n    }\n    .message-list {\n      display: grid;\n      gap: 11px;\n      width: 100%;\n      padding: 0 18px;\n    }\n    .system-line {\n      color: #aaa49a;\n      font-size: 10px;\n      text-align: center;\n      padding: 4px 0;\n    }\n    .post {\n      display: grid;\n      grid-template-columns: 24px minmax(0, 1fr);\n      gap: 8px;\n      padding: 8px;\n      border: 1px solid transparent;\n    }\n    .post.highlight { border-color: var(--line); }\n    .avatar {\n      width: 22px;\n      height: 22px;\n      display: grid;\n      place-items: center;\n      border: 1px solid var(--line);\n      background: var(--avatar);\n      color: var(--line);\n      font-size: 12px;\n      font-weight: 900;\n    }\n    .post-top {\n      display: flex;\n      align-items: baseline;\n      gap: 6px;\n      min-width: 0;\n      margin-bottom: 3px;\n    }\n    .author { font-weight: 900; }\n    .time { color: var(--muted); font-size: 10px; white-space: nowrap; }\n    .post-body {\n      color: var(--body);\n      line-height: 1.45;\n      white-space: pre-wrap;\n      word-break: break-word;\n    }\n    .jump {\n      position: sticky;\n      bottom: 104px;\n      display: none;\n      width: max-content;\n      margin: 16px auto;\n      box-shadow: var(--shadow);\n    }\n    .jump.visible { display: block; }\n    .composer {\n      position: fixed;\n      right: 16px;\n      bottom: 14px;\n      left: 238px;\n      z-index: 5;\n      display: grid;\n      grid-template-columns: minmax(0, 1fr) auto;\n      gap: 8px;\n      width: auto;\n      max-width: none;\n      border: 2px solid var(--line);\n      background: var(--canvas);\n      padding: 8px;\n    }\n    .composer textarea {\n      min-height: 44px;\n      max-height: 110px;\n      border: 0;\n      padding: 6px;\n    }\n    .composer button:disabled {\n      opacity: 0.62;\n      cursor: wait;\n    }\n    .tab-panel {\n      max-width: 920px;\n      padding: 18px;\n      gap: 10px;\n    }\n    .tab-panel.active { display: grid; }\n    .task-row {\n      display: grid;\n      gap: 5px;\n      max-width: 720px;\n      border: 1px solid var(--line);\n      padding: 10px;\n    }\n    .task-top {\n      display: flex;\n      align-items: baseline;\n      justify-content: space-between;\n      gap: 10px;\n    }\n    .model-grid { display: grid; gap: 10px; }\n    .model-row {\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 12px;\n      border-top: 1px solid var(--soft-line);\n      padding-top: 8px;\n      color: var(--body);\n    }\n    .model-row:first-child { border-top: 0; padding-top: 0; }\n    .available { color: #cc2f68; font-weight: 900; }\n    .unavailable { color: var(--muted); }\n    .cmd {\n      border: 1px solid var(--line);\n      background: var(--panel);\n      padding: 10px;\n      color: var(--body);\n      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;\n      font-size: 11px;\n      line-height: 1.5;\n      overflow: auto;\n      white-space: pre-wrap;\n      word-break: break-word;\n    }\n    .side-card {\n      display: grid;\n      gap: 10px;\n      border: 1px solid var(--line);\n      padding: 10px;\n    }\n    .settings-actions {\n      display: flex;\n      justify-content: flex-end;\n      gap: 8px;\n    }\n    .field { display: grid; gap: 5px; }\n    .muted { color: var(--muted); font-size: 11px; }\n    dialog {\n      width: min(520px, calc(100vw - 24px));\n      max-height: min(760px, calc(100vh - 24px));\n      border: 2px solid var(--line);\n      border-radius: 0;\n      padding: 0;\n      box-shadow: var(--shadow);\n      overflow: hidden;\n    }\n    dialog::backdrop { background: rgba(0,0,0,0.48); }\n    .computer-dialog { width: min(680px, calc(100vw - 24px)); }\n    .window-dialog { width: min(440px, calc(100vw - 24px)); }\n    .modal-form { margin: 0; }\n    .modal-head {\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 16px;\n      padding: 12px;\n      border-bottom: 2px solid var(--line);\n    }\n    .modal-body {\n      display: grid;\n      gap: 12px;\n      padding: 12px;\n      overflow: auto;\n      max-height: calc(100vh - 120px);\n    }\n    .computer-flow {\n      display: grid;\n      gap: 20px;\n      padding: 32px;\n    }\n    .computer-kicker {\n      color: var(--muted);\n      font-size: 11px;\n      font-weight: 900;\n      letter-spacing: 0.14em;\n      text-transform: uppercase;\n    }\n    .computer-title {\n      font-size: 20px;\n      line-height: 1.15;\n      text-transform: uppercase;\n    }\n    .computer-lead {\n      display: grid;\n      grid-template-columns: 36px minmax(0, 1fr);\n      gap: 14px;\n      align-items: start;\n      color: var(--body);\n      font-size: 15px;\n      line-height: 1.5;\n    }\n    .computer-icon {\n      width: 32px;\n      height: 32px;\n      display: grid;\n      place-items: center;\n      border: 2px solid var(--line);\n      background: var(--accent);\n      font-weight: 900;\n    }\n    .computer-muted {\n      margin-top: 8px;\n      color: var(--muted);\n      font-size: 12px;\n      line-height: 1.45;\n    }\n    .computer-rule { border-top: 2px solid var(--soft-line); }\n    .computer-actions {\n      display: flex;\n      align-items: center;\n      justify-content: flex-end;\n      gap: 12px;\n      flex-wrap: wrap;\n    }\n    .computer-actions.between { justify-content: space-between; }\n    .check-row {\n      display: flex;\n      align-items: center;\n      gap: 8px;\n      font-weight: 800;\n      color: var(--body);\n    }\n    .check-row input {\n      width: 16px;\n      height: 16px;\n      padding: 0;\n      accent-color: var(--accent);\n    }\n    .choice-grid {\n      display: grid;\n      grid-template-columns: repeat(2, minmax(0, 1fr));\n      gap: 10px;\n    }\n    .computer-choice {\n      display: grid;\n      grid-template-columns: 28px minmax(0, 1fr);\n      gap: 10px;\n      min-height: 82px;\n      border: 2px solid var(--line);\n      padding: 14px;\n      background: var(--canvas);\n      text-align: left;\n    }\n    .computer-choice.active { background: var(--accent); }\n    .computer-choice.disabled {\n      border-style: dashed;\n      color: var(--muted);\n      opacity: 0.56;\n      cursor: default;\n    }\n    .computer-choice-title {\n      display: block;\n      font-size: 14px;\n      text-transform: uppercase;\n    }\n    .connect-row {\n      display: grid;\n      grid-template-columns: minmax(0, 1fr) auto;\n      gap: 10px;\n      align-items: center;\n    }\n    .connect-stack {\n      display: grid;\n      gap: 8px;\n      min-width: 0;\n    }\n    .connect-help {\n      color: var(--body);\n      font-size: 12px;\n      font-weight: 900;\n    }\n    .connect-command {\n      border: 2px solid var(--line);\n      background: #080808;\n      color: #a7d66d;\n      padding: 14px;\n      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;\n      font-size: 12px;\n      line-height: 1.5;\n      white-space: pre-wrap;\n      word-break: break-word;\n    }\n    .connect-status {\n      display: flex;\n      align-items: center;\n      gap: 10px;\n      border: 2px solid var(--line);\n      background: #fff3c4;\n      padding: 14px;\n      font-weight: 900;\n    }\n    .status-dot {\n      width: 10px;\n      height: 10px;\n      border: 2px solid var(--line);\n      border-radius: 50%;\n      background: #ffad7a;\n    }\n    .status-dot.online { background: #74d67b; }\n    .button-shadow { box-shadow: 4px 5px 0 var(--line); }\n    button.primary-pink {\n      background: var(--active);\n      min-height: 36px;\n      padding: 8px 14px;\n      font-size: 14px;\n    }\n    button.disabled-action {\n      background: #edf5df;\n      color: var(--muted);\n      cursor: default;\n    }\n    @media (max-width: 760px) {\n      .app { grid-template-columns: 36px 132px minmax(0, 1fr); }\n      .logo {\n        width: 24px;\n        grid-template-columns: 1fr;\n      }\n      .logo span {\n        width: 22px;\n        height: 16px;\n        font-size: 10px;\n      }\n      .message-list { padding: 0 10px; }\n      .composer { left: 178px; right: 10px; width: auto; }\n      .top-actions .hide-mobile { display: none; }\n      .post { max-width: 100%; }\n      .computer-flow { padding: 22px; }\n      .choice-grid, .connect-row { grid-template-columns: 1fr; }\n    }\n";
 
-const clientScript = "const base = location.origin;\nlet pairCommand = '';\nlet pairCommandPrimary = '';\nlet pairCommandStart = '';\nlet computerStep = 'intro';\nlet lastConnection = { paired: false, online: false };\nlet promptedForComputer = false;\nlet visibleMessageCount = 20;\nlet lastMessageTotal = 0;\nlet loadingOlderMessages = false;\nlet sendingMessage = false;\nlet shouldStickToBottom = true;\nlet activeConversationId = localStorage.getItem('king:activeConversationId') || 'king-convo';\n\nfunction escapeHtml(value) {\n  return String(value ?? '').replace(/[&<>\"']/g, function(ch) {\n    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' })[ch];\n  });\n}\nfunction formatTime(value) {\n  if (!value) return '未收到';\n  return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });\n}\nfunction lifecycleLabel(value) {\n  return ({ 'on-demand': '按需启动', '24/7': '持续在线', idle_cached: '空闲保活', disabled: '停用' })[value] || value || '按需启动';\n}\nfunction taskStatusLabel(value) {\n  return ({ pending: '待分配', assigned: '已分配', in_progress: '进行中', review: '待评审', done: '已完成', failed: '失败', blocked: '被阻塞' })[value] || value || '未知';\n}\nfunction reasonLabel(reason) {\n  return String(reason || '')\n    .replace(/(\\\\\\\\d+) unread message\\\\\\\\(s\\\\\\\\) pending/g, '$1 条消息等待本地 AI 处理')\n    .replace(/(\\\\\\\\d+) failed run\\\\\\\\(s\\\\\\\\)/g, '$1 次运行失败')\n    .replace('no state changes detected', '等待下一条消息。');\n}\nasync function request(path, options) {\n  const res = await fetch(path, options);\n  if (!res.ok) throw new Error(await res.text());\n  return res.headers.get('Content-Type') && res.headers.get('Content-Type').includes('application/json') ? res.json() : res.text();\n}\nfunction openSettings() {\n  document.getElementById('settingsDialog').showModal();\n}\nfunction closeSettings() {\n  document.getElementById('settingsDialog').close();\n}\nfunction closeComputerDialog() {\n  document.getElementById('computerDialog').close();\n}\nasync function openComputerFlow(step) {\n  computerStep = step || 'intro';\n  const settings = document.getElementById('settingsDialog');\n  if (settings.open) settings.close();\n  renderComputerFlow();\n  const dialog = document.getElementById('computerDialog');\n  if (!dialog.open) dialog.showModal();\n  if (!pairCommand) await loadPairCommand();\n}\nasync function loadPairCommand() {\n  const summary = await request('/gui/summary');\n  if (!summary.pairingCode) return;\n  pairCommandPrimary = 'king agent computer --pair ' + summary.pairingCode + ' --server ' + base + (summary.pairCommandTenantArg || '');\n  pairCommandStart = 'king agent computer --server ' + base + (summary.pairCommandTenantArg || '');\n  pairCommand = pairCommandPrimary + '\\n' + pairCommandStart;\n  lastConnection = summary.connection || lastConnection;\n  if (document.getElementById('computerDialog').open && computerStep === 'connect') renderComputerFlow();\n}\nfunction dismissComputerIntro() {\n  const checkbox = document.getElementById('dontRemindComputer');\n  if (checkbox && checkbox.checked) localStorage.setItem('king:addComputerDismissed', '1');\n  closeComputerDialog();\n}\nfunction renderComputerFlow() {\n  const connected = Boolean(lastConnection.online);\n  const paired = Boolean(lastConnection.paired);\n  const connectionText = connected ? 'Computer connected.' : paired ? 'Computer paired. Waiting for it to come online...' : 'Waiting for computer to connect...';\n  const flow = document.getElementById('computerFlow');\n  if (computerStep === 'select') {\n    flow.innerHTML =\n      '<div class=\"computer-actions\"><button class=\"icon button-shadow\" onclick=\"closeComputerDialog()\" aria-label=\"Close\">×</button></div>' +\n      '<h2 class=\"computer-title\">Add Computer</h2>' +\n      '<div class=\"choice-grid\">' +\n      '<button class=\"computer-choice active\" onclick=\"openComputerFlow(&quot;connect&quot;)\"><span class=\"computer-icon\">▭</span><span><strong class=\"computer-choice-title\">Your Computer</strong><span class=\"computer-muted\">Run agents on your own computer</span></span></button>' +\n      '<button class=\"computer-choice disabled\" type=\"button\"><span class=\"computer-icon\">☁</span><span><strong class=\"computer-choice-title\">Cloud Computer</strong><span class=\"computer-muted\">Coming soon</span></span></button>' +\n      '</div>' +\n      '<div class=\"computer-actions\"><button class=\"button-shadow\" onclick=\"closeComputerDialog()\">Cancel</button><button class=\"primary-pink button-shadow\" onclick=\"openComputerFlow(&quot;connect&quot;)\">Next</button></div>';\n    return;\n  }\n  if (computerStep === 'connect') {\n    flow.innerHTML =\n      '<div class=\"computer-actions\"><button class=\"icon button-shadow\" onclick=\"closeComputerDialog()\" aria-label=\"Close\">×</button></div>' +\n      '<h2 class=\"computer-title\">Connect Computer</h2>' +\n      '<p><strong>&gt;_ Run this command on your computer to connect:</strong></p>' +\n      '<div class=\"connect-row\"><div class=\"connect-stack\">' +\n      '<div class=\"connect-help\">First-time pairing: run this once to attach this browser session.</div>' +\n      '<pre class=\"connect-command\">' + escapeHtml(pairCommandPrimary || 'Loading pairing code...') + '</pre>' +\n      '<div class=\"connect-help\">Already paired: use this later to start the local computer runtime.</div>' +\n      '<pre class=\"connect-command\">' + escapeHtml(pairCommandStart || 'Loading start command...') + '</pre></div><button class=\"icon button-shadow\" onclick=\"copyPairCommand()\" aria-label=\"Copy commands\">□</button></div>' +\n      '<div class=\"connect-status\"><span class=\"status-dot' + (connected ? ' online' : '') + '\"></span><span>' + connectionText + '</span></div>' +\n      '<div class=\"computer-actions\"><button class=\"button-shadow\" onclick=\"closeComputerDialog()\">Cancel</button><button class=\"' + (connected ? 'primary-pink' : 'disabled-action') + ' button-shadow\" onclick=\"' + (connected ? 'closeComputerDialog()' : 'refresh()') + '\">' + (connected ? 'Done' : 'Done') + '</button></div>';\n    return;\n  }\n  flow.innerHTML =\n    '<div><div class=\"computer-kicker\">Meet King</div><h2 class=\"computer-title\">Add a Computer</h2></div>' +\n    '<div class=\"computer-lead\"><span class=\"computer-icon\">▭</span><div><p>Your agents need somewhere to run. Connect a computer and they will come online there.</p><p class=\"computer-muted\">Need an agent runtime installed: Claude Code, Codex CLI, Kimi CLI, Copilot CLI, Cursor CLI, Gemini CLI, OpenCode, or Pi.</p></div></div>' +\n    '<div class=\"computer-rule\"></div>' +\n    '<div class=\"computer-actions between\"><label class=\"check-row\"><input id=\"dontRemindComputer\" type=\"checkbox\" />Do not remind me again</label><span class=\"computer-actions\"><button class=\"button-shadow\" onclick=\"dismissComputerIntro()\">Skip</button><button class=\"primary-pink button-shadow\" onclick=\"openComputerFlow(&quot;select&quot;)\">▭ Add Computer</button></span></div>';\n}\nfunction showPanel(name) {\n  ['chat', 'tasks', 'files'].forEach(function(panel) {\n    document.getElementById('panel-' + panel).classList.toggle('active', panel === name);\n    document.querySelector('[data-panel=\"' + panel + '\"]').classList.toggle('active', panel === name);\n  });\n}\nfunction scrollToBottom() {\n  const workspace = document.querySelector('.workspace');\n  workspace.scrollTop = workspace.scrollHeight;\n  shouldStickToBottom = true;\n  updateBackToBottom();\n}\nfunction updateBackToBottom() {\n  const workspace = document.querySelector('.workspace');\n  const jump = document.querySelector('.jump');\n  const distance = workspace.scrollHeight - workspace.clientHeight - workspace.scrollTop;\n  const away = distance > 180;\n  shouldStickToBottom = !away;\n  jump.classList.toggle('visible', away);\n}\nasync function handleWorkspaceScroll() {\n  updateBackToBottom();\n  const workspace = document.querySelector('.workspace');\n  if (loadingOlderMessages || workspace.scrollTop > 24 || visibleMessageCount >= lastMessageTotal) return;\n  loadingOlderMessages = true;\n  const beforeHeight = workspace.scrollHeight;\n  const beforeTop = workspace.scrollTop;\n  visibleMessageCount = Math.min(visibleMessageCount + 20, lastMessageTotal);\n  await refresh({ preserveScroll: true });\n  workspace.scrollTop = workspace.scrollHeight - beforeHeight + beforeTop;\n  loadingOlderMessages = false;\n}\nasync function copyPairCommand() {\n  if (!pairCommand) return;\n  await navigator.clipboard.writeText(pairCommand).catch(function() {});\n}\nasync function sendMessage() {\n  if (sendingMessage) return;\n  const input = document.getElementById('body');\n  const button = document.getElementById('sendButton');\n  const body = input.value.trim();\n  if (!body) return;\n  sendingMessage = true;\n  input.value = '';\n  input.blur();\n  button.disabled = true;\n  button.textContent = 'Sending';\n  try {\n    await request('/gui/message', {\n      method: 'POST',\n      headers: { 'Content-Type': 'application/json' },\n      body: JSON.stringify({ body, conversationId: activeConversationId })\n    });\n    visibleMessageCount = 20;\n    shouldStickToBottom = true;\n    await refresh();\n  } catch (error) {\n    input.value = body;\n    throw error;\n  } finally {\n    sendingMessage = false;\n    button.disabled = false;\n    button.textContent = 'Send';\n  }\n}\nasync function clearMessages() {\n  await request('/gui/clear-messages', { method: 'POST' });\n  visibleMessageCount = 20;\n  shouldStickToBottom = true;\n  await refresh();\n}\nasync function saveAgentConfig() {\n  await request('/gui/agent-config', {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify({\n      name: document.getElementById('agentName').value,\n      role: document.getElementById('agentRole').value,\n      engine: document.getElementById('engine').value,\n      lifecycle: 'on-demand',\n      model: document.getElementById('model').value,\n      fastModel: document.getElementById('fastModel').value\n    })\n  });\n  await refresh();\n}\nfunction renderMessages(state, options) {\n  const allRows = (state.messages || []).filter(function(message) { return message.conversation_id === activeConversationId; });\n  if (allRows.length > lastMessageTotal) visibleMessageCount = 20;\n  lastMessageTotal = allRows.length;\n  visibleMessageCount = Math.min(Math.max(visibleMessageCount, 20), Math.max(lastMessageTotal, 20));\n  const rows = allRows.slice(-visibleMessageCount);\n  const hasOlder = rows.length < allRows.length;\n  const unread = rows.filter(function(message) { return !(message.readBy || []).includes('king-agent') && message.author_kind === 'human'; }).length;\n  const olderLine = hasOlder ? 'Pull down or scroll to top to load older messages...' : 'No older messages';\n  const html = rows.length ? rows.map(function(message) {\n    if (message.author_kind === 'system') {\n      return '<div class=\"system-line\">' + escapeHtml(message.body) + '</div>';\n    }\n    const initial = message.author_kind === 'agent' ? 'A' : '人';\n    const name = message.author_kind === 'agent' ? (message.author_name || 'AI') : (message.author_name || 'you');\n    const unreadClass = message.author_kind === 'human' && !(message.readBy || []).includes('king-agent') ? ' highlight' : '';\n    return '<article class=\"post' + unreadClass + '\"><div class=\"avatar\">' + initial + '</div><div><div class=\"post-top\"><span class=\"author\">' + escapeHtml(name) + '</span><span class=\"time\">' + formatTime(message.created_at) + '</span></div><div class=\"post-body\">' + escapeHtml(message.body) + '</div></div></article>';\n  }).join('') : '';\n  document.getElementById('chatWindow').innerHTML = '<div class=\"system-line\">' + olderLine + '</div>' + html;\n  if (options && options.preserveScroll) updateBackToBottom();\n  else if (shouldStickToBottom) scrollToBottom();\n  else updateBackToBottom();\n}\nfunction selectConversation(id) {\n  activeConversationId = id || 'king-convo';\n  localStorage.setItem('king:activeConversationId', activeConversationId);\n  visibleMessageCount = 20;\n  shouldStickToBottom = true;\n  refresh();\n}\nfunction createConversation() {\n  const input = document.getElementById('newWindowTitle');\n  input.value = '';\n  const dialog = document.getElementById('newWindowDialog');\n  if (!dialog.open) dialog.showModal();\n  setTimeout(function() { input.focus(); }, 0);\n}\nfunction closeNewWindowDialog() {\n  document.getElementById('newWindowDialog').close();\n}\nasync function submitConversation(event) {\n  event.preventDefault();\n  const input = document.getElementById('newWindowTitle');\n  const title = input.value.trim();\n  const submit = document.getElementById('newWindowSubmit');\n  submit.disabled = true;\n  submit.textContent = 'Creating';\n  try {\n    const result = await request('/gui/conversations', {\n      method: 'POST',\n      headers: { 'Content-Type': 'application/json' },\n      body: JSON.stringify({ title })\n    });\n    activeConversationId = result.conversation.id;\n    localStorage.setItem('king:activeConversationId', activeConversationId);\n    visibleMessageCount = 20;\n    shouldStickToBottom = true;\n    closeNewWindowDialog();\n    await refresh();\n  } finally {\n    submit.disabled = false;\n    submit.textContent = 'Create';\n  }\n}\nfunction activeConversationStatus(summary, active) {\n  const state = summary.state || {};\n  const typing = (state.typingLog || []).slice().reverse().find(function(row) { return row.conversationId === active.id && !row.done; });\n  const thinking = (state.thinkingLog || []).slice().reverse().find(function(row) { return row.action === 'mark' && (row.conversationIds || []).includes(active.id); });\n  if (typing) return 'agent 正在输入...';\n  if (thinking) return 'agent 正在处理...';\n  if ((active.unread || 0) > 0) return '等待本地 agent 回复';\n  return 'General channel for all members';\n}\nfunction renderConversations(summary) {\n  const conversations = summary.conversations || [];\n  if (conversations.length && !conversations.some(function(row) { return row.id === activeConversationId; })) activeConversationId = conversations[0].id;\n  const active = conversations.find(function(row) { return row.id === activeConversationId; }) || conversations[0] || { id: 'king-convo', title: 'all' };\n  document.querySelector('.channel-name').textContent = active.title || active.id;\n  document.querySelector('.composer textarea').placeholder = 'Message #' + (active.title || active.id);\n  document.querySelector('.hash').textContent = active.id === 'king-convo' ? '#' : '~';\n  document.getElementById('routeSummary').textContent = activeConversationStatus(summary, active);\n  document.getElementById('conversationList').innerHTML = conversations.map(function(row) {\n    const deletable = row.id !== 'king-convo';\n    return '<div class=\"window-item' + (row.id === activeConversationId ? ' active' : '') + '\"><button class=\"window-select\" onclick=\"selectConversation(&quot;' + escapeHtml(row.id) + '&quot;)\"><span class=\"window-name\">' + escapeHtml(row.title || row.id) + '</span></button><span class=\"window-meta\">' + escapeHtml(row.unread || 0) + '</span>' + (deletable ? '<button class=\"window-delete\" onclick=\"deleteConversation(event, &quot;' + escapeHtml(row.id) + '&quot;)\" aria-label=\"Delete window\">×</button>' : '') + '</div>';\n  }).join('');\n}\nasync function deleteConversation(event, id) {\n  event.stopPropagation();\n  await request('/gui/conversations/' + encodeURIComponent(id) + '/delete', { method: 'POST' });\n  if (activeConversationId === id) {\n    activeConversationId = 'king-convo';\n    localStorage.setItem('king:activeConversationId', activeConversationId);\n  }\n  visibleMessageCount = 20;\n  shouldStickToBottom = true;\n  await refresh();\n}\nfunction renderTasks(state) {\n  const tasks = state.tasks || [];\n  document.getElementById('taskBadge').textContent = String(tasks.filter(function(task) { return task.status !== 'done'; }).length);\n  document.getElementById('panel-tasks').innerHTML = tasks.length ? tasks.slice().reverse().map(function(task) {\n    return '<div class=\"task-row\"><div class=\"task-top\"><h3>' + escapeHtml(task.title) + '</h3><span class=\"time\">' + escapeHtml(taskStatusLabel(task.status)) + ' P' + escapeHtml(task.priority) + '</span></div><p>' + escapeHtml(task.description || ((task.scope && task.scope.paths || []).join(', ')) || 'No description') + '</p></div>';\n  }).join('') : '<p class=\"muted\">No tasks yet.</p>';\n  const artifacts = state.artifacts || [];\n  document.getElementById('panel-files').innerHTML = artifacts.length ? artifacts.slice().reverse().map(function(artifact) {\n    return '<div class=\"task-row\"><div class=\"task-top\"><h3>' + escapeHtml(artifact.path || artifact.name || 'artifact') + '</h3><span class=\"time\">' + escapeHtml(artifact.kind || 'file') + '</span></div><p>' + escapeHtml(artifact.source || artifact.confidence || '') + '</p></div>';\n  }).join('') : '<p class=\"muted\">No files yet.</p>';\n}\nfunction renderSummary(summary) {\n  const connection = summary.connection || {};\n  const observation = summary.observation || { counts: {}, reasons: [] };\n  const counts = observation.counts || {};\n  const agent = summary.agent || {};\n  lastConnection = connection;\n  const heartbeatStat = document.getElementById('heartbeatStat');\n  if (heartbeatStat) heartbeatStat.textContent = '最近心跳：' + (connection.lastHeartbeatAt ? formatTime(connection.lastHeartbeatAt) : '未收到');\n  document.getElementById('unreadStat').textContent = String(counts.unreadMessages || 0);\n  document.getElementById('failedStat').textContent = String(counts.failedRuns || 0);\n  document.getElementById('activityBadge').textContent = String((counts.unreadMessages || 0) + (counts.failedRuns || 0));\n  renderConversations({ ...summary, state: window.__lastState || {} });\n  const observationReasons = document.getElementById('observationReasons');\n  if (observationReasons) observationReasons.textContent = (observation.reasons || []).map(reasonLabel).join('；') || '等待下一条消息。';\n  if (summary.pairingCode) {\n    pairCommandPrimary = 'king agent computer --pair ' + summary.pairingCode + ' --server ' + base + (summary.pairCommandTenantArg || '');\n  pairCommandStart = 'king agent computer --server ' + base + (summary.pairCommandTenantArg || '');\n  pairCommand = pairCommandPrimary + '\\n' + pairCommandStart;\n    if (document.getElementById('computerDialog').open) renderComputerFlow();\n  }\n  if (!connection.paired && !promptedForComputer && !localStorage.getItem('king:addComputerDismissed')) {\n    promptedForComputer = true;\n    setTimeout(function() {\n      if (!document.getElementById('settingsDialog').open && !document.getElementById('computerDialog').open) openComputerFlow('intro');\n    }, 250);\n  }\n  const engines = summary.availableEngines || [];\n  document.getElementById('engine').innerHTML = engines.length ? engines.map(function(engine) {\n    return '<option value=\"' + escapeHtml(engine) + '\"' + (engine === agent.engine ? ' selected' : '') + '>' + escapeHtml(engine) + '</option>';\n  }).join('') : '<option value=\"\">请先配对</option>';\n  document.getElementById('agentName').value = agent.name || 'King Agent';\n  document.getElementById('agentRole').value = agent.role || 'Local BYOA agent';\n  document.getElementById('model').value = agent.model === 'default' ? '' : (agent.model || '');\n  document.getElementById('fastModel').value = agent.fastModel === 'default' ? '' : (agent.fastModel || '');\n  const modelRows = ['claude', 'codex'].map(function(engine) {\n    const available = engines.includes(engine);\n    const active = agent.engine === engine;\n    const label = active && !available ? '当前配置，未检测到本机' : available ? '可用' : '未检测到';\n    return '<div class=\"model-row\"><span>' + engine + (active ? ' · 当前' : '') + '</span><span class=\"' + (available ? 'available' : 'unavailable') + '\">' + label + '</span></div>';\n  }).join('');\n  document.getElementById('modelStatus').innerHTML = modelRows + '<div class=\"model-row\"><span>运行模式</span><span>' + lifecycleLabel(agent.lifecycle) + '</span></div>';\n}\nasync function refresh(options) {\n  const results = await Promise.all([\n    request('/gui/summary'),\n    request('/gui/state')\n  ]);\n  window.__lastState = results[1];\n  renderSummary(results[0]);\n  renderMessages(results[1], options || {});\n  renderTasks(results[1]);\n}\nrefresh();\ndocument.querySelector('.workspace').addEventListener('scroll', handleWorkspaceScroll);\nsetInterval(refresh, 3500);\n";
+const clientScript = "const base = location.origin;\nlet pairCommand = '';\nlet pairCommandPrimary = '';\nlet pairCommandStart = '';\nlet computerStep = 'intro';\nlet lastConnection = { paired: false, online: false };\nlet promptedForComputer = false;\nlet visibleMessageCount = 20;\nlet lastMessageTotal = 0;\nlet loadingOlderMessages = false;\nlet sendingMessage = false;\nlet shouldStickToBottom = true;\nlet activeConversationId = localStorage.getItem('king:activeConversationId') || 'king-convo';\n\nfunction escapeHtml(value) {\n  return String(value ?? '').replace(/[&<>\"']/g, function(ch) {\n    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' })[ch];\n  });\n}\nfunction formatTime(value) {\n  if (!value) return '未收到';\n  return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });\n}\nfunction lifecycleLabel(value) {\n  return ({ 'on-demand': '按需启动', '24/7': '持续在线', idle_cached: '空闲保活', disabled: '停用' })[value] || value || '按需启动';\n}\nfunction taskStatusLabel(value) {\n  return ({ pending: '待分配', assigned: '已分配', in_progress: '进行中', review: '待评审', done: '已完成', failed: '失败', blocked: '被阻塞' })[value] || value || '未知';\n}\nfunction reasonLabel(reason) {\n  return String(reason || '')\n    .replace(/(\\\\\\\\d+) unread message\\\\\\\\(s\\\\\\\\) pending/g, '$1 条消息等待本地 AI 处理')\n    .replace(/(\\\\\\\\d+) failed run\\\\\\\\(s\\\\\\\\)/g, '$1 次运行失败')\n    .replace('no state changes detected', '等待下一条消息。');\n}\nasync function request(path, options) {\n  const res = await fetch(path, options);\n  if (!res.ok) throw new Error(await res.text());\n  return res.headers.get('Content-Type') && res.headers.get('Content-Type').includes('application/json') ? res.json() : res.text();\n}\nfunction openSettings() {\n  document.getElementById('settingsDialog').showModal();\n}\nfunction closeSettings() {\n  document.getElementById('settingsDialog').close();\n}\nfunction closeComputerDialog() {\n  document.getElementById('computerDialog').close();\n}\nasync function openComputerFlow(step) {\n  computerStep = step || 'intro';\n  const settings = document.getElementById('settingsDialog');\n  if (settings.open) settings.close();\n  renderComputerFlow();\n  const dialog = document.getElementById('computerDialog');\n  if (!dialog.open) dialog.showModal();\n  if (!pairCommand) await loadPairCommand();\n}\nasync function loadPairCommand() {\n  const summary = await request('/gui/summary?conversationId=' + encodeURIComponent(activeConversationId));\n  if (!summary.pairingCode) return;\n  pairCommandPrimary = 'king agent computer --pair ' + summary.pairingCode + ' --server ' + base + (summary.pairCommandTenantArg || '');\n  pairCommandStart = 'king agent computer --server ' + base + (summary.pairCommandTenantArg || '');\n  pairCommand = pairCommandPrimary + '\\n' + pairCommandStart;\n  lastConnection = summary.connection || lastConnection;\n  if (document.getElementById('computerDialog').open && computerStep === 'connect') renderComputerFlow();\n}\nfunction dismissComputerIntro() {\n  const checkbox = document.getElementById('dontRemindComputer');\n  if (checkbox && checkbox.checked) localStorage.setItem('king:addComputerDismissed', '1');\n  closeComputerDialog();\n}\nfunction renderComputerFlow() {\n  const connected = Boolean(lastConnection.online);\n  const paired = Boolean(lastConnection.paired);\n  const connectionText = connected ? 'Computer connected.' : paired ? 'Computer paired. Waiting for it to come online...' : 'Waiting for computer to connect...';\n  const flow = document.getElementById('computerFlow');\n  if (computerStep === 'select') {\n    flow.innerHTML =\n      '<div class=\"computer-actions\"><button class=\"icon button-shadow\" onclick=\"closeComputerDialog()\" aria-label=\"Close\">×</button></div>' +\n      '<h2 class=\"computer-title\">Add Computer</h2>' +\n      '<div class=\"choice-grid\">' +\n      '<button class=\"computer-choice active\" onclick=\"openComputerFlow(&quot;connect&quot;)\"><span class=\"computer-icon\">▭</span><span><strong class=\"computer-choice-title\">Your Computer</strong><span class=\"computer-muted\">Run agents on your own computer</span></span></button>' +\n      '<button class=\"computer-choice disabled\" type=\"button\"><span class=\"computer-icon\">☁</span><span><strong class=\"computer-choice-title\">Cloud Computer</strong><span class=\"computer-muted\">Coming soon</span></span></button>' +\n      '</div>' +\n      '<div class=\"computer-actions\"><button class=\"button-shadow\" onclick=\"closeComputerDialog()\">Cancel</button><button class=\"primary-pink button-shadow\" onclick=\"openComputerFlow(&quot;connect&quot;)\">Next</button></div>';\n    return;\n  }\n  if (computerStep === 'connect') {\n    flow.innerHTML =\n      '<div class=\"computer-actions\"><button class=\"icon button-shadow\" onclick=\"closeComputerDialog()\" aria-label=\"Close\">×</button></div>' +\n      '<h2 class=\"computer-title\">Connect Computer</h2>' +\n      '<p><strong>&gt;_ Run this command on your computer to connect:</strong></p>' +\n      '<div class=\"connect-row\"><div class=\"connect-stack\">' +\n      '<div class=\"connect-help\">First-time pairing: run this once to attach this browser session.</div>' +\n      '<pre class=\"connect-command\">' + escapeHtml(pairCommandPrimary || 'Loading pairing code...') + '</pre>' +\n      '<div class=\"connect-help\">Already paired: use this later to start the local computer runtime.</div>' +\n      '<pre class=\"connect-command\">' + escapeHtml(pairCommandStart || 'Loading start command...') + '</pre></div><button class=\"icon button-shadow\" onclick=\"copyPairCommand()\" aria-label=\"Copy commands\">□</button></div>' +\n      '<div class=\"connect-status\"><span class=\"status-dot' + (connected ? ' online' : '') + '\"></span><span>' + connectionText + '</span></div>' +\n      '<div class=\"computer-actions\"><button class=\"button-shadow\" onclick=\"closeComputerDialog()\">Cancel</button><button class=\"' + (connected ? 'primary-pink' : 'disabled-action') + ' button-shadow\" onclick=\"' + (connected ? 'closeComputerDialog()' : 'refresh()') + '\">' + (connected ? 'Done' : 'Done') + '</button></div>';\n    return;\n  }\n  flow.innerHTML =\n    '<div><div class=\"computer-kicker\">Meet King</div><h2 class=\"computer-title\">Add a Computer</h2></div>' +\n    '<div class=\"computer-lead\"><span class=\"computer-icon\">▭</span><div><p>Your agents need somewhere to run. Connect a computer and they will come online there.</p><p class=\"computer-muted\">Need an agent runtime installed: Claude Code, Codex CLI, Kimi CLI, Copilot CLI, Cursor CLI, Gemini CLI, OpenCode, or Pi.</p></div></div>' +\n    '<div class=\"computer-rule\"></div>' +\n    '<div class=\"computer-actions between\"><label class=\"check-row\"><input id=\"dontRemindComputer\" type=\"checkbox\" />Do not remind me again</label><span class=\"computer-actions\"><button class=\"button-shadow\" onclick=\"dismissComputerIntro()\">Skip</button><button class=\"primary-pink button-shadow\" onclick=\"openComputerFlow(&quot;select&quot;)\">▭ Add Computer</button></span></div>';\n}\nfunction showPanel(name) {\n  ['chat', 'tasks', 'files'].forEach(function(panel) {\n    document.getElementById('panel-' + panel).classList.toggle('active', panel === name);\n    document.querySelector('[data-panel=\"' + panel + '\"]').classList.toggle('active', panel === name);\n  });\n}\nfunction scrollToBottom() {\n  const workspace = document.querySelector('.workspace');\n  workspace.scrollTop = workspace.scrollHeight;\n  shouldStickToBottom = true;\n  updateBackToBottom();\n}\nfunction updateBackToBottom() {\n  const workspace = document.querySelector('.workspace');\n  const jump = document.querySelector('.jump');\n  const distance = workspace.scrollHeight - workspace.clientHeight - workspace.scrollTop;\n  const away = distance > 180;\n  shouldStickToBottom = !away;\n  jump.classList.toggle('visible', away);\n}\nasync function handleWorkspaceScroll() {\n  updateBackToBottom();\n  const workspace = document.querySelector('.workspace');\n  if (loadingOlderMessages || workspace.scrollTop > 24 || visibleMessageCount >= lastMessageTotal) return;\n  loadingOlderMessages = true;\n  const beforeHeight = workspace.scrollHeight;\n  const beforeTop = workspace.scrollTop;\n  visibleMessageCount = Math.min(visibleMessageCount + 20, lastMessageTotal);\n  await refresh({ preserveScroll: true });\n  workspace.scrollTop = workspace.scrollHeight - beforeHeight + beforeTop;\n  loadingOlderMessages = false;\n}\nasync function copyPairCommand() {\n  if (!pairCommand) return;\n  await navigator.clipboard.writeText(pairCommand).catch(function() {});\n}\nasync function sendMessage() {\n  if (sendingMessage) return;\n  const input = document.getElementById('body');\n  const button = document.getElementById('sendButton');\n  const body = input.value.trim();\n  if (!body) return;\n  sendingMessage = true;\n  input.value = '';\n  input.blur();\n  button.disabled = true;\n  button.textContent = 'Sending';\n  try {\n    await request('/gui/message', {\n      method: 'POST',\n      headers: { 'Content-Type': 'application/json' },\n      body: JSON.stringify({ body, conversationId: activeConversationId })\n    });\n    visibleMessageCount = 20;\n    shouldStickToBottom = true;\n    await refresh();\n  } catch (error) {\n    input.value = body;\n    throw error;\n  } finally {\n    sendingMessage = false;\n    button.disabled = false;\n    button.textContent = 'Send';\n  }\n}\nasync function clearMessages() {\n  await request('/gui/clear-messages', { method: 'POST' });\n  visibleMessageCount = 20;\n  shouldStickToBottom = true;\n  await refresh();\n}\nasync function saveAgentConfig() {\n  await request('/gui/agent-config', {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify({\n      engine: document.getElementById('engine').value,\n      lifecycle: 'on-demand',\n      model: document.getElementById('model').value,\n      fastModel: document.getElementById('fastModel').value\n    })\n  });\n  await refresh();\n}\nfunction renderMessages(state, options) {\n  const allRows = (state.messages || []).filter(function(message) { return message.conversation_id === activeConversationId; });\n  if (allRows.length > lastMessageTotal) visibleMessageCount = 20;\n  lastMessageTotal = allRows.length;\n  visibleMessageCount = Math.min(Math.max(visibleMessageCount, 20), Math.max(lastMessageTotal, 20));\n  const rows = allRows.slice(-visibleMessageCount);\n  const hasOlder = rows.length < allRows.length;\n  const unread = rows.filter(function(message) { return !(message.readBy || []).includes('king-ceo') && message.author_kind === 'human'; }).length;\n  const olderLine = hasOlder ? 'Pull down or scroll to top to load older messages...' : 'No older messages';\n  const html = rows.length ? rows.map(function(message) {\n    if (message.author_kind === 'system') {\n      return '<div class=\"system-line\">' + escapeHtml(message.body) + '</div>';\n    }\n    const initial = message.author_kind === 'agent' ? 'A' : '人';\n    const name = message.author_kind === 'agent' ? (message.author_name || 'AI') : (message.author_name || 'you');\n    const unreadClass = message.author_kind === 'human' && !(message.readBy || []).includes('king-ceo') ? ' highlight' : '';\n    return '<article class=\"post' + unreadClass + '\"><div class=\"avatar\">' + initial + '</div><div><div class=\"post-top\"><span class=\"author\">' + escapeHtml(name) + '</span><span class=\"time\">' + formatTime(message.created_at) + '</span></div><div class=\"post-body\">' + escapeHtml(message.body) + '</div></div></article>';\n  }).join('') : '';\n  document.getElementById('chatWindow').innerHTML = '<div class=\"system-line\">' + olderLine + '</div>' + html;\n  if (options && options.preserveScroll) updateBackToBottom();\n  else if (shouldStickToBottom) scrollToBottom();\n  else updateBackToBottom();\n}\nfunction selectConversation(id) {\n  activeConversationId = id || 'king-convo';\n  localStorage.setItem('king:activeConversationId', activeConversationId);\n  visibleMessageCount = 20;\n  shouldStickToBottom = true;\n  refresh();\n}\nfunction createConversation() {\n  const input = document.getElementById('newWindowTitle');\n  input.value = '';\n  const dialog = document.getElementById('newWindowDialog');\n  if (!dialog.open) dialog.showModal();\n  setTimeout(function() { input.focus(); }, 0);\n}\nfunction closeNewWindowDialog() {\n  document.getElementById('newWindowDialog').close();\n}\nasync function submitConversation(event) {\n  event.preventDefault();\n  const input = document.getElementById('newWindowTitle');\n  const title = input.value.trim();\n  const submit = document.getElementById('newWindowSubmit');\n  submit.disabled = true;\n  submit.textContent = 'Creating';\n  try {\n    const result = await request('/gui/conversations', {\n      method: 'POST',\n      headers: { 'Content-Type': 'application/json' },\n      body: JSON.stringify({ title })\n    });\n    activeConversationId = result.conversation.id;\n    localStorage.setItem('king:activeConversationId', activeConversationId);\n    visibleMessageCount = 20;\n    shouldStickToBottom = true;\n    closeNewWindowDialog();\n    await refresh();\n  } finally {\n    submit.disabled = false;\n    submit.textContent = 'Create';\n  }\n}\nfunction activeConversationStatus(summary, active) {\n  const state = summary.state || {};\n  const typing = (state.typingLog || []).slice().reverse().find(function(row) { return row.conversationId === active.id && !row.done; });\n  const thinking = (state.thinkingLog || []).slice().reverse().find(function(row) { return row.action === 'mark' && (row.conversationIds || []).includes(active.id); });\n  if (typing) return 'agent 正在输入...';\n  if (thinking) return 'agent 正在处理...';\n  if ((active.unread || 0) > 0) return '等待本地 agent 回复';\n  return 'General channel for all members';\n}\nfunction renderConversations(summary) {\n  const conversations = summary.conversations || [];\n  if (conversations.length && !conversations.some(function(row) { return row.id === activeConversationId; })) activeConversationId = conversations[0].id;\n  const active = conversations.find(function(row) { return row.id === activeConversationId; }) || conversations[0] || { id: 'king-convo', title: 'all' };\n  document.querySelector('.channel-name').textContent = active.title || active.id;\n  document.querySelector('.composer textarea').placeholder = 'Message #' + (active.title || active.id);\n  document.querySelector('.hash').textContent = active.id === 'king-convo' ? '#' : '~';\n  document.getElementById('routeSummary').textContent = activeConversationStatus(summary, active);\n  document.getElementById('conversationList').innerHTML = conversations.map(function(row) {\n    const deletable = row.id !== 'king-convo';\n    return '<div class=\"window-item' + (row.id === activeConversationId ? ' active' : '') + '\"><button class=\"window-select\" onclick=\"selectConversation(&quot;' + escapeHtml(row.id) + '&quot;)\"><span class=\"window-name\">' + escapeHtml(row.title || row.id) + '</span></button><span class=\"window-meta\">' + escapeHtml(row.unread || 0) + '</span>' + (deletable ? '<button class=\"window-delete\" onclick=\"deleteConversation(event, &quot;' + escapeHtml(row.id) + '&quot;)\" aria-label=\"Delete window\">×</button>' : '') + '</div>';\n  }).join('');\n}\nasync function deleteConversation(event, id) {\n  event.stopPropagation();\n  await request('/gui/conversations/' + encodeURIComponent(id) + '/delete', { method: 'POST' });\n  if (activeConversationId === id) {\n    activeConversationId = 'king-convo';\n    localStorage.setItem('king:activeConversationId', activeConversationId);\n  }\n  visibleMessageCount = 20;\n  shouldStickToBottom = true;\n  await refresh();\n}\nfunction renderTasks(state) {\n  const tasks = state.tasks || [];\n  document.getElementById('taskBadge').textContent = String(tasks.filter(function(task) { return task.status !== 'done'; }).length);\n  document.getElementById('panel-tasks').innerHTML = tasks.length ? tasks.slice().reverse().map(function(task) {\n    return '<div class=\"task-row\"><div class=\"task-top\"><h3>' + escapeHtml(task.title) + '</h3><span class=\"time\">' + escapeHtml(taskStatusLabel(task.status)) + ' P' + escapeHtml(task.priority) + '</span></div><p>' + escapeHtml(task.description || ((task.scope && task.scope.paths || []).join(', ')) || 'No description') + '</p></div>';\n  }).join('') : '<p class=\"muted\">No tasks yet.</p>';\n  const artifacts = state.artifacts || [];\n  document.getElementById('panel-files').innerHTML = artifacts.length ? artifacts.slice().reverse().map(function(artifact) {\n    return '<div class=\"task-row\"><div class=\"task-top\"><h3>' + escapeHtml(artifact.path || artifact.name || 'artifact') + '</h3><span class=\"time\">' + escapeHtml(artifact.kind || 'file') + '</span></div><p>' + escapeHtml(artifact.source || artifact.confidence || '') + '</p></div>';\n  }).join('') : '<p class=\"muted\">No files yet.</p>';\n}\nfunction renderSummary(summary) {\n  const connection = summary.connection || {};\n  const observation = summary.observation || { counts: {}, reasons: [] };\n  const counts = observation.counts || {};\n  const agent = summary.agent || {};\n  lastConnection = connection;\n  const heartbeatStat = document.getElementById('heartbeatStat');\n  if (heartbeatStat) heartbeatStat.textContent = '最近心跳：' + (connection.lastHeartbeatAt ? formatTime(connection.lastHeartbeatAt) : '未收到');\n  document.getElementById('unreadStat').textContent = String(counts.unreadMessages || 0);\n  document.getElementById('failedStat').textContent = String(counts.failedRuns || 0);\n  document.getElementById('activityBadge').textContent = String((counts.unreadMessages || 0) + (counts.failedRuns || 0));\n  renderConversations({ ...summary, state: window.__lastState || {} });\n  const observationReasons = document.getElementById('observationReasons');\n  if (observationReasons) observationReasons.textContent = (observation.reasons || []).map(reasonLabel).join('；') || '等待下一条消息。';\n  if (summary.pairingCode) {\n    pairCommandPrimary = 'king agent computer --pair ' + summary.pairingCode + ' --server ' + base + (summary.pairCommandTenantArg || '');\n  pairCommandStart = 'king agent computer --server ' + base + (summary.pairCommandTenantArg || '');\n  pairCommand = pairCommandPrimary + '\\n' + pairCommandStart;\n    if (document.getElementById('computerDialog').open) renderComputerFlow();\n  }\n  if (!connection.paired && !promptedForComputer && !localStorage.getItem('king:addComputerDismissed')) {\n    promptedForComputer = true;\n    setTimeout(function() {\n      if (!document.getElementById('settingsDialog').open && !document.getElementById('computerDialog').open) openComputerFlow('intro');\n    }, 250);\n  }\n  const engines = summary.availableEngines || [];\n  document.getElementById('engine').innerHTML = engines.length ? engines.map(function(engine) {\n    return '<option value=\"' + escapeHtml(engine) + '\"' + (engine === agent.engine ? ' selected' : '') + '>' + escapeHtml(engine) + '</option>';\n  }).join('') : '<option value=\"\">请先配对</option>';\n  document.getElementById('model').value = agent.model === 'default' ? '' : (agent.model || '');\n  document.getElementById('fastModel').value = agent.fastModel === 'default' ? '' : (agent.fastModel || '');\n  const modelRows = ['claude', 'codex'].map(function(engine) {\n    const available = engines.includes(engine);\n    const active = agent.engine === engine;\n    const label = active && !available ? '当前配置，未检测到本机' : available ? '可用' : '未检测到';\n    return '<div class=\"model-row\"><span>' + engine + (active ? ' · 当前' : '') + '</span><span class=\"' + (available ? 'available' : 'unavailable') + '\">' + label + '</span></div>';\n  }).join('');\n  document.getElementById('modelStatus').innerHTML = modelRows + '<div class=\"model-row\"><span>运行模式</span><span>' + lifecycleLabel(agent.lifecycle) + '</span></div>';\n}\nasync function refresh(options) {\n  const results = await Promise.all([\n    request('/gui/summary?conversationId=' + encodeURIComponent(activeConversationId)),\n    request('/gui/state')\n  ]);\n  window.__lastState = results[1];\n  renderSummary(results[0]);\n  renderMessages(results[1], options || {});\n  renderTasks(results[1]);\n}\nrefresh();\ndocument.querySelector('.workspace').addEventListener('scroll', handleWorkspaceScroll);\nsetInterval(refresh, 3500);\n";
 
 
 function json(data: unknown, init?: ResponseInit): Response {
@@ -654,6 +792,17 @@ function authUserFromRequest(request: Request): AuthUser | undefined {
   } catch {
     return undefined;
   }
+}
+
+function displayNameForAuthUser(user: AuthUser | undefined): string {
+  return user?.name?.trim() || user?.email?.trim() || user?.id?.trim() || "King Human";
+}
+
+function displayNameForHuman(state: State, user: AuthUser | undefined): string {
+  const fromAuth = displayNameForAuthUser(user);
+  if (fromAuth !== "King Human") return fromAuth;
+  const fromMessages = [...state.messages].reverse().find((message) => message.author_kind === "human" && message.author_name.trim());
+  return fromMessages?.author_name.trim() || fromAuth;
 }
 
 function tenantFromAuthUser(user: AuthUser): string {
@@ -810,13 +959,8 @@ function loginPage(baseUrl: string): string {
     .github-icon {
       width: 18px;
       height: 18px;
-      display: inline-grid;
-      place-items: center;
-      border-radius: 50%;
-      background: #fff;
-      color: #050505;
-      font-size: 13px;
-      font-weight: 950;
+      display: block;
+      fill: currentColor;
     }
   </style>
 </head>
@@ -828,7 +972,7 @@ function loginPage(baseUrl: string): string {
     <section class="panel" aria-label="Sign in">
       <div class="login-mark">↗</div>
       <h1>Sign In</h1>
-      <button id="githubSignIn"><span class="github-icon">G</span>Continue with GitHub</button>
+      <button id="githubSignIn"><svg class="github-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.49c0 3.75 2.39 6.93 5.7 8.05.42.08.57-.19.57-.42 0-.21-.01-.91-.01-1.65-2.32.55-2.81-1.04-2.81-1.04-.38-1-.93-1.27-.93-1.27-.76-.53.06-.52.06-.52.84.06 1.28.9 1.28.9.75 1.33 1.96.95 2.44.73.08-.56.29-.95.53-1.17-1.85-.22-3.79-.96-3.79-4.27 0-.94.32-1.71.86-2.31-.09-.22-.37-1.1.08-2.28 0 0 .7-.23 2.3.88A7.65 7.65 0 0 1 8 3.51c.71 0 1.43.1 2.1.29 1.59-1.11 2.29-.88 2.29-.88.45 1.18.17 2.06.08 2.28.54.6.86 1.37.86 2.31 0 3.32-1.95 4.05-3.8 4.27.3.27.56.79.56 1.6 0 1.16-.01 2.09-.01 2.37 0 .23.15.5.57.42A8.33 8.33 0 0 0 16 8.49C16 3.64 12.42 0 8 0Z"/></svg>Continue with GitHub</button>
     </section>
   </main>
   <script>
@@ -858,6 +1002,72 @@ async function requireGuiAuth(c: RequestContext): Promise<Response | null> {
     headers: { "Content-Type": "text/html; charset=utf-8" },
     status: 401
   });
+}
+
+type HostBridgeCard = {
+  id: string;
+  title?: string;
+  status?: string;
+  ownerRole?: string;
+  reviewerRole?: string;
+  decisionBy?: string;
+  detail?: string;
+  createdAt?: string;
+};
+
+type HostDecisionsResult = {
+  configured: boolean;
+  cards: HostBridgeCard[];
+  error?: string;
+};
+
+function hostBridgeOutputDir(env: Bindings): Record<string, string> {
+  const dir = typeof env.KING_HOST_OUTPUT_DIR === "string" ? env.KING_HOST_OUTPUT_DIR.trim() : "";
+  return dir ? { outputDir: dir } : {};
+}
+
+function hostBridgeSdk(env: Bindings) {
+  const baseUrl = typeof env.KING_HOST_URL === "string" ? env.KING_HOST_URL.trim() : "";
+  if (!baseUrl) return null;
+  return createHostSdk({ baseUrl, fetch: (input, init) => fetch(input as RequestInfo, init) });
+}
+
+async function fetchHostDecisions(env: Bindings): Promise<HostDecisionsResult> {
+  const sdk = hostBridgeSdk(env);
+  if (!sdk) return { configured: false, cards: [] };
+  try {
+    const result = await sdk.runCommand<{ cards?: HostBridgeCard[] }>({
+      command: "workflow-list",
+      actorRole: "reviewer",
+      input: { kind: "decision", status: "waiting_human", limit: 50, ...hostBridgeOutputDir(env) }
+    });
+    const cards = result.json && Array.isArray(result.json.cards) ? result.json.cards : [];
+    return { configured: true, cards, error: result.ok ? undefined : result.error || "host command failed" };
+  } catch (err) {
+    return { configured: true, cards: [], error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function resolveHostDecision(env: Bindings, id: string, decision: "approve" | "deny"): Promise<{ ok: boolean; card?: unknown; error?: string }> {
+  const sdk = hostBridgeSdk(env);
+  if (!sdk) return { ok: false, error: "host bridge not configured" };
+  try {
+    const result = await sdk.runCommand<{ card?: unknown }>({
+      command: "workflow-update",
+      actorRole: "reviewer",
+      input: {
+        id,
+        status: decision === "approve" ? "done" : "cancelled",
+        result: decision === "approve" ? "approved from gui" : "denied from gui",
+        humanApproved: decision === "approve" ? true : undefined,
+        approvedBy: decision === "approve" ? "gui-human" : undefined,
+        ...hostBridgeOutputDir(env)
+      }
+    });
+    return { ok: result.ok, card: result.json?.card, error: result.ok ? undefined : result.error || result.text };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 const app = new Hono<Env>();
@@ -1002,7 +1212,8 @@ app.get("/gui/state", async (c) => {
 app.get("/gui/summary", async (c) => {
   const blocked = await requireGuiAuth(c);
   if (blocked) return blocked;
-  return (await stateForRequest(c)).fetch("https://state/gui-summary", { headers: await forwardHeaders(c) });
+  const search = new URL(c.req.url).search;
+  return (await stateForRequest(c)).fetch(`https://state/gui-summary${search}`, { headers: await forwardHeaders(c) });
 });
 app.get("/gui/activity", async (c) => {
   const blocked = await requireGuiAuth(c);
@@ -1032,6 +1243,7 @@ app.post("/gui/message", async (c) => {
   if (blocked) return blocked;
   return (await stateForRequest(c)).fetch("https://state/gui-message", {
   method: "POST",
+  headers: await forwardHeaders(c, { "Content-Type": "application/json" }),
   body: JSON.stringify(await c.req.json().catch(() => ({})))
   });
 });
@@ -1041,6 +1253,14 @@ app.post("/gui/conversations", async (c) => {
   return (await stateForRequest(c)).fetch("https://state/gui-conversations", {
   method: "POST",
   body: JSON.stringify(await c.req.json().catch(() => ({})))
+  });
+});
+app.post("/gui/conversations/:conversationId/team", async (c) => {
+  const blocked = await requireGuiAuth(c);
+  if (blocked) return blocked;
+  return (await stateForRequest(c)).fetch(`https://state/gui-conversations/${c.req.param("conversationId")}/team`, {
+    method: "POST",
+    body: JSON.stringify(await c.req.json().catch(() => ({})))
   });
 });
 app.post("/gui/conversations/:conversationId/delete", async (c) => {
@@ -1112,6 +1332,32 @@ app.post("/gui/wake", async (c) => {
   body: JSON.stringify(await c.req.json().catch(() => ({})))
   });
 });
+app.post("/gui/approvals/:id/resolve", async (c) => {
+  const blocked = await requireGuiAuth(c);
+  if (blocked) return blocked;
+  return (await stateForRequest(c)).fetch(`https://state/gui-approval/${encodeURIComponent(c.req.param("id"))}/resolve`, {
+  method: "POST",
+  body: JSON.stringify(await c.req.json().catch(() => ({})))
+  });
+});
+app.get("/gui/host-decisions", async (c) => {
+  const blocked = await requireGuiAuth(c);
+  if (blocked) return blocked;
+  return json(await fetchHostDecisions(c.env));
+});
+app.post("/gui/host-decisions/:id/resolve", async (c) => {
+  const blocked = await requireGuiAuth(c);
+  if (blocked) return blocked;
+  const body = await c.req.json().catch(() => ({})) as { decision?: string };
+  const decision = body.decision === "approve" || body.decision === "approved"
+    ? "approve"
+    : body.decision === "deny" || body.decision === "denied"
+      ? "deny"
+      : undefined;
+  if (!decision) return json({ ok: false, error: "decision must be approve or deny" }, { status: 400 });
+  const result = await resolveHostDecision(c.env, c.req.param("id"), decision);
+  return json(result, { status: result.ok ? 200 : result.error === "host bridge not configured" ? 404 : 400 });
+});
 
 export class GuiState implements DurableObject {
   private waiters = new Set<WritableStreamDefaultWriter<Uint8Array>>();
@@ -1124,19 +1370,19 @@ export class GuiState implements DurableObject {
     if (path === "/pair") return this.pair(await request.json().catch(() => ({})) as PairPayload, request);
     if (path === "/agents") return this.authDevice(request, async () => json((await this.get()).agents));
     if (path === "/heartbeat") return this.authDevice(request, async () => this.heartbeat(await request.json().catch(() => ({}))));
-    if (path.startsWith("/runtime-token/")) return this.authDevice(request, async () => json({ token: (await this.get()).runtimeToken, expiresInSeconds: 3600 }));
-    if (path === "/wake-stream") return this.authRuntime(request, async () => this.wakeStream());
-    if (path === "/inbox") return this.authRuntime(request, async () => this.inbox());
-    if (path === "/triage") return this.authRuntime(request, async () => this.triage());
-    if (path === "/agenda") return this.authRuntime(request, async () => this.agenda());
+    if (path.startsWith("/runtime-token/")) return this.authDevice(request, async () => this.runtimeToken(path.split("/")[2]));
+    if (path === "/wake-stream") return this.authRuntime(request, async (agentId) => this.wakeStream(agentId));
+    if (path === "/inbox") return this.authRuntime(request, async (agentId) => this.inbox(agentId));
+    if (path === "/triage") return this.authRuntime(request, async (agentId) => this.triage(agentId));
+    if (path === "/agenda") return this.authRuntime(request, async (agentId) => this.agenda(agentId));
     if (path === "/roster") return this.authRuntime(request, async () => this.roster());
     if (path === "/preamble") return this.authRuntime(request, async () => this.preamble(url.searchParams));
-    if (path === "/cli") return this.authRuntime(request, async () => this.cli(await request.json() as { argv?: string[]; agentId?: string }));
-    if (path === "/mark-read") return this.authRuntime(request, async () => this.markRead(await request.json() as { conversationId?: string; upToMessageId?: string }));
-    if (path === "/status") return this.authRuntime(request, async () => this.status(await request.json() as { status?: string }));
-    if (path === "/typing") return this.authRuntime(request, async () => this.typing(await request.json() as { conversationId?: string; done?: boolean }));
-    if (path === "/thinking/mark") return this.authRuntime(request, async () => this.thinking("mark", await request.json() as { conversationIds?: string[] }));
-    if (path === "/thinking/unmark") return this.authRuntime(request, async () => this.thinking("unmark", await request.json() as { conversationIds?: string[] }));
+    if (path === "/cli") return this.authRuntime(request, async (agentId) => this.cli({ ...await request.json() as { argv?: string[]; agentId?: string }, tokenAgentId: agentId, authUser: authUserFromRequest(request) }));
+    if (path === "/mark-read") return this.authRuntime(request, async (agentId) => this.markRead(await request.json() as { conversationId?: string; upToMessageId?: string }, agentId));
+    if (path === "/status") return this.authRuntime(request, async (agentId) => this.status(await request.json() as { status?: string }, agentId));
+    if (path === "/typing") return this.authRuntime(request, async (agentId) => this.typing(await request.json() as { conversationId?: string; done?: boolean }, agentId));
+    if (path === "/thinking/mark") return this.authRuntime(request, async (agentId) => this.thinking("mark", await request.json() as { conversationIds?: string[] }, agentId));
+    if (path === "/thinking/unmark") return this.authRuntime(request, async (agentId) => this.thinking("unmark", await request.json() as { conversationIds?: string[] }, agentId));
     if (path === "/events") return this.authRuntime(request, async () => this.events(await request.json().catch(() => null)));
     if (path === "/notices") return this.authRuntime(request, async () => this.logBody("noticeLog", await request.json().catch(() => null)));
     if (path === "/triage-log") return this.authRuntime(request, async () => this.logBody("triageLog", await request.json().catch(() => null)));
@@ -1149,8 +1395,9 @@ export class GuiState implements DurableObject {
     if (path === "/gui-export-state") return json(this.snapshot(await this.get()));
     if (path === "/gui-import-state") return this.importSnapshot(await request.json().catch(() => null));
     if (path === "/gui-reset-state") return this.resetState();
-    if (path === "/gui-message") return this.guiMessage(await request.json() as { body?: string; conversationId?: string });
-    if (path === "/gui-conversations") return this.guiConversation(await request.json().catch(() => ({})) as { title?: unknown });
+    if (path === "/gui-message") return this.guiMessage(request, await request.json() as { body?: string; conversationId?: string });
+    if (path === "/gui-conversations") return this.guiConversation(await request.json().catch(() => ({})) as GuiConversationPayload);
+    if (path.startsWith("/gui-conversations/") && path.endsWith("/team")) return this.guiUpdateConversationTeam(path.split("/")[2], await request.json().catch(() => ({})) as GuiConversationPayload);
     if (path.startsWith("/gui-conversations/") && path.endsWith("/delete")) return this.guiDeleteConversation(path.split("/")[2]);
     if (path === "/gui-clear-messages") return this.clearMessages(await request.json().catch(() => ({})) as { conversationId?: string });
     if (path === "/gui-agent-config") return this.agentConfig(await request.json() as AgentConfigPayload);
@@ -1160,6 +1407,7 @@ export class GuiState implements DurableObject {
     if (path.startsWith("/gui-card/") && path.endsWith("/move")) return this.moveCard(path.split("/")[2], await request.json().catch(() => ({})) as GuiCardMovePayload);
     if (path === "/gui-conversation/mark-read") return this.guiMarkRead(await request.json().catch(() => ({})) as { conversationId?: string; upToMessageId?: string });
     if (path === "/gui-wake") return this.guiWake(await request.json().catch(() => ({})));
+    if (path.startsWith("/gui-approval/") && path.endsWith("/resolve")) return this.resolveApproval(path.split("/")[2] || "", await request.json().catch(() => ({})) as { decision?: string; reason?: string });
     return json({ error: "not found" }, { status: 404 });
   }
 
@@ -1181,10 +1429,11 @@ export class GuiState implements DurableObject {
       computerId: "king-computer",
       deviceToken: crypto.randomUUID(),
       runtimeToken: crypto.randomUUID(),
+      runtimeTokens: {},
       pairingCode: crypto.randomUUID(),
       availableEngines: [],
       capabilities: { workspaces: [] },
-      agents: [DEFAULT_AGENT],
+      agents: defaultTeamAgents(),
       conversations: [{ ...DEFAULT_CONVERSATION, created_at: Date.now(), updated_at: Date.now() }],
       messages: [],
       cliLog: [],
@@ -1192,6 +1441,7 @@ export class GuiState implements DurableObject {
       typingLog: [],
       thinkingLog: [],
       eventLog: [],
+      wakeLog: [],
       eventRoutes: [],
       loopRunId: "run-gui",
       currentLoop: 0,
@@ -1201,6 +1451,7 @@ export class GuiState implements DurableObject {
       runLog: [],
       initiatives: [],
       tasks: [],
+      taskEvents: [],
       capsules: [],
       mergeQueue: [],
       evaluations: [],
@@ -1228,6 +1479,7 @@ export class GuiState implements DurableObject {
     saved.initiatives ??= [];
     saved.pairingCode ??= crypto.randomUUID();
     saved.runtimeToken ??= crypto.randomUUID();
+    saved.runtimeTokens ??= {};
     saved.capsules ??= [];
     saved.approvals ??= [];
     saved.mergeQueue ??= [];
@@ -1247,17 +1499,38 @@ export class GuiState implements DurableObject {
     saved.hypotheses ??= [];
     saved.reactions ??= [];
     saved.composing ??= [];
-    saved.agents = Array.isArray(saved.agents) && saved.agents.length ? saved.agents : [DEFAULT_AGENT];
+    saved.runtimeTokens = normalizeRuntimeTokens(saved.runtimeTokens);
+    saved.agents = normalizeAgents(saved.agents);
+    saved.messages = normalizeMessages(saved.messages ?? []);
+    saved.tasks = normalizeTasks(saved.tasks ?? []);
+    saved.taskEvents = normalizeTaskEvents(saved.taskEvents ?? []);
+    saved.cards = normalizeCards(saved.cards ?? []);
+    saved.calendar = normalizeCalendar(saved.calendar ?? []);
+    saved.claims = normalizeClaims(saved.claims ?? []);
+    saved.capsules = normalizeCapsules(saved.capsules ?? []);
+    saved.mergeQueue = normalizeMergeQueue(saved.mergeQueue ?? []);
+    saved.artifacts = normalizeArtifacts(saved.artifacts ?? []);
+    saved.context = normalizeContext(saved.context ?? []);
+    saved.hypotheses = normalizeHypotheses(saved.hypotheses ?? []);
+    saved.reactions = normalizeReactions(saved.reactions ?? []);
+    saved.composing = normalizeComposing(saved.composing ?? []);
     saved.conversations = normalizeConversations(saved.conversations, saved.messages ?? []);
-    saved.messages ??= [];
-    saved.cliLog ??= [];
-    saved.statusLog ??= [];
-    saved.typingLog ??= [];
-    saved.thinkingLog ??= [];
-    saved.eventLog ??= [];
-    saved.noticeLog ??= [];
-    saved.triageLog ??= [];
-    saved.runLog ??= [];
+    for (const conversation of saved.conversations) {
+      const team = normalizeConversationTeam(saved, {}, conversation);
+      conversation.teamMode = team.teamMode;
+      conversation.coordinatorAgentId = team.coordinatorAgentId;
+      conversation.teamAgentIds = team.teamAgentIds;
+      conversation.teamSnapshot ??= buildConversationTeamSnapshot(saved, team, {}, conversation.created_at || Date.now());
+    }
+    saved.cliLog = (saved.cliLog ?? []).slice(-CLI_LOG_CAPACITY);
+    saved.statusLog = (saved.statusLog ?? []).slice(-STATUS_LOG_CAPACITY);
+    saved.typingLog = (saved.typingLog ?? []).slice(-TYPING_LOG_CAPACITY);
+    saved.thinkingLog = (saved.thinkingLog ?? []).slice(-THINKING_LOG_CAPACITY);
+    saved.eventLog = (saved.eventLog ?? []).slice(-EVENT_LOG_CAPACITY);
+    saved.wakeLog = (saved.wakeLog ?? []).slice(-WAKE_LOG_CAPACITY);
+    saved.noticeLog = (saved.noticeLog ?? []).slice(-NOTICE_LOG_CAPACITY);
+    saved.triageLog = (saved.triageLog ?? []).slice(-TRIAGE_LOG_CAPACITY);
+    saved.runLog = (saved.runLog ?? []).slice(-RUN_LOG_CAPACITY);
     saved.capabilities ??= { workspaces: [] };
     saved.availableEngines ??= [];
     return saved;
@@ -1304,6 +1577,18 @@ export class GuiState implements DurableObject {
     return json({ computerId: state.computerId, deviceToken: state.deviceToken, tenantId: tenantHeader(request) });
   }
 
+  private async runtimeToken(agentIdRaw?: string): Promise<Response> {
+    const state = await this.get();
+    const agentId = normalizeAgentId(decodeURIComponent(agentIdRaw || "")) ?? "";
+    const agent = findAgent(state, agentId) ?? defaultAgentFor(state);
+    state.runtimeTokens ??= {};
+    const runtimeToken = crypto.randomUUID();
+    state.runtimeTokens[agent.id] = runtimeToken;
+    if (agent.id === DEFAULT_AGENT.id) state.runtimeToken = runtimeToken;
+    await this.put(state);
+    return json({ token: runtimeToken, expiresInSeconds: 3600 });
+  }
+
   private async heartbeat(payload?: unknown): Promise<Response> {
     const state = await this.get();
     const body = payload && typeof payload === "object" ? payload as { version?: unknown; capabilities?: unknown } : {};
@@ -1320,7 +1605,7 @@ export class GuiState implements DurableObject {
 
   private async guiSummary(request: Request): Promise<Response> {
     const state = await this.get();
-    const agent = state.agents[0] ?? DEFAULT_AGENT;
+    const agent = defaultAgentFor(state);
     const agentSummary = agentStateSummary(state, agent);
     const observation = buildLoopSnapshot(state);
     const lastRunStart = state.runLog.slice().reverse().find((row) => row.action === "start");
@@ -1332,6 +1617,9 @@ export class GuiState implements DurableObject {
     const tenantId = tenantHeader(request);
     const encodedPairingCode = tenantId === "global" ? state.pairingCode : `${tenantId}:${state.pairingCode}`;
     const publicBase = request.headers.get("X-King-Public-Base") || new URL(request.url).origin;
+    const requestedConversationId = new URL(request.url).searchParams.get("conversationId") || DEFAULT_CONVERSATION.id;
+    const activeConversation = state.conversations.find((row) => row.id === requestedConversationId) ?? state.conversations.find((row) => row.id === DEFAULT_CONVERSATION.id);
+    const activeAgents = teamAgentsFor(state, activeConversation);
     return json({
       connection: {
         paired,
@@ -1350,6 +1638,9 @@ export class GuiState implements DurableObject {
       availableEngines: state.availableEngines,
       capabilities: state.capabilities,
       agent: agentSummary,
+      agents: state.agents.map((row) => agentStateSummary(state, row)),
+      activeConversation,
+      activeAgents: activeAgents.map((row) => agentStateSummary(state, row)),
       actualEngine: runtimeBodyEngine(lastRunStart?.body) ?? agent.engine ?? "not running yet",
       observation,
       routeSummary: formatMessageRouteSummary(unread, DEFAULT_AGENT.id),
@@ -1429,13 +1720,14 @@ export class GuiState implements DurableObject {
     return fn();
   }
 
-  private async authRuntime(request: Request, fn: () => Promise<Response>): Promise<Response> {
+  private async authRuntime(request: Request, fn: (agentId: string) => Promise<Response>): Promise<Response> {
     const state = await this.get();
-    if (token(request) !== state.runtimeToken) return json({ error: "invalid runtime token" }, { status: 401 });
-    return fn();
+    const agentId = agentIdForRuntimeToken(state, token(request));
+    if (!agentId) return json({ error: "invalid runtime token" }, { status: 401 });
+    return fn(agentId);
   }
 
-  private async wakeStream(): Promise<Response> {
+  private async wakeStream(_agentId: string): Promise<Response> {
     const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
     const writer = writable.getWriter();
     this.waiters.add(writer);
@@ -1450,24 +1742,24 @@ export class GuiState implements DurableObject {
     });
   }
 
-  private async inbox(): Promise<Response> {
+  private async inbox(agentId: string): Promise<Response> {
     const state = await this.get();
-    const unread = unreadMessagesFor(state, DEFAULT_AGENT.id);
+    const unread = unreadMessagesFor(state, agentId);
     return json({
-      rows: sortRuntimeMessages(unread, DEFAULT_AGENT.id).map((item) => item.row),
-      routeSummary: formatMessageRouteSummary(unread, DEFAULT_AGENT.id)
+      rows: sortRuntimeMessages(unread, agentId).map((item) => item.row),
+      routeSummary: formatMessageRouteSummary(unread, agentId)
     });
   }
 
-  private async triage(): Promise<Response> {
+  private async triage(agentId: string): Promise<Response> {
     const state = await this.get();
-    const unread = unreadMessagesFor(state, DEFAULT_AGENT.id);
-    const routed = sortRuntimeMessages(unread, DEFAULT_AGENT.id);
+    const unread = unreadMessagesFor(state, agentId);
+    const routed = sortRuntimeMessages(unread, agentId);
     const top = routed[0];
     return json({
       instructions: "Return strict JSON: {\"actionable\": boolean, \"reason\": string, \"promptNote\": string, \"routeHint\": \"ignore|monitor|respond|steer\", \"priority\": \"normal|steer|urgent\"}. Mark human messages actionable and prioritize blocker, approval, decision, direct, and @mention messages.",
       input: routed.map((item) => `${messageRouteTag(item)} score=${item.score} ${item.row.author_name}: ${item.row.body}`).join("\n"),
-      routeSummary: formatMessageRouteSummary(unread, DEFAULT_AGENT.id),
+      routeSummary: formatMessageRouteSummary(unread, agentId),
       verdict: unread.length ? {
         actionable: top ? top.route !== "ignore" : true,
         reason: top ? `gui unread message routed ${messageRouteTag(top)}` : "gui unread message",
@@ -1500,15 +1792,15 @@ export class GuiState implements DurableObject {
     });
   }
 
-  private async agenda(): Promise<Response> {
+  private async agenda(agentId: string): Promise<Response> {
     const state = await this.get();
     const now = new Date();
     const due = state.calendar.filter((item) =>
-      item.assignee === DEFAULT_AGENT.id &&
+      item.assignee === agentId &&
       (Date.parse(item.at) <= now.getTime() || (item.cron ? cronMatches(item.cron, now) : false))
     );
-    const card = state.cards.find((row) => row.column !== "done" && (!row.assignee || row.assignee === DEFAULT_AGENT.id));
-    const task = state.tasks.find((row) => taskVisibleStatus(state, row) !== "done" && taskVisibleStatus(state, row) !== "blocked" && (!row.assignee || row.assignee === DEFAULT_AGENT.id));
+    const card = state.cards.find((row) => row.column !== "done" && (!row.assignee || row.assignee === agentId));
+    const task = state.tasks.find((row) => taskVisibleStatus(state, row) !== "done" && taskVisibleStatus(state, row) !== "blocked" && (!row.assignee || row.assignee === agentId));
     if (!due.length && !card && !task) return json({ actionable: false });
     const lines = [
       ...due.map((item) => `Calendar due: ${item.title}${item.cron ? ` [cron ${item.cron}]` : ""}${item.prompt ? ` — ${item.prompt}` : ""}`),
@@ -1522,10 +1814,10 @@ export class GuiState implements DurableObject {
     } satisfies AgendaPayload);
   }
 
-  private async cli(payload: { argv?: string[]; agentId?: string; engine?: string }): Promise<Response> {
+  private async cli(payload: { argv?: string[]; agentId?: string; tokenAgentId?: string; engine?: string; authUser?: AuthUser }): Promise<Response> {
     const argv = payload.argv ?? [];
     const state = await this.get();
-    const actor = state.agents.find((agent) => agent.id === payload.agentId) ?? DEFAULT_AGENT;
+    const actor = findAgent(state, payload.agentId) ?? findAgent(state, payload.tokenAgentId) ?? defaultAgentFor(state);
     const authorEngine = activeRunEngine(state) ?? normalizeEngineId(payload.engine) ?? actor.engine;
     let result = "";
     if (argv[0] === "reply") {
@@ -1557,7 +1849,7 @@ export class GuiState implements DurableObject {
         body,
         quoted_message_id: quoted,
         created_at: now,
-        readBy: [DEFAULT_AGENT.id]
+        readBy: [actor.id]
       };
       if (pending) {
         Object.assign(pending, {
@@ -1577,7 +1869,7 @@ export class GuiState implements DurableObject {
     } else if (argv[0] === "state") {
       result = await this.stateCommand(state, argv.slice(1));
     } else if (argv[0] === "inbox") {
-      result = JSON.stringify(unreadMessagesFor(state, DEFAULT_AGENT.id), null, 2);
+      result = JSON.stringify(unreadMessagesFor(state, actor.id), null, 2);
     } else if (argv[0] === "messages") {
       const conversationId = argv[1] || "king-convo";
       const tailIdx = argv.indexOf("--tail");
@@ -1611,6 +1903,7 @@ export class GuiState implements DurableObject {
       result = this.agentsCommand(state, argv.slice(1));
     } else if (argv[0] === "contacts") {
       const query = argv.slice(1).join(" ").trim().toLowerCase();
+      const humanName = displayNameForHuman(state, payload.authUser);
       const rows = [
         ...state.agents.map((agent) => ({
           id: agent.id,
@@ -1619,18 +1912,18 @@ export class GuiState implements DurableObject {
           role: agent.role,
           engine: agent.engine ?? "auto"
         })),
-        { id: "gui-human", name: "King Human", kind: "human", role: "Runtime operator", engine: undefined }
+        { id: "gui-human", name: humanName, kind: "human", role: "Runtime operator", engine: undefined }
       ];
       const filtered = query
         ? rows.filter((row) => [row.id, row.name, row.kind, row.role, row.engine].filter(Boolean).join(" ").toLowerCase().includes(query))
         : rows;
       result = filtered.map((row) => `${row.id}\t${row.name}\t${row.kind}\t${row.role}${row.engine ? `\t${row.engine}` : ""}`).join("\n");
     } else if (argv[0] === "whoami") {
-      result = JSON.stringify(agentStateSummary(state, state.agents[0] ?? DEFAULT_AGENT), null, 2);
+      result = JSON.stringify(agentStateSummary(state, actor), null, 2);
     } else if (argv[0] === "status") {
       result = JSON.stringify({
-        agent: state.agents[0],
-        agentState: agentStateSummary(state, state.agents[0] ?? DEFAULT_AGENT),
+        agent: actor,
+        agentState: agentStateSummary(state, actor),
         status: state.statusLog.at(-1)?.status ?? "unknown",
         availableEngines: state.availableEngines
       }, null, 2);
@@ -1641,7 +1934,7 @@ export class GuiState implements DurableObject {
     } else if (argv[0] === "card") {
       result = this.cardCommand(state, argv.slice(1));
     } else if (argv[0] === "task") {
-      result = this.taskCommand(state, argv.slice(1));
+      result = this.taskCommand(state, argv.slice(1), actor);
     } else if (argv[0] === "initiative") {
       result = this.initiativeCommand(state, argv.slice(1));
     } else if (argv[0] === "capsule") {
@@ -1685,7 +1978,7 @@ export class GuiState implements DurableObject {
     } else if (argv[0] === "escalate") {
       result = this.escalateCommand(state, argv.slice(1));
     } else if (argv[0] === "agenda") {
-      result = JSON.stringify((await this.agenda().then((res) => res.json())) as AgendaPayload, null, 2);
+      result = JSON.stringify((await this.agenda(actor.id).then((res) => res.json())) as AgendaPayload, null, 2);
     } else if (argv[0] === "help" || argv[0] === "--help") {
       result = [
         "king gui commands:",
@@ -1809,8 +2102,8 @@ export class GuiState implements DurableObject {
 
   private agentsCommand(state: State, args: string[]): string {
     const cmd = args[0];
-    if (cmd === "spawn") return "agent spawn is not supported by this single-agent gui runtime";
-    if (cmd === "destroy") return "agent destroy is not supported by this single-agent gui runtime";
+    if (cmd === "spawn") return "agent spawn is not supported by this gui runtime";
+    if (cmd === "destroy") return "agent destroy is not supported by this gui runtime";
     const agents = state.agents.map((agent) => agentStateSummary(state, agent));
     if (agents.length === 0) return "No agents configured.";
     return ["Agent Matrix:", "-".repeat(56), ...agents.map(formatAgentMatrixLine)].join("\n");
@@ -1897,7 +2190,7 @@ export class GuiState implements DurableObject {
     return "usage: king loop tick|emit|classify|recent|snapshot";
   }
 
-  private taskCommand(state: State, args: string[]): string {
+  private taskCommand(state: State, args: string[], actor = defaultAgentFor(state)): string {
     const cmd = args[0] || "list";
     if (cmd === "list") {
       const status = readOption(args, "--status") as TaskStatus | undefined;
@@ -1918,7 +2211,7 @@ export class GuiState implements DurableObject {
       return task ? JSON.stringify(task, null, 2) : `task not found: ${args[1] || ""}`;
     }
     if (cmd === "create") {
-      const title = stripOptions(args.slice(1), ["--assign", "--assignee", "--priority", "--parent", "--after", "--path", "--pattern", "--desc", "--initiative", "--capsule", "--subsystem", "--profile"]).join(" ").trim();
+      const title = stripOptions(args.slice(1), ["--assign", "--assignee", "--priority", "--parent", "--after", "--path", "--pattern", "--desc", "--initiative", "--capsule", "--subsystem", "--profile", "--owner-role", "--reviewer-role", "--acceptance", "--blocked-by"]).join(" ").trim();
       if (!title) return "usage: king task create <title> [--assign agent-id] [--priority 1-10] [--after id1,id2] [--path a,b] [--pattern a,b] [--desc text]";
       const now = Date.now();
       const task: Task = {
@@ -1927,9 +2220,13 @@ export class GuiState implements DurableObject {
         description: readOption(args, "--desc"),
         status: readOption(args, "--assign") || readOption(args, "--assignee") ? "assigned" : "pending",
         assignee: readOption(args, "--assign") || readOption(args, "--assignee"),
+        ownerRole: readOption(args, "--owner-role"),
+        reviewerRole: readOption(args, "--reviewer-role"),
         priority: normalizePriority(readOption(args, "--priority")),
         parentId: readOption(args, "--parent"),
         dependsOn: parseCsvOption(args, "--after"),
+        blockedBy: parseCsvOption(args, "--blocked-by"),
+        acceptance: parseCsvOption(args, "--acceptance"),
         initiativeId: readOption(args, "--initiative"),
         capsuleId: readOption(args, "--capsule"),
         subsystem: readOption(args, "--subsystem"),
@@ -1952,7 +2249,16 @@ export class GuiState implements DurableObject {
       const previousStatus = task.status;
       task.status = nextStatus;
       task.assignee = readOption(args, "--assign") || readOption(args, "--assignee") || task.assignee;
+      task.ownerRole = readOption(args, "--owner-role") ?? task.ownerRole;
+      task.reviewerRole = readOption(args, "--reviewer-role") ?? task.reviewerRole;
+      task.blockedBy = parseCsvOption(args, "--blocked-by") ?? task.blockedBy;
+      task.acceptance = parseCsvOption(args, "--acceptance") ?? task.acceptance;
       task.result = readOption(args, "--result") ?? task.result;
+      applyTaskReviewPayload(task, {
+        reviewResult: readOption(args, "--review"),
+        revisionReason: readOption(args, "--reason"),
+        artifactIds: parseCsvOption(args, "--artifact") ?? parseCsvOption(args, "--artifacts")
+      }, actor);
       task.initiativeId = readOption(args, "--initiative") ?? task.initiativeId;
       task.capsuleId = readOption(args, "--capsule") ?? task.capsuleId;
       task.subsystem = readOption(args, "--subsystem") ?? task.subsystem;
@@ -1974,20 +2280,30 @@ export class GuiState implements DurableObject {
     if (cmd === "done") {
       const task = findTask(state, args[1]);
       if (!task) return `task not found: ${args[1] || ""}`;
-      const previousStatus = task.status;
-      task.status = "done";
-      task.result = args.slice(2).join(" ").trim() || task.result;
-      task.updated_at = Date.now();
-      if (previousStatus !== task.status) {
-        pushLoopEvent(state, {
-          type: "task.transition",
-          agent: task.assignee,
-          taskId: task.id,
-          from: previousStatus,
-          to: task.status
-        });
+      const review = readOption(args, "--review");
+      const reason = readOption(args, "--reason");
+      const artifactIds = parseCsvOption(args, "--artifact") ?? parseCsvOption(args, "--artifacts");
+      const resultText = stripOptions(args.slice(2), ["--review", "--reason", "--artifact", "--artifacts"]).join(" ").trim();
+      if (review && review !== "approved" && review !== "changes_requested") return "invalid review result: use approved or changes_requested";
+      if (review === "changes_requested") {
+        task.reviewResult = "changes_requested";
+        task.revisionReason = reason || resultText || "Reviewer requested revisions.";
+        if (artifactIds?.length) task.artifactIds = artifactIds;
+        task.reviewedByAgentId = actor.id;
+        task.reviewedAt = Date.now();
+        const previousStatus = task.status;
+        const conversation = task.conversationId ? ensureConversation(state, task.conversationId) : undefined;
+        const worker = conversation ? workerAgentForConversation(state, conversation) : defaultWorkerAgentFor(state);
+        task.status = "assigned";
+        task.assignee = worker?.id ?? defaultWorkerAgentFor(state).id;
+        task.updated_at = Date.now();
+        if (previousStatus !== task.status) pushTaskTransition(state, task, previousStatus);
+        queueTaskChangesRequestedMessage(state, task, task.assignee);
+        return `Task ${task.id} returned to ${task.assignee}: ${task.revisionReason}`;
       }
-      return `Task ${task.id} marked done.`;
+      if (artifactIds?.length) task.artifactIds = artifactIds;
+      if (review === "approved") task.reviewResult = "approved";
+      return advanceTaskDone(state, task, actor, resultText);
     }
     return "usage: king task create|list|get|update|done";
   }
@@ -2425,6 +2741,7 @@ export class GuiState implements DurableObject {
     const body = args.slice(1).join(" ").trim() || "(empty dm)";
     const message = this.newAgentMessage({
       target,
+      fromId: DEFAULT_AGENT.id,
       fromName: DEFAULT_AGENT.name,
       fromKind: "agent",
       fromEngine: DEFAULT_AGENT.engine,
@@ -2447,6 +2764,7 @@ export class GuiState implements DurableObject {
     if (!target || !body) return "usage: king send <agentId> <message> [--steer] [--type message|decision|blocker]";
     const message = this.newAgentMessage({
       target,
+      fromId: DEFAULT_AGENT.id,
       fromName: DEFAULT_AGENT.name,
       fromKind: "agent",
       fromEngine: DEFAULT_AGENT.engine,
@@ -2479,6 +2797,7 @@ export class GuiState implements DurableObject {
     const target = state.agents.find((agent) => agent.id === "ceo" || agent.name.toLowerCase().includes("ceo"))?.id ?? DEFAULT_AGENT.id;
     const message = this.newAgentMessage({
       target,
+      fromId: DEFAULT_AGENT.id,
       fromName: DEFAULT_AGENT.name,
       fromKind: "agent",
       fromEngine: DEFAULT_AGENT.engine,
@@ -2792,21 +3111,49 @@ export class GuiState implements DurableObject {
     return "usage: king safety check|request|list|get|approve|deny <action|approvalId>";
   }
 
-  private async status(payload: { status?: string }): Promise<Response> {
+  private async resolveApproval(approvalId: string, payload: { decision?: string; reason?: string }): Promise<Response> {
     const state = await this.get();
-    state.statusLog.push({ at: Date.now(), status: payload.status || "unknown" });
+    const request = findApproval(state, approvalId);
+    if (!request) return json({ error: `approval not found: ${approvalId || ""}` }, { status: 404 });
+    if (request.status !== "pending") return json({ error: `cannot resolve ${request.id}: status=${request.status}` }, { status: 409 });
+    const decision = payload.decision === "approve" || payload.decision === "approved"
+      ? "approved"
+      : payload.decision === "deny" || payload.decision === "denied"
+        ? "denied"
+        : undefined;
+    if (!decision) return json({ error: "decision must be approve or deny" }, { status: 400 });
+    request.status = decision;
+    request.resolvedAt = Date.now();
+    if (decision === "denied") {
+      const reason = typeof payload.reason === "string" ? payload.reason.trim() : "";
+      request.reason = reason || "denied";
+    }
+    await this.put(state);
+    return json({ ok: true, approval: request });
+  }
+
+  private async status(payload: { status?: string }, agentId = DEFAULT_AGENT.id): Promise<Response> {
+    const state = await this.get();
+    state.statusLog.push({ at: Date.now(), status: payload.status || "unknown", agentId });
     await this.put(state);
     return json({ ok: true });
   }
 
-  private async typing(payload: { conversationId?: string; done?: boolean }): Promise<Response> {
+  private async typing(payload: { conversationId?: string; done?: boolean }, agentId = DEFAULT_AGENT.id): Promise<Response> {
     const state = await this.get();
     state.typingLog.push({ at: Date.now(), conversationId: payload.conversationId, done: payload.done });
+    if (!payload.done) state.composing.push({
+      conversationId: payload.conversationId || DEFAULT_CONVERSATION.id,
+      agentId,
+      agentName: findAgent(state, agentId)?.name ?? agentId,
+      claimed_at: Date.now(),
+      expires_at: Date.now() + 60_000
+    });
     await this.put(state);
     return json({ ok: true });
   }
 
-  private async thinking(action: "mark" | "unmark", payload: { conversationIds?: string[] }): Promise<Response> {
+  private async thinking(action: "mark" | "unmark", payload: { conversationIds?: string[] }, agentId = DEFAULT_AGENT.id): Promise<Response> {
     const state = await this.get();
     const now = Date.now();
     const ids = Array.isArray(payload.conversationIds) ? payload.conversationIds.filter((id): id is string => typeof id === "string") : [];
@@ -2815,13 +3162,14 @@ export class GuiState implements DurableObject {
       action,
       conversationIds: ids
     });
-    state.composing = state.composing.filter((claim) => claim.expires_at > now && !(ids.includes(claim.conversationId) && claim.agentId === DEFAULT_AGENT.id));
+    state.composing = state.composing.filter((claim) => claim.expires_at > now && !(ids.includes(claim.conversationId) && claim.agentId === agentId));
     if (action === "mark") {
+      const agent = findAgent(state, agentId) ?? defaultAgentFor(state);
       for (const conversationId of ids) {
         state.composing.push({
           conversationId,
-          agentId: DEFAULT_AGENT.id,
-          agentName: DEFAULT_AGENT.name,
+          agentId,
+          agentName: agent.name,
           claimed_at: now,
           expires_at: now + 60_000
         });
@@ -2871,39 +3219,53 @@ export class GuiState implements DurableObject {
     return json({ ok: true, runId });
   }
 
-  private async markRead(payload: { conversationId?: string; upToMessageId?: string }): Promise<Response> {
+  private async markRead(payload: { conversationId?: string; upToMessageId?: string }, agentId = DEFAULT_AGENT.id): Promise<Response> {
     const state = await this.get();
     const conversationMessages = state.messages.filter((m) => m.conversation_id === payload.conversationId);
     const cutoffIndex = conversationMessages.findIndex((m) => m.id === payload.upToMessageId);
     const readable = cutoffIndex >= 0 ? conversationMessages.slice(0, cutoffIndex + 1) : conversationMessages;
     for (const message of readable) {
       if (
-        !message.readBy.includes(DEFAULT_AGENT.id)
+        !message.readBy.includes(agentId)
       ) {
-        message.readBy.push(DEFAULT_AGENT.id);
+        message.readBy.push(agentId);
       }
     }
     await this.put(state);
     return json({ ok: true });
   }
 
-  private async guiConversation(payload: { title?: unknown }): Promise<Response> {
+  private async guiConversation(payload: GuiConversationPayload): Promise<Response> {
     const state = await this.get();
     const now = Date.now();
     const title = typeof payload.title === "string" && payload.title.trim() ? payload.title.trim() : `事务 ${state.conversations.length + 1}`;
     const maxOrder = Math.max(0, ...state.conversations.map((conversation) => conversation.order ?? 0));
     const order = Math.max(maxOrder + 1, now * 1000);
+    const team = normalizeConversationTeam(state, payload);
+    const roleOverrides = normalizeAgentRolePayload(payload.agentRoles);
+    const teamSnapshot = buildConversationTeamSnapshot(state, team, roleOverrides, now);
     const conversation: Conversation = {
       id: `convo-${now}-${Math.random().toString(36).slice(2)}`,
       title,
       kind: "group",
       created_at: now,
       updated_at: now,
-      order
+      order,
+      teamMode: team.teamMode,
+      coordinatorAgentId: team.coordinatorAgentId,
+      teamAgentIds: team.teamAgentIds,
+      teamSnapshot
     };
     state.conversations.push(conversation);
     await this.put(state);
     return json({ ok: true, conversation });
+  }
+
+  private async guiUpdateConversationTeam(conversationId: string | undefined, payload: GuiConversationPayload): Promise<Response> {
+    const state = await this.get();
+    const conversation = state.conversations.find((row) => row.id === conversationId);
+    if (!conversation) return json({ error: `conversation not found: ${conversationId || ""}` }, { status: 404 });
+    return json({ error: "conversation team is immutable after creation" }, { status: 409 });
   }
 
   private async guiDeleteConversation(conversationId?: string): Promise<Response> {
@@ -2916,19 +3278,22 @@ export class GuiState implements DurableObject {
     return json({ ok: true, deleted: before !== state.conversations.length });
   }
 
-  private async guiMessage(payload: { body?: string; conversationId?: string }): Promise<Response> {
+  private async guiMessage(request: Request, payload: { body?: string; conversationId?: string }): Promise<Response> {
     const state = await this.get();
     const conversation = ensureConversation(state, payload.conversationId || DEFAULT_CONVERSATION.id);
     const now = Date.now();
+    const targetAgent = coordinatorAgentFor(state, conversation);
+    const humanName = displayNameForAuthUser(authUserFromRequest(request));
     const message: Message = {
       id: `msg-${now}`,
       conversation_id: conversation.id,
       conversation_title: conversation.title,
       conversation_kind: conversation.kind,
-      author_name: "King Human",
+      author_name: humanName,
       author_kind: "human",
       kind: "message",
       body: payload.body || "Hello from the local gui runtime.",
+      to_agent_id: targetAgent.id,
       created_at: now,
       readBy: []
     };
@@ -2937,21 +3302,26 @@ export class GuiState implements DurableObject {
       conversation_id: conversation.id,
       conversation_title: conversation.title,
       conversation_kind: conversation.kind,
-      author_name: state.agents[0]?.name || DEFAULT_AGENT.name,
+      author_name: targetAgent.name,
       author_kind: "agent",
-      author_engine: state.agents[0]?.engine || DEFAULT_AGENT.engine,
+      author_engine: targetAgent.engine,
       status: "pending",
       kind: "message",
       body: "AI 正在处理...",
       created_at: now + 1,
-      readBy: [DEFAULT_AGENT.id]
+      readBy: [targetAgent.id]
     };
     state.messages = state.messages.filter((row) => !(row.conversation_id === conversation.id && row.status === "pending"));
     conversation.updated_at = now;
     state.messages.push(message);
     state.messages.push(pendingReply);
+    autoDelegateMessage(state, conversation, message, targetAgent);
     await this.put(state);
-    this.broadcast({ event: "wake", data: { conversationId: message.conversation_id, at: now } });
+    this.broadcast({ event: "wake", data: { conversationId: message.conversation_id, agentId: targetAgent.id, at: now } });
+    const delegated = state.tasks.find((task) => task.requestMessageId === message.id);
+    if (delegated?.assignee) {
+      await this.broadcast({ event: "wake", data: { agenda: true, conversationId: conversation.id, taskId: delegated.id, agentId: delegated.assignee, at: Date.now() } });
+    }
     return json({ ok: true, message });
   }
 
@@ -3011,11 +3381,16 @@ export class GuiState implements DurableObject {
     const state = await this.get();
     const title = typeof payload.title === "string" && payload.title.trim() ? payload.title.trim() : "Gui task";
     const description = typeof payload.description === "string" && payload.description.trim() ? payload.description.trim() : undefined;
-    const assignee = typeof payload.assignee === "string" && payload.assignee.trim() ? payload.assignee.trim() : DEFAULT_AGENT.id;
+    const assignee = typeof payload.assignee === "string" && payload.assignee.trim() ? payload.assignee.trim() : defaultWorkerAgentFor(state).id;
+    const ownerRole = typeof payload.ownerRole === "string" && payload.ownerRole.trim() ? payload.ownerRole.trim() : "builder";
+    const reviewerRole = typeof payload.reviewerRole === "string" && payload.reviewerRole.trim() ? payload.reviewerRole.trim() : (findAgent(state, "reviewer") ? "reviewer" : undefined);
     const priority = typeof payload.priority === "number"
       ? Math.min(10, Math.max(1, Math.round(payload.priority)))
       : 5;
     const paths = normalizeStringList(payload.paths);
+    const dependsOn = normalizeStringList(payload.dependsOn);
+    const blockedBy = normalizeStringList(payload.blockedBy);
+    const acceptance = normalizeStringList(payload.acceptance);
     const now = Date.now();
     const task: Task = {
       id: `task-${now}-${Math.random().toString(36).slice(2)}`,
@@ -3023,12 +3398,18 @@ export class GuiState implements DurableObject {
       description,
       status: assignee ? "assigned" : "pending",
       assignee,
+      ownerRole,
+      reviewerRole,
       priority,
+      dependsOn: dependsOn.length ? dependsOn : undefined,
+      blockedBy: blockedBy.length ? blockedBy : undefined,
+      acceptance: acceptance.length ? acceptance : ["Assigned work has concrete output and verification evidence."],
       scope: paths.length ? { paths } : undefined,
       created_at: now,
       updated_at: now
     };
     state.tasks.push(task);
+    queueTaskAssignmentMessage(state, task, "King");
     pushLoopEvent(state, {
       type: "queue.backlog",
       agent: assignee,
@@ -3037,7 +3418,7 @@ export class GuiState implements DurableObject {
       payload: { taskId: task.id, source: "gui-ui" }
     });
     await this.put(state);
-    if (payload.wake !== false) await this.broadcast({ event: "wake", data: { agenda: true, taskId: task.id, at: Date.now() } });
+    if (payload.wake !== false) await this.broadcast({ event: "wake", data: { agenda: true, taskId: task.id, agentId: assignee, at: Date.now() } });
     return json({ ok: true, task });
   }
 
@@ -3051,24 +3432,60 @@ export class GuiState implements DurableObject {
       task.status = payload.status;
     }
     if (typeof payload.assignee === "string" && payload.assignee.trim()) task.assignee = payload.assignee.trim();
+    if (typeof payload.ownerRole === "string") task.ownerRole = payload.ownerRole.trim() || undefined;
+    if (typeof payload.reviewerRole === "string") task.reviewerRole = payload.reviewerRole.trim() || undefined;
+    const blockedBy = normalizeStringList(payload.blockedBy);
+    if (blockedBy.length) task.blockedBy = blockedBy;
+    const acceptance = normalizeStringList(payload.acceptance);
+    if (acceptance.length) task.acceptance = acceptance;
     if (typeof payload.result === "string") task.result = payload.result.trim() || undefined;
+    applyTaskReviewPayload(task, payload, findAgent(state, task.assignee));
     task.updated_at = Date.now();
+    if (task.reviewResult === "changes_requested" && task.revisionReason) {
+      const worker = task.requestMessageId && task.conversationId
+        ? workerAgentForConversation(state, ensureConversation(state, task.conversationId))
+        : defaultWorkerAgentFor(state);
+      const targetWorker = worker ?? defaultWorkerAgentFor(state);
+      task.status = "assigned";
+      task.assignee = targetWorker.id;
+      task.updated_at = Date.now();
+      if (previousStatus !== task.status) pushTaskTransition(state, task, previousStatus);
+      queueTaskChangesRequestedMessage(state, task, targetWorker.id);
+      await this.put(state);
+      await this.broadcast({ event: "wake", data: { agenda: true, taskId: task.id, agentId: task.assignee, at: Date.now() } });
+      return json({ ok: true, task });
+    }
     if (previousStatus !== task.status) {
-      pushLoopEvent(state, {
-        type: "task.transition",
-        agent: task.assignee,
-        taskId: task.id,
-        from: previousStatus,
-        to: task.status
-      });
+      pushTaskTransition(state, task, previousStatus);
+      if (task.status === "review") {
+        const reviewer = findAgent(state, task.reviewerAgentId);
+        if (reviewer) {
+          task.assignee = reviewer.id;
+          task.reviewerAgentId = reviewer.id;
+          queueTaskReviewMessage(state, task, defaultAgentFor(state).id);
+        } else {
+          const reviewStatus = task.status;
+          task.status = "done";
+          task.assignee = task.coordinatorAgentId ?? defaultAgentFor(state).id;
+          task.updated_at = Date.now();
+          pushTaskTransition(state, task, reviewStatus);
+          queueTaskCompletionMessage(state, task, defaultAgentFor(state).id);
+        }
+      } else if (task.status === "done") {
+        task.assignee = task.coordinatorAgentId ?? defaultAgentFor(state).id;
+        queueTaskCompletionMessage(state, task, defaultAgentFor(state).id);
+      } else if (task.assignee) {
+        queueTaskAssignmentMessage(state, task, "King");
+      }
     }
     await this.put(state);
-    await this.broadcast({ event: "wake", data: { agenda: true, taskId: task.id, at: Date.now() } });
+    await this.broadcast({ event: "wake", data: { agenda: true, taskId: task.id, agentId: task.assignee, at: Date.now() } });
     return json({ ok: true, task });
   }
 
   private newAgentMessage(args: {
     target: string;
+    fromId?: string;
     fromName: string;
     fromKind: Message["author_kind"];
     fromEngine?: Message["author_engine"];
@@ -3079,7 +3496,7 @@ export class GuiState implements DurableObject {
   }): Message {
     return {
       id: `msg-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      conversation_id: `dm-${args.fromName.toLowerCase().replace(/\s+/g, "-")}-${args.target}`,
+      conversation_id: `dm-${(args.fromId ?? args.fromName).toLowerCase().replace(/\s+/g, "-")}-${args.target}`,
       conversation_title: `DM ${args.target}`,
       conversation_kind: "direct",
       author_name: args.fromName,
@@ -3125,6 +3542,7 @@ export class GuiState implements DurableObject {
     state.runLog = [];
     state.initiatives = [];
     state.tasks = [];
+    state.taskEvents = [];
     state.capsules = [];
     state.mergeQueue = [];
     state.evaluations = [];
@@ -3146,20 +3564,20 @@ export class GuiState implements DurableObject {
 
   private async agentConfig(payload: AgentConfigPayload): Promise<Response> {
     const state = await this.get();
-    const previous = state.agents[0] ?? DEFAULT_AGENT;
-    const engine = typeof payload.engine === "string" && state.availableEngines.includes(payload.engine) ? payload.engine : state.agents[0]?.engine;
+    const previous = defaultAgentFor(state);
+    const engine = typeof payload.engine === "string" && state.availableEngines.includes(payload.engine) ? payload.engine : previous.engine;
     const name = typeof payload.name === "string" ? payload.name.trim() : "";
     const role = typeof payload.role === "string" ? payload.role.trim() : "";
     const model = typeof payload.model === "string" ? payload.model.trim() : "";
     const fastModel = typeof payload.fastModel === "string" ? payload.fastModel.trim() : "";
     const lifecycle = isAgentLifecycle(payload.lifecycle)
       ? payload.lifecycle
-      : state.agents[0]?.lifecycle ?? DEFAULT_AGENT.lifecycle;
+      : previous.lifecycle ?? DEFAULT_AGENT.lifecycle;
     const nextAgent = {
       ...DEFAULT_AGENT,
       ...previous,
-      name: name || state.agents[0]?.name || DEFAULT_AGENT.name,
-      role: role || state.agents[0]?.role || DEFAULT_AGENT.role,
+      name: name || previous.name || DEFAULT_AGENT.name,
+      role: role || previous.role || DEFAULT_AGENT.role,
       engine: engine === "claude" || engine === "codex" ? engine : DEFAULT_AGENT.engine,
       lifecycle,
       model: model || undefined,
@@ -3172,23 +3590,41 @@ export class GuiState implements DurableObject {
       previous.lifecycle !== nextAgent.lifecycle ||
       previous.model !== nextAgent.model ||
       previous.fastModel !== nextAgent.fastModel;
-    state.agents = [nextAgent];
+    state.agents = normalizeAgents(state.agents).map((agent) => agent.id === nextAgent.id ? nextAgent : agent);
     state.agentConfigUpdatedAt = Date.now();
-    if (changed) state.runtimeToken = crypto.randomUUID();
+    if (changed) {
+      state.runtimeToken = crypto.randomUUID();
+      state.runtimeTokens ??= {};
+      delete state.runtimeTokens[nextAgent.id];
+    }
     await this.put(state);
-    return json({ ok: true, agent: state.agents[0] });
+    return json({ ok: true, agent: nextAgent });
   }
 
   private async broadcast(evt: { event: string; data: unknown }): Promise<void> {
+    try {
+      const state = await this.get();
+      state.wakeLog ??= [];
+      state.wakeLog.push({ at: Date.now(), event: evt.event, data: evt.data });
+      state.wakeLog = state.wakeLog.slice(-WAKE_LOG_CAPACITY);
+      await this.put(state);
+    } catch {
+      // Wake delivery must not depend on observability persistence.
+    }
     const frame = encode(`event: ${evt.event}\ndata: ${JSON.stringify(evt.data)}\n\n`);
     await Promise.all([...this.waiters].map(async (writer) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         await Promise.race([
           writer.write(frame),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("sse write timeout")), 1000))
+          new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error("sse write timeout")), 1000);
+          })
         ]);
       } catch {
         this.waiters.delete(writer);
+      } finally {
+        if (timer) clearTimeout(timer);
       }
     }));
   }
@@ -3201,6 +3637,96 @@ function token(request: Request): string {
 
 function tenantHeader(request: Request): string {
   return sanitizeTenantId(request.headers.get("X-King-Tenant") || "global");
+}
+
+function normalizeAgentId(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const id = value.trim();
+  if (!id) return undefined;
+  return id === LEGACY_DEFAULT_AGENT_ID ? DEFAULT_AGENT.id : id;
+}
+
+function normalizeRuntimeTokens(value: Record<string, string> | undefined): Record<string, string> {
+  const next: Record<string, string> = {};
+  for (const [agentId, tokenValue] of Object.entries(value ?? {})) {
+    const id = normalizeAgentId(agentId);
+    if (id && typeof tokenValue === "string") next[id] = tokenValue;
+  }
+  return next;
+}
+
+function normalizeMessages(messages: Message[]): Message[] {
+  return messages.map((message) => ({
+    ...message,
+    to_agent_id: normalizeAgentId(message.to_agent_id),
+    readBy: [...new Set((message.readBy ?? []).map(normalizeAgentId).filter((id): id is string => Boolean(id)))]
+  }));
+}
+
+function normalizeTasks(tasks: Task[]): Task[] {
+  return tasks.map((task) => ({
+    ...task,
+    assignee: normalizeAgentId(task.assignee),
+    coordinatorAgentId: normalizeAgentId(task.coordinatorAgentId),
+    reviewerAgentId: normalizeAgentId(task.reviewerAgentId),
+    reviewedByAgentId: normalizeAgentId(task.reviewedByAgentId)
+  }));
+}
+
+function normalizeTaskEvents(events: TaskEvent[]): TaskEvent[] {
+  return events.map((event) => ({
+    ...event,
+    actorAgentId: normalizeAgentId(event.actorAgentId),
+    targetAgentId: normalizeAgentId(event.targetAgentId)
+  }));
+}
+
+function normalizeCards(cards: Card[]): Card[] {
+  return cards.map((card) => ({
+    ...card,
+    assignee: normalizeAgentId(card.assignee),
+    claimedBy: normalizeAgentId(card.claimedBy)
+  }));
+}
+
+function normalizeCalendar(calendar: CalendarItem[]): CalendarItem[] {
+  return calendar.map((item) => ({ ...item, assignee: normalizeAgentId(item.assignee) ?? item.assignee }));
+}
+
+function normalizeClaims(claims: Claim[]): Claim[] {
+  return claims.map((claim) => ({ ...claim, owner: normalizeAgentId(claim.owner) ?? claim.owner }));
+}
+
+function normalizeCapsules(capsules: ChangeCapsule[]): ChangeCapsule[] {
+  return capsules.map((capsule) => ({ ...capsule, ownerAgent: normalizeAgentId(capsule.ownerAgent) ?? capsule.ownerAgent }));
+}
+
+function normalizeMergeQueue(queue: MergeRequest[]): MergeRequest[] {
+  return queue.map((entry) => ({ ...entry, agentId: normalizeAgentId(entry.agentId) ?? entry.agentId }));
+}
+
+function normalizeArtifacts(artifacts: Artifact[]): Artifact[] {
+  return artifacts.map((artifact) => ({
+    ...artifact,
+    agentId: normalizeAgentId(artifact.agentId) ?? artifact.agentId,
+    source: artifact.source === LEGACY_DEFAULT_AGENT_ID ? DEFAULT_AGENT.id : artifact.source
+  }));
+}
+
+function normalizeContext(entries: ContextEntry[]): ContextEntry[] {
+  return entries.map((entry) => ({ ...entry, updatedBy: normalizeAgentId(entry.updatedBy) ?? entry.updatedBy }));
+}
+
+function normalizeHypotheses(hypotheses: Hypothesis[]): Hypothesis[] {
+  return hypotheses.map((hypothesis) => ({ ...hypothesis, agentId: normalizeAgentId(hypothesis.agentId) ?? hypothesis.agentId }));
+}
+
+function normalizeReactions(reactions: Reaction[]): Reaction[] {
+  return reactions.map((reaction) => ({ ...reaction, authorId: normalizeAgentId(reaction.authorId) ?? reaction.authorId }));
+}
+
+function normalizeComposing(claims: ComposingClaim[]): ComposingClaim[] {
+  return claims.map((claim) => ({ ...claim, agentId: normalizeAgentId(claim.agentId) ?? claim.agentId }));
 }
 
 function normalizeConversations(input: unknown, messages: Message[]): Conversation[] {
@@ -3217,7 +3743,11 @@ function normalizeConversations(input: unknown, messages: Message[]): Conversati
         kind: row.kind === "direct" ? "direct" : "group",
         created_at: typeof row.created_at === "number" ? row.created_at : now,
         updated_at: typeof row.updated_at === "number" ? row.updated_at : now,
-        order: typeof row.order === "number" ? row.order : undefined
+        order: typeof row.order === "number" ? row.order : undefined,
+        teamMode: normalizeTeamMode(row.teamMode),
+        coordinatorAgentId: normalizeAgentId(row.coordinatorAgentId) ?? DEFAULT_AGENT.id,
+        teamAgentIds: normalizeTeamAgentIds(row.teamAgentIds),
+        teamSnapshot: normalizeConversationTeamSnapshot(row.teamSnapshot)
       });
     }
   }
@@ -3226,7 +3756,11 @@ function normalizeConversations(input: unknown, messages: Message[]): Conversati
     ...byId.get(DEFAULT_CONVERSATION.id),
     title: byId.get(DEFAULT_CONVERSATION.id)?.title || DEFAULT_CONVERSATION.title,
     created_at: byId.get(DEFAULT_CONVERSATION.id)?.created_at || now,
-    updated_at: byId.get(DEFAULT_CONVERSATION.id)?.updated_at || now
+    updated_at: byId.get(DEFAULT_CONVERSATION.id)?.updated_at || now,
+    teamMode: normalizeTeamMode(byId.get(DEFAULT_CONVERSATION.id)?.teamMode),
+    coordinatorAgentId: normalizeAgentId(byId.get(DEFAULT_CONVERSATION.id)?.coordinatorAgentId) ?? DEFAULT_AGENT.id,
+    teamAgentIds: normalizeTeamAgentIds(byId.get(DEFAULT_CONVERSATION.id)?.teamAgentIds),
+    teamSnapshot: normalizeConversationTeamSnapshot(byId.get(DEFAULT_CONVERSATION.id)?.teamSnapshot)
   });
   for (const message of messages) {
     const existing = byId.get(message.conversation_id);
@@ -3239,7 +3773,11 @@ function normalizeConversations(input: unknown, messages: Message[]): Conversati
       title: message.conversation_title || message.conversation_id,
       kind: message.conversation_kind || "group",
       created_at: message.created_at,
-      updated_at: message.created_at
+      updated_at: message.created_at,
+      teamMode: "team",
+      coordinatorAgentId: DEFAULT_AGENT.id,
+      teamAgentIds: normalizeTeamAgentIds(undefined),
+      teamSnapshot: undefined
     });
   }
   return [...byId.values()].sort(compareConversations);
@@ -3255,10 +3793,470 @@ function ensureConversation(state: State, id: string): Conversation {
     title: conversationId === DEFAULT_CONVERSATION.id ? DEFAULT_CONVERSATION.title : conversationId,
     kind: "group",
     created_at: now,
-    updated_at: now
+    updated_at: now,
+    teamMode: "team",
+    coordinatorAgentId: DEFAULT_AGENT.id,
+    teamAgentIds: normalizeTeamAgentIds(undefined),
+    teamSnapshot: undefined
   };
   state.conversations.push(conversation);
   return conversation;
+}
+
+function defaultTeamAgents(): Agent[] {
+  return DEFAULT_TEAM_AGENTS.map((agent) => ({ ...agent }));
+}
+
+function defaultTeamAgentIds(): string[] {
+  return [DEFAULT_AGENT.id, "dev", "reviewer"];
+}
+
+function normalizeTeamMode(value: unknown): NonNullable<Conversation["teamMode"]> {
+  return value === "single" || value === "custom" || value === "team" ? value : "team";
+}
+
+function normalizeTeamAgentIds(value: unknown): string[] {
+  const ids = Array.isArray(value) ? value.map(normalizeAgentId).filter((id): id is string => Boolean(id)) : [];
+  return [...new Set(ids.length ? ids : defaultTeamAgentIds())];
+}
+
+function normalizeConversationTeam(state: State, payload: GuiConversationPayload, previous?: Conversation): Required<Pick<Conversation, "teamMode" | "coordinatorAgentId" | "teamAgentIds">> {
+  const mode = normalizeTeamMode(payload.teamMode ?? previous?.teamMode);
+  const coordinator = defaultAgentFor(state);
+  if (mode === "single") {
+    return { teamMode: mode, coordinatorAgentId: coordinator.id, teamAgentIds: [coordinator.id] };
+  }
+  if (mode === "custom") {
+    const requestedIds = normalizeStringList(payload.teamAgentIds).map(normalizeAgentId).filter((id): id is string => Boolean(id));
+    const ids = [...new Set([coordinator.id, ...requestedIds])].filter((id) => Boolean(findAgent(state, id)));
+    return { teamMode: mode, coordinatorAgentId: coordinator.id, teamAgentIds: ids.length ? ids : [coordinator.id] };
+  }
+  return { teamMode: "team", coordinatorAgentId: DEFAULT_AGENT.id, teamAgentIds: defaultTeamAgentIds() };
+}
+
+function normalizeAgentRolePayload(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const roles = value as Record<string, unknown>;
+  const normalized: Record<string, string> = {};
+  for (const [agentId, role] of Object.entries(roles)) {
+    if (typeof role !== "string") continue;
+    const id = normalizeAgentId(agentId);
+    if (!id) continue;
+    const trimmed = role.trim();
+    if (trimmed) normalized[id] = trimmed;
+  }
+  return normalized;
+}
+
+function applyAgentRolePayload(state: State, value: unknown): void {
+  const roles = normalizeAgentRolePayload(value);
+  let changed = false;
+  state.agents = state.agents.map((agent) => {
+    const role = roles[agent.id];
+    if (!role || role === agent.role) return agent;
+    changed = true;
+    return { ...agent, role };
+  });
+  if (changed) state.agentConfigUpdatedAt = Date.now();
+}
+
+function normalizeConversationTeamSnapshot(value: unknown): ConversationTeamSnapshot | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const row = value as Partial<ConversationTeamSnapshot>;
+  const agents = Array.isArray(row.agents)
+    ? row.agents.filter((agent): agent is Agent => Boolean(agent) && typeof agent.id === "string" && typeof agent.name === "string" && typeof agent.role === "string")
+    : [];
+  const teamAgentIds = normalizeTeamAgentIds(row.teamAgentIds);
+  const coordinatorAgentId = normalizeAgentId(row.coordinatorAgentId) ?? DEFAULT_AGENT.id;
+  if (agents.length === 0) return undefined;
+  return {
+    mode: normalizeTeamMode(row.mode),
+    coordinatorAgentId,
+    teamAgentIds,
+    agents: agents.map((agent) => ({ ...agent, id: normalizeAgentId(agent.id) ?? agent.id })),
+    createdAt: typeof row.createdAt === "number" ? row.createdAt : Date.now()
+  };
+}
+
+function buildConversationTeamSnapshot(
+  state: State,
+  team: Required<Pick<Conversation, "teamMode" | "coordinatorAgentId" | "teamAgentIds">>,
+  roleOverrides: Record<string, string> = {},
+  createdAt = Date.now()
+): ConversationTeamSnapshot {
+  const agents = team.teamAgentIds.map((id) => {
+    const agent = findAgent(state, id) ?? DEFAULT_TEAM_AGENTS.find((row) => row.id === id) ?? defaultAgentFor(state);
+    return {
+      ...agent,
+      role: roleOverrides[id] || agent.role
+    };
+  });
+  return {
+    mode: team.teamMode,
+    coordinatorAgentId: team.coordinatorAgentId,
+    teamAgentIds: team.teamAgentIds,
+    agents,
+    createdAt
+  };
+}
+
+function normalizeAgents(agents: Agent[] | undefined): Agent[] {
+  const byId = new Map<string, Agent>();
+  const incoming = Array.isArray(agents) && agents.length ? agents : [DEFAULT_AGENT];
+  for (const agent of incoming) {
+    if (!agent?.id) continue;
+    const id = normalizeAgentId(agent.id);
+    if (!id) continue;
+    byId.set(id, { ...agent, id });
+  }
+  for (const agent of DEFAULT_TEAM_AGENTS) {
+    const existing = byId.get(agent.id);
+    const normalized = { ...agent, ...existing };
+    if (agent.id === DEFAULT_AGENT.id) {
+      if (!existing?.name || existing.name === LEGACY_DEFAULT_AGENT_NAME) normalized.name = agent.name;
+      if (!existing?.role || existing.role === LEGACY_DEFAULT_AGENT_ROLE) normalized.role = agent.role;
+    } else if (agent.id === "dev" && (!existing?.role || existing.role === LEGACY_DEFAULT_DEV_ROLE)) {
+      normalized.role = agent.role;
+    } else if (agent.id === "reviewer" && (!existing?.role || existing.role === LEGACY_DEFAULT_REVIEWER_ROLE)) {
+      normalized.role = agent.role;
+    }
+    byId.set(agent.id, normalized);
+  }
+  return [...byId.values()];
+}
+
+function findAgent(state: State, agentId?: string | null): Agent | undefined {
+  const id = normalizeAgentId(agentId);
+  if (!id) return undefined;
+  return state.agents.find((agent) => agent.id === id);
+}
+
+function defaultAgentFor(state: State): Agent {
+  return findAgent(state, DEFAULT_AGENT.id) ?? state.agents[0] ?? DEFAULT_AGENT;
+}
+
+function coordinatorAgentFor(state: State, conversation: Conversation): Agent {
+  const snapshot = conversation.teamSnapshot;
+  if (snapshot) {
+    const agent = snapshot.agents.find((row) => row.id === snapshot.coordinatorAgentId);
+    if (agent) return agent;
+  }
+  return findAgent(state, conversation.coordinatorAgentId) ?? defaultAgentFor(state);
+}
+
+function teamAgentsFor(state: State, conversation?: Conversation): Agent[] {
+  if (conversation?.teamSnapshot?.agents.length) return conversation.teamSnapshot.agents.map((agent) => ({ ...agent }));
+  const ids = normalizeTeamAgentIds(conversation?.teamAgentIds);
+  const rows = ids.map((id) => findAgent(state, id)).filter((agent): agent is Agent => Boolean(agent));
+  return rows.length ? rows : [defaultAgentFor(state)];
+}
+
+function teamSpecForConversation(state: State, conversation: Conversation) {
+  const base = defaultTeamSpec(`${conversation.id}-team`, conversation.title || "GUI Conversation Team");
+  const agents = teamAgentsFor(state, conversation);
+  return {
+    ...base,
+    roles: agents.map((agent) => {
+      const template = roleTemplateForAgent(agent);
+      const baseRole = base.roles.find((role) => role.template === template);
+      return {
+        id: agent.id,
+        template,
+        responsibility: agent.role,
+        capabilities: baseRole?.capabilities ?? [],
+        handoffPolicy: baseRole?.handoffPolicy ?? {
+          mode: "one-of-us" as const,
+          escalation: "coordinator" as const,
+          acceptanceRequired: false
+        }
+      };
+    })
+  };
+}
+
+function defaultWorkerAgentFor(state: State): Agent {
+  return findAgent(state, "dev") ?? defaultAgentFor(state);
+}
+
+function reviewerAgentFor(state: State): Agent {
+  return findAgent(state, "reviewer") ?? defaultAgentFor(state);
+}
+
+function agentForRoleInConversation(state: State, conversation: Conversation, role: string): Agent | undefined {
+  return teamAgentsFor(state, conversation).find((agent) => agent.id === role || roleTemplateForAgent(agent) === role);
+}
+
+function workerAgentForConversation(state: State, conversation: Conversation): Agent | undefined {
+  const ids = new Set(teamAgentsFor(state, conversation).map((agent) => agent.id));
+  return ids.has("dev") ? teamAgentsFor(state, conversation).find((agent) => agent.id === "dev") : undefined;
+}
+
+function reviewerAgentForConversation(state: State, conversation: Conversation): Agent | undefined {
+  const ids = new Set(teamAgentsFor(state, conversation).map((agent) => agent.id));
+  return ids.has("reviewer") ? teamAgentsFor(state, conversation).find((agent) => agent.id === "reviewer") : undefined;
+}
+
+function agentIdForRuntimeToken(state: State, runtimeToken: string): string | null {
+  if (!runtimeToken) return null;
+  for (const [agentId, tokenValue] of Object.entries(state.runtimeTokens ?? {})) {
+    if (tokenValue === runtimeToken) return agentId;
+  }
+  return runtimeToken === state.runtimeToken ? DEFAULT_AGENT.id : null;
+}
+
+function autoDelegateMessage(state: State, conversation: Conversation, message: Message, coordinator: Agent): Task | undefined {
+  const ownerRole = selectOwnerRole(teamSpecForConversation(state, conversation), requiredCapabilitiesForText(message.body)) ?? "builder";
+  const worker = agentForRoleInConversation(state, conversation, ownerRole) ?? workerAgentForConversation(state, conversation);
+  if (!worker) return undefined;
+  const reviewer = agentForRoleInConversation(state, conversation, "reviewer") ?? reviewerAgentForConversation(state, conversation);
+  const now = Date.now();
+  const task: Task = {
+    id: `task-${now}-${Math.random().toString(36).slice(2)}`,
+    title: message.body.slice(0, 80) || `Handle ${conversation.title}`,
+    description: `Handle the human request in ${conversation.title}: ${message.body}`,
+    status: "assigned",
+    assignee: worker.id,
+    ownerRole,
+    reviewerRole: reviewer ? "reviewer" : undefined,
+    priority: message.priority === "steer" ? 8 : 5,
+    acceptance: [
+      "The assigned agent reports concrete output or files changed.",
+      reviewer ? "Reviewer approves or requests specific revisions before Planner summarizes." : "Planner receives a concrete completion summary."
+    ],
+    conversationId: conversation.id,
+    requestMessageId: message.id,
+    coordinatorAgentId: coordinator.id,
+    reviewerAgentId: reviewer?.id,
+    created_at: now,
+    updated_at: now
+  };
+  state.tasks.push(task);
+  queueTaskAssignmentMessage(state, task, coordinator.id);
+  pushLoopEvent(state, {
+    type: "queue.backlog",
+    agent: worker.id,
+    taskId: task.id,
+    pendingMessages: unreadMessagesFor(state, worker.id).length,
+    payload: { taskId: task.id, source: "gui-message", conversationId: conversation.id, requestMessageId: message.id }
+  });
+  return task;
+}
+
+function advanceTaskDone(state: State, task: Task, actor: Agent, resultText?: string): string {
+  const previousStatus = task.status;
+  if (resultText?.trim()) task.result = resultText.trim();
+  if (!task.reviewerAgentId && !task.conversationId) {
+    task.status = "done";
+    task.updated_at = Date.now();
+    if (previousStatus !== task.status) pushTaskTransition(state, task, previousStatus);
+    return `Task ${task.id} marked done.`;
+  }
+  if (!task.reviewerAgentId) {
+    task.status = "done";
+    task.assignee = task.coordinatorAgentId ?? DEFAULT_AGENT.id;
+    task.updated_at = Date.now();
+    if (previousStatus !== task.status) pushTaskTransition(state, task, previousStatus);
+    queueTaskCompletionMessage(state, task, actor.name);
+    return `Task ${task.id} marked done and returned to ${task.assignee}.`;
+  }
+  if (actor.id === task.reviewerAgentId || task.status === "review") {
+    task.status = "done";
+    task.assignee = task.coordinatorAgentId ?? DEFAULT_AGENT.id;
+    task.reviewResult = "approved";
+    task.reviewedByAgentId = actor.id;
+    task.reviewedAt = Date.now();
+    task.updated_at = Date.now();
+    if (previousStatus !== task.status) pushTaskTransition(state, task, previousStatus);
+    queueTaskCompletionMessage(state, task, actor.name);
+    return `Task ${task.id} marked done and returned to ${task.assignee}.`;
+  }
+  const reviewer = findAgent(state, task.reviewerAgentId) ?? reviewerAgentFor(state);
+  task.status = "review";
+  task.assignee = reviewer.id;
+  task.reviewerAgentId = reviewer.id;
+  task.updated_at = Date.now();
+  if (previousStatus !== task.status) pushTaskTransition(state, task, previousStatus);
+  queueTaskReviewMessage(state, task, actor.id);
+  return `Task ${task.id} submitted for review by ${reviewer.id}.`;
+}
+
+function pushTaskTransition(state: State, task: Task, previousStatus: TaskStatus): void {
+  pushLoopEvent(state, {
+    type: "task.transition",
+    agent: task.assignee,
+    taskId: task.id,
+    from: previousStatus,
+    to: task.status
+  });
+}
+
+function applyTaskReviewPayload(task: Task, payload: GuiTaskUpdatePayload, reviewer?: Agent): void {
+  if (payload.reviewResult === "approved" || payload.reviewResult === "changes_requested") {
+    task.reviewResult = payload.reviewResult;
+    task.reviewedByAgentId = reviewer?.id ?? task.reviewedByAgentId;
+    task.reviewedAt = Date.now();
+  }
+  if (typeof payload.revisionReason === "string") task.revisionReason = payload.revisionReason.trim() || undefined;
+  const artifactIds = normalizeStringList(payload.artifactIds);
+  if (artifactIds.length) task.artifactIds = artifactIds;
+}
+
+function recordTaskEvent(
+  state: State,
+  task: Task,
+  args: Omit<TaskEvent, "id" | "taskId" | "conversationId" | "created_at">
+): TaskEvent {
+  const event: TaskEvent = {
+    id: `task-event-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    taskId: task.id,
+    conversationId: task.conversationId,
+    created_at: Date.now(),
+    ...args
+  };
+  state.taskEvents.push(event);
+  return event;
+}
+
+function taskEventPayload(event: TaskEvent, task: Task): Record<string, unknown> {
+  return {
+    taskEventId: event.id,
+    taskEventType: event.type,
+    taskId: task.id,
+    title: task.title,
+    description: task.description,
+    result: task.result,
+    reviewResult: task.reviewResult,
+    revisionReason: task.revisionReason,
+    artifactIds: task.artifactIds ?? []
+  };
+}
+
+function queueTaskAssignmentMessage(state: State, task: Task, fromName: string): void {
+  if (!task.assignee) return;
+  const target = findAgent(state, task.assignee);
+  if (!target) return;
+  const now = Date.now();
+  const conversation = ensureConversation(state, task.conversationId || DEFAULT_CONVERSATION.id);
+  const event = recordTaskEvent(state, task, {
+    type: "assigned",
+    actorAgentId: task.coordinatorAgentId,
+    targetAgentId: target.id,
+    summary: `Assigned to ${target.name || target.id}`
+  });
+  state.messages.push({
+    id: `msg-${now}-${Math.random().toString(36).slice(2)}`,
+    conversation_id: conversation.id,
+    conversation_title: conversation.title,
+    conversation_kind: conversation.kind,
+    author_name: fromName,
+    author_kind: "system",
+    kind: "message",
+    body: `Task assigned to ${target.id}: ${task.id} "${task.title}"${task.description ? ` - ${task.description}` : ""}`,
+    priority: "steer",
+    message_type: "message",
+    to_agent_id: target.id,
+    payload: taskEventPayload(event, task),
+    created_at: now,
+    readBy: []
+  });
+  conversation.updated_at = now;
+}
+
+function queueTaskReviewMessage(state: State, task: Task, fromAgentId: string): void {
+  if (!task.assignee) return;
+  const target = findAgent(state, task.assignee);
+  if (!target) return;
+  const now = Date.now();
+  const conversation = ensureConversation(state, task.conversationId || DEFAULT_CONVERSATION.id);
+  const event = recordTaskEvent(state, task, {
+    type: "submitted_for_review",
+    actorAgentId: fromAgentId,
+    targetAgentId: target.id,
+    summary: `Submitted for review by ${fromAgentId}`,
+    result: task.result
+  });
+  state.messages.push({
+    id: `msg-${now}-${Math.random().toString(36).slice(2)}`,
+    conversation_id: conversation.id,
+    conversation_title: conversation.title,
+    conversation_kind: conversation.kind,
+    author_name: fromAgentId,
+    author_kind: "system",
+    kind: "message",
+    body: `Task assigned to ${target.id}: ${task.id} "${task.title}"${task.result ? ` - Review result: ${task.result}` : ""}`,
+    priority: "steer",
+    message_type: "message",
+    to_agent_id: target.id,
+    payload: taskEventPayload(event, task),
+    created_at: now,
+    readBy: []
+  });
+  conversation.updated_at = now;
+}
+
+function queueTaskChangesRequestedMessage(state: State, task: Task, targetAgentId: string): void {
+  const target = findAgent(state, targetAgentId);
+  if (!target) return;
+  const now = Date.now();
+  const conversation = ensureConversation(state, task.conversationId || DEFAULT_CONVERSATION.id);
+  const event = recordTaskEvent(state, task, {
+    type: "changes_requested",
+    actorAgentId: task.reviewedByAgentId ?? task.reviewerAgentId,
+    targetAgentId,
+    summary: task.revisionReason || "Reviewer requested revisions",
+    reviewResult: "changes_requested",
+    revisionReason: task.revisionReason,
+    artifactIds: task.artifactIds
+  });
+  state.messages.push({
+    id: `msg-${now}-${Math.random().toString(36).slice(2)}`,
+    conversation_id: conversation.id,
+    conversation_title: conversation.title,
+    conversation_kind: conversation.kind,
+    author_name: "Reviewer",
+    author_kind: "system",
+    kind: "message",
+    body: `Task revisions requested for ${target.id}: ${task.id} "${task.title}"${task.revisionReason ? ` - ${task.revisionReason}` : ""}`,
+    priority: "steer",
+    message_type: "blocker",
+    to_agent_id: target.id,
+    payload: taskEventPayload(event, task),
+    created_at: now,
+    readBy: []
+  });
+  conversation.updated_at = now;
+}
+
+function queueTaskCompletionMessage(state: State, task: Task, fromName = "Reviewer"): void {
+  const ceo = findAgent(state, task.coordinatorAgentId) ?? defaultAgentFor(state);
+  const now = Date.now();
+  const conversation = ensureConversation(state, task.conversationId || DEFAULT_CONVERSATION.id);
+  const event = recordTaskEvent(state, task, {
+    type: "completed",
+    actorAgentId: task.reviewedByAgentId ?? task.reviewerAgentId ?? task.assignee,
+    targetAgentId: ceo.id,
+    summary: task.result || `Completed by ${fromName}`,
+    result: task.result,
+    reviewResult: task.reviewResult,
+    artifactIds: task.artifactIds
+  });
+  state.messages.push({
+    id: `msg-${now}-${Math.random().toString(36).slice(2)}`,
+    conversation_id: conversation.id,
+    conversation_title: conversation.title,
+    conversation_kind: conversation.kind,
+    author_name: fromName,
+    author_kind: "system",
+    kind: "message",
+    body: `Task completed: ${task.id} "${task.title}"${task.result ? ` - ${task.result}` : ""}. Summarize the result for the human in #${conversation.title}.`,
+    priority: "steer",
+    message_type: "decision",
+    to_agent_id: ceo.id,
+    payload: taskEventPayload(event, task),
+    created_at: now,
+    readBy: []
+  });
+  conversation.updated_at = now;
 }
 
 function conversationSummaries(state: State): Array<Conversation & { unread: number; messages: number }> {
@@ -3277,7 +4275,11 @@ function isRuntimeVisibleMessage(message: Message): boolean {
 }
 
 function unreadMessagesFor(state: State, agentId: string): Message[] {
-  return state.messages.filter((message) => isRuntimeVisibleMessage(message) && !message.readBy.includes(agentId));
+  return state.messages.filter((message) =>
+    isRuntimeVisibleMessage(message) &&
+    (!message.to_agent_id || message.to_agent_id === agentId) &&
+    !message.readBy.includes(agentId)
+  );
 }
 
 function compareConversations(a: Conversation, b: Conversation): number {
@@ -3352,7 +4354,7 @@ function summarizeUnknown(value: unknown): string {
 
 function agentStateSummary(state: State, agent: Agent): AgentStateSummary {
   const lifecycle = agent.lifecycle ?? "on-demand";
-  const latestStatus = state.statusLog.at(-1);
+  const latestStatus = state.statusLog.slice().reverse().find((row) => !row.agentId || row.agentId === agent.id);
   const status = lifecycle === "disabled" ? "disabled" : latestStatus?.status ?? "idle";
   return {
     id: agent.id,
@@ -3398,6 +4400,7 @@ function buildRuntimePreamble(
   const lines: string[] = [
     `## Runtime Context (Loop #${state.currentLoop})`,
     `Agent: ${agent.id} (${agent.name})`,
+    `Role: ${agent.role}`,
     `Reason: ${options.reason}`,
     `Run ID: ${options.runId || state.loopRunId || "run-gui"}`
   ];
@@ -4044,7 +5047,8 @@ function isKnownArtifactSource(source: string): boolean {
     source.startsWith("api:") ||
     source === "cross_validated" ||
     source === "marketing" ||
-    source === "king-agent" ||
+    source === DEFAULT_AGENT.id ||
+    source === LEGACY_DEFAULT_AGENT_ID ||
     source === "original";
 }
 

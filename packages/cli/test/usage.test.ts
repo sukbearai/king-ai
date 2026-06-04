@@ -5,9 +5,11 @@ import {
   checkTokenBudget,
   emptyAgentRunStats,
   estimateUsageCost,
+  formatUsageExpenses,
   formatAgentRunStats,
   formatUsageSummary,
   formatTokenBudgetCheck,
+  listUsageExpenses,
   normalizeUsagePricing,
   normalizeEngineUsage,
   recordAgentRunStats,
@@ -242,6 +244,47 @@ test("summarizeAgentUsage includes optional King cost estimates", () => {
   assert.equal(summary.agents.find((agent) => agent.id === "dev")?.cost?.amount, 4.75);
   assert.equal(summary.byEngine.find((group) => group.key === "claude")?.cost?.amount, 0.033);
   assert.match(formatUsageSummary(summary), /estimated cost: USD 4\.783000/);
+});
+
+test("listUsageExpenses returns sorted per-agent expense rows", () => {
+  const codexStats = recordAgentRunStats(emptyAgentRunStats(), {
+    status: "completed",
+    usage: { inputTokens: 1_000_000, cacheReadInputTokens: 500_000, outputTokens: 250_000 },
+    durationMs: 1000,
+    model: "gpt-test",
+    at: "2026-06-02T00:00:00.000Z"
+  });
+  const unpricedStats = recordAgentRunStats(emptyAgentRunStats(), {
+    status: "failed",
+    usage: { inputTokens: 10, outputTokens: 5 },
+    durationMs: 100,
+    model: "unknown-model",
+    at: "2026-06-02T00:01:00.000Z"
+  });
+  const summary = summarizeAgentUsage([
+    { id: "unpriced", name: "Unpriced", engine: "codex", model: "unknown-model", runStats: unpricedStats },
+    { id: "dev", name: "Dev", engine: "codex", model: "gpt-test", runStats: codexStats }
+  ], null, normalizeUsagePricing({
+    "codex:gpt-test": {
+      inputPerMillionTokens: 2,
+      cacheReadInputPerMillionTokens: 0.5,
+      outputPerMillionTokens: 10
+    }
+  }));
+
+  const rows = listUsageExpenses(summary);
+  assert.deepEqual(rows.map((row) => row.agentId), ["dev", "unpriced"]);
+  assert.equal(rows[0]?.amount, 4.75);
+  assert.equal(rows[0]?.pricingKeys[0], "codex:gpt-test");
+  assert.equal(rows[1]?.amount, 0);
+  assert.equal(rows[1]?.unpricedTokens, 15);
+
+  const rendered = formatUsageExpenses(rows);
+  assert.match(rendered, /usage expenses:/);
+  assert.match(rendered, /dev \(Dev\): USD 4\.750000/);
+  assert.match(rendered, /inputCost=2\.000000 cacheCost=0\.250000 outputCost=2\.500000/);
+  assert.match(rendered, /unpriced \(Unpriced\): unpriced/);
+  assert.match(rendered, /unpricedTokens=15/);
 });
 
 test("formatUsageSummary renders empty running state", () => {

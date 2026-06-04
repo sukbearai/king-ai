@@ -55,6 +55,7 @@ export type RunningAgentState = {
   }>;
   workspaceRoot?: string;
   worktreePlans?: WorktreePlan[];
+  worktreeMaterializationEnabled?: boolean;
   runStats?: AgentRunStats;
   tokenBudget?: TokenBudgetCheck;
   remediation?: RemediationAdvice | null;

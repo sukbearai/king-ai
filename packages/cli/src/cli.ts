@@ -7,12 +7,14 @@ import { cleanupWorktrees, installService, isServiceInstalled, prepareWorktrees,
 import type { CommandName } from "./service.js";
 import { runSkillCheck } from "./skill-check.js";
 import { runProjectProfile } from "./project-profile.js";
-import { formatUsageSummary, summarizeAgentUsage, tokenBudgetFromEnv } from "./usage.js";
+import { formatUsageExpenses, formatUsageSummary, listUsageExpenses, summarizeAgentUsage, tokenBudgetFromEnv, usagePricingFromEnv } from "./usage.js";
 import { buildUsageRuntimeData, formatProviderCapabilities, formatRuntimeResultsTable, writeUsageRuntimeData } from "./runtime-data.js";
 import { buildHostStatusSnapshot, formatHostStatusSnapshot } from "./host-api.js";
 import { listHostCommands, runHostCommand } from "./host-control.js";
 import type { HostCommandRequest, HostCommandResult } from "./host-control.js";
 import { DEFAULT_HOST_SERVER_HOST, hostServerPortFromEnv, serveHostStatus } from "./host-server.js";
+import { scenarioTemplate } from "./team-workflow.js";
+import type { KingScenarioTemplate } from "./team-workflow.js";
 import type { EngineId } from "./types.js";
 
 export function commandNameFromArgv(_argv0?: string): CommandName {
@@ -294,14 +296,25 @@ const usageCommand = command({
     }
   },
   help: {
-    description: "Summarize local agent run usage from the running daemon state, or export runtime data"
+    description: "Summarize local agent run usage from the running daemon state, list expenses, or export runtime data"
   }
 }, async (argv) => {
   const state = await readRunningState();
-  const runtimeData = buildUsageRuntimeData(state, { budget: tokenBudgetFromEnv() });
+  const pricingRules = usagePricingFromEnv();
+  const runtimeData = buildUsageRuntimeData(state, { budget: tokenBudgetFromEnv(), pricingRules });
+  const usageSummary = summarizeAgentUsage(state?.agents ?? [], tokenBudgetFromEnv(), pricingRules);
   if (argv._.action === "export") {
     const out = await writeUsageRuntimeData(argv.flags.out || "king-runtime-data.json", runtimeData);
     console.log(`usage runtime data written: ${out}`);
+    return;
+  }
+  if (argv._.action === "expenses") {
+    const rows = listUsageExpenses(usageSummary);
+    if (argv.flags.json) {
+      console.log(JSON.stringify({ expenses: rows, usage: usageSummary }, null, 2));
+    } else {
+      console.log(formatUsageExpenses(rows));
+    }
     return;
   }
   if (argv.flags.json) {
@@ -312,10 +325,116 @@ const usageCommand = command({
     console.log(formatRuntimeResultsTable(runtimeData.runtimeResults).trimEnd());
     return;
   }
-  const lines = [formatUsageSummary(summarizeAgentUsage(state?.agents ?? [], tokenBudgetFromEnv()))];
+  const lines = [formatUsageSummary(usageSummary)];
   if (argv.flags.capabilities) lines.push(formatProviderCapabilities(runtimeData.providerCapabilities));
   console.log(lines.join("\n"));
 });
+
+function formatTeamScenario(scenario: KingScenarioTemplate): string {
+  return [
+    `team scenario: ${scenario.id}`,
+    `name: ${scenario.name}`,
+    `goal: ${scenario.goal}`,
+    `roles: ${scenario.team.roles.map((role) => `${role.id}:${role.template}`).join(", ")}`,
+    "tasks:",
+    ...scenario.tasks.map((task, index) => {
+      const review = task.reviewerRole ? ` reviewerRole=${task.reviewerRole}` : "";
+      const deps = task.dependsOn?.length ? ` dependsOn=${task.dependsOn.join(",")}` : "";
+      return `  ${index + 1}. ownerRole=${task.ownerRole}${review}${deps} ${task.title}`;
+    }),
+    "acceptance:",
+    ...scenario.acceptance.map((entry) => `  - ${entry}`)
+  ].join("\n");
+}
+
+const teamCommand = command({
+  name: "team",
+  parameters: ["<scenario>"],
+  flags: {
+    help: {
+      type: Boolean,
+      alias: "h",
+      description: "Show help"
+    },
+    json: {
+      type: Boolean,
+      description: "Print structured team scenario JSON"
+    },
+    output: {
+      type: String,
+      description: "Materialize the scenario into this host output directory"
+    },
+    role: {
+      type: String,
+      description: "Act as a team role while materializing workflow cards"
+    }
+  },
+  help: {
+    description: "Preview or materialize built-in multi-role team workflow scenarios"
+  }
+}, async (argv) => {
+  const scenarioId = argv._.scenario;
+  if (scenarioId !== "repo-takeover" && scenarioId !== "bug-investigation" && scenarioId !== "product-design" && scenarioId !== "release-check" && scenarioId !== "research-brief") {
+    throw new Error("team scenario must be repo-takeover, bug-investigation, product-design, release-check, or research-brief");
+  }
+  const scenario = scenarioTemplate(scenarioId);
+  if (argv.flags.output) {
+    const result = await materializeTeamScenario(scenario, argv.flags.output, argv.flags.role);
+    console.log(argv.flags.json ? JSON.stringify(result, null, 2) : formatMaterializedTeamScenario(result));
+    return;
+  }
+  console.log(argv.flags.json ? JSON.stringify(scenario, null, 2) : formatTeamScenario(scenario));
+});
+
+export async function materializeTeamScenario(scenario: KingScenarioTemplate, outputDir: string, actorRole?: string): Promise<{ scenario: string; outputDir: string; cards: unknown[] }> {
+  const cards: unknown[] = [];
+  const initiative = await runHostCommandFromCli({
+    command: "initiative-create",
+    format: "json",
+    actorRole,
+    input: {
+      outputDir,
+      id: `initiative-${scenario.id}`,
+      title: scenario.name,
+      ownerRole: "planner",
+      acceptance: scenario.acceptance,
+      detail: scenario.goal
+    }
+  });
+  if (!initiative.ok) throw new Error(initiative.error ?? initiative.text);
+  cards.push((initiative.json as { card?: unknown }).card);
+  for (const [index, task] of scenario.tasks.entries()) {
+    const id = `task-${index + 1}`;
+    const result = await runHostCommandFromCli({
+      command: "workflow-create",
+      format: "json",
+      actorRole,
+      input: {
+        outputDir,
+        kind: "task",
+        id,
+        title: task.title,
+        status: "assigned",
+        ownerRole: task.ownerRole,
+        reviewerRole: task.reviewerRole,
+        dependsOn: task.dependsOn,
+        acceptance: task.acceptance,
+        sourceId: `initiative-${scenario.id}`
+      }
+    });
+    if (!result.ok) throw new Error(result.error ?? result.text);
+    cards.push((result.json as { card?: unknown }).card);
+  }
+  return { scenario: scenario.id, outputDir, cards };
+}
+
+export function formatMaterializedTeamScenario(result: { scenario: string; outputDir: string; cards: unknown[] }): string {
+  return [
+    `team scenario materialized: ${result.scenario}`,
+    `output: ${result.outputDir}`,
+    `workflow cards: ${result.cards.length}`
+  ].join("\n");
+}
 
 const hostStatusCommand = command({
   name: "status",
@@ -412,6 +531,22 @@ function runHostCommandFromCli(request: HostCommandRequest): Promise<HostCommand
   return runHostCommand(request, { recordTimeline: true });
 }
 
+const roleFlag = {
+  role: {
+    type: String,
+    description: "Act as a team role; applies opt-in governance/audit policy (or set KING_TEAM_ROLE)"
+  }
+};
+
+function parseJsonInput(value: string | undefined): unknown {
+  if (!value) return undefined;
+  try {
+    return JSON.parse(value) as unknown;
+  } catch (err) {
+    throw new Error(`--input must be valid JSON: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 const hostRunCommand = command({
   name: "run",
   parameters: ["<command>"],
@@ -424,6 +559,14 @@ const hostRunCommand = command({
     json: {
       type: Boolean,
       description: "Print structured JSON for host applications"
+    },
+    input: {
+      type: String,
+      description: "JSON object input for the host command"
+    },
+    role: {
+      type: String,
+      description: "Act as a team role; applies opt-in governance/audit policy (or set KING_TEAM_ROLE)"
     }
   },
   help: {
@@ -432,7 +575,9 @@ const hostRunCommand = command({
 }, async (argv) => {
   const result = await runHostCommandFromCli({
     command: argv._.command,
-    format: argv.flags.json ? "json" : "text"
+    format: argv.flags.json ? "json" : "text",
+    input: parseJsonInput(argv.flags.input),
+    actorRole: argv.flags.role
   });
   if (argv.flags.json) {
     console.log(JSON.stringify(result, null, 2));
@@ -484,6 +629,10 @@ const hostPlanRunCommand = command({
       type: String,
       description: "Output directory",
       default: "deliverables"
+    },
+    roleProfile: {
+      type: String,
+      description: "Default local role profile: small, engineering, product, or full"
     }
   },
   help: {
@@ -501,6 +650,7 @@ const hostPlanRunCommand = command({
       goal: argv._.goal,
       mode: "run",
       projectDir: argv.flags.project,
+      roleProfile: argv.flags.roleProfile,
       options: {
         engine,
         model: argv.flags.model,
@@ -538,6 +688,10 @@ const hostPreflightCommand = command({
     takeover: {
       type: Boolean,
       description: "Preflight a takeover-style run"
+    },
+    roleProfile: {
+      type: String,
+      description: "Default local role profile: small, engineering, product, or full"
     }
   },
   help: {
@@ -553,6 +707,7 @@ const hostPreflightCommand = command({
       goal: argv._.goal,
       mode: argv.flags.takeover ? "takeover" : "run",
       projectDir: argv.flags.project,
+      roleProfile: argv.flags.roleProfile,
       options: { engine }
     }
   });
@@ -593,6 +748,10 @@ const hostPrepareRunLayoutCommand = command({
     force: {
       type: Boolean,
       description: "Replace an existing prepared layout with the same run id"
+    },
+    roleProfile: {
+      type: String,
+      description: "Default local role profile: small, engineering, product, or full"
     }
   },
   help: {
@@ -608,6 +767,7 @@ const hostPrepareRunLayoutCommand = command({
       goal: argv._.goal,
       runId: argv.flags.runId,
       projectDir: argv.flags.project,
+      roleProfile: argv.flags.roleProfile,
       force: argv.flags.force,
       confirmed: true,
       options: {
@@ -652,7 +812,12 @@ const hostSubmitRunCommand = command({
     takeover: {
       type: Boolean,
       description: "Submit a takeover-style run request"
-    }
+    },
+    roleProfile: {
+      type: String,
+      description: "Default local role profile: small, engineering, product, or full"
+    },
+    ...roleFlag
   },
   help: {
     description: "Persist a pending host app run request"
@@ -663,11 +828,13 @@ const hostSubmitRunCommand = command({
   const result = await runHostCommandFromCli({
     command: "submit-run",
     format: argv.flags.json ? "json" : "text",
+    actorRole: argv.flags.role,
     input: {
       goal: argv._.goal,
       requestId: argv.flags.requestId,
       mode: argv.flags.takeover ? "takeover" : "run",
       projectDir: argv.flags.project,
+      roleProfile: argv.flags.roleProfile,
       options: {
         engine,
         model: argv.flags.model
@@ -757,7 +924,8 @@ const hostUpdateRunCommand = command({
     detail: {
       type: String,
       description: "Short status detail"
-    }
+    },
+    ...roleFlag
   },
   help: {
     description: "Append a lifecycle status update for a host app run request"
@@ -766,6 +934,7 @@ const hostUpdateRunCommand = command({
   const result = await runHostCommandFromCli({
     command: "update-run",
     format: argv.flags.json ? "json" : "text",
+    actorRole: argv.flags.role,
     input: {
       id: argv._.id,
       status: argv._.status,
@@ -792,7 +961,8 @@ const hostCancelRunCommand = command({
     detail: {
       type: String,
       description: "Short cancellation detail"
-    }
+    },
+    ...roleFlag
   },
   help: {
     description: "Cancel a queued or active host app run request"
@@ -801,6 +971,7 @@ const hostCancelRunCommand = command({
   const result = await runHostCommandFromCli({
     command: "cancel-run",
     format: argv.flags.json ? "json" : "text",
+    actorRole: argv.flags.role,
     input: {
       id: argv._.id,
       detail: argv.flags.detail
@@ -822,7 +993,8 @@ const hostExecuteRunCommand = command({
     json: {
       type: Boolean,
       description: "Print structured JSON for host applications"
-    }
+    },
+    ...roleFlag
   },
   help: {
     description: "Consume one pending host app run request with a safe local executor"
@@ -831,6 +1003,7 @@ const hostExecuteRunCommand = command({
   const result = await runHostCommandFromCli({
     command: "execute-run",
     format: argv.flags.json ? "json" : "text",
+    actorRole: argv.flags.role,
     input: argv._.id ? { id: argv._.id } : {}
   });
   console.log(argv.flags.json ? JSON.stringify(result.json, null, 2) : result.text);
@@ -1090,14 +1263,16 @@ const hostRunMetaCommand = command({
   console.log(argv.flags.json ? JSON.stringify(result.json, null, 2) : result.text);
 });
 
-function hostExportInputFromFlags(flags: { workspace?: string; repo?: string; output?: string; runId?: string; noWorkspace?: boolean; noRepoPatch?: boolean }) {
+function hostExportInputFromFlags(flags: { workspace?: string; repo?: string; output?: string; runId?: string; noWorkspace?: boolean; noRepoPatch?: boolean; capsuleId?: string; capsulesFile?: string }) {
   return {
     workspaceRoot: flags.workspace,
     repoRoot: flags.repo,
     outputDir: flags.output,
     runId: flags.runId,
     includeWorkspace: flags.noWorkspace ? false : undefined,
-    includeRepoPatch: flags.noRepoPatch ? false : undefined
+    includeRepoPatch: flags.noRepoPatch ? false : undefined,
+    capsuleId: flags.capsuleId,
+    capsulesFile: flags.capsulesFile
   };
 }
 
@@ -1137,6 +1312,14 @@ const hostPlanExportCommand = command({
     noRepoPatch: {
       type: Boolean,
       description: "Do not export repository status or patches"
+    },
+    capsuleId: {
+      type: String,
+      description: "Capsule id to include from capsules.jsonl"
+    },
+    capsulesFile: {
+      type: String,
+      description: "Explicit capsules.jsonl path"
     }
   },
   help: {
@@ -1187,7 +1370,16 @@ const hostExportCommand = command({
     noRepoPatch: {
       type: Boolean,
       description: "Do not export repository status or patches"
-    }
+    },
+    capsuleId: {
+      type: String,
+      description: "Capsule id to include from capsules.jsonl"
+    },
+    capsulesFile: {
+      type: String,
+      description: "Explicit capsules.jsonl path"
+    },
+    ...roleFlag
   },
   help: {
     description: "Export host artifacts and repo patches to an output directory"
@@ -1196,6 +1388,7 @@ const hostExportCommand = command({
   const result = await runHostCommandFromCli({
     command: "export",
     format: argv.flags.json ? "json" : "text",
+    actorRole: argv.flags.role,
     input: { ...hostExportInputFromFlags(argv.flags), confirmed: true }
   });
   console.log(argv.flags.json ? JSON.stringify(result.json, null, 2) : result.text);
@@ -1251,7 +1444,8 @@ const hostTimelineCommand = command({
       type: String,
       description: "Maximum events to print",
       default: "20"
-    }
+    },
+    ...roleFlag
   },
   help: {
     description: "Show recent host command audit events"
@@ -1262,9 +1456,50 @@ const hostTimelineCommand = command({
   const result = await runHostCommandFromCli({
     command: "timeline",
     format: argv.flags.json ? "json" : "text",
+    actorRole: argv.flags.role,
     input: { limit }
   });
   console.log(argv.flags.json ? JSON.stringify(result.json, null, 2) : result.text);
+});
+
+const hostWorkflowCommand = command({
+  name: "workflow",
+  parameters: ["<action>"],
+  flags: {
+    help: {
+      type: Boolean,
+      alias: "h",
+      description: "Show help"
+    },
+    json: {
+      type: Boolean,
+      description: "Print structured JSON for host applications"
+    },
+    input: {
+      type: String,
+      description: "JSON input for workflow-create/list/update"
+    },
+    ...roleFlag
+  },
+  help: {
+    description: "Create, list, or update first-class host workflow objects"
+  }
+}, async (argv) => {
+  const action = argv._.action;
+  const commandName = action === "create" || action === "list" || action === "update"
+    ? `workflow-${action}`
+    : action === "initiative" || action === "handoff" || action === "review" || action === "decision" || action === "artifact"
+      ? `${action}-create`
+      : undefined;
+  if (!commandName) throw new Error("workflow action must be create, list, update, initiative, handoff, review, decision, or artifact");
+  const result = await runHostCommandFromCli({
+    command: commandName,
+    format: argv.flags.json ? "json" : "text",
+    actorRole: argv.flags.role,
+    input: parseJsonInput(argv.flags.input) ?? {}
+  });
+  console.log(argv.flags.json ? JSON.stringify(result.json, null, 2) : result.text);
+  if (!result.ok || result.exitCode !== 0) process.exitCode = result.exitCode || 1;
 });
 
 const hostCommand = command({
@@ -1284,7 +1519,7 @@ const hostCommand = command({
     {
       name: `${commandNameFromArgv(process.argv[1])} host`,
       strictFlags: true,
-      commands: [hostStatusCommand, hostServeCommand, hostCommandsCommand, hostRunCommand, hostPlanRunCommand, hostPreflightCommand, hostPrepareRunLayoutCommand, hostSubmitRunCommand, hostRunRequestsCommand, hostRunRequestCommand, hostUpdateRunCommand, hostCancelRunCommand, hostExecuteRunCommand, hostEmitRunEventCommand, hostWatchRunCommand, hostRunResultsCommand, hostRunHeartbeatCommand, hostRunMetaCommand, hostPlanExportCommand, hostExportCommand, hostTimelineCommand, hostPolicyCommand],
+      commands: [hostStatusCommand, hostServeCommand, hostCommandsCommand, hostRunCommand, hostPlanRunCommand, hostPreflightCommand, hostPrepareRunLayoutCommand, hostSubmitRunCommand, hostRunRequestsCommand, hostRunRequestCommand, hostUpdateRunCommand, hostCancelRunCommand, hostExecuteRunCommand, hostEmitRunEventCommand, hostWatchRunCommand, hostRunResultsCommand, hostRunHeartbeatCommand, hostRunMetaCommand, hostPlanExportCommand, hostExportCommand, hostTimelineCommand, hostPolicyCommand, hostWorkflowCommand],
       help: {
         description: "Host application integration commands"
       }
@@ -1303,13 +1538,14 @@ async function main(): Promise<void> {
       name: commandNameFromArgv(process.argv[1]),
       version: "0.1.0",
       strictFlags: true,
-      commands: [agentCommand, skillCheckCommand, projectProfileCommand, usageCommand, hostCommand],
+      commands: [agentCommand, skillCheckCommand, projectProfileCommand, usageCommand, teamCommand, hostCommand],
       help: {
         description: "Local BYOA agent daemon",
         examples: [
           `${commandNameFromArgv(process.argv[1])} agent computer --pair abc123 --server https://runtime.example`,
           `${commandNameFromArgv(process.argv[1])} agent computer --doctor`,
           `${commandNameFromArgv(process.argv[1])} usage`,
+          `${commandNameFromArgv(process.argv[1])} team repo-takeover --json`,
           `${commandNameFromArgv(process.argv[1])} host status --json`,
           `${commandNameFromArgv(process.argv[1])} host run status --json`,
           `${commandNameFromArgv(process.argv[1])} host plan-run "review this repo" --project . --json`,

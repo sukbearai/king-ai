@@ -7,11 +7,181 @@ import { listHostCommands, normalizeHostCommandName, runHostCommand } from "../s
 
 test("host commands expose only low-risk allowlisted actions", () => {
   const commands = listHostCommands();
-  assert.deepEqual(commands.map((entry) => entry.name), ["status", "usage", "events", "timeline", "policy", "doctor", "plan-run", "preflight", "prepare-run-layout", "submit-run", "run-requests", "run-request", "update-run", "cancel-run", "execute-run", "emit-run-event", "watch-run", "run-results", "run-heartbeat", "run-meta", "plan-export", "export"]);
-  assert.equal(commands.filter((entry) => entry.destructive).map((entry) => entry.name).join(","), "prepare-run-layout,export");
+  assert.deepEqual(commands.map((entry) => entry.name), ["status", "usage", "expenses", "events", "timeline", "policy", "doctor", "plan-run", "preflight", "prepare-run-layout", "submit-run", "run-requests", "run-request", "update-run", "cancel-run", "execute-run", "task-create", "task-list", "task-update", "agenda", "capsule-create", "capsule-list", "capsule-update", "workflow-create", "workflow-list", "workflow-update", "initiative-create", "handoff-create", "review-create", "decision-create", "artifact-create", "feedback-record", "feedback-list", "feedback-summary", "cron-check", "emit-run-event", "watch-run", "run-results", "run-heartbeat", "run-meta", "plan-export", "export", "compact-ledger"]);
+  assert.equal(commands.filter((entry) => entry.destructive).map((entry) => entry.name).join(","), "prepare-run-layout,export,compact-ledger");
   assert.equal(normalizeHostCommandName("STATUS"), "status");
   assert.equal(normalizeHostCommandName("restart"), null);
   assert.equal(normalizeHostCommandName("stop"), null);
+});
+
+test("runHostCommand maintains first-class workflow objects", async () => {
+  const root = await mkdtemp(join(tmpdir(), "king-host-workflow-"));
+  const outputDir = join(root, "out");
+
+  const initiative = await runHostCommand({
+    command: "initiative-create",
+    input: {
+      outputDir,
+      id: "initiative-1",
+      title: "Repo takeover",
+      ownerRole: "planner",
+      acceptance: ["tasks have owners"]
+    }
+  }, {
+    now: () => new Date("2026-06-02T00:00:00.000Z")
+  });
+  assert.equal((initiative.json as { card?: { kind?: string; ownerRole?: string } }).card?.kind, "initiative");
+  assert.equal((initiative.json as { card?: { kind?: string; ownerRole?: string } }).card?.ownerRole, "planner");
+
+  const decision = await runHostCommand({
+    command: "decision-create",
+    input: {
+      outputDir,
+      id: "decision-1",
+      title: "Ship release?",
+      ownerRole: "ops",
+      reviewerRole: "planner",
+      decisionBy: "human",
+      detail: "Need human approval before release"
+    }
+  }, {
+    now: () => new Date("2026-06-02T00:00:01.000Z")
+  });
+  assert.equal((decision.json as { card?: { status?: string; decisionBy?: string } }).card?.status, "waiting_human");
+  assert.equal((decision.json as { card?: { status?: string; decisionBy?: string } }).card?.decisionBy, "human");
+
+  await runHostCommand({
+    command: "handoff-create",
+    input: {
+      outputDir,
+      id: "handoff-1",
+      title: "Builder to reviewer",
+      ownerRole: "builder",
+      reviewerRole: "reviewer",
+      targetRole: "reviewer",
+      sourceId: "initiative-1",
+      handoffPolicy: { mode: "review-required", reviewerRole: "reviewer", escalation: "human", acceptanceRequired: true }
+    }
+  }, {
+    now: () => new Date("2026-06-02T00:00:02.000Z")
+  });
+
+  const reviewed = await runHostCommand({
+    command: "workflow-update",
+    input: {
+      outputDir,
+      id: "handoff-1",
+      status: "review",
+      result: "ready for reviewer"
+    }
+  }, {
+    now: () => new Date("2026-06-02T00:00:03.000Z")
+  });
+  assert.equal((reviewed.json as { card?: { status?: string; result?: string } }).card?.status, "review");
+
+  const listed = await runHostCommand({ command: "workflow-list", input: { outputDir, reviewerRole: "reviewer" } });
+  assert.match(listed.text, /handoff-1 handoff review/);
+  assert.equal((listed.json as { cards?: Array<{ id?: string }> }).cards?.some((card) => card.id === "handoff-1"), true);
+});
+
+test("runHostCommand maintains local task capsule agenda and feedback ledgers", async () => {
+  const root = await mkdtemp(join(tmpdir(), "king-host-ledger-"));
+  const outputDir = join(root, "out");
+
+  await runHostCommand({
+    command: "task-create",
+    input: { outputDir, id: "task-1", title: "Design capsule", assignee: "ceo" }
+  }, {
+    now: () => new Date("2026-06-02T00:00:00.000Z")
+  });
+  await runHostCommand({
+    command: "task-create",
+    input: { outputDir, id: "task-2", title: "Implement capsule", assignee: "dev", dependsOn: ["task-1"] }
+  }, {
+    now: () => new Date("2026-06-02T00:00:01.000Z")
+  });
+
+  const blockedAgenda = await runHostCommand({ command: "agenda", input: { outputDir } });
+  assert.equal((blockedAgenda.json as { readyCount?: number; blockedCount?: number }).readyCount, 1);
+  assert.equal((blockedAgenda.json as { readyCount?: number; blockedCount?: number }).blockedCount, 1);
+  assert.match(blockedAgenda.text, /blocked task-2/);
+
+  await runHostCommand({
+    command: "task-update",
+    input: { outputDir, id: "task-1", status: "done", result: "accepted" }
+  }, {
+    now: () => new Date("2026-06-02T00:00:02.000Z")
+  });
+  const readyAgenda = await runHostCommand({ command: "agenda", input: { outputDir } });
+  assert.equal((readyAgenda.json as { readyCount?: number; blockedCount?: number }).readyCount, 1);
+  assert.equal((readyAgenda.json as { readyCount?: number; blockedCount?: number }).blockedCount, 0);
+
+  const capsule = await runHostCommand({
+    command: "capsule-create",
+    input: {
+      outputDir,
+      id: "capsule-1",
+      taskId: "task-2",
+      goal: "Implement scoped change",
+      owner: "dev",
+      branchOrWorktree: "agent/dev",
+      allowedPaths: ["packages/cli/src/host-ledger.ts"],
+      acceptance: ["agenda marks task ready"],
+      reviewer: "cto",
+      verificationCommands: ["pnpm --filter @suwujs/king test"]
+    }
+  }, {
+    now: () => new Date("2026-06-02T00:00:03.000Z")
+  });
+  assert.equal((capsule.json as { capsule?: { id?: string } }).capsule?.id, "capsule-1");
+
+  await runHostCommand({
+    command: "feedback-record",
+    input: {
+      outputDir,
+      runId: "run-1",
+      agent: "dev",
+      taskId: "task-2",
+      capsuleId: "capsule-1",
+      skill: "typescript",
+      status: "completed",
+      inputTokens: 10,
+      outputTokens: 5
+    }
+  }, {
+    now: () => new Date("2026-06-02T00:00:04.000Z")
+  });
+  const feedback = await runHostCommand({ command: "feedback-summary", input: { outputDir } });
+  assert.equal((feedback.json as { records?: number; completed?: number; totalTokens?: number }).records, 1);
+  assert.equal((feedback.json as { records?: number; completed?: number; totalTokens?: number }).completed, 1);
+  assert.equal((feedback.json as { records?: number; completed?: number; totalTokens?: number }).totalTokens, 15);
+});
+
+test("runHostCommand cron-check emits matching local run events", async () => {
+  const root = await mkdtemp(join(tmpdir(), "king-host-cron-"));
+  const outputDir = join(root, "out");
+
+  const result = await runHostCommand({
+    command: "cron-check",
+    input: {
+      outputDir,
+      runId: "run-1",
+      now: "2026-06-02T00:15:00.000Z",
+      schedules: [
+        { id: "quarter-hour", cron: "15 * * * *", type: "agenda.tick", message: "check agenda" },
+        { id: "wrong-minute", cron: "16 * * * *", type: "agenda.skip" }
+      ]
+    }
+  });
+
+  assert.equal((result.json as { matched?: number }).matched, 1);
+  const watched = await runHostCommand({
+    command: "watch-run",
+    input: { outputDir, type: "agenda.tick", writeResults: false }
+  });
+  assert.equal((watched.json as { filteredEvents?: number; events?: Array<{ source?: string; message?: string }> }).filteredEvents, 1);
+  assert.equal((watched.json as { events?: Array<{ source?: string; message?: string }> }).events?.[0]?.source, "cron-check");
+  assert.equal((watched.json as { events?: Array<{ source?: string; message?: string }> }).events?.[0]?.message, "check agenda");
 });
 
 test("runHostCommand emits app events into host run loop event files", async () => {
@@ -28,7 +198,14 @@ test("runHostCommand emits app events into host run loop event files", async () 
     }
   }, {
     runsPath,
-    availableEngines: () => ["codex"]
+    availableEngines: () => ["codex"],
+    teamSpec: () => ({
+      id: "queue-only",
+      name: "Queue Only",
+      roles: [],
+      routingPolicy: { defaultMode: "one-of-us", capabilityFirst: true, reviewRequiredFor: [], humanDecisionFor: [] },
+      permissionPolicy: { defaultDecision: "deny", rules: [{ role: "ops", allow: ["manage-queue"] }] }
+    })
   });
 
   const emitted = await runHostCommand({
@@ -171,6 +348,13 @@ test("runHostCommand returns status, usage, events, and doctor results", async (
   assert.equal((usage.json as { runtimeData?: { schemaVersion?: number } }).runtimeData?.schemaVersion, 1);
   assert.equal((usage.json as { runtimeData?: { providerCapabilities?: unknown[] } }).runtimeData?.providerCapabilities?.length, 3);
 
+  const expenses = await runHostCommand({ command: "expenses" }, { readState, tokenBudget: () => 100, usagePricing });
+  assert.equal(expenses.ok, true);
+  assert.match(expenses.text, /usage expenses:/);
+  assert.match(expenses.text, /demo-agent \(Demo Agent\): USD 0\.000070/);
+  assert.equal((expenses.json as { expenses?: Array<{ agentId?: string; amount?: number }> }).expenses?.[0]?.agentId, "demo-agent");
+  assert.equal((expenses.json as { expenses?: Array<{ amount?: number }> }).expenses?.[0]?.amount, 0.00007);
+
   const events = await runHostCommand({ command: "events" }, { readState, tokenBudget: () => null });
   assert.equal(events.ok, true);
   assert.match(events.text, /agent.started demo-agent/);
@@ -257,13 +441,18 @@ test("runHostCommand materializes host run layouts only after confirmation", asy
     availableEngines: () => ["codex"]
   });
   assert.equal(prepared.ok, true);
-  const json = prepared.json as { launchPlan?: { layout?: { configPath?: string; workspaceRoot?: string; exists?: boolean } }; writtenFiles?: string[] };
+  const json = prepared.json as { launchPlan?: { layout?: { configPath?: string; workspaceRoot?: string; collaborationPath?: string; tasksPath?: string; capsulesPath?: string; workflowPath?: string; feedbackPath?: string; exists?: boolean } }; writtenFiles?: string[] };
   assert.equal(json.launchPlan?.layout?.exists, true);
   assert.equal(json.writtenFiles?.some((file) => file.endsWith("agents.json")), true);
+  assert.equal(json.writtenFiles?.some((file) => file.endsWith("collaboration.json")), true);
   assert.equal(json.writtenFiles?.some((file) => file.endsWith("loop-events.ndjson")), true);
   assert.equal(json.writtenFiles?.some((file) => file.endsWith("results.tsv")), true);
-  assert.equal(json.writtenFiles?.some((file) => file.endsWith(".king/heartbeat.json")), true);
+  assert.equal(json.writtenFiles?.some((file) => file.includes(`${join(".king", "heartbeat.json")}`)), true);
   assert.equal(json.writtenFiles?.some((file) => file.endsWith("meta.json")), true);
+  assert.equal(json.writtenFiles?.some((file) => file.endsWith("tasks.jsonl")), true);
+  assert.equal(json.writtenFiles?.some((file) => file.endsWith("capsules.jsonl")), true);
+  assert.equal(json.writtenFiles?.some((file) => file.endsWith("workflow.jsonl")), true);
+  assert.equal(json.writtenFiles?.some((file) => file.endsWith("run-feedback.jsonl")), true);
   const preparedConfig = await readFile(json.launchPlan!.layout!.configPath!, "utf8");
   assert.match(preparedConfig, /"workspaceRoot"/);
   assert.equal(preparedConfig.includes("secret-key"), false);
@@ -278,7 +467,7 @@ test("runHostCommand materializes host run layouts only after confirmation", asy
   assert.equal(heartbeat.runId, "layout-1");
   assert.equal(heartbeat.loopCount, 0);
   assert.equal(heartbeat.outputDir, join(root, "out"));
-  const meta = JSON.parse(await readFile(join(root, "out", "meta.json"), "utf8")) as { schema?: string; status?: string; runId?: string; actualLoops?: number; paths?: { workspaceRoot?: string; resultsPath?: string; heartbeatPath?: string } };
+  const meta = JSON.parse(await readFile(join(root, "out", "meta.json"), "utf8")) as { schema?: string; status?: string; runId?: string; actualLoops?: number; paths?: { workspaceRoot?: string; resultsPath?: string; heartbeatPath?: string; collaborationPath?: string; tasksPath?: string; capsulesPath?: string; workflowPath?: string; feedbackPath?: string } };
   assert.equal(meta.schema, "king.host-run-meta.v1");
   assert.equal(meta.status, "prepared");
   assert.equal(meta.runId, "layout-1");
@@ -286,6 +475,39 @@ test("runHostCommand materializes host run layouts only after confirmation", asy
   assert.equal(meta.paths?.workspaceRoot, json.launchPlan!.layout!.workspaceRoot);
   assert.equal(meta.paths?.resultsPath, join(root, "out", "results.tsv"));
   assert.equal(meta.paths?.heartbeatPath, join(root, "out", ".king", "heartbeat.json"));
+  assert.equal(meta.paths?.collaborationPath, json.launchPlan!.layout!.collaborationPath);
+  assert.equal(meta.paths?.tasksPath, join(root, "out", "tasks.jsonl"));
+  assert.equal(meta.paths?.capsulesPath, join(root, "out", "capsules.jsonl"));
+  assert.equal(meta.paths?.workflowPath, join(root, "out", "workflow.jsonl"));
+  assert.equal(meta.paths?.feedbackPath, join(root, "out", "run-feedback.jsonl"));
+  assert.equal(await readFile(join(root, "out", "tasks.jsonl"), "utf8"), "");
+  assert.equal(await readFile(join(root, "out", "capsules.jsonl"), "utf8"), "");
+  assert.equal(await readFile(join(root, "out", "workflow.jsonl"), "utf8"), "");
+  assert.equal(await readFile(join(root, "out", "run-feedback.jsonl"), "utf8"), "");
+  const collaboration = JSON.parse(await readFile(json.launchPlan!.layout!.collaborationPath!, "utf8")) as { schema?: string; governance?: { mode?: string; securityBoundary?: boolean; appliesWhen?: string }; team?: { roles?: Array<{ template?: string; responsibility?: string }>; routingPolicy?: { defaultMode?: string; capabilityFirst?: boolean }; permissionPolicy?: { defaultDecision?: string; rules?: Array<{ role?: string; allow?: string[]; requireHumanDecision?: string[] }> } }; agents?: Array<{ id?: string; roleTemplate?: string }>; workflowObjects?: string[]; taskRules?: { dependencyField?: string; localTaskCommands?: string[]; routingModes?: string[]; permissionRules?: Array<{ role?: string; allow?: string[] }> }; capsuleRules?: { requiredFields?: string[]; defaultReviewer?: string; localCapsuleCommands?: string[] }; worktreePlans?: Array<{ agentId?: string; plans?: Array<{ branch?: string; command?: string }> }>; paths?: { tasksPath?: string; capsulesPath?: string; workflowPath?: string; feedbackPath?: string } };
+  assert.equal(collaboration.schema, "king.host-run-collaboration.v1");
+  assert.equal(collaboration.governance?.mode, "opt-in");
+  assert.equal(collaboration.governance?.securityBoundary, false);
+  assert.match(collaboration.governance?.appliesWhen ?? "", /KING_TEAM_ROLE/);
+  assert.equal(collaboration.team?.routingPolicy?.capabilityFirst, true);
+  assert.equal(collaboration.team?.permissionPolicy?.defaultDecision, "deny");
+  assert.equal(collaboration.team?.permissionPolicy?.rules?.some((rule) => rule.role === "ops" && rule.requireHumanDecision?.includes("deploy-release")), true);
+  assert.equal(collaboration.team?.roles?.some((role) => role.template === "builder" && Boolean(role.responsibility)), true);
+  assert.equal(collaboration.team?.roles?.some((role) => role.template === "builder"), true);
+  assert.deepEqual(collaboration.workflowObjects, ["initiative", "task", "handoff", "review", "decision", "artifact"]);
+  assert.equal(collaboration.taskRules?.dependencyField, "dependsOn");
+  assert.equal(collaboration.taskRules?.localTaskCommands?.includes("king host agenda"), true);
+  assert.equal(collaboration.taskRules?.routingModes?.includes("human-decision"), true);
+  assert.equal(collaboration.taskRules?.permissionRules?.some((rule) => rule.role === "planner" && rule.allow?.includes("assign-task")), true);
+  assert.equal(collaboration.capsuleRules?.defaultReviewer, "reviewer");
+  assert.equal(collaboration.capsuleRules?.requiredFields?.includes("verificationCommands"), true);
+  assert.equal(collaboration.capsuleRules?.localCapsuleCommands?.includes("king host capsule-create"), true);
+  assert.equal(collaboration.worktreePlans?.[0]?.plans?.[0]?.branch, "agent/dev");
+  assert.match(collaboration.worktreePlans?.[0]?.plans?.[0]?.command ?? "", /git -C .* worktree add -B agent\/dev/);
+  assert.equal(collaboration.paths?.tasksPath, json.launchPlan!.layout!.tasksPath);
+  assert.equal(collaboration.paths?.capsulesPath, json.launchPlan!.layout!.capsulesPath);
+  assert.equal(collaboration.paths?.workflowPath, json.launchPlan!.layout!.workflowPath);
+  assert.equal(collaboration.paths?.feedbackPath, json.launchPlan!.layout!.feedbackPath);
   assert.match(prepared.text, /written files:/);
 
   await writeFile(join(root, "out", "loop-events.ndjson"), [
@@ -366,16 +588,46 @@ test("prepare-run-layout creates King default agents and missing guides", async 
     availableEngines: () => ["claude"]
   });
   assert.equal(prepared.ok, true);
-  const json = prepared.json as { launchPlan?: { layout?: { configPath?: string; workspaceRoot?: string } }; writtenFiles?: string[] };
-  const config = JSON.parse(await readFile(json.launchPlan!.layout!.configPath!, "utf8")) as { agents?: Array<{ id?: string; lifecycle?: string; tier?: string; engine?: string }> };
-  assert.deepEqual(config.agents?.map((agent) => agent.id), ["ceo", "dev", "feedback"]);
+  const json = prepared.json as { launchPlan?: { layout?: { configPath?: string; workspaceRoot?: string; collaborationPath?: string } }; writtenFiles?: string[] };
+  const config = JSON.parse(await readFile(json.launchPlan!.layout!.configPath!, "utf8")) as { agents?: Array<{ id?: string; lifecycle?: string; tier?: string; engine?: string; systemPrompt?: string }> };
+  assert.deepEqual(config.agents?.map((agent) => agent.id), ["ceo", "dev", "cto", "tester", "devops", "feedback", "marketing"]);
   assert.equal(config.agents?.[0]?.lifecycle, "24/7");
   assert.equal(config.agents?.[0]?.tier, "high");
   assert.equal(config.agents?.[1]?.tier, "standard");
+  assert.equal(config.agents?.[2]?.tier, "high");
   assert.equal(config.agents?.every((agent) => agent.engine === "claude"), true);
+  assert.match(config.agents?.find((agent) => agent.id === "cto")?.systemPrompt ?? "", /capsule acceptance criteria/);
+  assert.match(config.agents?.find((agent) => agent.id === "dev")?.systemPrompt ?? "", /capsule-shaped handoff/);
   assert.match(await readFile(join(json.launchPlan!.layout!.workspaceRoot!, "ceo", "AGENT.md"), "utf8"), /Turn the run goal/);
+  assert.match(await readFile(join(json.launchPlan!.layout!.workspaceRoot!, "dev", "AGENT.md"), "utf8"), /private branch or worktree/);
+  assert.match(await readFile(join(json.launchPlan!.layout!.workspaceRoot!, "dev", "AGENT.md"), "utf8"), /acceptance evidence/);
   assert.match(await readFile(join(json.launchPlan!.layout!.workspaceRoot!, "feedback", "AGENT.md"), "utf8"), /Review outputs/);
+  const collaboration = JSON.parse(await readFile(json.launchPlan!.layout!.collaborationPath!, "utf8")) as { agents?: Array<{ id?: string }>; capsuleRules?: { requiredFields?: string[] } };
+  assert.deepEqual(collaboration.agents?.map((agent) => agent.id), ["ceo", "dev", "cto", "tester", "devops", "feedback", "marketing"]);
+  assert.equal(collaboration.capsuleRules?.requiredFields?.includes("allowedPaths"), true);
   assert.equal(json.writtenFiles?.some((file) => file.endsWith("ceo/AGENT.md")), true);
+});
+
+test("prepare-run-layout supports compact role profiles", async () => {
+  const root = await mkdtemp(join(tmpdir(), "king-host-command-profile-layout-"));
+  const prepared = await runHostCommand({
+    command: "prepare-run-layout",
+    input: {
+      goal: "prepare small layout",
+      runId: "small-layout",
+      roleProfile: "small",
+      options: { outputDir: join(root, "out"), engine: "codex" },
+      confirmation: "allow:prepare-run-layout"
+    }
+  }, {
+    availableEngines: () => ["codex"]
+  });
+  assert.equal(prepared.ok, true);
+  const json = prepared.json as { launchPlan?: { layout?: { configPath?: string; workspaceRoot?: string } } };
+  const config = JSON.parse(await readFile(json.launchPlan!.layout!.configPath!, "utf8")) as { agents?: Array<{ id?: string; roleTemplate?: string }> };
+  assert.deepEqual(config.agents?.map((agent) => agent.id), ["ceo", "dev", "cto"]);
+  assert.deepEqual(config.agents?.map((agent) => agent.roleTemplate), ["planner", "builder", "reviewer"]);
+  assert.match(await readFile(join(json.launchPlan!.layout!.workspaceRoot!, "cto", "AGENT.md"), "utf8"), /Review architecture-sensitive changes/);
 });
 
 test("runHostCommand persists and lists pending host run requests", async () => {
@@ -585,6 +837,54 @@ test("runHostCommand executes safe pending host run requests", async () => {
   assert.equal(failedEvents[0]?.status, "failed");
   assert.equal(failedEvents[0]?.source, "execute-run");
   assert.equal(failedEvents[0]?.exitCode, 64);
+});
+
+test("safe host run executor enforces the submitting team role", async () => {
+  const root = await mkdtemp(join(tmpdir(), "king-host-executor-role-"));
+  const runsPath = join(root, "host-runs.ndjson");
+
+  const submitted = await runHostCommand({
+    command: "submit-run",
+    actorRole: "ops",
+    input: {
+      goal: "inspect usage",
+      requestId: "role-exec-1",
+      options: { outputDir: join(root, "role-out") },
+      executor: {
+        kind: "host-command",
+        command: "usage",
+        format: "json"
+      }
+    }
+  }, {
+    runsPath,
+    availableEngines: () => ["codex"]
+  });
+  assert.equal(submitted.ok, true);
+  assert.equal((submitted.json as { request?: { executor?: { actorRole?: string } } }).request?.executor?.actorRole, "ops");
+
+  const executed = await runHostCommand({
+    command: "execute-run",
+    input: { id: "role-exec-1" }
+  }, {
+    runsPath,
+    readState: async () => null,
+    tokenBudget: () => null,
+    teamSpec: () => ({
+      id: "queue-only",
+      name: "Queue Only",
+      roles: [],
+      routingPolicy: { defaultMode: "one-of-us", capabilityFirst: true, reviewRequiredFor: [], humanDecisionFor: [] },
+      permissionPolicy: { defaultDecision: "deny", rules: [{ role: "ops", allow: ["manage-queue"] }] }
+    })
+  });
+  assert.equal(executed.ok, false);
+  assert.equal((executed.json as { commandResult?: { error?: string; json?: { permission?: { role?: string; action?: string; decision?: string } } } }).commandResult?.error, "host command blocked by role governance");
+  assert.equal((executed.json as { commandResult?: { json?: { permission?: { role?: string } } } }).commandResult?.json?.permission?.role, "ops");
+  assert.equal((executed.json as { commandResult?: { json?: { permission?: { action?: string } } } }).commandResult?.json?.permission?.action, "view-cost");
+  assert.equal((executed.json as { commandResult?: { json?: { permission?: { decision?: string } } } }).commandResult?.json?.permission?.decision, "deny");
+  assert.equal((executed.json as { request?: { status?: string; result?: { exitCode?: number } } }).request?.status, "failed");
+  assert.equal((executed.json as { request?: { result?: { exitCode?: number } } }).request?.result?.exitCode, 77);
 });
 
 test("runHostCommand rejects unsupported actions", async () => {

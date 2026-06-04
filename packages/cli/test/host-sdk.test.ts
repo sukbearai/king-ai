@@ -134,13 +134,21 @@ test("host SDK wraps localhost host server commands", async (t) => {
   assert.equal(capabilities.streams.includes("GET /runs/stream"), true);
   assert.equal(capabilities.streams.includes("GET /runs/:id/stream"), true);
   assert.equal(capabilities.safeExecutorCommands.includes("usage"), true);
-  assert.deepEqual(capabilities.destructiveCommands, ["prepare-run-layout", "export"]);
+  assert.equal(capabilities.safeExecutorCommands.includes("expenses"), true);
+  assert.deepEqual(capabilities.destructiveCommands, ["prepare-run-layout", "export", "compact-ledger"]);
 
   const usage = await sdk.usage();
   assert.equal(usage.ok, true);
   assert.equal(usage.command, "usage");
   assert.equal(usage.json?.totalTokens, 15);
   assert.equal(usage.json?.budget?.state, "ok");
+
+  const expenses = await sdk.expenses();
+  assert.equal(expenses.ok, true);
+  assert.equal(expenses.command, "expenses");
+  assert.equal(expenses.json?.expenses[0]?.agentId, "demo-agent");
+  assert.equal(expenses.json?.expenses[0]?.amount, 0);
+  assert.equal(expenses.json?.expenses[0]?.unpricedTokens, 15);
 
   const doctor = await sdk.doctor();
   assert.equal(doctor.ok, true);

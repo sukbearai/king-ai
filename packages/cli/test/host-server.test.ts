@@ -197,8 +197,8 @@ test("createHostStatusServer serves read-only app endpoints", async (t) => {
   const commands = await fetch(`http://127.0.0.1:${port}/commands`).then((res) => res.json()) as {
     commands?: Array<{ name: string; destructive: boolean }>;
   };
-  assert.deepEqual(commands.commands?.map((entry) => entry.name), ["status", "usage", "events", "timeline", "policy", "doctor", "plan-run", "preflight", "prepare-run-layout", "submit-run", "run-requests", "run-request", "update-run", "cancel-run", "execute-run", "emit-run-event", "watch-run", "run-results", "run-heartbeat", "run-meta", "plan-export", "export"]);
-  assert.deepEqual(commands.commands?.filter((entry) => entry.destructive).map((entry) => entry.name), ["prepare-run-layout", "export"]);
+  assert.deepEqual(commands.commands?.map((entry) => entry.name), ["status", "usage", "expenses", "events", "timeline", "policy", "doctor", "plan-run", "preflight", "prepare-run-layout", "submit-run", "run-requests", "run-request", "update-run", "cancel-run", "execute-run", "task-create", "task-list", "task-update", "agenda", "capsule-create", "capsule-list", "capsule-update", "workflow-create", "workflow-list", "workflow-update", "initiative-create", "handoff-create", "review-create", "decision-create", "artifact-create", "feedback-record", "feedback-list", "feedback-summary", "cron-check", "emit-run-event", "watch-run", "run-results", "run-heartbeat", "run-meta", "plan-export", "export", "compact-ledger"]);
+  assert.deepEqual(commands.commands?.filter((entry) => entry.destructive).map((entry) => entry.name), ["prepare-run-layout", "export", "compact-ledger"]);
 
   const capabilities = await fetch(`http://127.0.0.1:${port}/capabilities`).then((res) => res.json()) as {
     ok?: boolean;
@@ -228,8 +228,9 @@ test("createHostStatusServer serves read-only app endpoints", async (t) => {
   assert.equal(capabilities.streams?.includes("GET /runs/stream"), true);
   assert.equal(capabilities.streams?.includes("GET /runs/:id/stream"), true);
   assert.equal(capabilities.safeExecutorCommands?.includes("usage"), true);
+  assert.equal(capabilities.safeExecutorCommands?.includes("expenses"), true);
   assert.equal(capabilities.safeExecutorCommands?.includes("prepare-run-layout"), false);
-  assert.deepEqual(capabilities.destructiveCommands, ["prepare-run-layout", "export"]);
+  assert.deepEqual(capabilities.destructiveCommands, ["prepare-run-layout", "export", "compact-ledger"]);
 
   const commandResult = await fetch(`http://127.0.0.1:${port}/commands/run`, {
     method: "POST",
@@ -259,6 +260,17 @@ test("createHostStatusServer serves read-only app endpoints", async (t) => {
   assert.equal(usage.json?.budget?.state, "ok");
   assert.equal(usage.json?.cost?.currency, "USD");
   assert.equal(usage.json?.cost?.amount, 0.000091);
+
+  const expenses = await fetch(`http://127.0.0.1:${port}/expenses`).then((res) => res.json()) as {
+    ok?: boolean;
+    command?: string;
+    json?: { expenses?: Array<{ agentId?: string; amount?: number; currency?: string }> };
+  };
+  assert.equal(expenses.ok, true);
+  assert.equal(expenses.command, "expenses");
+  assert.equal(expenses.json?.expenses?.[0]?.agentId, "demo-agent");
+  assert.equal(expenses.json?.expenses?.[0]?.currency, "USD");
+  assert.equal(expenses.json?.expenses?.[0]?.amount, 0.000091);
 
   const doctor = await fetch(`http://127.0.0.1:${port}/doctor`).then((res) => res.json()) as {
     ok?: boolean;

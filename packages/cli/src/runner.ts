@@ -9,7 +9,7 @@ import { writeShim } from "./shim.js";
 import type { AgentConfig, ComputerConfig, EngineAdapter, EngineId, EngineSession, RuntimeRun, TriageVerdict } from "./types.js";
 import { authFailureHint, concise, hashText, isRateLimited } from "./text.js";
 import { agentWorkspaceRoot, detectLocalCapabilities, formatWorkspacePolicy } from "./workspace.js";
-import { formatWorktreePlanForPrompt, planAgentWorktrees } from "./worktree.js";
+import { formatWorktreePlanForPrompt, formatWorktreePreparationResults, planAgentWorktrees, prepareWorktreePlans } from "./worktree.js";
 import type { RunningAgentState } from "./service.js";
 import { checkTokenBudget, emptyAgentRunStats, recordAgentRunStats, tokenBudgetFromEnv } from "./usage.js";
 import type { AgentRunStats } from "./usage.js";
@@ -35,6 +35,7 @@ const BIG_BRAIN_SPAWN_JITTER_MS = Number(process.env.KING_BYOA_BIG_BRAIN_SPAWN_J
 const TRIAGE_SPAWN_JITTER_MS = Number(process.env.KING_BYOA_TRIAGE_SPAWN_JITTER_MS) || 500;
 const AGENDA_QUIET_MS = Number(process.env.KING_AGENDA_QUIET_MS) || 180_000;
 const AGENDA_CHECK_MS = Number(process.env.KING_AGENDA_CHECK_MS) || 120_000;
+const PREPARE_WORKTREES = process.env.KING_PREPARE_WORKTREES === "1" || process.env.KING_AGENT_PREPARE_WORKTREES === "1";
 const NESTED_ENV_BLOCKLIST = [
   "CODEX_CI",
   "CODEX_SANDBOX_NETWORK_DISABLED",
@@ -95,6 +96,7 @@ interface RuntimePreamblePayload {
 
 export interface WakeEventInfo {
   conversationId: string | null;
+  agentId: string | null;
   sentAt: number | null;
   deliveryLatencyMs: number | null;
 }
@@ -304,19 +306,25 @@ export function agentSessionFile(agentId: string, engine: EngineId): string {
 }
 
 export function parseWakeEventInfo(rawData: string | undefined, now = Date.now()): WakeEventInfo {
-  if (!rawData) return { conversationId: null, sentAt: null, deliveryLatencyMs: null };
+  if (!rawData) return { conversationId: null, agentId: null, sentAt: null, deliveryLatencyMs: null };
   try {
-    const data = JSON.parse(rawData) as { conversationId?: unknown; at?: unknown };
+    const data = JSON.parse(rawData) as { conversationId?: unknown; agentId?: unknown; at?: unknown };
     const conversationId = typeof data.conversationId === "string" ? data.conversationId : null;
+    const agentId = typeof data.agentId === "string" ? data.agentId : null;
     const sentAt = typeof data.at === "number" && Number.isFinite(data.at) ? data.at : null;
     return {
       conversationId,
+      agentId,
       sentAt,
       deliveryLatencyMs: sentAt == null ? null : Math.max(0, now - sentAt)
     };
   } catch {
-    return { conversationId: null, sentAt: null, deliveryLatencyMs: null };
+    return { conversationId: null, agentId: null, sentAt: null, deliveryLatencyMs: null };
   }
+}
+
+export function shouldHandleWakeEvent(info: WakeEventInfo, agentId: string): boolean {
+  return !info.agentId || info.agentId === agentId;
 }
 
 export class AgentRunner {
@@ -383,6 +391,7 @@ export class AgentRunner {
       hostHomeEntries: this.hostHomeEntries,
       workspaceRoot: this.workspaceRoot(),
       worktreePlans: this.worktreePlans(),
+      worktreeMaterializationEnabled: PREPARE_WORKTREES,
       runStats: this.runStats,
       tokenBudget: checkTokenBudget(this.runStats, tokenBudgetFromEnv()),
       remediation: this.remediation,
@@ -428,6 +437,10 @@ export class AgentRunner {
     const sharedSkills = await installSharedSkills(this.home);
     this.sharedSkillSnapshot = sharedSkills.snapshot;
     await mkdir(this.workspaceRoot(), { recursive: true });
+    const worktreePlans = this.worktreePlans();
+    const worktreePreparation = PREPARE_WORKTREES
+      ? await prepareWorktreePlans(worktreePlans, { execute: true })
+      : [];
     await writeShim(this.binDir);
     await this.loadSessionId();
     await this.publishEvent("agent.started", {
@@ -436,7 +449,11 @@ export class AgentRunner {
       lifecycleNote: runtimeLifecycleNote(normalizeAgentLifecycle(this.agent.lifecycle)),
       home: this.home,
       workspaces: detectLocalCapabilities().workspaces,
-      worktreePlans: this.worktreePlans(),
+      worktreePlans,
+      worktreeMaterialization: {
+        enabled: PREPARE_WORKTREES,
+        results: worktreePreparation
+      },
       sharedSkillRoots: sharedSkills.sourceRoots,
       sharedSkills: sharedSkills.installed.map((skill) => skill.name),
       sharedSkillSnapshot: sharedSkills.snapshot
@@ -448,7 +465,7 @@ export class AgentRunner {
           }
         : null,
       hostHomeEntries: this.hostHomeEntries
-    }, "info", `${this.agent.name} started`);
+    }, "info", `${this.agent.name} started${PREPARE_WORKTREES ? `; ${formatWorktreePreparationResults(worktreePreparation, true).split("\n")[0]}` : ""}`);
     void this.streamLoop();
     this.pollTimer = setInterval(() => {
       if (!this.busy && !this.stopped) this.scheduleWake("poll");
@@ -556,7 +573,9 @@ export class AgentRunner {
   }
 
   private standingPrompt(): string {
-    return buildStandingPrompt(detectLocalCapabilities().workspaces, this.workspaceRoot(), formatWorktreePlanForPrompt(this.worktreePlans()));
+    const note = formatWorktreePlanForPrompt(this.worktreePlans()) +
+      (PREPARE_WORKTREES ? "\nKING_PREPARE_WORKTREES=1: the daemon attempted to create these local worktrees before starting this agent." : "");
+    return buildStandingPrompt(detectLocalCapabilities().workspaces, this.workspaceRoot(), note);
   }
 
   private async memoryDigest(): Promise<string> {
@@ -1114,6 +1133,7 @@ ${delta}`;
           if (this.stopped) break;
           if (evt.event !== "wake" && evt.event !== "steer") continue;
           const info = parseWakeEventInfo(evt.data);
+          if (!shouldHandleWakeEvent(info, this.agent.id)) continue;
           const conversationId = info.conversationId;
           if (evt.event === "steer") {
             if (conversationId) void this.maybeSteer(conversationId);

@@ -84,6 +84,26 @@ export interface UsageSummary extends UsageTotals {
   cost?: UsageCostSummary;
 }
 
+export interface UsageExpenseRow extends UsageTotals {
+  agentId: string;
+  agentName?: string;
+  engine: string;
+  model: string;
+  turns: number;
+  completed: number;
+  failed: number;
+  currency: string;
+  amount: number;
+  inputCost: number;
+  cacheReadInputCost: number;
+  outputCost: number;
+  pricedTokens: number;
+  unpricedTokens: number;
+  pricingKeys: string[];
+  lastRunAt?: string;
+  lastStatus?: "completed" | "failed";
+}
+
 function num(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
@@ -306,6 +326,54 @@ export function formatUsageSummary(summary: UsageSummary): string {
     }
   } else {
     lines.push("by agent: none");
+  }
+  return lines.join("\n");
+}
+
+export function listUsageExpenses(summary: UsageSummary): UsageExpenseRow[] {
+  return summary.agents
+    .filter((agent) => agent.cost || agent.totalTokens > 0 || agent.turns > 0)
+    .map((agent) => {
+      const cost = agent.cost;
+      return {
+        agentId: agent.id,
+        agentName: agent.name,
+        engine: agent.engine,
+        model: agent.model || "default",
+        turns: agent.turns,
+        completed: agent.completed,
+        failed: agent.failed,
+        inputTokens: agent.inputTokens,
+        cacheReadInputTokens: agent.cacheReadInputTokens,
+        outputTokens: agent.outputTokens,
+        totalTokens: agent.totalTokens,
+        currency: cost?.currency ?? "",
+        amount: cost?.amount ?? 0,
+        inputCost: cost?.inputCost ?? 0,
+        cacheReadInputCost: cost?.cacheReadInputCost ?? 0,
+        outputCost: cost?.outputCost ?? 0,
+        pricedTokens: cost?.pricedTokens ?? 0,
+        unpricedTokens: cost?.unpricedTokens ?? agent.totalTokens,
+        pricingKeys: cost?.pricingKeys ?? [],
+        lastRunAt: agent.lastRunAt,
+        lastStatus: agent.lastStatus
+      };
+    })
+    .sort((left, right) => right.amount - left.amount || right.totalTokens - left.totalTokens || left.agentId.localeCompare(right.agentId));
+}
+
+export function formatUsageExpenses(rows: UsageExpenseRow[]): string {
+  if (rows.length === 0) return "usage expenses: none";
+  const lines = ["usage expenses:"];
+  for (const row of rows) {
+    const label = row.agentName ? `${row.agentId} (${row.agentName})` : row.agentId;
+    const cost = row.currency ? `${row.currency} ${row.amount.toFixed(6)}` : "unpriced";
+    const unpriced = row.unpricedTokens ? ` unpricedTokens=${row.unpricedTokens}` : "";
+    const keys = row.pricingKeys.length ? ` pricing=${row.pricingKeys.join(",")}` : "";
+    const last = row.lastRunAt ? ` last=${row.lastStatus ?? "unknown"}@${row.lastRunAt}` : "";
+    lines.push(
+      `  - ${label}: ${cost} engine=${row.engine} model=${row.model} runs=${row.turns} completed=${row.completed} failed=${row.failed} tokens=${row.totalTokens} input=${row.inputTokens} cache=${row.cacheReadInputTokens} output=${row.outputTokens} inputCost=${row.inputCost.toFixed(6)} cacheCost=${row.cacheReadInputCost.toFixed(6)} outputCost=${row.outputCost.toFixed(6)}${unpriced}${keys}${last}`
+    );
   }
   return lines.join("\n");
 }

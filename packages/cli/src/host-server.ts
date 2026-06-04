@@ -30,6 +30,7 @@ const HOST_RESOURCE_ENDPOINTS = [
   "GET /timeline",
   "GET /timeline/stream",
   "GET /usage",
+  "GET /expenses",
   "GET /doctor",
   "GET /commands",
   "POST /commands/run",
@@ -701,9 +702,9 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
         await sendTimeline();
         return;
       }
-      if (url.pathname === "/usage" || url.pathname === "/doctor") {
+      if (url.pathname === "/usage" || url.pathname === "/expenses" || url.pathname === "/doctor") {
         await runHostCommandRoute(res, runCommand, {
-          command: url.pathname === "/usage" ? "usage" : "doctor",
+          command: url.pathname === "/usage" ? "usage" : url.pathname === "/expenses" ? "expenses" : "doctor",
           format: "json"
         }, headOnly);
         return;
@@ -798,7 +799,7 @@ export async function serveHostStatus(options: HostStatusServerOptions = {}): Pr
   const host = normalizeHostServerHost(options.host);
   const port = typeof address === "object" && address ? address.port : options.port ?? hostServerPortFromEnv();
   console.log(`host status server listening on http://${host}:${port}`);
-  console.log("read-only endpoints: /health, /capabilities, /status, /host/snapshot, /host/stream, /status/stream, /status.txt, /events, /timeline, /timeline/stream, /usage, /doctor, /commands");
+  console.log("read-only endpoints: /health, /capabilities, /status, /host/snapshot, /host/stream, /status/stream, /status.txt, /events, /timeline, /timeline/stream, /usage, /expenses, /doctor, /commands");
   console.log("controlled command endpoint: POST /commands/run");
   console.log("host run endpoints: POST /runs/plan, POST /runs/preflight, POST /runs/prepare-layout, GET/POST /runs, GET /runs/stream, GET/PATCH /runs/:id, GET /runs/:id/stream, GET /runs/:id/events, GET /runs/:id/results, GET /runs/:id/heartbeat, GET /runs/:id/meta, POST /runs/:id/execute");
   console.log("host export endpoints: POST /exports/plan, POST /exports");

@@ -16,6 +16,7 @@ import {
   selectSteerMessage,
   Semaphore,
   sessionResetReason,
+  shouldHandleWakeEvent,
   shouldStopEngineOnBeginStop,
   sanitizeNestedEngineEnv,
   swallowTurnRejection,
@@ -30,20 +31,29 @@ test("agentSessionFile scopes session ids by engine", () => {
 test("parseWakeEventInfo extracts conversation and delivery latency", () => {
   assert.deepEqual(parseWakeEventInfo(undefined, 2000), {
     conversationId: null,
+    agentId: null,
     sentAt: null,
     deliveryLatencyMs: null
   });
-  assert.deepEqual(parseWakeEventInfo(JSON.stringify({ conversationId: "demo-convo", at: 1500 }), 2000), {
+  assert.deepEqual(parseWakeEventInfo(JSON.stringify({ conversationId: "demo-convo", agentId: "dev", at: 1500 }), 2000), {
     conversationId: "demo-convo",
+    agentId: "dev",
     sentAt: 1500,
     deliveryLatencyMs: 500
   });
   assert.deepEqual(parseWakeEventInfo("not json", 2000), {
     conversationId: null,
+    agentId: null,
     sentAt: null,
     deliveryLatencyMs: null
   });
   assert.equal(parseWakeEventInfo(JSON.stringify({ at: 2500 }), 2000).deliveryLatencyMs, 0);
+});
+
+test("shouldHandleWakeEvent keeps targeted wake events on the owning agent", () => {
+  assert.equal(shouldHandleWakeEvent(parseWakeEventInfo(JSON.stringify({ agentId: "dev" })), "dev"), true);
+  assert.equal(shouldHandleWakeEvent(parseWakeEventInfo(JSON.stringify({ agentId: "reviewer" })), "dev"), false);
+  assert.equal(shouldHandleWakeEvent(parseWakeEventInfo(JSON.stringify({ conversationId: "all" })), "dev"), true);
 });
 
 test("Semaphore queues callers beyond the concurrency limit", async () => {
