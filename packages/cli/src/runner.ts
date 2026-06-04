@@ -1,7 +1,7 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
-import { api, runtimeGet, runtimePost } from "./api.js";
+import { api, runtimeGet, runtimePost, tenantHeader } from "./api.js";
 import { AGENTS_ROOT, SESSIONS_DIR, TRIAGE_DIR } from "./paths.js";
 import { formatEngineLogLine, getAdapter, parseTriage } from "./engine.js";
 import { parseSseStream } from "./sse.js";
@@ -45,6 +45,7 @@ const NESTED_ENV_BLOCKLIST = [
   "KING_AGENT_RUNTIME_URL",
   "KING_AGENT_RUNTIME_TOKEN",
   "KING_AGENT_RUNTIME_TOKEN_FILE",
+  "KING_AGENT_RUNTIME_TENANT",
   "KING_AGENT_ID",
   "KING_AGENT_ENGINE",
   "KING_AGENT_HOME",
@@ -480,7 +481,7 @@ export class AgentRunner {
     this.sideSteering = true;
     try {
       const token = await this.ensureToken();
-      const inbox = await runtimeGet<InboxPayload>(this.cfg.serverUrl, "/inbox?probe=1", token);
+      const inbox = await runtimeGet<InboxPayload>(this.cfg.serverUrl, "/inbox?probe=1", token, this.cfg.tenantId);
       const latest = selectSteerMessage(inbox?.rows ?? [], conversationId, this.agent.id, this.lastSteeredMsgId);
       if (!latest?.id) return;
       this.lastSteeredMsgId = latest.id;
@@ -500,7 +501,7 @@ export class AgentRunner {
       `/api/agents/${this.agent.id}/runtime-token`,
       {
         method: "POST",
-        headers: { Authorization: `Bearer ${this.cfg.deviceToken}` },
+        headers: { Authorization: `Bearer ${this.cfg.deviceToken}`, ...tenantHeader(this.cfg.tenantId) },
         body: "{}"
       }
     );
@@ -519,6 +520,7 @@ export class AgentRunner {
       KING_AGENT_RUNTIME_URL: `${this.cfg.serverUrl}/runtime`,
       KING_AGENT_RUNTIME_TOKEN: this.token,
       KING_AGENT_RUNTIME_TOKEN_FILE: join(this.binDir, ".runtime-token"),
+      KING_AGENT_RUNTIME_TENANT: this.cfg.tenantId ?? "",
       KING_AGENT_ID: this.agent.id,
       KING_AGENT_ENGINE: this.adapter.id,
       KING_AGENT_HOME: this.home,
@@ -578,7 +580,7 @@ export class AgentRunner {
 
   private beatRun(token: string, runId?: string): () => void {
     if (!runId) return () => undefined;
-    const beat = () => void runtimePost(this.cfg.serverUrl, `/runs/${runId}/heartbeat`, token, {});
+    const beat = () => void runtimePost(this.cfg.serverUrl, `/runs/${runId}/heartbeat`, token, {}, this.cfg.tenantId);
     beat();
     const timer = setInterval(beat, RUN_HEARTBEAT_MS);
     return () => clearInterval(timer);
@@ -586,7 +588,7 @@ export class AgentRunner {
 
   private async failureConversationIds(token: string, preferred?: string | null): Promise<string[]> {
     if (preferred) return [preferred];
-    const inbox = await runtimeGet<InboxPayload>(this.cfg.serverUrl, "/inbox?probe=1", token);
+    const inbox = await runtimeGet<InboxPayload>(this.cfg.serverUrl, "/inbox?probe=1", token, this.cfg.tenantId);
     const ids = new Set<string>();
     for (const row of inbox?.rows ?? []) {
       if (row.conversation_id) ids.add(row.conversation_id);
@@ -602,7 +604,7 @@ export class AgentRunner {
       level: "error",
       title: `${this.adapter.id} failed`,
       data: { error: args.error, exitCode: args.exitCode }
-    });
+    }, this.cfg.tenantId);
     const conversationIds = await this.failureConversationIds(args.token, args.conversationId);
     await Promise.all(
       conversationIds.map((conversationId) =>
@@ -613,7 +615,7 @@ export class AgentRunner {
           text: `${this.agent.name} could not run on local ${this.adapter.id}: ${args.error}\n${authFailureHint(this.adapter.id, args.error)}`,
           dedupeKey: `byoa_engine_failed:${this.agent.id}:${conversationId}:${hashText(args.error)}`,
           dedupeTtlSec: 900
-        })
+        }, this.cfg.tenantId)
       )
     );
   }
@@ -628,7 +630,7 @@ export class AgentRunner {
         agentId: this.agent.id,
         engine: this.adapter.id,
         data
-      });
+      }, this.cfg.tenantId);
     } catch {
       // Events are observability only; never block agent execution on them.
     }
@@ -650,7 +652,7 @@ export class AgentRunner {
       agentId: this.agent.id,
       engine: this.adapter.id,
       data: check
-    });
+    }, this.cfg.tenantId);
   }
 
   private triageModel(): string {
@@ -665,11 +667,11 @@ export class AgentRunner {
       reason: verdict.reason ?? "",
       responseMode: verdict.responseMode,
       usage: usageForRuntime(usage)
-    });
+    }, this.cfg.tenantId);
   }
 
   private async inboxTriage(token: string): Promise<TriageVerdict | null> {
-    const payload = await runtimeGet<TriagePayload>(this.cfg.serverUrl, "/inbox-triage/payload", token);
+    const payload = await runtimeGet<TriagePayload>(this.cfg.serverUrl, "/inbox-triage/payload", token, this.cfg.tenantId);
     if (!payload) return null;
     if (payload.verdict) return payload.verdict;
     if (!payload.instructions || !payload.input) return null;
@@ -719,7 +721,7 @@ export class AgentRunner {
   }
 
   private async snapshotUnread(token: string): Promise<{ seen: Map<string, string>; digest: string; hasReal: boolean }> {
-    const inbox = await runtimeGet<InboxPayload>(this.cfg.serverUrl, "/inbox", token);
+    const inbox = await runtimeGet<InboxPayload>(this.cfg.serverUrl, "/inbox", token, this.cfg.tenantId);
     const rows = inbox?.rows ?? [];
     const seen = new Map<string, string>();
     const lines: string[] = [];
@@ -752,13 +754,13 @@ export class AgentRunner {
   private async ackSeen(token: string, seen: Map<string, string>): Promise<void> {
     await Promise.all(
       [...seen].map(([conversationId, upToMessageId]) =>
-        runtimePost(this.cfg.serverUrl, "/conversation/mark-read", token, { conversationId, upToMessageId })
+        runtimePost(this.cfg.serverUrl, "/conversation/mark-read", token, { conversationId, upToMessageId }, this.cfg.tenantId)
       )
     );
   }
 
   private async rosterDigest(token: string): Promise<string> {
-    const payload = await runtimeGet<{ roster?: string }>(this.cfg.serverUrl, "/roster", token);
+    const payload = await runtimeGet<{ roster?: string }>(this.cfg.serverUrl, "/roster", token, this.cfg.tenantId);
     return typeof payload?.roster === "string" ? payload.roster.trim().slice(0, 4000) : "";
   }
 
@@ -769,7 +771,7 @@ export class AgentRunner {
     });
     if (runId) params.set("runId", runId);
     if (steerReason) params.set("steerReason", steerReason);
-    const payload = await runtimeGet<RuntimePreamblePayload>(this.cfg.serverUrl, `/preamble?${params.toString()}`, token);
+    const payload = await runtimeGet<RuntimePreamblePayload>(this.cfg.serverUrl, `/preamble?${params.toString()}`, token, this.cfg.tenantId);
     return typeof payload?.text === "string" ? payload.text.trim().slice(0, 4000) : "";
   }
 
@@ -826,7 +828,7 @@ ${delta}`;
         const { seen, digest, hasReal } = await this.snapshotUnread(token);
         if (!hasReal) {
           await this.ackSeen(token, seen);
-          await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" });
+          await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" }, this.cfg.tenantId);
           await this.maybeAgendaTurn(token);
           continue;
         }
@@ -837,7 +839,7 @@ ${delta}`;
           const backoff = Math.min(TRIAGE_BACKOFF_MAX_MS, 30_000 * 2 ** (this.triageTroubleStreak - 1));
           this.triageBackoffUntil = Date.now() + backoff;
           console.warn(`[${this.agent.id}/${this.adapter.id}] triage rate-limited; backing off ${Math.round(backoff / 1000)}s without acking unread`);
-          await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" });
+          await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" }, this.cfg.tenantId);
           break;
         }
         if (triage?.source !== "fail-open") {
@@ -846,25 +848,25 @@ ${delta}`;
         }
         if (triage?.actionable === false) {
           await this.ackSeen(token, seen);
-          await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" });
+          await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" }, this.cfg.tenantId);
           await this.maybeAgendaTurn(token);
           continue;
         }
 
-        await runtimePost(this.cfg.serverUrl, "/status", token, { status: "thinking" });
+        await runtimePost(this.cfg.serverUrl, "/status", token, { status: "thinking" }, this.cfg.tenantId);
         let typingTimer: NodeJS.Timeout | null = null;
         const typingConvo = activeConversationId;
         if (typingConvo) {
           const ping = () => {
-            void runtimePost(this.cfg.serverUrl, "/typing", token, { conversationId: typingConvo, done: false });
-            void runtimePost(this.cfg.serverUrl, "/thinking/mark", token, { conversationIds: [typingConvo], ttlSec: 60 });
+            void runtimePost(this.cfg.serverUrl, "/typing", token, { conversationId: typingConvo, done: false }, this.cfg.tenantId);
+            void runtimePost(this.cfg.serverUrl, "/thinking/mark", token, { conversationIds: [typingConvo], ttlSec: 60 }, this.cfg.tenantId);
           };
           ping();
           typingTimer = setInterval(ping, 6000);
         }
         const run = await runtimePost<RuntimeRun>(this.cfg.serverUrl, "/runs", token, {
           trigger: { source: reason, engine: this.adapter.id }
-        });
+        }, this.cfg.tenantId);
         await this.publishEvent("turn.started", { reason, runId: run?.runId, conversationId: activeConversationId });
         const stopBeat = this.beatRun(token, run?.runId);
         let error: string | undefined;
@@ -913,8 +915,8 @@ ${delta}`;
           stopBeat();
           if (typingTimer) clearInterval(typingTimer);
           if (typingConvo) {
-            await runtimePost(this.cfg.serverUrl, "/typing", token, { conversationId: typingConvo, done: true });
-            await runtimePost(this.cfg.serverUrl, "/thinking/unmark", token, { conversationIds: [typingConvo] });
+            await runtimePost(this.cfg.serverUrl, "/typing", token, { conversationId: typingConvo, done: true }, this.cfg.tenantId);
+            await runtimePost(this.cfg.serverUrl, "/thinking/unmark", token, { conversationIds: [typingConvo] }, this.cfg.tenantId);
           }
         }
 
@@ -933,7 +935,7 @@ ${delta}`;
           exitCode,
           model: turnModel ?? this.agent.model,
           usage: turnUsage ?? null
-        });
+        }, this.cfg.tenantId);
         const durationMs = Date.now() - runStartedAt;
         this.runStats = recordAgentRunStats(this.runStats, {
           status: error ? "failed" : "completed",
@@ -952,7 +954,7 @@ ${delta}`;
           usage: turnUsage ?? null,
           durationMs
         }, error ? "error" : "info");
-        await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" });
+        await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" }, this.cfg.tenantId);
         this.lastTurnEndedAt = Date.now();
       } while (this.pendingRerun && !this.stopped);
     } finally {
@@ -966,14 +968,14 @@ ${delta}`;
     if (now - this.lastAgendaCheckAt < AGENDA_CHECK_MS) return;
     this.lastAgendaCheckAt = now;
     if (Date.now() < this.engineBackoffUntil) return;
-    const agenda = await runtimeGet<AgendaPayload>(this.cfg.serverUrl, "/agenda", token);
+    const agenda = await runtimeGet<AgendaPayload>(this.cfg.serverUrl, "/agenda", token, this.cfg.tenantId);
     if (!agenda?.actionable || !agenda.brief) return;
     console.log(`[${this.agent.id}/${this.adapter.id}] agenda turn START${agenda.focus ? ` ${agenda.focus}` : ""}`);
     await this.publishEvent("agenda.started", { focus: agenda.focus ?? null });
-    await runtimePost(this.cfg.serverUrl, "/status", token, { status: "thinking" });
+    await runtimePost(this.cfg.serverUrl, "/status", token, { status: "thinking" }, this.cfg.tenantId);
     const run = await runtimePost<RuntimeRun>(this.cfg.serverUrl, "/runs", token, {
       trigger: { source: "agenda", engine: this.adapter.id }
-    });
+    }, this.cfg.tenantId);
     const stopBeat = this.beatRun(token, run?.runId);
     let error: string | undefined;
     let exitCode = 0;
@@ -1029,7 +1031,7 @@ ${delta}`;
           level: "error",
           title: `${this.adapter.id} agenda failed`,
           data: { error }
-        });
+        }, this.cfg.tenantId);
       }
     }
     await runtimePost(this.cfg.serverUrl, `/runs/${run?.runId}/finish`, token, {
@@ -1039,7 +1041,7 @@ ${delta}`;
       exitCode,
       model: turnModel ?? this.agent.model,
       usage: turnUsage ?? null
-    });
+    }, this.cfg.tenantId);
     const durationMs = Date.now() - runStartedAt;
     this.runStats = recordAgentRunStats(this.runStats, {
       status: error ? "failed" : "completed",
@@ -1057,7 +1059,7 @@ ${delta}`;
       usage: turnUsage ?? null,
       durationMs
     }, error ? "error" : "info");
-    await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" });
+    await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" }, this.cfg.tenantId);
     this.lastTurnEndedAt = Date.now();
   }
 
@@ -1067,7 +1069,7 @@ ${delta}`;
       try {
         const token = await this.ensureToken();
         const res = await fetch(`${this.cfg.serverUrl}/runtime/wake-stream`, {
-          headers: { Authorization: `Bearer ${token}`, Accept: "text/event-stream" }
+          headers: { Authorization: `Bearer ${token}`, Accept: "text/event-stream", ...tenantHeader(this.cfg.tenantId) }
         });
         if (!res.ok || !res.body) throw new Error(`wake-stream HTTP ${res.status}`);
         backoff = 1000;

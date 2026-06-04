@@ -5,6 +5,7 @@ export interface ComputerConfig {
   serverUrl: string;
   computerId: string;
   deviceToken: string;
+  tenantId?: string;
 }
 
 export interface AgentConfig {

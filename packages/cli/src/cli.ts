@@ -39,11 +39,12 @@ export function computerHelpText(defaultServer = DEFAULT_SERVER, commandName = "
     "",
     "Usage:",
     `  ${commandName} agent computer --pair <code> [--server <url>] [--engine <id>]`,
-    `  ${commandName} agent computer [--server <url>]`,
+    `  ${commandName} agent computer [--server <url>] [--tenant <id>]`,
     "",
     "Setup:",
     "  --pair <code>        pair this machine with the runtime",
     `  --server <url>       runtime server URL (default: ${defaultServer})`,
+    "  --tenant <id>        runtime tenant id on multi-tenant GUI servers",
     "  --engine <id>        force an engine: claude | codex",
     "",
     "Background service:",
@@ -95,6 +96,10 @@ const computerCommand = command(
         type: String,
         description: "Runtime server URL",
         default: DEFAULT_SERVER
+      },
+      tenant: {
+        type: String,
+        description: "Runtime tenant id for multi-tenant GUI servers"
       },
       engine: {
         type: String,
@@ -158,6 +163,7 @@ const computerCommand = command(
     const explicitServer = hasExplicitServerArg(process.argv.slice(2));
     const selectedServer = explicitServer ? flags.server : defaultServerForCommand(commandName);
     const serverUrl = selectedServer.replace(/\/+$/, "");
+    const tenantId = typeof flags.tenant === "string" && flags.tenant.trim() ? flags.tenant.trim() : undefined;
     const engine = flags.engine as EngineId | undefined;
     if (engine && engine !== "claude" && engine !== "codex") throw new Error("--engine must be claude or codex");
     if (flags.help) {
@@ -177,7 +183,7 @@ const computerCommand = command(
     if (flags.restart) return restartService(commandName);
     if (flags.stop) return stopService(commandName);
     if (flags.uninstallService) return uninstallService(commandName);
-    if (flags.pair) await doPair(flags.pair, serverUrl, engine);
+    if (flags.pair) await doPair(flags.pair, serverUrl, engine, tenantId);
     if (flags.installService) return installService(explicitServer ? serverUrl : undefined, commandName);
     if (flags.pair) {
       const serviceInstalled = isServiceInstalled(commandName);
@@ -188,7 +194,7 @@ const computerCommand = command(
       }
       if (!shouldRunAfterPair(serviceInstalled)) return;
     }
-    return doRun(explicitServer ? serverUrl : undefined);
+    return doRun(explicitServer ? serverUrl : undefined, tenantId);
   }
 );
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { anyRunnerBusy, doctorExitCode, formatDoctorReport, missingEngineMessage, resolveHostName, shouldExitForUpdate } from "../src/daemon.js";
+import { anyRunnerBusy, doctorExitCode, formatDoctorReport, missingEngineMessage, parsePairLocator, resolveHostName, shouldExitForUpdate } from "../src/daemon.js";
 
 test("anyRunnerBusy reports whether any runner is active", () => {
   assert.equal(anyRunnerBusy([]), false);
@@ -20,6 +20,16 @@ test("resolveHostName avoids localhost and uses platform names on macOS", () => 
   assert.equal(resolveHostName("localhost", "darwin", ["", "Fayon Mac\n"]), "Fayon Mac");
   assert.equal(resolveHostName("localhost", "linux"), "localhost");
   assert.equal(resolveHostName("", "darwin", []), "My computer");
+});
+
+test("parsePairLocator supports GUI-provided server and tenant", () => {
+  const locator = parsePairLocator("king://pair?server=https%3A%2F%2Fgui.example.com%2F&tenant=user-octo&code=abc123");
+  assert.deepEqual(locator, {
+    code: "abc123",
+    serverUrl: "https://gui.example.com",
+    tenantId: "user-octo"
+  });
+  assert.deepEqual(parsePairLocator("legacy-code"), { code: "legacy-code" });
 });
 
 test("missingEngineMessage gives actionable install guidance", () => {

@@ -8,9 +8,9 @@ test("saveConfig writes loadable 0600 config", async () => {
   const dir = await mkdtemp(join(tmpdir(), "king-config-"));
   process.env.KING_CONFIG_DIR = dir;
   const mod = await import(`../src/config.js?case=${Date.now()}`);
-  await mod.saveConfig({ serverUrl: "https://runtime.test", computerId: "c1", deviceToken: "secret" });
+  await mod.saveConfig({ serverUrl: "https://runtime.test", computerId: "c1", deviceToken: "secret", tenantId: "user-alice" });
   const loaded = await mod.loadConfig();
-  assert.deepEqual(loaded, { serverUrl: "https://runtime.test", computerId: "c1", deviceToken: "secret" });
+  assert.deepEqual(loaded, { serverUrl: "https://runtime.test", computerId: "c1", deviceToken: "secret", tenantId: "user-alice" });
   const mode = (await stat(join(dir, "computer.json"))).mode & 0o777;
   assert.equal(mode, 0o600);
 });

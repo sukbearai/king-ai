@@ -11,8 +11,11 @@
     "deploy": "wrangler deploy --config wrangler.toml"
   },
   "dependencies": {
+    "@suwujs/king": "workspace:*",
+    "better-auth": "^1.6.14",
     "hono": "^4.12.23",
-    "@suwujs/king": "workspace:*"
+    "kysely": "^0.28.17",
+    "kysely-d1": "^0.4.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260602.1",

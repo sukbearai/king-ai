@@ -216,6 +216,7 @@ test("sanitizeNestedEngineEnv removes outer runtime controls before spawning eng
     CLAUDE_CODE_ENTRYPOINT: "outer",
     KING_AGENT_RUNTIME_URL: "outer",
     KING_AGENT_RUNTIME_TOKEN: "outer",
+    KING_AGENT_RUNTIME_TENANT: "outer",
     KING_AGENT_WORKSPACE_ROOT: "outer",
     KING_AGENT_WORKTREE_PLAN: "outer",
     KING_AGENT_SKILL_SNAPSHOT_ID: "outer",
@@ -234,6 +235,7 @@ test("sanitizeNestedEngineEnv removes outer runtime controls before spawning eng
   assert.equal(clean.CLAUDE_CODE_ENTRYPOINT, undefined);
   assert.equal(clean.KING_AGENT_RUNTIME_URL, undefined);
   assert.equal(clean.KING_AGENT_RUNTIME_TOKEN, undefined);
+  assert.equal(clean.KING_AGENT_RUNTIME_TENANT, undefined);
   assert.equal(clean.KING_AGENT_WORKSPACE_ROOT, undefined);
   assert.equal(clean.KING_AGENT_WORKTREE_PLAN, undefined);
   assert.equal(clean.KING_AGENT_SKILL_SNAPSHOT_ID, undefined);

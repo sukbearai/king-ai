@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
-import { api } from "./api.js";
+import { api, tenantHeader } from "./api.js";
 import { loadConfig, saveConfig } from "./config.js";
 import { detectEngines, getAdapter } from "./engine.js";
 import { CURRENT_VERSION, HEARTBEAT_PATH } from "./paths.js";
@@ -83,6 +83,24 @@ export function missingEngineMessage(): string {
     "After that, rerun:",
     "  king agent computer --pair <code>"
   ].join("\n");
+}
+
+export interface PairLocator {
+  code: string;
+  serverUrl?: string;
+  tenantId?: string;
+}
+
+export function parsePairLocator(value: string): PairLocator {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("king://pair?")) return { code: trimmed };
+  const url = new URL(trimmed);
+  const code = url.searchParams.get("code")?.trim();
+  const serverUrl = url.searchParams.get("server")?.trim().replace(/\/+$/, "");
+  const tenantId = url.searchParams.get("tenant")?.trim() || undefined;
+  if (!code) throw new Error("pair locator is missing code");
+  if (serverUrl) new URL(serverUrl);
+  return { code, serverUrl: serverUrl || undefined, tenantId };
 }
 
 export interface DoctorProbe {
@@ -169,19 +187,24 @@ export async function collectDoctorResults(): Promise<DoctorResult[]> {
   return results;
 }
 
-export async function doPair(code: string, serverUrl: string, preferredEngine?: EngineId): Promise<void> {
+export async function doPair(code: string, serverUrl: string, preferredEngine?: EngineId, tenantId?: string): Promise<void> {
+  const locator = parsePairLocator(code);
+  const resolvedServerUrl = locator.serverUrl ?? serverUrl;
+  const resolvedTenantId = locator.tenantId ?? tenantId;
   const detected = await detectEngines();
   if (detected.length === 0) throw new Error(missingEngineMessage());
   const engines = preferredEngine ? [preferredEngine, ...detected.filter((id) => id !== preferredEngine)] : detected;
   if (preferredEngine && !detected.includes(preferredEngine)) {
     throw new Error(`--engine ${preferredEngine} chosen, but ${preferredEngine} is not installed on this machine. Installed: ${detected.join(", ") || "none"}.`);
   }
-  const paired = await api<{ computerId: string; deviceToken: string }>(serverUrl, "/api/computers/pair", {
+  const paired = await api<{ computerId: string; deviceToken: string; tenantId?: string }>(resolvedServerUrl, "/api/computers/pair", {
     method: "POST",
-    body: JSON.stringify({ code, hostName: await detectHostName(), engines, version: CURRENT_VERSION, capabilities: detectLocalCapabilities() })
+    headers: tenantHeader(resolvedTenantId),
+    body: JSON.stringify({ code: locator.code, hostName: await detectHostName(), engines, version: CURRENT_VERSION, capabilities: detectLocalCapabilities() })
   });
-  await saveConfig({ serverUrl, computerId: paired.computerId, deviceToken: paired.deviceToken });
-  console.log(`paired as ${paired.computerId}; default engine: ${engines[0] ?? "none"}; available engines: ${engines.join(", ") || "none"}`);
+  const savedTenantId = paired.tenantId ?? resolvedTenantId;
+  await saveConfig({ serverUrl: resolvedServerUrl, computerId: paired.computerId, deviceToken: paired.deviceToken, ...(savedTenantId ? { tenantId: savedTenantId } : {}) });
+  console.log(`paired as ${paired.computerId}${savedTenantId ? ` tenant=${savedTenantId}` : ""}; default engine: ${engines[0] ?? "none"}; available engines: ${engines.join(", ") || "none"}`);
 }
 
 export async function runDoctor(): Promise<void> {
@@ -190,11 +213,11 @@ export async function runDoctor(): Promise<void> {
   if (doctorExitCode(results) !== 0) process.exitCode = 1;
 }
 
-export async function doRun(serverOverride?: string): Promise<void> {
+export async function doRun(serverOverride?: string, tenantOverride?: string): Promise<void> {
   installProcessErrorLogging();
   const cfg = await loadConfig();
   if (!cfg) throw new Error("not paired. Run: king agent computer --pair <code> --server <url>");
-  const runtimeCfg: ComputerConfig = { ...cfg, serverUrl: serverOverride ?? cfg.serverUrl };
+  const runtimeCfg: ComputerConfig = { ...cfg, serverUrl: serverOverride ?? cfg.serverUrl, tenantId: tenantOverride ?? cfg.tenantId };
   const available = await detectEngines();
   if (available.length === 0) throw new Error(missingEngineMessage());
   console.log(`king ${CURRENT_VERSION} starting ${runtimeCfg.computerId} @ ${runtimeCfg.serverUrl}`);
@@ -230,7 +253,7 @@ export async function doRun(serverOverride?: string): Promise<void> {
     let agents: AgentConfig[];
     try {
       agents = await api<AgentConfig[]>(runtimeCfg.serverUrl, "/api/computers/me/agents", {
-        headers: { Authorization: `Bearer ${runtimeCfg.deviceToken}` }
+        headers: { Authorization: `Bearer ${runtimeCfg.deviceToken}`, ...tenantHeader(runtimeCfg.tenantId) }
       });
     } catch (err) {
       console.warn(`agent sync failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -294,7 +317,7 @@ export async function doRun(serverOverride?: string): Promise<void> {
     const capabilities = detectLocalCapabilities();
     return fetch(`${runtimeCfg.serverUrl}/api/computers/heartbeat`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${runtimeCfg.deviceToken}` },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${runtimeCfg.deviceToken}`, ...tenantHeader(runtimeCfg.tenantId) },
       body: JSON.stringify({ version: CURRENT_VERSION, capabilities })
     }).then(() => {
       fileHeartbeat.tick();

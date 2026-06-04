@@ -7,6 +7,7 @@ const SHIM = `#!/usr/bin/env node
   const commandName = require('path').basename(process.argv[1] || process.argv[0] || 'king')
   const url = process.env.KING_AGENT_RUNTIME_URL
   let token = process.env.KING_AGENT_RUNTIME_TOKEN
+  const tenant = process.env.KING_AGENT_RUNTIME_TENANT
   const tokenFile = process.env.KING_AGENT_RUNTIME_TOKEN_FILE
   if (tokenFile) {
     try {
@@ -37,7 +38,7 @@ const SHIM = `#!/usr/bin/env node
   }
   const res = await fetch(url + '/cli', {
     method: 'POST',
-    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', ...(tenant ? { 'X-King-Tenant': tenant } : {}) },
     body: JSON.stringify({ argv, agentId: process.env.KING_AGENT_ID || undefined, engine: process.env.KING_AGENT_ENGINE || undefined })
   })
   if (!res.ok) {

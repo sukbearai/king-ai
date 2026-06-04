@@ -306,6 +306,9 @@ export function renderPage(styles: string, clientScript: string): string {
     }
   `;
   const enhancementScript = `
+function shellQuote(value) {
+  return "'" + String(value).replace(/'/g, "'\\''") + "'";
+}
 const LANG_KEY = 'king:lang';
 let currentLang = localStorage.getItem(LANG_KEY) || 'zh';
 const TRANSLATIONS = {
@@ -619,8 +622,16 @@ renderMessages = function(state, options) {
   const rows = allRows.slice(-visibleMessageCount);
   const hasOlder = rows.length < allRows.length;
   const olderLine = hasOlder ? 'Pull down or scroll to top to load older messages...' : 'No older messages';
+  function currentHumanName() {
+    const user = window.__lastSummary && window.__lastSummary.currentUser;
+    return user && (user.name || user.email || user.id) || 'you';
+  }
+  function currentHumanInitial() {
+    const label = currentHumanName();
+    return label ? label.slice(0, 1).toUpperCase() : 'U';
+  }
   function authorHtml(message) {
-    const name = message.author_kind === 'agent' ? (message.author_name || 'AI') : (message.author_name || 'you');
+    const name = message.author_kind === 'agent' ? (message.author_name || 'AI') : (message.author_name || currentHumanName());
     const engine = message.author_kind === 'agent' && message.author_engine ? '<span class="engine-chip">' + escapeHtml(message.author_engine) + '</span>' : '';
     return escapeHtml(name) + engine;
   }
@@ -628,7 +639,7 @@ renderMessages = function(state, options) {
     if (message.author_kind === 'system') {
       return '<div class="system-line">' + escapeHtml(message.body) + '</div>';
     }
-    const initial = message.author_kind === 'agent' ? 'A' : '人';
+    const initial = message.author_kind === 'agent' ? 'A' : currentHumanInitial();
     const unreadClass = message.author_kind === 'human' && !(message.readBy || []).includes('king-agent') ? ' highlight' : '';
     const pendingClass = message.status === 'pending' ? ' pending' : '';
     const bodyHtml = message.status === 'pending' ? '<span class="typing-dots"><span></span><span></span><span></span></span><span>' + escapeHtml(t('agentThinking')) + '</span>' : escapeHtml(message.body);
@@ -661,6 +672,12 @@ const baseRenderSummary = renderSummary;
 renderSummary = function(summary) {
   window.__lastSummary = summary;
   baseRenderSummary(summary);
+  if (summary.pairingLocator) {
+    pairCommandPrimary = 'king agent computer --pair ' + shellQuote(summary.pairingLocator);
+    pairCommandStart = 'king agent computer';
+    pairCommand = pairCommandPrimary + '\\n' + pairCommandStart;
+    if (document.getElementById('computerDialog').open) renderComputerFlow();
+  }
 };
 applyLanguage();
   `;

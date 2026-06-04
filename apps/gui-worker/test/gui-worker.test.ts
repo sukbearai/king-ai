@@ -18,19 +18,31 @@ class FakeStorage {
   }
 }
 
-function env(initialState?: unknown): { GUI_STATE: DurableObjectNamespace } {
-  const storage: StorageMap = new Map();
-  if (initialState) storage.set("state", initialState);
-  const state = { storage: new FakeStorage(storage) } as unknown as DurableObjectState;
-  const instance = new GuiState(state);
-  const stub = {
-    fetch: (input: string | URL | Request, init?: RequestInit) => instance.fetch(new Request(input, init))
-  } as DurableObjectStub;
+function env(initialState?: unknown, extraBindings: Record<string, unknown> = {}): { GUI_STATE: DurableObjectNamespace } & Record<string, unknown> {
+  const instances = new Map<string, DurableObjectStub>();
+  const createStub = (name: string) => {
+    const storage: StorageMap = new Map();
+    if (initialState && name === "global") storage.set("state", initialState);
+    const state = { storage: new FakeStorage(storage) } as unknown as DurableObjectState;
+    const instance = new GuiState(state);
+    return {
+      fetch: (input: string | URL | Request, init?: RequestInit) => instance.fetch(new Request(input, init))
+    } as DurableObjectStub;
+  };
   return {
     GUI_STATE: {
-      idFromName: () => ({}),
-      get: () => stub
-    } as unknown as DurableObjectNamespace
+      idFromName: (name: string) => name,
+      get: (id: unknown) => {
+        const name = typeof id === "string" ? id : "global";
+        let stub = instances.get(name);
+        if (!stub) {
+          stub = createStub(name);
+          instances.set(name, stub);
+        }
+        return stub;
+      }
+    } as unknown as DurableObjectNamespace,
+    ...extraBindings
   };
 }
 
@@ -43,16 +55,115 @@ async function pairComputer(
   bindings: { GUI_STATE: DurableObjectNamespace },
   payload: { engines?: string[]; capabilities?: { workspaces?: string[]; agentWorkspaceRoot?: string } } = {}
 ): Promise<{ computerId: string; deviceToken: string }> {
-  const summary = await json<{ pairingCode: string }>(
+  const summary = await json<{ pairingCode: string; tenantId?: string }>(
     await worker.fetch(new Request("https://gui/gui/summary"), bindings)
   );
-  return json<{ computerId: string; deviceToken: string }>(
+  return json<{ computerId: string; deviceToken: string; tenantId?: string }>(
     await worker.fetch(new Request("https://gui/api/computers/pair", {
       method: "POST",
       body: JSON.stringify({ code: summary.pairingCode, ...payload })
     }), bindings)
   );
 }
+
+test("gui runtime isolates state by tenant identity", async () => {
+  const bindings = env();
+  const aliceHeaders = { "Cf-Access-Authenticated-User-Email": "alice@example.com" };
+  const bobHeaders = { "Cf-Access-Authenticated-User-Email": "bob@example.com" };
+  const aliceSummary = await json<{ pairingCode: string; pairingLocator: string; tenantId: string; pairCommandTenantArg: string }>(
+    await worker.fetch(new Request("https://gui/gui/summary", { headers: aliceHeaders }), bindings)
+  );
+  const bobSummary = await json<{ pairingCode: string; pairingLocator: string; tenantId: string; pairCommandTenantArg: string }>(
+    await worker.fetch(new Request("https://gui/gui/summary", { headers: bobHeaders }), bindings)
+  );
+  assert.equal(aliceSummary.tenantId, "user-alice-example.com");
+  assert.equal(bobSummary.tenantId, "user-bob-example.com");
+  assert.notEqual(aliceSummary.pairingCode, bobSummary.pairingCode);
+  assert.match(aliceSummary.pairingCode, /^user-alice-example\.com:/);
+  assert.match(aliceSummary.pairingLocator, /^king:\/\/pair\?/);
+  assert.match(aliceSummary.pairingLocator, /server=https%3A%2F%2Fgui/);
+  assert.match(aliceSummary.pairingLocator, /tenant=user-alice-example.com/);
+  assert.equal(aliceSummary.pairCommandTenantArg, "");
+
+  const alicePaired = await json<{ deviceToken: string; tenantId: string }>(
+    await worker.fetch(new Request("https://gui/api/computers/pair", {
+      method: "POST",
+      body: JSON.stringify({ code: aliceSummary.pairingCode, engines: ["codex"] })
+    }), bindings)
+  );
+  assert.equal(alicePaired.tenantId, aliceSummary.tenantId);
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    headers: aliceHeaders,
+    body: JSON.stringify({ body: "alice only" })
+  }), bindings);
+
+  const aliceToken = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${alicePaired.deviceToken}`, "X-King-Tenant": aliceSummary.tenantId }
+    }), bindings)
+  );
+  const aliceInbox = await json<{ rows: { body: string }[] }>(
+    await worker.fetch(new Request("https://gui/runtime/inbox", {
+      headers: { Authorization: `Bearer ${aliceToken.token}`, "X-King-Tenant": aliceSummary.tenantId }
+    }), bindings)
+  );
+  assert.equal(aliceInbox.rows[0]?.body, "alice only");
+
+  const crossTenantToken = await worker.fetch(new Request("https://gui/api/agents/king-agent/runtime-token", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${alicePaired.deviceToken}`, "X-King-Tenant": bobSummary.tenantId }
+  }), bindings);
+  assert.equal(crossTenantToken.status, 401);
+
+  const bobState = await json<{ messages: { body: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state", { headers: bobHeaders }), bindings)
+  );
+  assert.deepEqual(bobState.messages.map((message) => message.body), []);
+});
+
+test("gui requires login when Better Auth is configured", async () => {
+  const bindings = env(undefined, {
+    AUTH_DB: {} as D1Database,
+    BETTER_AUTH_SECRET: "test-secret-test-secret-test-secret",
+    GITHUB_CLIENT_ID: "github-client",
+    GITHUB_CLIENT_SECRET: "github-secret"
+  });
+
+  const html = await worker.fetch(new Request("https://gui/"), bindings);
+  assert.equal(html.status, 401);
+  assert.match(await html.text(), /Continue with GitHub/);
+
+  const state = await worker.fetch(new Request("https://gui/gui/state"), bindings);
+  assert.equal(state.status, 401);
+  assert.deepEqual(await state.json(), { error: "login_required" });
+});
+
+test("gui uses Better Auth user identity as tenant", async () => {
+  const bindings = env(undefined, {
+    AUTH_DB: {} as D1Database,
+    BETTER_AUTH_SECRET: "test-secret-test-secret-test-secret",
+    GITHUB_CLIENT_ID: "github-client",
+    GITHUB_CLIENT_SECRET: "github-secret",
+    KING_TEST_AUTH_USER: "1"
+  });
+  const headers = {
+    "X-King-Test-User": JSON.stringify({ id: "github-1", email: "octo@example.com", name: "Octo" })
+  };
+
+  const page = await worker.fetch(new Request("https://gui/", { headers }), bindings);
+  assert.equal(page.status, 200);
+
+  const summary = await json<{ pairingCode: string; pairingLocator: string; tenantId: string; pairCommandTenantArg: string; currentUser?: { id: string; email?: string; name?: string } }>(
+    await worker.fetch(new Request("https://gui/gui/summary", { headers }), bindings)
+  );
+  assert.equal(summary.tenantId, "user-octo-example.com");
+  assert.match(summary.pairingCode, /^user-octo-example\.com:/);
+  assert.match(summary.pairingLocator, /tenant=user-octo-example.com/);
+  assert.equal(summary.pairCommandTenantArg, "");
+  assert.deepEqual(summary.currentUser, { id: "github-1", email: "octo@example.com", name: "Octo" });
+});
 
 test("gui runtime marks read only through the requested message", async () => {
   const bindings = env();
@@ -536,6 +647,7 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /# all/);
   assert.match(html, /id="chatWindow"/);
   assert.match(html, /id="settingsDialog"/);
+  assert.match(html, /function currentHumanName/);
   assert.match(html, /id="computerDialog"/);
   assert.match(html, /id="newWindowDialog"/);
   assert.match(html, /id="newWindowTitle"/);
@@ -599,6 +711,9 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /showPanel\((?:'|&#39;)tasks(?:'|&#39;)\)/);
   assert.match(html, /function updateBackToBottom/);
   assert.match(html, /summary\.pairingCode/);
+  assert.match(html, /summary\.pairingLocator/);
+  assert.match(html, /king agent computer --pair/);
+  assert.match(html, /pairCommandStart = 'king agent computer'/);
   assert.doesNotMatch(html, /Computer pairing/);
   assert.doesNotMatch(html, /--pair gui/);
   assert.doesNotMatch(html, /id="state"/);

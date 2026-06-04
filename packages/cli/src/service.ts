@@ -149,13 +149,14 @@ export async function installService(serverUrl?: string, commandName: CommandNam
   const cfg = await loadConfig();
   if (!cfg) throw new Error(`pair this computer first: ${names.displayName} agent computer --pair <code>`);
   const resolvedServerUrl = serverUrl ?? cfg.serverUrl;
+  const tenantArgs = cfg.tenantId ? ["--tenant", cfg.tenantId] : [];
   const npx = resolveNpx();
   const logPath = daemonLogPath();
   await mkdir(CONFIG_DIR, { recursive: true });
   if (process.platform === "darwin") {
     await mkdir(dirname(darwinPlistPath(commandName)), { recursive: true });
     const plistPath = darwinPlistPath(commandName);
-    const args = [npx, "-y", `${names.packageName}@latest`, "agent", "computer", "--server", resolvedServerUrl];
+    const args = [npx, "-y", `${names.packageName}@latest`, "agent", "computer", "--server", resolvedServerUrl, ...tenantArgs];
     const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -184,7 +185,7 @@ Description=King BYOA daemon
 After=network-online.target
 
 [Service]
-ExecStart=${npx} -y ${names.packageName}@latest agent computer --server ${resolvedServerUrl}
+ExecStart=${npx} -y ${names.packageName}@latest agent computer --server ${resolvedServerUrl}${tenantArgs.length ? ` --tenant ${tenantArgs[1]}` : ""}
 Restart=always
 RestartSec=5
 Environment=PATH=${process.env.PATH ?? ""}

@@ -13,13 +13,18 @@ export async function api<T>(serverUrl: string, path: string, init: RequestInit 
   return (await res.json()) as T;
 }
 
-export async function runtimePost<T>(serverUrl: string, path: string, token: string, body: unknown): Promise<T | null> {
+export function tenantHeader(tenantId?: string): Record<string, string> {
+  return tenantId ? { "X-King-Tenant": tenantId } : {};
+}
+
+export async function runtimePost<T>(serverUrl: string, path: string, token: string, body: unknown, tenantId?: string): Promise<T | null> {
   try {
     const res = await fetch(`${serverUrl}/runtime${path}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`
+        Authorization: `Bearer ${token}`,
+        ...tenantHeader(tenantId)
       },
       body: JSON.stringify(body)
     });
@@ -29,11 +34,12 @@ export async function runtimePost<T>(serverUrl: string, path: string, token: str
   }
 }
 
-export async function runtimeGet<T>(serverUrl: string, path: string, token: string): Promise<T | null> {
+export async function runtimeGet<T>(serverUrl: string, path: string, token: string, tenantId?: string): Promise<T | null> {
   try {
     const res = await fetch(`${serverUrl}/runtime${path}`, {
       headers: {
-        Authorization: `Bearer ${token}`
+        Authorization: `Bearer ${token}`,
+        ...tenantHeader(tenantId)
       }
     });
     return res.ok ? ((await res.json().catch(() => null)) as T | null) : null;
