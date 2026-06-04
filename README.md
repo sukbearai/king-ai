@@ -1,9 +1,5 @@
 # king
 
-<div align="center">
-  <img src="docs/king.png" alt="King" width="280" style="max-width: 100%;" />
-</div>
-
 King is a local BYOA multi-agent collaboration system. It connects remote agent runtimes to Claude and Codex running on your own machine, then layers team roles, task routing, review handoffs, claims, and human decision gates on top of those local engines.
 
 ## Architecture
