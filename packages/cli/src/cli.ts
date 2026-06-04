@@ -8,6 +8,7 @@ import type { CommandName } from "./service.js";
 import { runSkillCheck } from "./skill-check.js";
 import { runProjectProfile } from "./project-profile.js";
 import { formatUsageSummary, summarizeAgentUsage, tokenBudgetFromEnv } from "./usage.js";
+import { buildUsageRuntimeData, formatProviderCapabilities, formatRuntimeResultsTable, writeUsageRuntimeData } from "./runtime-data.js";
 import { buildHostStatusSnapshot, formatHostStatusSnapshot } from "./host-api.js";
 import { listHostCommands, runHostCommand } from "./host-control.js";
 import type { HostCommandRequest, HostCommandResult } from "./host-control.js";
@@ -268,19 +269,52 @@ const projectProfileCommand = command({
 
 const usageCommand = command({
   name: "usage",
+  parameters: ["[action]"],
   flags: {
     help: {
       type: Boolean,
       alias: "h",
       description: "Show help"
+    },
+    json: {
+      type: Boolean,
+      description: "Print structured runtime data JSON"
+    },
+    out: {
+      type: String,
+      description: "Output path for `king usage export`"
+    },
+    results: {
+      type: Boolean,
+      description: "Print TSV runtime results rows"
+    },
+    capabilities: {
+      type: Boolean,
+      description: "Print provider usage capability notes"
     }
   },
   help: {
-    description: "Summarize local agent run usage from the running daemon state"
+    description: "Summarize local agent run usage from the running daemon state, or export runtime data"
   }
-}, async () => {
+}, async (argv) => {
   const state = await readRunningState();
-  console.log(formatUsageSummary(summarizeAgentUsage(state?.agents ?? [], tokenBudgetFromEnv())));
+  const runtimeData = buildUsageRuntimeData(state, { budget: tokenBudgetFromEnv() });
+  if (argv._.action === "export") {
+    const out = await writeUsageRuntimeData(argv.flags.out || "king-runtime-data.json", runtimeData);
+    console.log(`usage runtime data written: ${out}`);
+    return;
+  }
+  if (argv.flags.json) {
+    console.log(JSON.stringify(runtimeData, null, 2));
+    return;
+  }
+  if (argv.flags.results) {
+    console.log(formatRuntimeResultsTable(runtimeData.runtimeResults).trimEnd());
+    return;
+  }
+  const lines = [formatUsageSummary(summarizeAgentUsage(state?.agents ?? [], tokenBudgetFromEnv()))];
+  if (argv.flags.capabilities) lines.push(formatProviderCapabilities(runtimeData.providerCapabilities));
+  console.log(lines.join("\n"));
 });
 
 const hostStatusCommand = command({

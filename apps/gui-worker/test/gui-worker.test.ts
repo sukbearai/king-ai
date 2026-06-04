@@ -1956,6 +1956,8 @@ test("gui runtime detects path conflicts for cards and claims", async () => {
   assert.match((await callCli(["claim", "backend-work", "--paths", "src/api,src/service", "--owner", "agent-a"])).text, /claim created/);
   assert.match((await callCli(["claim", "api-work", "--paths", "src/api/routes"])).text, /path conflict: claim .* already covers src\/api/);
   assert.match((await callCli(["claim", "docs-work", "--paths", "README.md"])).text, /claim created/);
+  assert.match((await callCli(["task", "create", "Own billing", "--assign", "agent-c", "--path", "src/billing"])).text, /Task task-/);
+  assert.match((await callCli(["claim", "billing-work", "--paths", "src/billing/invoices", "--owner", "agent-d"])).text, /path conflict: task .* already covers src\/billing/);
 
   assert.match((await callCli(["card", "create", "Touch API", "--paths", "src/api"])).text, /card created/);
   const state = await json<{ cards: { id: string; allowedPaths?: string[] }[] }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
@@ -1963,6 +1965,8 @@ test("gui runtime detects path conflicts for cards and claims", async () => {
   if (!cardId) assert.fail("expected created card id");
   assert.deepEqual(state.cards.at(-1)?.allowedPaths, ["src/api"]);
   assert.match((await callCli(["card", "claim", cardId, "--owner", "agent-b"])).text, /path conflict: claim .* already covers src\/api/);
+  assert.match((await callCli(["capsule", "create", "--goal", "Own docs", "--paths", "docs/runtime", "--owner", "agent-a"])).text, /Capsule capsule-/);
+  assert.match((await callCli(["task", "create", "Touch docs runtime", "--assign", "agent-b", "--path", "docs/runtime/api"])).text, /Warnings: capsule .* overlaps docs\/runtime/);
 });
 
 test("gui runtime supports quotes, reactions, docs, dms, and composing-aware glance", async () => {

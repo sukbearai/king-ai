@@ -93,6 +93,12 @@ interface RuntimePreamblePayload {
   text?: string;
 }
 
+export interface WakeEventInfo {
+  conversationId: string | null;
+  sentAt: number | null;
+  deliveryLatencyMs: number | null;
+}
+
 export class Semaphore {
   private inFlight = 0;
   private readonly waiters: Array<() => void> = [];
@@ -295,6 +301,22 @@ export function swallowTurnRejection(task: Promise<void>, onError: (message: str
 
 export function agentSessionFile(agentId: string, engine: EngineId): string {
   return join(SESSIONS_DIR, `${agentId}.${engine}.session`);
+}
+
+export function parseWakeEventInfo(rawData: string | undefined, now = Date.now()): WakeEventInfo {
+  if (!rawData) return { conversationId: null, sentAt: null, deliveryLatencyMs: null };
+  try {
+    const data = JSON.parse(rawData) as { conversationId?: unknown; at?: unknown };
+    const conversationId = typeof data.conversationId === "string" ? data.conversationId : null;
+    const sentAt = typeof data.at === "number" && Number.isFinite(data.at) ? data.at : null;
+    return {
+      conversationId,
+      sentAt,
+      deliveryLatencyMs: sentAt == null ? null : Math.max(0, now - sentAt)
+    };
+  } catch {
+    return { conversationId: null, sentAt: null, deliveryLatencyMs: null };
+  }
 }
 
 export class AgentRunner {
@@ -549,7 +571,10 @@ export class AgentRunner {
   private async loadSessionId(): Promise<void> {
     try {
       const s = (await readFile(this.sessionFile, "utf8")).trim();
-      if (s) this.sessionId = s;
+      if (s) {
+        this.sessionId = s;
+        console.log(`[${this.agent.id}/${this.adapter.id}] restored engine session ${s.slice(0, 8)} from disk; will resume`);
+      }
     } catch {
       this.sessionId = null;
     }
@@ -798,6 +823,7 @@ ${delta}`;
 
   private ensureEngineSession(): EngineSession | null {
     if (this.engineSession && this.engineSession.alive) return this.engineSession;
+    const resumeSessionId = this.sessionId;
     this.engineSession = this.adapter.startSession?.({
       home: this.home,
       env: this.engineEnv(),
@@ -807,6 +833,14 @@ ${delta}`;
       standingPrompt: this.standingPrompt(),
       onLog: (line) => this.logEngineLine(line)
     }) ?? null;
+    if (this.engineSession) {
+      const resumeLabel = resumeSessionId ? `resume ${resumeSessionId.slice(0, 8)}` : "fresh";
+      console.log(`[${this.agent.id}/${this.adapter.id}] engine session spawned (${resumeLabel}); persistent mode active`);
+      void this.publishEvent("engine.session.started", {
+        mode: "persistent",
+        resumeSessionId: resumeSessionId ?? null
+      });
+    }
     return this.engineSession;
   }
 
@@ -1072,18 +1106,15 @@ ${delta}`;
           headers: { Authorization: `Bearer ${token}`, Accept: "text/event-stream", ...tenantHeader(this.cfg.tenantId) }
         });
         if (!res.ok || !res.body) throw new Error(`wake-stream HTTP ${res.status}`);
+        console.log(`[${this.agent.id}/${this.adapter.id}] wake-stream connected`);
+        await this.publishEvent("wake.stream.connected", { backoffMs: backoff });
         backoff = 1000;
         this.scheduleWake("reconnect-catchup");
         for await (const evt of parseSseStream(res.body)) {
           if (this.stopped) break;
           if (evt.event !== "wake" && evt.event !== "steer") continue;
-          let conversationId: string | null = null;
-          try {
-            const data = evt.data ? (JSON.parse(evt.data) as { conversationId?: unknown }) : {};
-            conversationId = typeof data.conversationId === "string" ? data.conversationId : null;
-          } catch {
-            conversationId = null;
-          }
+          const info = parseWakeEventInfo(evt.data);
+          const conversationId = info.conversationId;
           if (evt.event === "steer") {
             if (conversationId) void this.maybeSteer(conversationId);
             else {
@@ -1091,12 +1122,22 @@ ${delta}`;
               this.steerRunningTurn(steerText);
             }
           }
-          await this.publishEvent("wake.received", { event: evt.event, conversationId });
+          console.log(
+            `[${this.agent.id}/${this.adapter.id}] SSE ${evt.event} received${conversationId ? ` conversation=${conversationId}` : ""}${info.deliveryLatencyMs == null ? "" : ` deliveryLatency=${info.deliveryLatencyMs}ms`}`
+          );
+          await this.publishEvent("wake.received", {
+            event: evt.event,
+            conversationId,
+            sentAt: info.sentAt,
+            deliveryLatencyMs: info.deliveryLatencyMs
+          });
           this.scheduleWake(`sse-${evt.event}`, conversationId);
         }
       } catch (err) {
         if (this.stopped) break;
-        console.warn(`[${this.agent.id}] stream error: ${err instanceof Error ? err.message : String(err)}; retry in ${backoff}ms`);
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[${this.agent.id}/${this.adapter.id}] wake-stream error: ${message}; retry in ${backoff}ms`);
+        await this.publishEvent("wake.stream.error", { error: message, retryInMs: backoff }, "warn");
         await new Promise((resolve) => setTimeout(resolve, backoff));
         backoff = Math.min(backoff * 2, 30_000);
       }

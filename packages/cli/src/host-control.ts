@@ -23,6 +23,7 @@ import { readRunningState } from "./service.js";
 import type { RunningEvent, RunningState } from "./service.js";
 import { formatUsageSummary, summarizeAgentUsage, tokenBudgetFromEnv, usagePricingFromEnv } from "./usage.js";
 import type { UsagePricingRule } from "./usage.js";
+import { buildUsageRuntimeData } from "./runtime-data.js";
 
 export type HostCommandName = "status" | "usage" | "events" | "timeline" | "policy" | "doctor" | "plan-run" | "preflight" | "prepare-run-layout" | "submit-run" | "run-requests" | "run-request" | "update-run" | "cancel-run" | "execute-run" | "emit-run-event" | "watch-run" | "run-results" | "run-heartbeat" | "run-meta" | "plan-export" | "export";
 export type HostCommandFormat = "text" | "json";
@@ -419,12 +420,16 @@ async function executeHostCommand(request: HostCommandRequest, deps: HostCommand
     };
   }
   if (command === "usage") {
+    const summary = summarizeAgentUsage(state?.agents ?? [], tokenBudget(), usagePricing());
     return {
       ok: true,
       command,
       exitCode: 0,
-      text: formatUsageSummary(summarizeAgentUsage(state?.agents ?? [], tokenBudget(), usagePricing())),
-      json: snapshot.usage
+      text: formatUsageSummary(summary),
+      json: {
+        ...summary,
+        runtimeData: buildUsageRuntimeData(state, { budget: tokenBudget(), pricingRules: usagePricing() })
+      }
     };
   }
 

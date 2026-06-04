@@ -12,6 +12,7 @@ import {
   isContextOverflow,
   isPoisonedTranscript,
   mustResetSession,
+  parseWakeEventInfo,
   selectSteerMessage,
   Semaphore,
   sessionResetReason,
@@ -24,6 +25,25 @@ import {
 test("agentSessionFile scopes session ids by engine", () => {
   assert.match(agentSessionFile("king-agent", "claude"), /king-agent\.claude\.session$/);
   assert.match(agentSessionFile("king-agent", "codex"), /king-agent\.codex\.session$/);
+});
+
+test("parseWakeEventInfo extracts conversation and delivery latency", () => {
+  assert.deepEqual(parseWakeEventInfo(undefined, 2000), {
+    conversationId: null,
+    sentAt: null,
+    deliveryLatencyMs: null
+  });
+  assert.deepEqual(parseWakeEventInfo(JSON.stringify({ conversationId: "demo-convo", at: 1500 }), 2000), {
+    conversationId: "demo-convo",
+    sentAt: 1500,
+    deliveryLatencyMs: 500
+  });
+  assert.deepEqual(parseWakeEventInfo("not json", 2000), {
+    conversationId: null,
+    sentAt: null,
+    deliveryLatencyMs: null
+  });
+  assert.equal(parseWakeEventInfo(JSON.stringify({ at: 2500 }), 2000).deliveryLatencyMs, 0);
 });
 
 test("Semaphore queues callers beyond the concurrency limit", async () => {

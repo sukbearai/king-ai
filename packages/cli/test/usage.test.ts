@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { homedir } from "node:os";
 import { test } from "node:test";
 import {
   checkTokenBudget,
@@ -14,6 +15,7 @@ import {
   tokenBudgetFromEnv,
   usagePricingFromEnv
 } from "../src/usage.js";
+import { buildUsageRuntimeData, formatRuntimeResultsTable, sanitizeRuntimeData } from "../src/runtime-data.js";
 
 test("normalizeEngineUsage accepts snake_case and camelCase token fields", () => {
   assert.deepEqual(normalizeEngineUsage({
@@ -244,4 +246,51 @@ test("summarizeAgentUsage includes optional King cost estimates", () => {
 
 test("formatUsageSummary renders empty running state", () => {
   assert.match(formatUsageSummary(summarizeAgentUsage()), /by agent: none/);
+});
+
+test("buildUsageRuntimeData exports sanitized provider and runtime rows", () => {
+  const home = homedir();
+  const workspace = `${home}/workspace/github/pnpm/king`;
+  const stats = recordAgentRunStats(emptyAgentRunStats(), {
+    status: "completed",
+    usage: { inputTokens: 10, outputTokens: 5 },
+    durationMs: 1200,
+    at: "2026-06-02T00:00:00.000Z"
+  });
+  const data = buildUsageRuntimeData({
+    version: "0.1.0",
+    pid: 123,
+    startedAt: "2026-06-02T00:00:00.000Z",
+    capabilities: { workspaces: [workspace] },
+    agents: [{
+      id: "dev",
+      name: "Dev",
+      engine: "codex",
+      workspaceRoot: workspace,
+      runStats: stats,
+      updatedAt: "2026-06-02T00:00:01.000Z"
+    }],
+    events: [{ at: "2026-06-02T00:00:02.000Z", kind: "turn.completed", detail: `dev completed ${workspace}` }]
+  }, { generatedAt: "2026-06-02T00:00:03.000Z" });
+
+  assert.equal(data.schemaVersion, 1);
+  assert.equal(data.dataSource.secretValuesIncluded, false);
+  assert.equal(data.usage.totalTokens, 15);
+  assert.equal(data.runtimeResults[0]?.classification, "productive");
+  assert.match(formatRuntimeResultsTable(data.runtimeResults), /dev\tcodex\t2026-06-02T00:00:00\.000Z\tdaemon-state\tcompleted\t1200\t15\tproductive/);
+  assert.equal(data.state.workspaces[0], "<home>/workspace/github/pnpm/king");
+  assert.match(data.state.events[0]?.detail ?? "", /<home>\/workspace\/github\/pnpm\/king/);
+  assert.equal(data.providerCapabilities.some((capability) => capability.provider === "OpenAI"), true);
+});
+
+test("sanitizeRuntimeData redacts user paths without touching ordinary strings", () => {
+  const sanitized = sanitizeRuntimeData({
+    homePath: "/Users/fayon/.king/agents/dev",
+    message: "use /Users/other/secret/token but keep relative/path"
+  }, "/Users/fayon");
+
+  assert.deepEqual(sanitized, {
+    homePath: "<home>/.king/agents/dev",
+    message: "use private://user/secret/token but keep relative/path"
+  });
 });

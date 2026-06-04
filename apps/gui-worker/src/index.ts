@@ -1938,8 +1938,10 @@ export class GuiState implements DurableObject {
         created_at: now,
         updated_at: now
       };
+      const conflicts = taskScopeConflicts(state, task, task.assignee);
       state.tasks.push(task);
-      return `Task ${task.id} created: "${task.title}" [${task.status}]`;
+      return `Task ${task.id} created: "${task.title}" [${task.status}]` +
+        (conflicts.length ? `\nWarnings: ${conflicts.join("; ")}` : "");
     }
     if (cmd === "update") {
       const task = findTask(state, args[1]);
@@ -4374,7 +4376,37 @@ function pathConflict(state: State, paths: string[], owner: string, exceptCardId
     const overlap = (claim.allowedPaths ?? []).find((path) => paths.some((candidate) => pathsOverlap(candidate, path)));
     if (overlap) return `claim ${claim.id} held by ${claim.owner} already covers ${overlap}`;
   }
+  for (const task of state.tasks) {
+    if (task.status === "done" || task.status === "failed" || task.assignee === owner) continue;
+    const overlap = (task.scope?.paths ?? []).find((path) => paths.some((candidate) => pathsOverlap(candidate, path)));
+    if (overlap) return `task ${task.id} assigned to ${task.assignee || "unassigned"} already covers ${overlap}`;
+  }
+  for (const capsule of state.capsules) {
+    if (capsule.status !== "open" && capsule.status !== "in_review") continue;
+    if (capsule.ownerAgent === owner) continue;
+    const overlap = capsule.allowedPaths.find((path) => paths.some((candidate) => pathsOverlap(candidate, path)));
+    if (overlap) return `capsule ${capsule.id} owned by ${capsule.ownerAgent} already covers ${overlap}`;
+  }
   return null;
+}
+
+function taskScopeConflicts(state: State, task: Task, owner?: string): string[] {
+  const paths = task.scope?.paths ?? [];
+  if (paths.length === 0) return [];
+  const conflicts: string[] = [];
+  for (const other of state.tasks) {
+    if (other.id === task.id || other.status === "done" || other.status === "failed") continue;
+    if (owner && other.assignee === owner) continue;
+    const overlap = (other.scope?.paths ?? []).find((path) => paths.some((candidate) => pathsOverlap(candidate, path)));
+    if (overlap) conflicts.push(`task ${other.id} overlaps ${overlap}`);
+  }
+  for (const capsule of state.capsules) {
+    if (capsule.status !== "open" && capsule.status !== "in_review") continue;
+    if (owner && capsule.ownerAgent === owner) continue;
+    const overlap = capsule.allowedPaths.find((path) => paths.some((candidate) => pathsOverlap(candidate, path)));
+    if (overlap) conflicts.push(`capsule ${capsule.id} overlaps ${overlap}`);
+  }
+  return conflicts;
 }
 
 function encode(s: string): Uint8Array {
