@@ -2,7 +2,9 @@
 
 ## Project Structure & Module Organization
 
-This is a pnpm workspace for a local agent daemon. The publishable CLI package lives in `packages/cli/`; `packages/cli/src/cli.ts` defines the `king` command, `packages/cli/src/daemon.ts` coordinates pairing and runner startup, `packages/cli/src/runner.ts` handles per-agent runtime loops, and `packages/cli/src/engine.ts` adapts local `claude` and `codex` CLIs. Shared runtime types are in `packages/cli/src/types.ts`.
+This is a pnpm workspace for a local BYOA multi-agent collaboration system. The publishable CLI package lives in `packages/cli/`; `packages/cli/src/cli.ts` defines the `king` command, `packages/cli/src/daemon.ts` coordinates pairing and runner startup, `packages/cli/src/runner.ts` handles per-agent runtime loops, and `packages/cli/src/engine.ts` adapts local `claude` and `codex` CLIs. Shared runtime types are in `packages/cli/src/types.ts`.
+
+Multi-role collaboration logic is part of the core product. `packages/cli/src/team-workflow.ts` defines role templates, team specs, permissions, and built-in workflow scenarios; `packages/cli/src/team-routing.ts` handles capability-first owner selection, reviews, handoffs, and human-decision routing; `packages/cli/src/host-control.ts` applies host command governance and workflow materialization. When changing agent/runtime behavior, preserve the distinction between the local execution boundary and the collaboration governance layer.
 
 CLI tests live in `packages/cli/test/` and compile into `packages/cli/dist/test/`. The optional Cloudflare GUI runtime app is under `apps/gui-worker/`, with tests in `apps/gui-worker/test/`. Generated output belongs in package-local `dist/` directories and should not be edited by hand.
 
@@ -25,7 +27,7 @@ No formatter or linter is currently configured, so preserve the existing style m
 
 ## Testing Guidelines
 
-Tests use Node's built-in test runner (`node --test`) and should be placed in `test/*.test.ts`. Keep tests focused on behavior that can run without real Claude/Codex credentials or a live runtime server. When adding daemon or runner logic, prefer unit tests around parsing, configuration, engine selection, and request shaping.
+Tests use Node's built-in test runner (`node --test`) and should be placed in `test/*.test.ts`. Keep tests focused on behavior that can run without real Claude/Codex credentials or a live runtime server. When adding daemon or runner logic, prefer unit tests around parsing, configuration, engine selection, and request shaping. When changing team roles, workflow scenarios, routing, permissions, reviews, handoffs, claims, or human-decision gates, add focused tests around the pure workflow/router/governance functions.
 
 Run `pnpm build && pnpm test` or `pnpm verify` after changes.
 
