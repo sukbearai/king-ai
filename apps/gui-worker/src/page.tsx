@@ -218,6 +218,9 @@ export function renderPage(styles: string, clientScript: string): string {
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 8px;
     }
+    .modal-body.window-body {
+      gap: 16px;
+    }
     .agent-check {
       display: flex;
       align-items: center;
@@ -1265,8 +1268,12 @@ renderMessages = function(state, options) {
     return user && (user.name || user.email || user.id) || 'you';
   }
   function currentHumanInitial() {
-    const label = currentHumanName();
-    return label ? label.slice(0, 1).toUpperCase() : 'U';
+    return displayInitial(currentHumanName(), 'U');
+  }
+  function displayInitial(label, fallback) {
+    const clean = String(label || '').trim();
+    const match = clean.match(/[A-Za-z0-9]/);
+    return (match ? match[0] : clean.slice(0, 1) || fallback || '?').toUpperCase();
   }
   function authorHtml(message) {
     const name = message.author_kind === 'agent' ? (message.author_name || 'AI') : (message.author_name || currentHumanName());
@@ -1277,11 +1284,11 @@ renderMessages = function(state, options) {
     if (message.author_kind === 'system') {
       return '<div class="system-line">' + escapeHtml(message.body) + '</div>';
     }
-    const initial = message.author_kind === 'agent' ? 'A' : currentHumanInitial();
+    const initial = message.author_kind === 'agent' ? displayInitial(message.author_name || 'AI', 'A') : currentHumanInitial();
     const unreadClass = message.author_kind === 'human' && !(message.readBy || []).includes('king-ceo') ? ' highlight' : '';
     const pendingClass = message.status === 'pending' ? ' pending' : '';
     const bodyHtml = message.status === 'pending' ? '<span class="typing-dots"><span></span><span></span><span></span></span><span>' + escapeHtml(t('agentThinking')) + '</span>' : escapeHtml(message.body);
-    return '<article class="post' + pendingClass + unreadClass + '"><div class="avatar">' + initial + '</div><div><div class="post-top"><span class="author">' + authorHtml(message) + '</span><span class="time">' + formatTime(message.created_at) + '</span></div><div class="post-body">' + bodyHtml + '</div></div></article>';
+    return '<article class="post' + pendingClass + unreadClass + '"><div class="avatar">' + escapeHtml(initial) + '</div><div><div class="post-top"><span class="author">' + authorHtml(message) + '</span><span class="time">' + formatTime(message.created_at) + '</span></div><div class="post-body">' + bodyHtml + '</div></div></article>';
   }).join('');
   const chatWindow = document.getElementById('chatWindow');
   chatWindow.classList.toggle('empty-state', !visibleRows.length);
@@ -1319,24 +1326,6 @@ function selectedTeamAgentIds() {
   if (!ids.includes('king-ceo')) ids.unshift('king-ceo');
   return ids;
 }
-function rolePromptAgentsForMode(mode) {
-  const agents = currentAgents();
-  const ids = mode === 'single'
-    ? ['king-ceo']
-    : mode === 'custom'
-      ? selectedTeamAgentIds()
-      : defaultTeamAgentIdsForUi();
-  const wanted = new Set(ids);
-  return agents.filter(function(agent) { return wanted.has(agent.id); });
-}
-function renderRolePrompts() {
-  const prompts = document.getElementById('newWindowRolePrompts');
-  if (!prompts) return;
-  const promptAgents = rolePromptAgentsForMode(selectedWindowMode());
-  prompts.innerHTML = promptAgents.map(function(agent) {
-    return '<label class="role-prompt"><span>' + escapeHtml(agent.name || agent.id) + '</span><textarea data-agent-role-id="' + escapeHtml(agent.id) + '">' + escapeHtml(agent.role || '') + '</textarea></label>';
-  }).join('');
-}
 function renderAgentOptions() {
   const agents = currentAgents();
   const checks = document.getElementById('newWindowTeam');
@@ -1345,23 +1334,14 @@ function renderAgentOptions() {
       const fixed = agent.id === 'king-ceo';
       const checked = fixed || defaultTeamAgentIdsForUi().includes(agent.id) ? ' checked' : '';
       const disabled = fixed ? ' disabled' : '';
-      return '<label class="agent-check"><input type="checkbox" name="newWindowTeamAgent" value="' + escapeHtml(agent.id) + '"' + checked + disabled + ' onchange="renderRolePrompts()" /><span>' + escapeHtml(agent.name || agent.id) + '</span></label>';
+      return '<label class="agent-check"><input type="checkbox" name="newWindowTeamAgent" value="' + escapeHtml(agent.id) + '"' + checked + disabled + ' /><span>' + escapeHtml(agent.name || agent.id) + '</span></label>';
     }).join('');
   }
-  renderRolePrompts();
 }
 function syncNewWindowMode() {
   const mode = selectedWindowMode();
   const custom = document.getElementById('newWindowCustomTeam');
   if (custom) custom.classList.toggle('hidden', mode !== 'custom');
-  renderRolePrompts();
-}
-function selectedAgentRoles() {
-  const roles = {};
-  document.querySelectorAll('[data-agent-role-id]').forEach(function(input) {
-    roles[input.getAttribute('data-agent-role-id')] = input.value;
-  });
-  return roles;
 }
 function setWindowMode(mode) {
   const option = document.querySelector('input[name="newWindowMode"][value="' + mode + '"]');
@@ -1373,7 +1353,6 @@ function setTeamAgentChecks(ids) {
   document.querySelectorAll('input[name="newWindowTeamAgent"]').forEach(function(input) {
     input.checked = input.value === 'king-ceo' || wanted.has(input.value);
   });
-  renderRolePrompts();
 }
 createConversation = function() {
   const input = document.getElementById('newWindowTitle');
@@ -1401,7 +1380,6 @@ submitConversation = async function(event) {
   const mode = selectedWindowMode();
   const coordinatorAgentId = 'king-ceo';
   const teamAgentIds = mode === 'custom' ? selectedTeamAgentIds() : undefined;
-  const agentRoles = selectedAgentRoles();
   const submit = document.getElementById('newWindowSubmit');
   submit.disabled = true;
   submit.textContent = t('sending');
@@ -1409,7 +1387,7 @@ submitConversation = async function(event) {
     const result = await request('/gui/conversations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, teamMode: mode, coordinatorAgentId, teamAgentIds, agentRoles })
+      body: JSON.stringify({ title, teamMode: mode, coordinatorAgentId, teamAgentIds })
     });
     activeConversationId = result.conversation.id;
     localStorage.setItem('king:activeConversationId', activeConversationId);
@@ -1693,7 +1671,7 @@ refresh();
                 <h2 data-i18n="newWindow">New Window</h2>
               <button class="icon" type="button" onclick="closeNewWindowDialog()" aria-label="Close new window">x</button>
             </div>
-            <div class="modal-body">
+            <div class="modal-body window-body">
               <div class="field">
                 <label for="newWindowTitle" data-i18n="windowName">Name</label>
                 <input id="newWindowTitle" placeholder="例如 发布计划 / 客户 A" data-i18n-placeholder="windowPlaceholder" autocomplete="off" />
@@ -1721,10 +1699,6 @@ refresh();
               <div id="newWindowCustomTeam" class="field hidden">
                 <label data-i18n="windowTeam">Roles</label>
                 <div id="newWindowTeam" class="agent-checks"></div>
-              </div>
-              <div class="field">
-                <label data-i18n="agentPrompts">Role prompts</label>
-                <div id="newWindowRolePrompts" class="role-prompts"></div>
               </div>
               <div class="settings-actions">
                 <button class="button-shadow" type="button" onclick="closeNewWindowDialog()" data-i18n="cancel">Cancel</button>
