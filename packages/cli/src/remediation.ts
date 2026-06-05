@@ -23,7 +23,7 @@ export function engineInstallAdvice(engine: string): RemediationAdvice {
     actions: [
       `Install the ${engine} CLI.`,
       `Run ${engine} once in a local terminal to finish login/setup.`,
-      "Restart or re-run: king agent computer --doctor"
+      "Restart or re-run: king-ai agent computer --doctor"
     ]
   };
 }
@@ -70,7 +70,7 @@ export function engineRemediationAdvice(engine: string, detail: string): Remedia
       detail: text,
       actions: [
         `Open ${engine} locally and refresh quota, billing, credits, or subscription state.`,
-        "Re-run: king agent computer --doctor",
+        "Re-run: king-ai agent computer --doctor",
         "Wake the agent again after the quota issue is fixed."
       ]
     };
@@ -85,7 +85,7 @@ export function engineRemediationAdvice(engine: string, detail: string): Remedia
       detail: text,
       actions: [
         "Wait for the provider limit to clear.",
-        "Re-run: king agent computer --doctor",
+        "Re-run: king-ai agent computer --doctor",
         "Wake the agent again after the backoff period."
       ]
     };
@@ -101,7 +101,7 @@ export function engineRemediationAdvice(engine: string, detail: string): Remedia
       actions: [
         `Open ${engine} locally and sign in again.`,
         "Make sure the daemon process has the same PATH and home config as your terminal.",
-        "Re-run: king agent computer --doctor"
+        "Re-run: king-ai agent computer --doctor"
       ]
     };
   }
@@ -114,7 +114,7 @@ export function engineRemediationAdvice(engine: string, detail: string): Remedia
     detail: text,
     actions: [
       "Check the daemon terminal or service logs for the full error.",
-      "Re-run: king agent computer --doctor",
+      "Re-run: king-ai agent computer --doctor",
       "Wake the agent again after fixing the local engine problem."
     ]
   };

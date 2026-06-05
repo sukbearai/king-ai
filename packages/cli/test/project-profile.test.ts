@@ -16,7 +16,7 @@ import {
 } from "../src/project-profile.js";
 
 test("scanProject detects local TypeScript repo profile signals", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "king-profile-"));
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-profile-"));
   try {
     await mkdir(join(dir, "src"), { recursive: true });
     await mkdir(join(dir, "docs"), { recursive: true });
@@ -56,7 +56,7 @@ test("scanProject detects local TypeScript repo profile signals", async () => {
 });
 
 test("collectProjectDocs ranks root docs and manifests", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "king-profile-docs-"));
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-profile-docs-"));
   try {
     await writeFile(join(dir, "README.md"), "# Read Me\n", "utf8");
     await writeFile(join(dir, "AGENTS.md"), "# Agent Rules\n", "utf8");

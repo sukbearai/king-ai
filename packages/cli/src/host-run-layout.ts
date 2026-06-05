@@ -113,7 +113,7 @@ async function buildLocalizedAgentConfig(plan: HostLaunchPlan): Promise<string> 
   config.workspaceRoot = plan.layout.workspaceRoot;
   config.gitRoot = plan.layout.gitRoot;
   config.outputDir = plan.layout.outputDir;
-  config.layoutSchema = "king.host-run-layout.v1";
+  config.layoutSchema = "king-ai.host-run-layout.v1";
   redactConfigSecrets(config);
   return `${JSON.stringify(config, null, 2)}\n`;
 }
@@ -162,7 +162,7 @@ async function writeRunObservationFiles(plan: HostLaunchPlan, force: boolean): P
 
 function createPreparedRunMeta(plan: HostLaunchPlan): Record<string, unknown> {
   return {
-    schema: "king.host-run-meta.v1",
+    schema: "king-ai.host-run-meta.v1",
     status: "prepared",
     runId: plan.runId,
     goal: plan.spec.goal,
@@ -226,7 +226,7 @@ async function buildCollaborationManifest(plan: HostLaunchPlan): Promise<string>
       : []
   }));
   return `${JSON.stringify({
-    schema: "king.host-run-collaboration.v1",
+    schema: "king-ai.host-run-collaboration.v1",
     runId: plan.runId,
     goal: plan.spec.goal,
     team,
@@ -234,23 +234,23 @@ async function buildCollaborationManifest(plan: HostLaunchPlan): Promise<string>
     governance: {
       mode: "opt-in",
       securityBoundary: false,
-      appliesWhen: "actorRole or KING_TEAM_ROLE is supplied",
+      appliesWhen: "actorRole or KING_AI_TEAM_ROLE is supplied",
       purpose: "route work, record decisions, audit role intent, and keep trusted local automation moving",
       securityBoundaryNote: "Use OS account isolation, workspace boundaries, runtime tokens, command allowlists, destructive confirmations, and per-agent homes for security."
     },
     taskRules: {
       dependencyField: "dependsOn",
       blockedUntil: "all referenced tasks are done",
-      localTaskCommands: ["king host task-create", "king host task-list", "king host task-update", "king host agenda"],
-      handoffCommand: "king send <agent> \"<message>\"",
-      humanDecisionCommand: "king host decision-create",
+      localTaskCommands: ["king-ai host task-create", "king-ai host task-list", "king-ai host task-update", "king-ai host agenda"],
+      handoffCommand: "king-ai send <agent> \"<message>\"",
+      humanDecisionCommand: "king-ai host decision-create",
       routingModes: ["one-of-us", "each", "review-required", "human-decision"],
       permissionRules: team.permissionPolicy.rules
     },
     capsuleRules: {
       requiredFields: ["owner", "branchOrWorktree", "allowedPaths", "acceptance", "reviewer", "verificationCommands"],
       defaultReviewer: "reviewer",
-      localCapsuleCommands: ["king host capsule-create", "king host capsule-list", "king host capsule-update"],
+      localCapsuleCommands: ["king-ai host capsule-create", "king-ai host capsule-list", "king-ai host capsule-update"],
       repoChangePolicy: "keep repository edits inside the agreed capsule scope and record acceptance evidence before marking work done"
     },
     workflowObjects: ["initiative", "task", "handoff", "review", "decision", "artifact"],
@@ -286,7 +286,7 @@ export function createDefaultHostRunConfigText(plan: HostLaunchPlan): string {
     workspaceRoot: plan.layout.workspaceRoot,
     gitRoot: plan.layout.gitRoot,
     outputDir: plan.layout.outputDir,
-    layoutSchema: "king.host-run-layout.v1"
+    layoutSchema: "king-ai.host-run-layout.v1"
   }, null, 2);
 }
 
@@ -338,8 +338,8 @@ function defaultHostRunAgent(
 
 function defaultHostRunCliInstructions(plan: HostLaunchPlan): string {
   return [
-    "Use `king recv` for messages, `king task list` for work state, and `king send <agent> \"<message>\"` to coordinate.",
-    "Use `king host decision-create` or `king send human --type decision \"<question>\"` when a human choice is required.",
+    "Use `king-ai recv` for messages, `king-ai task list` for work state, and `king-ai send <agent> \"<message>\"` to coordinate.",
+    "Use `king-ai host decision-create` or `king-ai send human --type decision \"<question>\"` when a human choice is required.",
     "For repository changes, prefer a capsule-shaped handoff: owner, branch/worktree, allowed paths, acceptance criteria, reviewer, and verification commands.",
     `Keep outputs under ${plan.layout.outputDir} unless the task explicitly asks for repository changes.`
   ].join("\n");
@@ -389,8 +389,8 @@ function defaultAgentGuideText(agent: { id?: unknown; name?: unknown; role?: unk
     "",
     "## Operating Rules",
     "",
-    "- Read current messages with `king recv` before starting new work.",
-    "- Check assigned work with `king task list` and update the team through `king send`.",
+    "- Read current messages with `king-ai recv` before starting new work.",
+    "- Check assigned work with `king-ai task list` and update the team through `king-ai send`.",
     "- For repository edits, work from a private branch or worktree and keep the changed paths inside the agreed capsule scope.",
     "- Before marking work done, record the acceptance evidence: commands run, files changed, reviewer needed, and any export path.",
     `- Put files you create under ${plan.layout.outputDir} unless the task explicitly asks for repository changes.`

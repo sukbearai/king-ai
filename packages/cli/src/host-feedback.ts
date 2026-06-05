@@ -32,7 +32,7 @@ export interface HostFeedbackListInput extends HostFeedbackPathInput {
 }
 
 export interface HostFeedbackRecord {
-  schema: "king.host-feedback.v1";
+  schema: "king-ai.host-feedback.v1";
   createdAt: string;
   runId?: string;
   agent?: string;
@@ -76,7 +76,7 @@ export async function recordHostFeedback(input: HostFeedbackRecordInput, now: ()
   const totalTokens = nonNegativeInteger(input.totalTokens, "totalTokens") ?? inputTokens + outputTokens;
   const status = normalizeStatus(input.status ?? (input.errored ? "failed" : "completed"));
   const record: HostFeedbackRecord = {
-    schema: "king.host-feedback.v1",
+    schema: "king-ai.host-feedback.v1",
     createdAt: now().toISOString(),
     runId: cleanString(input.runId),
     agent: cleanString(input.agent),
@@ -199,7 +199,7 @@ function feedbackPath(input: HostFeedbackPathInput): string {
 function isFeedbackRecord(value: unknown): value is HostFeedbackRecord {
   if (!value || typeof value !== "object") return false;
   const record = value as HostFeedbackRecord;
-  return record.schema === "king.host-feedback.v1" && typeof record.createdAt === "string" && typeof record.totalTokens === "number";
+  return record.schema === "king-ai.host-feedback.v1" && typeof record.createdAt === "string" && typeof record.totalTokens === "number";
 }
 
 function normalizeStatus(value: unknown): HostFeedbackRecord["status"] {

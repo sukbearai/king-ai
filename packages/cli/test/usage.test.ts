@@ -113,14 +113,14 @@ test("checkTokenBudget reports ok, warning, and exceeded states", () => {
 });
 
 test("tokenBudgetFromEnv reads KING env vars", () => {
-  assert.equal(tokenBudgetFromEnv({ KING_TOKEN_BUDGET: "1000" } as NodeJS.ProcessEnv), 1000);
-  assert.equal(tokenBudgetFromEnv({ KING_TOKEN_BUDGET: "0" } as NodeJS.ProcessEnv), null);
-  assert.equal(tokenBudgetFromEnv({ KING_TOKEN_BUDGET: "bad" } as NodeJS.ProcessEnv), null);
+  assert.equal(tokenBudgetFromEnv({ KING_AI_TOKEN_BUDGET: "1000" } as NodeJS.ProcessEnv), 1000);
+  assert.equal(tokenBudgetFromEnv({ KING_AI_TOKEN_BUDGET: "0" } as NodeJS.ProcessEnv), null);
+  assert.equal(tokenBudgetFromEnv({ KING_AI_TOKEN_BUDGET: "bad" } as NodeJS.ProcessEnv), null);
 });
 
 test("usagePricingFromEnv reads configurable cost rules", () => {
   const pricing = usagePricingFromEnv({
-    KING_USAGE_PRICING: JSON.stringify({
+    KING_AI_USAGE_PRICING: JSON.stringify({
       "codex:gpt-test": {
         inputPerMillionTokens: 2,
         cacheReadInputPerMillionTokens: 0.5,
@@ -137,7 +137,7 @@ test("usagePricingFromEnv reads configurable cost rules", () => {
     outputPerMillionTokens: 10,
     source: undefined
   }]);
-  assert.deepEqual(usagePricingFromEnv({ KING_USAGE_PRICING: "not-json" } as NodeJS.ProcessEnv), []);
+  assert.deepEqual(usagePricingFromEnv({ KING_AI_USAGE_PRICING: "not-json" } as NodeJS.ProcessEnv), []);
 });
 
 test("estimateUsageCost prices token categories per million tokens", () => {
@@ -207,7 +207,7 @@ test("summarizeAgentUsage groups usage by engine, model, and agent", () => {
   assert.match(rendered, /dev \(Dev\): engine=codex model=gpt-test/);
 });
 
-test("summarizeAgentUsage includes optional King cost estimates", () => {
+test("summarizeAgentUsage includes optional King AI cost estimates", () => {
   const codexStats = recordAgentRunStats(emptyAgentRunStats(), {
     status: "completed",
     usage: { inputTokens: 1_000_000, cacheReadInputTokens: 500_000, outputTokens: 250_000 },
@@ -293,7 +293,7 @@ test("formatUsageSummary renders empty running state", () => {
 
 test("buildUsageRuntimeData exports sanitized provider and runtime rows", () => {
   const home = homedir();
-  const workspace = `${home}/workspace/github/pnpm/king`;
+  const workspace = `${home}/workspace/github/pnpm/king-ai`;
   const stats = recordAgentRunStats(emptyAgentRunStats(), {
     status: "completed",
     usage: { inputTokens: 10, outputTokens: 5 },
@@ -321,19 +321,19 @@ test("buildUsageRuntimeData exports sanitized provider and runtime rows", () => 
   assert.equal(data.usage.totalTokens, 15);
   assert.equal(data.runtimeResults[0]?.classification, "productive");
   assert.match(formatRuntimeResultsTable(data.runtimeResults), /dev\tcodex\t2026-06-02T00:00:00\.000Z\tdaemon-state\tcompleted\t1200\t15\tproductive/);
-  assert.equal(data.state.workspaces[0], "<home>/workspace/github/pnpm/king");
-  assert.match(data.state.events[0]?.detail ?? "", /<home>\/workspace\/github\/pnpm\/king/);
+  assert.equal(data.state.workspaces[0], "<home>/workspace/github/pnpm/king-ai");
+  assert.match(data.state.events[0]?.detail ?? "", /<home>\/workspace\/github\/pnpm\/king-ai/);
   assert.equal(data.providerCapabilities.some((capability) => capability.provider === "OpenAI"), true);
 });
 
 test("sanitizeRuntimeData redacts user paths without touching ordinary strings", () => {
   const sanitized = sanitizeRuntimeData({
-    homePath: "/Users/fayon/.king/agents/dev",
+    homePath: "/Users/fayon/.king-ai/agents/dev",
     message: "use /Users/other/secret/token but keep relative/path"
   }, "/Users/fayon");
 
   assert.deepEqual(sanitized, {
-    homePath: "<home>/.king/agents/dev",
+    homePath: "<home>/.king-ai/agents/dev",
     message: "use private://user/secret/token but keep relative/path"
   });
 });

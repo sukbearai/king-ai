@@ -26,17 +26,17 @@ import { validateAgentConfig } from "./agent-config-validation.js";
 import type { AgentConfigWarning } from "./agent-config-validation.js";
 
 const TOKEN_REFRESH_SKEW_MS = 5 * 60 * 1000;
-const INBOX_POLL_MS = Number(process.env.KING_INBOX_POLL_MS) || 20_000;
-const WAKE_DEBOUNCE_MS = Number(process.env.KING_WAKE_DEBOUNCE_MS) || 2500;
-const RUN_HEARTBEAT_MS = Number(process.env.KING_RUN_HEARTBEAT_MS) || 60_000;
-const TRIAGE_TIMEOUT_MS = Number(process.env.KING_TRIAGE_TIMEOUT_MS) || 30_000;
-const ENGINE_BACKOFF_MS = Number(process.env.KING_ENGINE_BACKOFF_MS) || 60_000;
-const TRIAGE_BACKOFF_MAX_MS = Number(process.env.KING_TRIAGE_BACKOFF_MAX_MS) || 600_000;
-const BIG_BRAIN_SPAWN_JITTER_MS = Number(process.env.KING_BYOA_BIG_BRAIN_SPAWN_JITTER_MS) || 1500;
-const TRIAGE_SPAWN_JITTER_MS = Number(process.env.KING_BYOA_TRIAGE_SPAWN_JITTER_MS) || 500;
-const AGENDA_QUIET_MS = Number(process.env.KING_AGENDA_QUIET_MS) || 180_000;
-const AGENDA_CHECK_MS = Number(process.env.KING_AGENDA_CHECK_MS) || 120_000;
-const PREPARE_WORKTREES = process.env.KING_PREPARE_WORKTREES === "1" || process.env.KING_AGENT_PREPARE_WORKTREES === "1";
+const INBOX_POLL_MS = Number(process.env.KING_AI_INBOX_POLL_MS) || 20_000;
+const WAKE_DEBOUNCE_MS = Number(process.env.KING_AI_WAKE_DEBOUNCE_MS) || 2500;
+const RUN_HEARTBEAT_MS = Number(process.env.KING_AI_RUN_HEARTBEAT_MS) || 60_000;
+const TRIAGE_TIMEOUT_MS = Number(process.env.KING_AI_TRIAGE_TIMEOUT_MS) || 30_000;
+const ENGINE_BACKOFF_MS = Number(process.env.KING_AI_ENGINE_BACKOFF_MS) || 60_000;
+const TRIAGE_BACKOFF_MAX_MS = Number(process.env.KING_AI_TRIAGE_BACKOFF_MAX_MS) || 600_000;
+const BIG_BRAIN_SPAWN_JITTER_MS = Number(process.env.KING_AI_BYOA_BIG_BRAIN_SPAWN_JITTER_MS) || 1500;
+const TRIAGE_SPAWN_JITTER_MS = Number(process.env.KING_AI_BYOA_TRIAGE_SPAWN_JITTER_MS) || 500;
+const AGENDA_QUIET_MS = Number(process.env.KING_AI_AGENDA_QUIET_MS) || 180_000;
+const AGENDA_CHECK_MS = Number(process.env.KING_AI_AGENDA_CHECK_MS) || 120_000;
+const PREPARE_WORKTREES = process.env.KING_AI_PREPARE_WORKTREES === "1" || process.env.KING_AI_AGENT_PREPARE_WORKTREES === "1";
 const NESTED_ENV_BLOCKLIST = [
   "CODEX_CI",
   "CODEX_SANDBOX_NETWORK_DISABLED",
@@ -44,19 +44,19 @@ const NESTED_ENV_BLOCKLIST = [
   "CLAUDECODE",
   "CLAUDE_CODE_ENTRYPOINT",
   "CLAUDE_CODE_SSE_PORT",
-  "KING_AGENT_RUNTIME_URL",
-  "KING_AGENT_RUNTIME_TOKEN",
-  "KING_AGENT_RUNTIME_TOKEN_FILE",
-  "KING_AGENT_RUNTIME_TENANT",
-  "KING_AGENT_ID",
-  "KING_AGENT_ENGINE",
-  "KING_AGENT_HOME",
-  "KING_AGENT_WORKSPACE_ROOT",
-  "KING_AGENT_WORKSPACES",
-  "KING_AGENT_WORKTREE_PLAN",
-  "KING_AGENT_SKILL_SNAPSHOT_ID",
-  "KING_AGENT_SKILL_SNAPSHOT_PATH",
-  "KING_AGENT_SKILL_SNAPSHOT_MANIFEST"
+  "KING_AI_AGENT_RUNTIME_URL",
+  "KING_AI_AGENT_RUNTIME_TOKEN",
+  "KING_AI_AGENT_RUNTIME_TOKEN_FILE",
+  "KING_AI_AGENT_RUNTIME_TENANT",
+  "KING_AI_AGENT_ID",
+  "KING_AI_AGENT_ENGINE",
+  "KING_AI_AGENT_HOME",
+  "KING_AI_AGENT_WORKSPACE_ROOT",
+  "KING_AI_AGENT_WORKSPACES",
+  "KING_AI_AGENT_WORKTREE_PLAN",
+  "KING_AI_AGENT_SKILL_SNAPSHOT_ID",
+  "KING_AI_AGENT_SKILL_SNAPSHOT_PATH",
+  "KING_AI_AGENT_SKILL_SNAPSHOT_MANIFEST"
 ] as const;
 
 interface InboxRow {
@@ -134,8 +134,8 @@ function envConcurrency(name: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
 }
 
-const bigBrainSem = new Semaphore(envConcurrency("KING_BYOA_MAX_CONCURRENT_BIG_BRAIN", 2));
-const triageSem = new Semaphore(envConcurrency("KING_BYOA_MAX_CONCURRENT_TRIAGE", 4));
+const bigBrainSem = new Semaphore(envConcurrency("KING_AI_BYOA_MAX_CONCURRENT_BIG_BRAIN", 2));
+const triageSem = new Semaphore(envConcurrency("KING_AI_BYOA_MAX_CONCURRENT_TRIAGE", 4));
 
 function usageForRuntime(usage: unknown): unknown {
   if (!usage || typeof usage !== "object") return null;
@@ -164,40 +164,40 @@ export function formatSteerPrompt(row: InboxRow, conversationId: string, agentId
   const body = (row.body ?? "").replace(/\s+/g, " ").slice(0, 300);
   const routed = sortRuntimeMessages([row], agentId)[0];
   const tag = routed ? messageRouteTag(routed) : "message";
-  return `A ${tag} runtime message arrived while you work. Answer it briefly if it needs you, then resume your current task. ${who} in ${conversationId}: "${body}". Reply one line now with: king reply ${conversationId} 'text'. Then continue what you were doing.`;
+  return `A ${tag} runtime message arrived while you work. Answer it briefly if it needs you, then resume your current task. ${who} in ${conversationId}: "${body}". Reply one line now with: king-ai reply ${conversationId} 'text'. Then continue what you were doing.`;
 }
 
 export function buildStandingPrompt(workspaces: string[] = [], agentRoot?: string, worktreeNote = ""): string {
-  return `You are a local BYOA teammate agent with your own voice. Use the king CLI on PATH to interact with the runtime.
+  return `You are a local BYOA teammate agent with your own voice. Use the king-ai CLI on PATH to interact with the runtime.
 
 Privacy boundary: this machine belongs to the operator. Stay inside your private agent home unless the operator explicitly asks otherwise in this runtime.
 ${formatWorkspacePolicy(workspaces, agentRoot)}
 ${worktreeNote}
 
-Shared skills: when KING_SHARED_SKILLS is configured, the daemon copies every skill directory containing SKILL.md into .claude/skills and .codex/skills in this agent home before starting you.
-The daemon also writes an activation snapshot under .king/skill-snapshots, or KING_SKILL_SNAPSHOTS_DIR when configured, so a run can audit exactly which skill files were available.
+Shared skills: when KING_AI_SHARED_SKILLS is configured, the daemon copies every skill directory containing SKILL.md into .claude/skills and .codex/skills in this agent home before starting you.
+The daemon also writes an activation snapshot under .king-ai/skill-snapshots, or KING_AI_SKILL_SNAPSHOTS_DIR when configured, so a run can audit exactly which skill files were available.
 
-Host home entries: when KING_HOST_HOME_ENTRIES is configured, the operator has explicitly linked selected host-home dotfiles or dot directories into this agent home. Treat them as sensitive credentials/configuration and use them only for the runtime task.
+Host home entries: when KING_AI_HOST_HOME_ENTRIES is configured, the operator has explicitly linked selected host-home dotfiles or dot directories into this agent home. Treat them as sensitive credentials/configuration and use them only for the runtime task.
 
-Remote test diagnostics: when a human asks you to investigate bugs, logs, database records, Redis state, or statistics on test environments, use king host remote-list --json to discover configured devices and autonomously use king host remote-profile, king host remote-probe, king host remote-run, king host remote-logs, king host remote-find-logs, king host remote-pg, and king host remote-redis. Do not ask the human for SSH commands unless the target device, app, or business object is missing. When reporting, include conclusion, evidence sources, checked scope, and remaining unknowns.
+Remote test diagnostics: when a human asks you to investigate bugs, logs, database records, Redis state, or statistics on test environments, use king-ai host remote-list --json to discover configured devices and autonomously use king-ai host remote-profile, king-ai host remote-probe, king-ai host remote-run, king-ai host remote-logs, king-ai host remote-find-logs, king-ai host remote-pg, and king-ai host remote-redis. Do not ask the human for SSH commands unless the target device, app, or business object is missing. When reporting, include conclusion, evidence sources, checked scope, and remaining unknowns.
 
 Memory: durable memory lives in memory/MEMORY.md and detail files under memory/. When asked to remember something, write it to a memory file and add a one-line pointer to MEMORY.md.
 
 Coordination:
-- Before you commit a reply or shared tool action, run king glance <conversationId>. Treat the composing list as raised hands ordered by who started first.
+- Before you commit a reply or shared tool action, run king-ai glance <conversationId>. Treat the composing list as raised hands ordered by who started first.
 - If another teammate already posted the same angle, do not repeat it. React, stay silent, or build on it only when you add something new.
 - If a teammate has an earlier composing claim and your planned reply or shared tool action is redundant, wait and glance again until their claim clears or their reply lands.
-- For shared resources, especially doc create, calendar create, group-level mutations, games, moderation, or one concrete deliverable, announce or claim before doing the work. Prefer king card claim <cardId> for real work and king claim <name> --in <conversationId> for short-lived locks.
+- For shared resources, especially doc create, calendar create, group-level mutations, games, moderation, or one concrete deliverable, announce or claim before doing the work. Prefer king-ai card claim <cardId> for real work and king-ai claim <name> --in <conversationId> for short-lived locks.
 - Trust board cards and claims over your memory. If a card is done or someone owns the same lock, do not duplicate the work.
 - For sequence, relay, round-robin, no-duplicates, or "who starts" tasks, continue from the newest visible message. Never restart the count or fork the opener.
 
-Posting: for replies with backticks, code, $, quotes, or multiple lines, write a draft under notes/ and send it with king reply <conversationId> --file notes/reply.md or king reply <conversationId> --file notes/reply.md. For short plain text, king reply <conversationId> '<text>' is fine. When answering a specific message, use --quote <messageId>. Address teammates by @<agent-id>, not by display name.
+Posting: for replies with backticks, code, $, quotes, or multiple lines, write a draft under notes/ and send it with king-ai reply <conversationId> --file notes/reply.md or king-ai reply <conversationId> --file notes/reply.md. For short plain text, king-ai reply <conversationId> '<text>' is fine. When answering a specific message, use --quote <messageId>. Address teammates by @<agent-id>, not by display name.
 
-Expressiveness: King clients can render Skype shortcode text such as (smile), (clap), (ok), (think), (coffee), or (wfh). Use at most one when it genuinely helps tone; plain text is usually better.
+Expressiveness: King AI clients can render Skype shortcode text such as (smile), (clap), (ok), (think), (coffee), or (wfh). Use at most one when it genuinely helps tone; plain text is usually better.
 
-Drive what you own forward. Multi-step turns are fine. If someone DMs you mid-task, answer briefly and continue. If progress is waiting on someone else, send one short follow-up and schedule a check-back with king calendar create '<chase>' --at <iso> --assignee <your-agent-id> --prompt '<what future-you should do>'.
+Drive what you own forward. Multi-step turns are fine. If someone DMs you mid-task, answer briefly and continue. If progress is waiting on someone else, send one short follow-up and schedule a check-back with king-ai calendar create '<chase>' --at <iso> --assignee <your-agent-id> --prompt '<what future-you should do>'.
 
-Useful runtime commands include king inbox, messages <conversationId> --tail 30, glance <conversationId>, roster, participants, contacts, whoami, agenda, observe [--json], initiative create|list|get|update, task list|create|update|done, capsule create|list|mine|get|update, artifact put|list|get, hypothesis create|list|update, context get|set|list, send <agentId> <message>, recv [--agent agent-id], escalate <message>, calendar list, card list, dm <agentId> <text>, react <messageId> <emoji>, and doc list|create|show.`;
+Useful runtime commands include king-ai inbox, messages <conversationId> --tail 30, glance <conversationId>, roster, participants, contacts, whoami, agenda, observe [--json], initiative create|list|get|update, task list|create|update|done, capsule create|list|mine|get|update, artifact put|list|get, hypothesis create|list|update, context get|set|list, send <agentId> <message>, recv [--agent agent-id], escalate <message>, calendar list, card list, dm <agentId> <text>, react <messageId> <emoji>, and doc list|create|show.`;
 }
 
 export function shouldStopEngineOnBeginStop(): boolean {
@@ -238,13 +238,13 @@ export function buildChatDelta(digest: string, memoryDigest: string, rosterDiges
   const triageNote = formatTriageNote(triage);
   return `You've been woken because there's new runtime activity, and local triage already decided whether you should respond. If triage marked it relevant, your job is to act, not re-litigate whether to wake.
 
-${triageNote ? `${triageNote}\n\n` : ""}Your unread messages (ALREADY FETCHED - no need to re-run king inbox or messages just to reread these; do run king glance before posting in a group to catch anything posted while you compose):
+${triageNote ? `${triageNote}\n\n` : ""}Your unread messages (ALREADY FETCHED - no need to re-run king-ai inbox or messages just to reread these; do run king-ai glance before posting in a group to catch anything posted while you compose):
 ${digest || "(none)"}
 
 Your memory index (memory/MEMORY.md):
 ${memoryDigest || "(empty)"}
 
-Your team right now (trust over memory - use these current ids for @mentions and king dm):
+Your team right now (trust over memory - use these current ids for @mentions and king-ai dm):
 ${rosterDigest || "(unavailable)"}`;
 }
 
@@ -259,7 +259,7 @@ ${brief}
 Your memory index (memory/MEMORY.md):
 ${memoryDigest || "(empty)"}
 
-Your team right now (trust over memory - use these current ids for @mentions and king dm):
+Your team right now (trust over memory - use these current ids for @mentions and king-ai dm):
 ${rosterDigest || "(unavailable)"}`;
 }
 
@@ -563,25 +563,25 @@ export class AgentRunner {
     return {
       ...sanitizeNestedEngineEnv(process.env),
       PATH: `${this.binDir}:${process.env.PATH ?? ""}`,
-      KING_AGENT_RUNTIME_URL: `${this.cfg.serverUrl}/runtime`,
-      KING_AGENT_RUNTIME_TOKEN: this.token,
-      KING_AGENT_RUNTIME_TOKEN_FILE: join(this.binDir, ".runtime-token"),
-      KING_AGENT_RUNTIME_TENANT: this.cfg.tenantId ?? "",
-      KING_AGENT_ID: this.agent.id,
-      KING_AGENT_ENGINE: this.adapter.id,
-      KING_AGENT_HOME: this.home,
-      KING_AGENT_WORKSPACE_ROOT: this.workspaceRoot(),
-      KING_AGENT_WORKSPACES: capabilities.workspaces.join(delimiter),
-      KING_AGENT_WORKTREE_PLAN: JSON.stringify(this.worktreePlans()),
-      KING_AGENT_SKILL_SNAPSHOT_ID: this.sharedSkillSnapshot?.id ?? "",
-      KING_AGENT_SKILL_SNAPSHOT_PATH: this.sharedSkillSnapshot?.root ?? "",
-      KING_AGENT_SKILL_SNAPSHOT_MANIFEST: this.sharedSkillSnapshot?.manifestPath ?? ""
+      KING_AI_AGENT_RUNTIME_URL: `${this.cfg.serverUrl}/runtime`,
+      KING_AI_AGENT_RUNTIME_TOKEN: this.token,
+      KING_AI_AGENT_RUNTIME_TOKEN_FILE: join(this.binDir, ".runtime-token"),
+      KING_AI_AGENT_RUNTIME_TENANT: this.cfg.tenantId ?? "",
+      KING_AI_AGENT_ID: this.agent.id,
+      KING_AI_AGENT_ENGINE: this.adapter.id,
+      KING_AI_AGENT_HOME: this.home,
+      KING_AI_AGENT_WORKSPACE_ROOT: this.workspaceRoot(),
+      KING_AI_AGENT_WORKSPACES: capabilities.workspaces.join(delimiter),
+      KING_AI_AGENT_WORKTREE_PLAN: JSON.stringify(this.worktreePlans()),
+      KING_AI_AGENT_SKILL_SNAPSHOT_ID: this.sharedSkillSnapshot?.id ?? "",
+      KING_AI_AGENT_SKILL_SNAPSHOT_PATH: this.sharedSkillSnapshot?.root ?? "",
+      KING_AI_AGENT_SKILL_SNAPSHOT_MANIFEST: this.sharedSkillSnapshot?.manifestPath ?? ""
     };
   }
 
   private standingPrompt(): string {
     const note = formatWorktreePlanForPrompt(this.worktreePlans()) +
-      (PREPARE_WORKTREES ? "\nKING_PREPARE_WORKTREES=1: the daemon attempted to create these local worktrees before starting this agent." : "");
+      (PREPARE_WORKTREES ? "\nKING_AI_PREPARE_WORKTREES=1: the daemon attempted to create these local worktrees before starting this agent." : "");
     return buildStandingPrompt(detectLocalCapabilities().workspaces, this.workspaceRoot(), note);
   }
 
@@ -707,7 +707,7 @@ export class AgentRunner {
   }
 
   private triageModel(): string {
-    return process.env.KING_TRIAGE_MODEL || (this.adapter.id === "claude" ? "haiku" : "gpt-5.4-mini");
+    return process.env.KING_AI_TRIAGE_MODEL || (this.adapter.id === "claude" ? "haiku" : "gpt-5.4-mini");
   }
 
   private async recordTriageUsage(token: string, verdict: TriageVerdict, usage: unknown): Promise<void> {
@@ -738,7 +738,7 @@ export class AgentRunner {
         cwd: TRIAGE_DIR,
         prompt: `${payload.instructions}\n\n${payload.input}`,
         env: this.engineEnv(),
-        model: process.env.KING_TRIAGE_MODEL,
+        model: process.env.KING_AI_TRIAGE_MODEL,
         signal: controller.signal
       });
       if (res.error || !res.text.trim()) {

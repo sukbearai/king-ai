@@ -1,5 +1,5 @@
 {
-  "name": "@king/gui-worker",
+  "name": "@king-ai/gui-worker",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@comark/html": "^0.4.0",
-    "@suwujs/king": "workspace:*",
+    "@suwujs/king-ai": "workspace:*",
     "better-auth": "^1.6.14",
     "comark": "^0.4.0",
     "hono": "^4.12.23",

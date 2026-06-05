@@ -4,7 +4,7 @@ import { dirname, join, resolve } from "node:path";
 export type HostRunHeartbeatStatus = "prepared" | "running" | "completed" | "failed" | "cancelled";
 
 export interface HostRunHeartbeatData {
-  schema: "king.host-run-heartbeat.v1";
+  schema: "king-ai.host-run-heartbeat.v1";
   status: HostRunHeartbeatStatus;
   runId: string;
   lastTick: string;
@@ -42,7 +42,7 @@ export interface HostRunHeartbeatReadResult {
 }
 
 export function hostRunHeartbeatPathForOutputDir(outputDir: string): string {
-  return join(resolve(outputDir), ".king", "heartbeat.json");
+  return join(resolve(outputDir), ".king-ai", "heartbeat.json");
 }
 
 export function resolveHostRunHeartbeatPath(input: HostRunHeartbeatReadInput = {}): string {
@@ -87,7 +87,7 @@ export function formatHostRunHeartbeat(result: HostRunHeartbeatReadResult): stri
 export async function writeHostRunHeartbeat(input: HostRunHeartbeatInput): Promise<HostRunHeartbeatData> {
   const now = (input.now ?? (() => new Date()))().toISOString();
   const data: HostRunHeartbeatData = {
-    schema: "king.host-run-heartbeat.v1",
+    schema: "king-ai.host-run-heartbeat.v1",
     status: input.status,
     runId: input.runId,
     lastTick: now,
@@ -117,10 +117,10 @@ function normalizeExitCode(value: unknown): number | undefined {
 function parseHostRunHeartbeat(text: string): HostRunHeartbeatData | null {
   try {
     const parsed = JSON.parse(text) as Partial<HostRunHeartbeatData>;
-    if (!parsed || parsed.schema !== "king.host-run-heartbeat.v1" || typeof parsed.runId !== "string") return null;
+    if (!parsed || parsed.schema !== "king-ai.host-run-heartbeat.v1" || typeof parsed.runId !== "string") return null;
     if (!isHostRunHeartbeatStatus(parsed.status)) return null;
     return {
-      schema: "king.host-run-heartbeat.v1",
+      schema: "king-ai.host-run-heartbeat.v1",
       status: parsed.status,
       runId: parsed.runId,
       lastTick: typeof parsed.lastTick === "string" ? parsed.lastTick : "",

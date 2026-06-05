@@ -1,4 +1,4 @@
-name = "king-gui"
+name = "king-ai-gui"
 main = "src/index.ts"
 compatibility_date = "2026-06-02"
 compatibility_flags = ["nodejs_compat"]
@@ -17,7 +17,7 @@ class_name = "GuiState"
 
 [[d1_databases]]
 binding = "AUTH_DB"
-database_name = "king-auth"
+database_name = "king-ai-auth"
 database_id = "9c5077c7-d538-42eb-96d4-70cc4a6ac489"
 
 [[migrations]]

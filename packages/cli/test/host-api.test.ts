@@ -33,7 +33,7 @@ test("buildHostStatusSnapshot normalizes running state for host apps", () => {
         severity: "error",
         summary: "codex authentication is not ready",
         detail: "not logged in",
-        actions: ["Open codex locally and sign in again.", "Re-run: king agent computer --doctor"]
+        actions: ["Open codex locally and sign in again.", "Re-run: king-ai agent computer --doctor"]
       },
       configWarnings: [{
         code: "idle-cached-without-resume",
@@ -64,7 +64,7 @@ test("buildHostStatusSnapshot normalizes running state for host apps", () => {
     category: "auth",
     severity: "error",
     summary: "codex authentication is not ready",
-    actions: ["Open codex locally and sign in again.", "Re-run: king agent computer --doctor"]
+    actions: ["Open codex locally and sign in again.", "Re-run: king-ai agent computer --doctor"]
   });
   assert.equal(snapshot.agents[0].configWarnings?.[0]?.code, "idle-cached-without-resume");
   assert.equal(snapshot.usage.totalTokens, 20);

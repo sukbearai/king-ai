@@ -183,7 +183,7 @@ export function createHostRunPlan(input: HostRunSpecInput, env: NodeJS.ProcessEn
   const mode = input.mode ?? "run";
   const projectDir = resolveOptionalDir(input.projectDir, "projectDir");
   const repoSourceDir = resolveOptionalDir(input.repoSourceDir ?? projectDir, "repoSourceDir");
-  const workspaceRoot = input.workspaceRoot ? resolve(input.workspaceRoot) : env.KING_AGENT_WORKSPACE_ROOT;
+  const workspaceRoot = input.workspaceRoot ? resolve(input.workspaceRoot) : env.KING_AI_AGENT_WORKSPACE_ROOT;
   const gitRoot = input.gitRoot ? resolve(input.gitRoot) : repoSourceDir ?? projectDir;
   const options = createDefaultHostRunOptions(input.options);
   const explicitRunId = cleanString(input.runId);
@@ -484,7 +484,7 @@ export function createHostRunConfigPlan(plan: HostRunPlan): HostRunConfigPlan {
 
 export function createHostRunLocalLayoutPlan(plan: HostRunPlan, config = createHostRunConfigPlan(plan)): HostRunLocalLayoutPlan {
   const outputDir = resolve(plan.options.outputDir);
-  const baseDir = join(outputDir, ".king-local", plan.runId);
+  const baseDir = join(outputDir, ".king-ai-local", plan.runId);
   return {
     baseDir,
     configPath: join(baseDir, "agents.json"),
@@ -598,9 +598,9 @@ function isGitRepo(dir: string): boolean {
 }
 
 function suggestedCommands(plan: HostRunPlan): string[] {
-  const commands = ["king agent computer --doctor"];
-  if (plan.spec.projectDir) commands.push(`king project-profile ${shellQuote(plan.spec.projectDir)}`);
-  commands.push("king host status --json");
+  const commands = ["king-ai agent computer --doctor"];
+  if (plan.spec.projectDir) commands.push(`king-ai project-profile ${shellQuote(plan.spec.projectDir)}`);
+  commands.push("king-ai host status --json");
   return commands;
 }
 

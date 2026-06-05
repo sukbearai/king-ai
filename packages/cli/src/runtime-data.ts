@@ -65,21 +65,21 @@ export const PROVIDER_CAPABILITIES: ProviderCapability[] = [
     engines: ["codex"],
     usage: "local_tokens",
     pricing: "env_pricing",
-    notes: ["King records CLI-reported token usage when available.", "Set KING_USAGE_PRICING for estimated local cost."]
+    notes: ["King AI records CLI-reported token usage when available.", "Set KING_AI_USAGE_PRICING for estimated local cost."]
   },
   {
     provider: "Anthropic",
     engines: ["claude"],
     usage: "local_tokens",
     pricing: "env_pricing",
-    notes: ["King records Claude CLI usage fields when the engine returns them.", "Set KING_USAGE_PRICING for estimated local cost."]
+    notes: ["King AI records Claude CLI usage fields when the engine returns them.", "Set KING_AI_USAGE_PRICING for estimated local cost."]
   },
   {
     provider: "OpenRouter",
     engines: ["openrouter"],
     usage: "unavailable",
     pricing: "env_pricing",
-    notes: ["No first-class King engine adapter is wired yet.", "Pricing can still be represented with KING_USAGE_PRICING once an adapter records usage."]
+    notes: ["No first-class King AI engine adapter is wired yet.", "Pricing can still be represented with KING_AI_USAGE_PRICING once an adapter records usage."]
   }
 ];
 

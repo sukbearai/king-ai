@@ -10,7 +10,7 @@ interface CardJson { card?: { id?: string; ownerRole?: string; status?: string }
 const at = (iso: string) => () => new Date(iso);
 
 test("workflow-update auto-routes a completed card to its reviewer", async () => {
-  const outputDir = join(await mkdtemp(join(tmpdir(), "king-handoff-")), "out");
+  const outputDir = join(await mkdtemp(join(tmpdir(), "king-ai-handoff-")), "out");
 
   await runHostCommand({
     command: "workflow-create",
@@ -35,7 +35,7 @@ test("workflow-update auto-routes a completed card to its reviewer", async () =>
 });
 
 test("workflow-update does not duplicate auto-handoffs for an already completed card", async () => {
-  const outputDir = join(await mkdtemp(join(tmpdir(), "king-handoff-idempotent-")), "out");
+  const outputDir = join(await mkdtemp(join(tmpdir(), "king-ai-handoff-idempotent-")), "out");
 
   await runHostCommand({
     command: "workflow-create",
@@ -59,7 +59,7 @@ test("workflow-update does not duplicate auto-handoffs for an already completed 
 });
 
 test("workflow-update chains review -> nextRole and honors the per-call opt-out", async () => {
-  const outputDir = join(await mkdtemp(join(tmpdir(), "king-handoff-chain-")), "out");
+  const outputDir = join(await mkdtemp(join(tmpdir(), "king-ai-handoff-chain-")), "out");
   const policy = { mode: "review-required", reviewerRole: "reviewer", escalation: "coordinator", acceptanceRequired: true, nextRole: "doc-writer" };
 
   await runHostCommand({
@@ -96,7 +96,7 @@ test("workflow-update chains review -> nextRole and honors the per-call opt-out"
 });
 
 test("workflow-update rejects done when dependencies or acceptance evidence are missing", async () => {
-  const outputDir = join(await mkdtemp(join(tmpdir(), "king-handoff-state-")), "out");
+  const outputDir = join(await mkdtemp(join(tmpdir(), "king-ai-handoff-state-")), "out");
 
   await runHostCommand({
     command: "workflow-create",
@@ -130,7 +130,7 @@ test("workflow-update rejects done when dependencies or acceptance evidence are 
 });
 
 test("review completion requires a verdict and routes changes back to the source owner", async () => {
-  const outputDir = join(await mkdtemp(join(tmpdir(), "king-review-verdict-")), "out");
+  const outputDir = join(await mkdtemp(join(tmpdir(), "king-ai-review-verdict-")), "out");
 
   await runHostCommand({
     command: "workflow-create",
@@ -161,7 +161,7 @@ test("review completion requires a verdict and routes changes back to the source
 });
 
 test("workflow-create assigns an owner by capability when none is given", async () => {
-  const outputDir = join(await mkdtemp(join(tmpdir(), "king-capability-")), "out");
+  const outputDir = join(await mkdtemp(join(tmpdir(), "king-ai-capability-")), "out");
   const created = await runHostCommand({
     command: "workflow-create",
     input: { outputDir, kind: "task", id: "verify-1", title: "Verify the release", requiredCapabilities: ["testing", "verification"] }
@@ -170,7 +170,7 @@ test("workflow-create assigns an owner by capability when none is given", async 
 });
 
 test("compact-ledger requires confirmation and rewrites the merged ledger", async () => {
-  const outputDir = join(await mkdtemp(join(tmpdir(), "king-compact-")), "out");
+  const outputDir = join(await mkdtemp(join(tmpdir(), "king-ai-compact-")), "out");
   // autoHandoff disabled so the only workflow records are the ones under test.
   const deps = { autoHandoff: false, now: at("2026-06-04T00:00:00.000Z") };
   await runHostCommand({ command: "workflow-create", input: { outputDir, kind: "task", id: "c1", title: "Card one", ownerRole: "builder" } }, deps);

@@ -27,8 +27,8 @@ import {
 } from "../src/runner.js";
 
 test("agentSessionFile scopes session ids by engine", () => {
-  assert.match(agentSessionFile("king-agent", "claude"), /king-agent\.claude\.session$/);
-  assert.match(agentSessionFile("king-agent", "codex"), /king-agent\.codex\.session$/);
+  assert.match(agentSessionFile("king-ai-agent", "claude"), /king-ai-agent\.claude\.session$/);
+  assert.match(agentSessionFile("king-ai-agent", "codex"), /king-ai-agent\.codex\.session$/);
 });
 
 test("parseWakeEventInfo extracts conversation and delivery latency", () => {
@@ -80,7 +80,7 @@ test("Semaphore queues callers beyond the concurrency limit", async () => {
   sem.release();
 });
 
-test("mustResetSession follows King session reset rules", () => {
+test("mustResetSession follows King AI session reset rules", () => {
   assert.equal(isContextOverflow("context_length_exceeded: prompt is too long"), true);
   assert.equal(isPoisonedTranscript("request body is not valid json: unpaired surrogate"), true);
 
@@ -151,28 +151,28 @@ test("formatSteerPrompt asks for a brief reply then resume", () => {
   assert.match(prompt, /Answer it briefly/);
   assert.match(prompt, /resume your current task/);
   assert.match(prompt, /runtime message arrived/);
-  assert.match(prompt, /king reply demo-convo/);
+  assert.match(prompt, /king-ai reply demo-convo/);
   assert.match(prompt, /hello there/);
 });
 
-test("buildStandingPrompt documents King command habits", () => {
+test("buildStandingPrompt documents King AI command habits", () => {
   const prompt = buildStandingPrompt(["/Users/fayon/workspace/github"], "/tmp/agents/demo-agent");
-  assert.match(prompt, /Use the king CLI on PATH/);
+  assert.match(prompt, /Use the king-ai CLI on PATH/);
   assert.match(prompt, /Agent workspace root: \/tmp\/agents\/demo-agent/);
   assert.match(prompt, /\/Users\/fayon\/workspace\/github/);
-  assert.match(prompt, /king glance <conversationId>/);
-  assert.match(prompt, /king card claim <cardId>/);
+  assert.match(prompt, /king-ai glance <conversationId>/);
+  assert.match(prompt, /king-ai card claim <cardId>/);
   assert.match(prompt, /context get\|set\|list/);
   assert.match(prompt, /artifact put\|list\|get/);
   assert.match(prompt, /hypothesis create\|list\|update/);
   assert.match(prompt, /task list\|create\|update\|done/);
-  assert.match(prompt, /king reply <conversationId> --file notes\/reply\.md/);
+  assert.match(prompt, /king-ai reply <conversationId> --file notes\/reply\.md/);
   assert.match(prompt, /Shared skills:/);
-  assert.match(prompt, /KING_SHARED_SKILLS/);
+  assert.match(prompt, /KING_AI_SHARED_SKILLS/);
   assert.match(prompt, /activation snapshot/);
-  assert.match(prompt, /KING_SKILL_SNAPSHOTS_DIR/);
+  assert.match(prompt, /KING_AI_SKILL_SNAPSHOTS_DIR/);
   assert.match(prompt, /Host home entries:/);
-  assert.match(prompt, /KING_HOST_HOME_ENTRIES/);
+  assert.match(prompt, /KING_AI_HOST_HOME_ENTRIES/);
   assert.match(prompt, /raised hands ordered by who started first/);
   assert.match(prompt, /doc create, calendar create, group-level mutations/);
   assert.match(prompt, /Skype shortcode text/);
@@ -188,7 +188,7 @@ test("buildChatDelta carries fetched inbox, roster, and response mode guidance",
     source: "local"
   });
   assert.match(delta, /ALREADY FETCHED/);
-  assert.match(delta, /no need to re-run king inbox or messages/);
+  assert.match(delta, /no need to re-run king-ai inbox or messages/);
   assert.match(delta, /Response mode: one-of-us/);
   assert.match(formatTriageNote({ actionable: true, routeHint: "steer", priority: "urgent" }), /Priority: urgent/);
   assert.match(formatTriageNote({ actionable: true, routeHint: "steer", priority: "urgent" }), /Route hint: steer/);
@@ -197,7 +197,7 @@ test("buildChatDelta carries fetched inbox, roster, and response mode guidance",
   assert.match(delta, /demo-agent\tDemo Agent/);
 });
 
-test("formatTriageNote explains all King response modes", () => {
+test("formatTriageNote explains all King AI response modes", () => {
   assert.match(formatTriageNote({ actionable: true, responseMode: "me" }), /specifically for you/);
   assert.match(formatTriageNote({ actionable: true, responseMode: "each" }), /may contribute their own distinct reply/);
   assert.match(formatTriageNote({ actionable: true, responseMode: "one-of-us" }), /only one teammate handles/);
@@ -248,12 +248,12 @@ test("wake stream auth failures are terminal statuses", () => {
 test("visibleEngineError redacts local home paths before publishing", () => {
   const message = visibleEngineError(
     "codex",
-    "/Users/fayon/.king/agents/demo-agent",
+    "/Users/fayon/.king-ai/agents/demo-agent",
     1,
-    "failed in /Users/fayon/.king/agents/demo-agent/workspace and /Users/fayon/private.txt"
+    "failed in /Users/fayon/.king-ai/agents/demo-agent/workspace and /Users/fayon/private.txt"
   );
   assert.match(message, /^local codex failed \(exit 1\):/);
-  assert.doesNotMatch(message, /\/Users\/fayon\/\.king/);
+  assert.doesNotMatch(message, /\/Users\/fayon\/\.king-ai/);
   assert.doesNotMatch(message, /\/Users\/fayon\/private\.txt/);
   assert.match(message, /<agent home>\/workspace/);
   assert.match(message, /~\/private\.txt/);
@@ -266,14 +266,14 @@ test("sanitizeNestedEngineEnv removes outer runtime controls before spawning eng
     CODEX_SANDBOX_NETWORK_DISABLED: "1",
     CODEX_THREAD_ID: "outer",
     CLAUDE_CODE_ENTRYPOINT: "outer",
-    KING_AGENT_RUNTIME_URL: "outer",
-    KING_AGENT_RUNTIME_TOKEN: "outer",
-    KING_AGENT_RUNTIME_TENANT: "outer",
-    KING_AGENT_WORKSPACE_ROOT: "outer",
-    KING_AGENT_WORKTREE_PLAN: "outer",
-    KING_AGENT_SKILL_SNAPSHOT_ID: "outer",
-    KING_AGENT_SKILL_SNAPSHOT_PATH: "outer",
-    KING_AGENT_SKILL_SNAPSHOT_MANIFEST: "outer",
+    KING_AI_AGENT_RUNTIME_URL: "outer",
+    KING_AI_AGENT_RUNTIME_TOKEN: "outer",
+    KING_AI_AGENT_RUNTIME_TENANT: "outer",
+    KING_AI_AGENT_WORKSPACE_ROOT: "outer",
+    KING_AI_AGENT_WORKTREE_PLAN: "outer",
+    KING_AI_AGENT_SKILL_SNAPSHOT_ID: "outer",
+    KING_AI_AGENT_SKILL_SNAPSHOT_PATH: "outer",
+    KING_AI_AGENT_SKILL_SNAPSHOT_MANIFEST: "outer",
     ORCA_SESSION_ID: "outer",
     OPENAI_CODEX_TRACE: "outer",
     KEEP_ME: "yes"
@@ -285,14 +285,14 @@ test("sanitizeNestedEngineEnv removes outer runtime controls before spawning eng
   assert.equal(clean.CODEX_SANDBOX_NETWORK_DISABLED, undefined);
   assert.equal(clean.CODEX_THREAD_ID, undefined);
   assert.equal(clean.CLAUDE_CODE_ENTRYPOINT, undefined);
-  assert.equal(clean.KING_AGENT_RUNTIME_URL, undefined);
-  assert.equal(clean.KING_AGENT_RUNTIME_TOKEN, undefined);
-  assert.equal(clean.KING_AGENT_RUNTIME_TENANT, undefined);
-  assert.equal(clean.KING_AGENT_WORKSPACE_ROOT, undefined);
-  assert.equal(clean.KING_AGENT_WORKTREE_PLAN, undefined);
-  assert.equal(clean.KING_AGENT_SKILL_SNAPSHOT_ID, undefined);
-  assert.equal(clean.KING_AGENT_SKILL_SNAPSHOT_PATH, undefined);
-  assert.equal(clean.KING_AGENT_SKILL_SNAPSHOT_MANIFEST, undefined);
+  assert.equal(clean.KING_AI_AGENT_RUNTIME_URL, undefined);
+  assert.equal(clean.KING_AI_AGENT_RUNTIME_TOKEN, undefined);
+  assert.equal(clean.KING_AI_AGENT_RUNTIME_TENANT, undefined);
+  assert.equal(clean.KING_AI_AGENT_WORKSPACE_ROOT, undefined);
+  assert.equal(clean.KING_AI_AGENT_WORKTREE_PLAN, undefined);
+  assert.equal(clean.KING_AI_AGENT_SKILL_SNAPSHOT_ID, undefined);
+  assert.equal(clean.KING_AI_AGENT_SKILL_SNAPSHOT_PATH, undefined);
+  assert.equal(clean.KING_AI_AGENT_SKILL_SNAPSHOT_MANIFEST, undefined);
   assert.equal(clean.ORCA_SESSION_ID, undefined);
   assert.equal(clean.OPENAI_CODEX_TRACE, undefined);
 });

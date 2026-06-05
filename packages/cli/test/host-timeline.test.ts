@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { appendHostTimelineEvent, formatHostTimeline, hostTimelinePath, readHostTimeline, summarizeHostCommandJson } from "../src/host-timeline.js";
 
 test("host timeline appends and reads recent command events", async () => {
-  const root = await mkdtemp(join(tmpdir(), "king-host-timeline-"));
+  const root = await mkdtemp(join(tmpdir(), "king-ai-host-timeline-"));
   const path = join(root, "host-events.ndjson");
 
   await appendFile(path, "not-json\n", "utf8");

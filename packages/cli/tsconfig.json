@@ -10,7 +10,7 @@
     "declaration": true,
     "baseUrl": ".",
     "paths": {
-      "king/host-sdk": [
+      "king-ai/host-sdk": [
         "src/host-sdk.ts"
       ]
     }

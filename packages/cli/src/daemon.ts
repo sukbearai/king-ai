@@ -18,13 +18,13 @@ import { normalizeAgentLifecycle, shouldHostAgent } from "./lifecycle.js";
 import { FileHeartbeat } from "./heartbeat.js";
 import { validateAgentConfig } from "./agent-config-validation.js";
 
-const AGENT_POLL_MS = Number(process.env.KING_AGENT_POLL_MS) || 5_000;
-const HEARTBEAT_MS = Number(process.env.KING_HEARTBEAT_MS) || 30_000;
-const SHUTDOWN_GRACE_MS = Number(process.env.KING_SHUTDOWN_GRACE_MS) || 15_000;
-const UPDATE_CHECK_MS = Number(process.env.KING_UPDATE_CHECK_MS) || 6 * 60 * 60 * 1000;
-const IDLE_UPDATE_CHECK_MS = Number(process.env.KING_IDLE_UPDATE_CHECK_MS) || 30_000;
-const LOG_ROTATE_MS = Number(process.env.KING_LOG_ROTATE_MS) || 5 * 60 * 1000;
-const SUPERVISED = process.env.KING_SUPERVISED === "1";
+const AGENT_POLL_MS = Number(process.env.KING_AI_AGENT_POLL_MS) || 5_000;
+const HEARTBEAT_MS = Number(process.env.KING_AI_HEARTBEAT_MS) || 30_000;
+const SHUTDOWN_GRACE_MS = Number(process.env.KING_AI_SHUTDOWN_GRACE_MS) || 15_000;
+const UPDATE_CHECK_MS = Number(process.env.KING_AI_UPDATE_CHECK_MS) || 6 * 60 * 60 * 1000;
+const IDLE_UPDATE_CHECK_MS = Number(process.env.KING_AI_IDLE_UPDATE_CHECK_MS) || 30_000;
+const LOG_ROTATE_MS = Number(process.env.KING_AI_LOG_ROTATE_MS) || 5 * 60 * 1000;
+const SUPERVISED = process.env.KING_AI_SUPERVISED === "1";
 const execFileP = promisify(execFile);
 
 export function anyRunnerBusy(runners: Iterable<{ isBusy: boolean }>): boolean {
@@ -40,10 +40,10 @@ export function shouldExitForUpdate(args: { updateReady: boolean; shuttingDown: 
 
 export function installProcessErrorLogging(): void {
   process.on("unhandledRejection", (reason) => {
-    console.error("[king] unhandledRejection (kept alive):", reason instanceof Error ? reason.stack || reason.message : reason);
+    console.error("[king-ai] unhandledRejection (kept alive):", reason instanceof Error ? reason.stack || reason.message : reason);
   });
   process.on("uncaughtException", (err) => {
-    console.error("[king] uncaughtException (kept alive):", err instanceof Error ? err.stack || err.message : err);
+    console.error("[king-ai] uncaughtException (kept alive):", err instanceof Error ? err.stack || err.message : err);
   });
 }
 
@@ -81,7 +81,7 @@ export function missingEngineMessage(): string {
     "  - Codex: install the `codex` CLI, then run `codex` once to sign in",
     "",
     "After that, rerun:",
-    "  king agent computer --pair <code>"
+    "  king-ai agent computer --pair <code>"
   ].join("\n");
 }
 
@@ -93,7 +93,7 @@ export interface PairLocator {
 
 export function parsePairLocator(value: string): PairLocator {
   const trimmed = value.trim();
-  if (!trimmed.startsWith("king://pair?")) return { code: trimmed };
+  if (!trimmed.startsWith("king-ai://pair?")) return { code: trimmed };
   const url = new URL(trimmed);
   const code = url.searchParams.get("code")?.trim();
   const serverUrl = url.searchParams.get("server")?.trim().replace(/\/+$/, "");
@@ -122,7 +122,7 @@ export function doctorExitCode(results: DoctorResult[]): number {
 
 export function formatDoctorReport(results: DoctorResult[], version = CURRENT_VERSION): string {
   const lines = [
-    `king ${version} engine doctor`,
+    `king-ai ${version} engine doctor`,
     "probing local engines (big brain = main reasoning, small brain = triage cerebellum)...",
     ""
   ];
@@ -153,7 +153,7 @@ export function formatDoctorReport(results: DoctorResult[], version = CURRENT_VE
   }
   if (!anyUsable) {
     lines.push("x no engine has BOTH brains healthy - this machine cannot currently run a BYOA agent.");
-    lines.push("  Fix one engine above, then re-run: king agent computer --doctor");
+    lines.push("  Fix one engine above, then re-run: king-ai agent computer --doctor");
   }
   return lines.join("\n").trimEnd();
 }
@@ -216,11 +216,11 @@ export async function runDoctor(): Promise<void> {
 export async function doRun(serverOverride?: string, tenantOverride?: string): Promise<void> {
   installProcessErrorLogging();
   const cfg = await loadConfig();
-  if (!cfg) throw new Error("not paired. Run: king agent computer --pair <code> --server <url>");
+  if (!cfg) throw new Error("not paired. Run: king-ai agent computer --pair <code> --server <url>");
   const runtimeCfg: ComputerConfig = { ...cfg, serverUrl: serverOverride ?? cfg.serverUrl, tenantId: tenantOverride ?? cfg.tenantId };
   const available = await detectEngines();
   if (available.length === 0) throw new Error(missingEngineMessage());
-  console.log(`king ${CURRENT_VERSION} starting ${runtimeCfg.computerId} @ ${runtimeCfg.serverUrl}`);
+  console.log(`king-ai ${CURRENT_VERSION} starting ${runtimeCfg.computerId} @ ${runtimeCfg.serverUrl}`);
   const fileHeartbeat = new FileHeartbeat(HEARTBEAT_PATH, {
     pid: process.pid,
     runId: `${runtimeCfg.computerId}-${Date.now()}`,
@@ -368,11 +368,11 @@ export async function doRun(serverOverride?: string, tenantOverride?: string): P
       if (SUPERVISED) {
         if (!updateReady) {
           updateReady = true;
-          console.log(`king ${latest} available; will restart when idle`);
+          console.log(`king-ai ${latest} available; will restart when idle`);
         }
         exitForUpdateWhenIdle();
       } else {
-        console.log(`king ${latest} available. Restart to update, or install the background service for automatic restarts.`);
+        console.log(`king-ai ${latest} available. Restart to update, or install the background service for automatic restarts.`);
       }
     });
   };

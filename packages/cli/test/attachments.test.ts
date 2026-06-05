@@ -41,7 +41,7 @@ test("normalizeRuntimeAttachments accepts readable text and source files", () =>
 });
 
 test("cacheLocalAttachments copies accepted file attachments into media cache", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "king-attachments-"));
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-attachments-"));
   const source = join(dir, "note.txt");
   const cache = join(dir, "cache");
   await mkdir(cache, { recursive: true });
@@ -55,7 +55,7 @@ test("cacheLocalAttachments copies accepted file attachments into media cache", 
 });
 
 test("cacheLocalAttachments downloads accepted URL attachments into media cache", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "king-url-attachments-"));
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-url-attachments-"));
   const cache = join(dir, "cache");
   const server = createServer((req, res) => {
     if (req.url !== "/screen.png") {

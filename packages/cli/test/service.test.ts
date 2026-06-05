@@ -42,21 +42,21 @@ test("checkForUpdate returns newer npm version only", async () => {
   assert.equal(newer, "99.0.0");
   const same = await checkForUpdate(async () => new Response(JSON.stringify({ version: CURRENT_VERSION })));
   assert.equal(same, null);
-  assert.deepEqual(urls, ["https://registry.npmjs.org/%40suwujs%2Fking/latest"]);
+  assert.deepEqual(urls, ["https://registry.npmjs.org/%40suwujs%2Fking-ai/latest"]);
 });
 
-test("serviceNames selects King package and service names", () => {
-  assert.deepEqual(serviceNames("king"), {
-    packageName: "@suwujs/king",
-    serviceUnit: "king",
-    displayName: "King",
-    serviceLabel: "io.king.daemon"
+test("serviceNames selects King AI package and service names", () => {
+  assert.deepEqual(serviceNames("king-ai"), {
+    packageName: "@suwujs/king-ai",
+    serviceUnit: "king-ai",
+    displayName: "King AI",
+    serviceLabel: "io.king-ai.daemon"
   });
-  assert.equal(updateRegistryUrl("king"), "https://registry.npmjs.org/%40suwujs%2Fking/latest");
+  assert.equal(updateRegistryUrl("king-ai"), "https://registry.npmjs.org/%40suwujs%2Fking-ai/latest");
 });
 
 test("rotateLogsIfNeeded preserves previous log as daemon.log.1", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "king-service-"));
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-service-"));
   await mkdir(dir, { recursive: true });
   const log = join(dir, "daemon.log");
   await writeFile(log, "large", "utf8");
@@ -70,7 +70,7 @@ test("shouldKillDaemonCommand only matches active foreground daemon runs", () =>
   assert.equal(shouldKillDaemonCommand("tsx src/cli.ts agent computer --server http://localhost:8787"), true);
   assert.equal(shouldKillDaemonCommand("node dist/cli.js agent computer --status"), false);
   assert.equal(shouldKillDaemonCommand("node dist/cli.js agent computer --pair demo"), false);
-  assert.equal(shouldKillDaemonCommand("npx -y king@latest agent computer --server http://localhost:8787"), false);
+  assert.equal(shouldKillDaemonCommand("npx -y @suwujs/king-ai@latest agent computer --server http://localhost:8787"), false);
   assert.equal(shouldKillDaemonCommand("node dist/cli.js agent other"), false);
 });
 
@@ -95,17 +95,17 @@ test("parseLinuxMainPid ignores empty and zero pids", () => {
 });
 
 test("Windows service helpers render task names, wrappers, and status", () => {
-  assert.equal(windowsTaskName("king"), "King.BYOA.king");
-  const wrapper = buildWindowsServiceWrapper(["npx", "-y", "@suwujs/king@latest", "agent", "computer", "--server", "https://gui"]);
-  assert.match(wrapper, /KING_SUPERVISED=1/);
-  assert.match(wrapper, /@suwujs\/king@latest/);
+  assert.equal(windowsTaskName("king-ai"), "KingAI.BYOA.king-ai");
+  const wrapper = buildWindowsServiceWrapper(["npx", "-y", "@suwujs/king-ai@latest", "agent", "computer", "--server", "https://gui"]);
+  assert.match(wrapper, /KING_AI_SUPERVISED=1/);
+  assert.match(wrapper, /@suwujs\/king-ai@latest/);
   const status = parseWindowsTaskStatus([
-    "TaskName: \\King.BYOA.king",
+    "TaskName: \\KingAI.BYOA.king-ai",
     "Status: Running",
     "Last Result: 0"
   ].join("\r\n"));
   assert.deepEqual(status, {
-    taskName: "\\King.BYOA.king",
+    taskName: "\\KingAI.BYOA.king-ai",
     status: "Running",
     lastResult: "0"
   });
@@ -229,7 +229,7 @@ test("formatRunningStateSnapshot and watch snapshot summarize daemon state", () 
         detail: "usage limit reached",
         actions: [
           "Open codex locally and refresh quota, billing, credits, or subscription state.",
-          "Re-run: king agent computer --doctor"
+          "Re-run: king-ai agent computer --doctor"
         ]
       },
       configWarnings: [{
@@ -239,12 +239,12 @@ test("formatRunningStateSnapshot and watch snapshot summarize daemon state", () 
         detail: "Codex app-server thread reuse is best-effort."
       }],
       worktreePlans: [{
-        repoRoot: "/Users/fayon/workspace/github/king",
-        repoName: "king",
-        repoUrl: "git@github.com:fayon/king.git",
+        repoRoot: "/Users/fayon/workspace/github/king-ai",
+        repoName: "king-ai",
+        repoUrl: "git@github.com:sukbearai/king-ai.git",
         branch: "agent/demo-agent",
-        worktreePath: "/tmp/agents/demo-agent/king",
-        command: ["git", "-C", "/Users/fayon/workspace/github/king", "worktree", "add", "-B", "agent/demo-agent", "/tmp/agents/demo-agent/king"]
+        worktreePath: "/tmp/agents/demo-agent/king-ai",
+        command: ["git", "-C", "/Users/fayon/workspace/github/king-ai", "worktree", "add", "-B", "agent/demo-agent", "/tmp/agents/demo-agent/king-ai"]
       }],
       updatedAt: "2026-06-02T00:00:04.000Z"
     }],
@@ -261,12 +261,12 @@ test("formatRunningStateSnapshot and watch snapshot summarize daemon state", () 
   assert.match(snapshot, /usage: runs=2 completed=1 failed=1 35 tokens \(in=20, cache=5, out=10\) last=failed 1500ms/);
   assert.match(snapshot, /token budget: budget=40 used=35 remaining=5 state=warning/);
   assert.match(snapshot, /remediation: codex quota or billing limit is blocking runs/);
-  assert.match(snapshot, /Re-run: king agent computer --doctor/);
+  assert.match(snapshot, /Re-run: king-ai agent computer --doctor/);
   assert.match(snapshot, /config warning: idle-cached-without-resume - idle_cached has engine-specific resume semantics/);
   assert.match(snapshot, /skill snapshot: skills-demo \(takeover-context, workspace-conventions\) \/tmp\/snapshots\/skills-demo\/manifest\.json/);
   assert.match(snapshot, /host home entry: \.gitconfig -> \/tmp\/agents\/demo-agent\/\.gitconfig/);
   assert.match(snapshot, /host home entry: \.missing -> \/tmp\/agents\/demo-agent\/\.missing \(source does not exist\)/);
-  assert.match(snapshot, /worktree plan: king -> \/tmp\/agents\/demo-agent\/king \(agent\/demo-agent\) from git@github\.com:fayon\/king\.git/);
+  assert.match(snapshot, /worktree plan: king-ai -> \/tmp\/agents\/demo-agent\/king-ai \(agent\/demo-agent\) from git@github\.com:sukbearai\/king-ai\.git/);
   assert.match(snapshot, /events by category/);
   assert.match(snapshot, /agent:/);
   assert.match(snapshot, /agent\.hosting: demo-agent on codex/);
@@ -274,7 +274,7 @@ test("formatRunningStateSnapshot and watch snapshot summarize daemon state", () 
   assert.match(snapshot, /turn\.completed: run-1/);
 
   const watch = formatWatchSnapshot(stateWithEvents, new Date("2026-06-02T00:00:06.000Z"));
-  assert.match(watch, /king watch 2026-06-02T00:00:06\.000Z/);
+  assert.match(watch, /king-ai watch 2026-06-02T00:00:06\.000Z/);
   assert.match(watch, /running: 0\.1\.0 pid=123/);
   assert.match(watch, /paired: demo-computer @ http:\/\/localhost:8787/);
   assert.match(formatWatchSnapshot(null), /no running\.json found/);

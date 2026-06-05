@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import { cli, command } from "cleye";
 import { pathToFileURL } from "node:url";
-import { CURRENT_VERSION, DEFAULT_SERVER } from "./paths.js";
+import { CURRENT_VERSION, DEFAULT_SERVER, normalizeCommandName } from "./paths.js";
 import { doPair, doRun, runDoctor } from "./daemon.js";
 import { cleanupWorktrees, installService, isServiceInstalled, prepareWorktrees, printStatus, readRunningState, reloadService, restartService, stopService, tailLogs, uninstallService, watchStatus } from "./service.js";
-import type { CommandName } from "./service.js";
+import type { CommandName } from "./paths.js";
 import { runSkillCheck } from "./skill-check.js";
 import { runProjectProfile } from "./project-profile.js";
 import { formatUsageExpenses, formatUsageSummary, listUsageExpenses, summarizeAgentUsage, tokenBudgetFromEnv, usagePricingFromEnv } from "./usage.js";
@@ -17,12 +17,12 @@ import { scenarioTemplate } from "./team-workflow.js";
 import type { KingScenarioTemplate } from "./team-workflow.js";
 import type { EngineId } from "./types.js";
 
-export function commandNameFromArgv(_argv0?: string): CommandName {
-  return "king";
+export function commandNameFromArgv(argv0?: string): CommandName {
+  return normalizeCommandName(argv0);
 }
 
-export function versionText(_commandName: string, version = CURRENT_VERSION): string {
-  return `king ${version}`;
+export function versionText(commandName: string, version = CURRENT_VERSION): string {
+  return `${commandName} ${version}`;
 }
 
 export function defaultServerForCommand(_commandName: string): string {
@@ -33,7 +33,7 @@ export function hasExplicitServerArg(args: string[]): boolean {
   return args.some((arg) => arg === "--server" || arg.startsWith("--server="));
 }
 
-export function computerHelpText(defaultServer = DEFAULT_SERVER, commandName = "king"): string {
+export function computerHelpText(defaultServer = DEFAULT_SERVER, commandName = "king-ai"): string {
   return [
     `${commandName} agent computer - run local BYOA agents on THIS machine`,
     "",
@@ -243,7 +243,7 @@ const skillCheckCommand = command({
     }
   },
   help: {
-  description: "Validate king command references in SKILL.md files"
+  description: "Validate king-ai command references in SKILL.md files"
   }
 }, (argv) => {
   const commandName = commandNameFromArgv(process.argv[1]);
@@ -284,7 +284,7 @@ const usageCommand = command({
     },
     out: {
       type: String,
-      description: "Output path for `king usage export`"
+      description: "Output path for `king-ai usage export`"
     },
     results: {
       type: Boolean,
@@ -304,7 +304,7 @@ const usageCommand = command({
   const runtimeData = buildUsageRuntimeData(state, { budget: tokenBudgetFromEnv(), pricingRules });
   const usageSummary = summarizeAgentUsage(state?.agents ?? [], tokenBudgetFromEnv(), pricingRules);
   if (argv._.action === "export") {
-    const out = await writeUsageRuntimeData(argv.flags.out || "king-runtime-data.json", runtimeData);
+    const out = await writeUsageRuntimeData(argv.flags.out || "king-ai-runtime-data.json", runtimeData);
     console.log(`usage runtime data written: ${out}`);
     return;
   }
@@ -540,7 +540,7 @@ async function printHostCommandResult(request: HostCommandRequest, json: boolean
 const roleFlag = {
   role: {
     type: String,
-    description: "Act as a team role; applies opt-in governance/audit policy (or set KING_TEAM_ROLE)"
+    description: "Act as a team role; applies opt-in governance/audit policy (or set KING_AI_TEAM_ROLE)"
   }
 };
 
@@ -572,7 +572,7 @@ const hostRunCommand = command({
     },
     role: {
       type: String,
-      description: "Act as a team role; applies opt-in governance/audit policy (or set KING_TEAM_ROLE)"
+      description: "Act as a team role; applies opt-in governance/audit policy (or set KING_AI_TEAM_ROLE)"
     }
   },
   help: {
@@ -1056,7 +1056,7 @@ const hostWatchRunCommand = command({
     }
   },
   help: {
-    description: "Read King loop events from a host run output"
+    description: "Read King AI loop events from a host run output"
   }
 }, async (argv) => {
   const tail = Number.parseInt(argv.flags.tail, 10);
@@ -1177,7 +1177,7 @@ const hostRunResultsCommand = command({
     }
   },
   help: {
-    description: "Read King results.tsv rows from a host run output"
+    description: "Read King AI results.tsv rows from a host run output"
   }
 }, async (argv) => {
   const result = await runHostCommandFromCli({
@@ -1208,7 +1208,7 @@ const hostRunHeartbeatCommand = command({
     },
     file: {
       type: String,
-      description: "Path to .king/heartbeat.json"
+      description: "Path to .king-ai/heartbeat.json"
     },
     output: {
       type: String,

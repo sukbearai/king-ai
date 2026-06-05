@@ -40,11 +40,11 @@ function splitRoots(value: string | undefined): string[] {
 }
 
 export function sharedSkillRoots(env: NodeJS.ProcessEnv = process.env): string[] {
-  return splitRoots(env.KING_SHARED_SKILLS);
+  return splitRoots(env.KING_AI_SHARED_SKILLS);
 }
 
 export function sharedSkillSnapshotsRoot(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  return env.KING_SKILL_SNAPSHOTS_DIR;
+  return env.KING_AI_SKILL_SNAPSHOTS_DIR;
 }
 
 export async function listSharedSkills(sourceRoots: string[]): Promise<SharedSkill[]> {
@@ -89,7 +89,7 @@ export async function installSharedSkills(
 async function createSharedSkillSnapshot(agentHome: string, skills: SharedSkill[], env: NodeJS.ProcessEnv = process.env): Promise<SharedSkillSnapshot | undefined> {
   if (skills.length === 0) return undefined;
   const snapshotId = `skills-${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID()}`;
-  const root = join(sharedSkillSnapshotsRoot(env) || join(agentHome, ".king", "skill-snapshots"), snapshotId);
+  const root = join(sharedSkillSnapshotsRoot(env) || join(agentHome, ".king-ai", "skill-snapshots"), snapshotId);
   await mkdir(root, { recursive: true });
 
   const snapshotSkills: SharedSkillSnapshotSkill[] = [];

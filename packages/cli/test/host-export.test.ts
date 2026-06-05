@@ -13,7 +13,7 @@ function git(repo: string, args: string[]): string {
 }
 
 test("planHostExport previews workspace deliverables and dirty repo patches", async () => {
-  const root = await mkdtemp(join(tmpdir(), "king-host-export-"));
+  const root = await mkdtemp(join(tmpdir(), "king-ai-host-export-"));
   const workspace = join(root, "workspace");
   const repo = join(root, "repo");
   await mkdir(workspace, { recursive: true });
@@ -44,7 +44,7 @@ test("planHostExport previews workspace deliverables and dirty repo patches", as
 });
 
 test("exportHostArtifacts writes workspace files and repo patch bundle", async () => {
-  const root = await mkdtemp(join(tmpdir(), "king-host-export-write-"));
+  const root = await mkdtemp(join(tmpdir(), "king-ai-host-export-write-"));
   const workspace = join(root, "workspace");
   const repo = join(root, "repo");
   const output = join(root, "deliverables");
@@ -77,7 +77,7 @@ test("exportHostArtifacts writes workspace files and repo patch bundle", async (
     files: string[];
     writtenFiles: string[];
   };
-  assert.equal(meta.schema, "king.host-export.v1");
+  assert.equal(meta.schema, "king-ai.host-export.v1");
   assert.equal(meta.runId, "run-1");
   assert.equal(meta.workspaceFileCount, 1);
   assert.equal(meta.repoDirty, true);
@@ -88,7 +88,7 @@ test("exportHostArtifacts writes workspace files and repo patch bundle", async (
 });
 
 test("exportHostArtifacts includes capsule closure metadata", async () => {
-  const root = await mkdtemp(join(tmpdir(), "king-host-export-capsule-"));
+  const root = await mkdtemp(join(tmpdir(), "king-ai-host-export-capsule-"));
   const workspace = join(root, "workspace");
   const output = join(root, "deliverables");
   await mkdir(workspace, { recursive: true });
@@ -102,7 +102,7 @@ test("exportHostArtifacts includes capsule closure metadata", async () => {
     allowedPaths: ["packages/cli/src/host-export.ts"],
     acceptance: ["export contains capsule metadata"],
     reviewer: "cto",
-    verificationCommands: ["pnpm --filter @suwujs/king test"]
+    verificationCommands: ["pnpm --filter @suwujs/king-ai test"]
   }, () => new Date("2026-06-02T00:00:00.000Z"));
 
   const plan = await planHostExport({
@@ -127,7 +127,7 @@ test("exportHostArtifacts includes capsule closure metadata", async () => {
 });
 
 test("planHostExport rejects run IDs that are not safe filename segments", async () => {
-  const root = await mkdtemp(join(tmpdir(), "king-host-export-unsafe-"));
+  const root = await mkdtemp(join(tmpdir(), "king-ai-host-export-unsafe-"));
   const outside = join(root, "outside");
   await mkdir(outside, { recursive: true });
   await writeFile(join(outside, "keep.txt"), "keep", "utf8");

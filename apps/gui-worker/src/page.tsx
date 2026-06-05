@@ -1098,7 +1098,7 @@ function shellQuote(value) {
 const ASSIST_PARAMS = new URLSearchParams(location.search);
 const assistToken = ASSIST_PARAMS.get('assist') || '';
 const assistTenant = ASSIST_PARAMS.get('tenant') || '';
-const LANG_KEY = 'king:lang';
+const LANG_KEY = 'king-ai:lang';
 let currentLang = localStorage.getItem(LANG_KEY) || 'zh';
 const TRANSLATIONS = {
   zh: {
@@ -1130,7 +1130,7 @@ const TRANSLATIONS = {
     probeDevice: '测试连接',
     profileDevice: '探测环境',
     noRemoteDevices: '尚未配置远端测试机',
-    hostBridgeMissing: '未配置 KING_HOST_URL，无法连接本机 host server。',
+    hostBridgeMissing: '未配置 KING_AI_HOST_URL，无法连接本机 host server。',
     createAssistLink: '生成链接',
     revokeAssistLink: '撤销链接',
     assistNoLink: '尚未生成远程协助链接',
@@ -1225,7 +1225,7 @@ const TRANSLATIONS = {
     mainModelPlaceholder: '例如 opus / gpt-5，留空使用默认',
     fastModelPlaceholder: '留空使用默认小模型',
     windowPlaceholder: '例如 发布计划 / 客户 A',
-    meetKing: '认识 King',
+    meetKing: '认识 King AI',
     addComputerTitle: '添加电脑',
     addComputerLead: '你的 agents 需要一台电脑来运行。连接这台电脑后，它们会在这里上线。',
     addComputerRuntime: '需要先安装一种 agent runtime：Claude Code 或 Codex CLI。',
@@ -1268,7 +1268,7 @@ const TRANSLATIONS = {
     probeDevice: 'Test',
     profileDevice: 'Profile',
     noRemoteDevices: 'No remote test devices configured',
-    hostBridgeMissing: 'KING_HOST_URL is not configured; local host server is unavailable.',
+    hostBridgeMissing: 'KING_AI_HOST_URL is not configured; local host server is unavailable.',
     createAssistLink: 'Create link',
     revokeAssistLink: 'Revoke link',
     assistNoLink: 'No remote assist link yet',
@@ -1363,7 +1363,7 @@ const TRANSLATIONS = {
     mainModelPlaceholder: 'e.g. opus / gpt-5, blank means default',
     fastModelPlaceholder: 'Blank means default fast model',
     windowPlaceholder: 'e.g. Release plan / Client A',
-    meetKing: 'Meet King',
+    meetKing: 'Meet King AI',
     addComputerTitle: 'Add a Computer',
     addComputerLead: 'Your agents need somewhere to run. Connect a computer and they will come online there.',
     addComputerRuntime: 'Need an agent runtime installed: Claude Code or Codex CLI.',
@@ -1389,8 +1389,8 @@ const baseRequest = request;
 request = async function(path, options) {
   const next = options ? { ...options } : {};
   const headers = new Headers(next.headers || {});
-  if (assistToken) headers.set('X-King-Assist-Token', assistToken);
-  if (assistTenant) headers.set('X-King-Tenant', assistTenant);
+  if (assistToken) headers.set('X-King-AI-Assist-Token', assistToken);
+  if (assistTenant) headers.set('X-King-AI-Tenant', assistTenant);
   next.headers = headers;
   return baseRequest(path, next);
 };
@@ -1565,7 +1565,7 @@ function renderAttachmentTray() {
     return '<a class="attachment-token"' + href + ' title="' + escapeHtml(name) + '"><span>[' + escapeHtml(name) + ']</span><span class="attachment-size">' + escapeHtml(formatBytes(attachment.size)) + '</span></a>';
   }).join('') + '</div>';
 }
-	const REMOTE_ASSIST_URL_KEY = 'king:remoteAssistUrl';
+	const REMOTE_ASSIST_URL_KEY = 'king-ai:remoteAssistUrl';
 let remoteAssistUrl = localStorage.getItem(REMOTE_ASSIST_URL_KEY) || '';
 function setRemoteAssistUrl(value) {
   remoteAssistUrl = value || '';
@@ -1659,10 +1659,10 @@ async function resetCurrentAccountData() {
   if (status) status.textContent = t('dataResetting');
   try {
     await request('/gui/reset-state', { method: 'POST' });
-    activeConversationId = 'king-convo';
-    localStorage.setItem('king:activeConversationId', activeConversationId);
-    localStorage.removeItem('king:taskFilter');
-    localStorage.removeItem('king:addComputerDismissed');
+    activeConversationId = 'king-ai-convo';
+    localStorage.setItem('king-ai:activeConversationId', activeConversationId);
+    localStorage.removeItem('king-ai:taskFilter');
+    localStorage.removeItem('king-ai:addComputerDismissed');
     setRemoteAssistUrl('');
     resetAccountConfirming = false;
     visibleMessageCount = 20;
@@ -1921,10 +1921,10 @@ function agentDisplayName(summary, id) {
   const agent = agents.find(function(row) { return row.id === id; });
   return agent && (agent.name || agent.id) || id;
 }
-let taskFilterMode = localStorage.getItem('king:taskFilter') || 'all';
+let taskFilterMode = localStorage.getItem('king-ai:taskFilter') || 'all';
 function setTaskFilter(mode) {
   taskFilterMode = mode === 'done' || mode === 'active' ? mode : 'all';
-  localStorage.setItem('king:taskFilter', taskFilterMode);
+  localStorage.setItem('king-ai:taskFilter', taskFilterMode);
   renderTasks(window.__lastState || { tasks: [], artifacts: [] });
   const workspace = document.querySelector('.workspace');
   if (workspace) workspace.scrollTop = 0;
@@ -2106,7 +2106,7 @@ function taskBoardHtml(tasks) {
     '</div>';
 }
 function isAllConversationView() {
-  return !activeConversationId || activeConversationId === 'king-convo';
+  return !activeConversationId || activeConversationId === 'king-ai-convo';
 }
 function taskMatchesConversation(task) {
   if (isAllConversationView()) return true;
@@ -2144,7 +2144,7 @@ function derivedRequestTasks(state, existingTasks) {
         title: message.body || t('taskBoardTitle'),
         description: message.body || '',
         status: hasAgentReply ? 'done' : 'in_progress',
-        assignee: message.to_agent_id || 'king-ceo',
+        assignee: message.to_agent_id || 'king-ai-ceo',
         ownerRole: 'request',
         priority: 5,
         conversationId: message.conversation_id,
@@ -2360,7 +2360,7 @@ renderMessages = function(state, options) {
       return '<div class="system-line">' + escapeHtml(message.body) + '</div>';
     }
     const initial = message.author_kind === 'agent' ? displayInitial(message.author_name || 'AI', 'A') : currentHumanInitial();
-    const unreadClass = message.author_kind === 'human' && !(message.readBy || []).includes('king-ceo') ? ' highlight' : '';
+    const unreadClass = message.author_kind === 'human' && !(message.readBy || []).includes('king-ai-ceo') ? ' highlight' : '';
     const pendingClass = message.status === 'pending' ? ' pending' : '';
     const renderedBody = message.body_html || '';
     const bodyHtml = message.status === 'pending' ? '<span class="typing-dots"><span></span><span></span><span></span></span><span>' + escapeHtml(t('agentThinking')) + '</span>' : (renderedBody || escapeHtml(message.body));
@@ -2382,7 +2382,7 @@ renderMessages = function(state, options) {
   else updateBackToBottom();
 };
 function displayConversationTitle(row) {
-  if (!row || row.id === 'king-convo') return t('allWindow');
+  if (!row || row.id === 'king-ai-convo') return t('allWindow');
   return row.title || row.id;
 }
 function currentAgents() {
@@ -2397,7 +2397,7 @@ function selectedTeamAgentIds() {
   const ids = Array.from(document.querySelectorAll('input[name="newWindowTeamAgent"]:checked')).map(function(input) {
     return input.value;
   });
-  if (!ids.includes('king-ceo')) ids.unshift('king-ceo');
+  if (!ids.includes('king-ai-ceo')) ids.unshift('king-ai-ceo');
   return ids;
 }
 function renderAgentOptions() {
@@ -2405,7 +2405,7 @@ function renderAgentOptions() {
   const checks = document.getElementById('newWindowTeam');
   if (checks) {
     checks.innerHTML = agents.map(function(agent) {
-      const fixed = agent.id === 'king-ceo';
+      const fixed = agent.id === 'king-ai-ceo';
       const checked = fixed ? ' checked' : '';
       const disabled = fixed ? ' disabled' : '';
       return '<label class="agent-check"><input type="checkbox" name="newWindowTeamAgent" value="' + escapeHtml(agent.id) + '"' + checked + disabled + ' /><span>' + escapeHtml(agent.name || agent.id) + '</span></label>';
@@ -2425,7 +2425,7 @@ function setWindowMode(mode) {
 function setTeamAgentChecks(ids) {
   const wanted = new Set(ids || []);
   document.querySelectorAll('input[name="newWindowTeamAgent"]').forEach(function(input) {
-    input.checked = input.value === 'king-ceo' || wanted.has(input.value);
+    input.checked = input.value === 'king-ai-ceo' || wanted.has(input.value);
   });
 }
 createConversation = function() {
@@ -2452,7 +2452,7 @@ submitConversation = async function(event) {
   const input = document.getElementById('newWindowTitle');
   const title = input.value.trim();
   const mode = selectedWindowMode();
-  const coordinatorAgentId = 'king-ceo';
+  const coordinatorAgentId = 'king-ai-ceo';
   const teamAgentIds = mode === 'custom' ? selectedTeamAgentIds() : undefined;
   const submit = document.getElementById('newWindowSubmit');
   submit.disabled = true;
@@ -2464,7 +2464,7 @@ submitConversation = async function(event) {
       body: JSON.stringify({ title, teamMode: mode, coordinatorAgentId, teamAgentIds })
     });
     activeConversationId = result.conversation.id;
-    localStorage.setItem('king:activeConversationId', activeConversationId);
+    localStorage.setItem('king-ai:activeConversationId', activeConversationId);
     visibleMessageCount = 20;
     shouldStickToBottom = true;
     input.disabled = false;
@@ -2478,14 +2478,14 @@ submitConversation = async function(event) {
 renderConversations = function(summary) {
   const conversations = summary.conversations || [];
   if (conversations.length && !conversations.some(function(row) { return row.id === activeConversationId; })) activeConversationId = conversations[0].id;
-  const active = conversations.find(function(row) { return row.id === activeConversationId; }) || conversations[0] || { id: 'king-convo', title: 'all' };
+  const active = conversations.find(function(row) { return row.id === activeConversationId; }) || conversations[0] || { id: 'king-ai-convo', title: 'all' };
   const activeTitle = displayConversationTitle(active);
   document.querySelector('.channel-name').textContent = activeTitle;
   document.querySelector('.composer textarea').placeholder = 'Message #' + activeTitle;
-  document.querySelector('.hash').textContent = active.id === 'king-convo' ? '#' : '~';
+  document.querySelector('.hash').textContent = active.id === 'king-ai-convo' ? '#' : '~';
   document.getElementById('routeSummary').textContent = activeConversationStatus(summary, active);
   document.getElementById('conversationList').innerHTML = conversations.map(function(row) {
-    const deletable = row.id !== 'king-convo';
+    const deletable = row.id !== 'king-ai-convo';
     return '<div class="window-item' + (row.id === activeConversationId ? ' active' : '') + '"><button class="window-select" onclick="selectConversation(&quot;' + escapeHtml(row.id) + '&quot;)"><span class="window-name">' + escapeHtml(displayConversationTitle(row)) + '</span></button><span class="window-meta">' + escapeHtml(row.unread || 0) + '</span>' + (deletable ? '<button class="window-delete" onclick="deleteConversation(event, &quot;' + escapeHtml(row.id) + '&quot;)" aria-label="Delete window">x</button>' : '') + '</div>';
   }).join('');
 };
@@ -2577,8 +2577,8 @@ renderSummary = function(summary) {
   renderTeamStrip(summary);
   renderRemoteAssist(summary);
   if (summary.pairingLocator) {
-    pairCommandPrimary = 'king agent computer --pair ' + shellQuote(summary.pairingLocator);
-    pairCommandStart = 'king agent computer';
+    pairCommandPrimary = 'king-ai agent computer --pair ' + shellQuote(summary.pairingLocator);
+    pairCommandStart = 'king-ai agent computer';
     pairCommand = pairCommandPrimary + '\\n' + pairCommandStart;
     if (document.getElementById('computerDialog').open) renderComputerFlow();
   }
@@ -2682,7 +2682,7 @@ refresh();
       <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>King Chat</title>
+        <title>King AI Chat</title>
         <style dangerouslySetInnerHTML={{ __html: styles }} />
         <style dangerouslySetInnerHTML={{ __html: enhancementStyles }} />
       </head>

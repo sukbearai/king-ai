@@ -86,7 +86,7 @@ export interface KingAgentRoleLike {
   role?: string;
 }
 
-export const KING_ROLE_TEMPLATES: KingRoleTemplate[] = [
+export const KING_AI_ROLE_TEMPLATES: KingRoleTemplate[] = [
   {
     id: "planner",
     name: "Planner",
@@ -211,7 +211,7 @@ export function normalizeTeamRoleId(role: string): string {
   const value = role.trim();
   const aliases: Record<string, string> = {
     ceo: "planner",
-    "king-ceo": "planner",
+    "king-ai-ceo": "planner",
     cto: "reviewer",
     dev: "builder",
     devops: "ops",
@@ -228,7 +228,7 @@ export function roleTemplateForAgent(agent: KingAgentRoleLike): KingRoleTemplate
   if (explicit && isRoleTemplateId(explicit)) return explicit;
   if (agent.id === "dev") return "builder";
   if (agent.id === "reviewer") return "reviewer";
-  if (agent.id === "king-ceo") return "planner";
+  if (agent.id === "king-ai-ceo") return "planner";
   if (text.includes("tester")) return "tester";
   if (text.includes("doc-writer") || text.includes("doc writer") || text.includes("documentation")) return "doc-writer";
   if (text.includes("ops") || text.includes("devops") || text.includes("release")) return "ops";
@@ -249,13 +249,13 @@ export function requiredCapabilitiesForText(text: string): string[] {
 }
 
 export function roleTemplateById(id: KingRoleTemplateId): KingRoleTemplate {
-  const template = KING_ROLE_TEMPLATES.find((entry) => entry.id === id);
+  const template = KING_AI_ROLE_TEMPLATES.find((entry) => entry.id === id);
   if (!template) throw new Error(`unknown role template: ${id}`);
   return template;
 }
 
 function isRoleTemplateId(value: string): value is KingRoleTemplateId {
-  return KING_ROLE_TEMPLATES.some((template) => template.id === value);
+  return KING_AI_ROLE_TEMPLATES.some((template) => template.id === value);
 }
 
 export function scenarioTemplate(id: KingScenarioTemplate["id"]): KingScenarioTemplate {

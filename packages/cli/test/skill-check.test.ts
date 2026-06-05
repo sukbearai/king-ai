@@ -12,12 +12,12 @@ import {
   validateCommand
 } from "../src/skill-check.js";
 
-test("extractCommands finds king command references", () => {
+test("extractCommands finds king-ai command references", () => {
   const commands = extractCommands(`
-    Use \`king reply demo-convo hello\`.
-    Then run \`king task create "Fix docs"\`.
-    Avoid matching king CLI as a command description.
-    Repeated: king reply demo-convo again.
+    Use \`king-ai reply demo-convo hello\`.
+    Then run \`king-ai task create "Fix docs"\`.
+    Avoid matching king-ai CLI as a command description.
+    Repeated: king-ai reply demo-convo again.
   `);
   assert.deepEqual(commands, ["reply", "task create"]);
 });
@@ -35,12 +35,12 @@ test("validateCommand rejects stale command references", () => {
 });
 
 test("checkSkill reports invalid references and empty command warnings", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "king-skill-check-"));
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-skill-check-"));
   try {
     const skillDir = join(dir, "skill-a");
     await mkdir(skillDir);
     const skillFile = join(skillDir, "SKILL.md");
-    await writeFile(skillFile, "Use `king task remove old-task` after `king inbox`.\n", "utf8");
+    await writeFile(skillFile, "Use `king-ai task remove old-task` after `king-ai inbox`.\n", "utf8");
     const result = checkSkill(skillFile);
     assert.equal(result.skillName, "skill-a");
     assert.deepEqual(result.referencedCommands, ["task remove", "inbox"]);
@@ -52,18 +52,18 @@ test("checkSkill reports invalid references and empty command warnings", async (
     await writeFile(emptyFile, "No runtime commands here.\n", "utf8");
     const empty = checkSkill(emptyFile);
     assert.equal(empty.valid, true);
-    assert.deepEqual(empty.warnings, ["No king CLI commands referenced"]);
+    assert.deepEqual(empty.warnings, ["No king-ai CLI commands referenced"]);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
 });
 
 test("findSkillFiles and checkAllSkills scan nested skill folders", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "king-skill-tree-"));
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-skill-tree-"));
   try {
     await mkdir(join(dir, "outer", "inner"), { recursive: true });
-    await writeFile(join(dir, "outer", "SKILL.md"), "Run `king observe --json`.\n", "utf8");
-    await writeFile(join(dir, "outer", "inner", "SKILL.md"), "Run `king artifact put`.\n", "utf8");
+    await writeFile(join(dir, "outer", "SKILL.md"), "Run `king-ai observe --json`.\n", "utf8");
+    await writeFile(join(dir, "outer", "inner", "SKILL.md"), "Run `king-ai artifact put`.\n", "utf8");
     const files = findSkillFiles(dir);
     assert.equal(files.length, 2);
     const results = checkAllSkills(dir);
@@ -88,11 +88,11 @@ test("formatDashboard renders pass, warnings, and failures without unicode marke
       filePath: "/tmp/invalid/SKILL.md",
       referencedCommands: ["takeover"],
       invalidCommands: ["takeover"],
-      warnings: ["No king CLI commands referenced"],
+      warnings: ["No king-ai CLI commands referenced"],
       valid: false
     }
-  ], "king");
-  assert.match(text, /king skill-check/);
+  ], "king-ai");
+  assert.match(text, /king-ai skill-check/);
   assert.match(text, /\[ok\] valid/);
   assert.match(text, /\[fail\] invalid/);
   assert.match(text, /Invalid: takeover/);

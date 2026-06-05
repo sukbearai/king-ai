@@ -32,7 +32,7 @@ test("toJsonSafeHostLaunchPlan keeps infinite loops JSON-safe", () => {
 });
 
 test("createHostRunPlan validates local project dirs and renders a summary", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "king-host-run-"));
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-host-run-"));
   await writeFile(join(dir, "package.json"), "{}", "utf8");
 
   const plan = createHostRunPlan({
@@ -45,7 +45,7 @@ test("createHostRunPlan validates local project dirs and renders a summary", asy
       outputDir: "out"
     }
   }, {
-    KING_AGENT_WORKSPACE_ROOT: join(dir, ".agents")
+    KING_AI_AGENT_WORKSPACE_ROOT: join(dir, ".agents")
   } as NodeJS.ProcessEnv);
 
   assert.match(plan.runId, /^host-run-/);
@@ -60,8 +60,8 @@ test("createHostRunPlan validates local project dirs and renders a summary", asy
   assert.match(formatHostRunPlanSummary(plan), /host run: run project:/);
 });
 
-test("createHostRunPlan accepts King project run metadata without leaking secrets", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "king-host-project-spec-"));
+test("createHostRunPlan accepts King AI project run metadata without leaking secrets", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-host-project-spec-"));
   await writeFile(join(dir, "package.json"), "{}", "utf8");
 
   const plan = createHostRunPlan({
@@ -87,7 +87,7 @@ test("createHostRunPlan accepts King project run metadata without leaking secret
   assert.equal(plan.summary.includes("sync-secret"), false);
 });
 
-test("createHostRunPlan accepts King worker run options without leaking worker keys", () => {
+test("createHostRunPlan accepts King AI worker run options without leaking worker keys", () => {
   const plan = createHostRunPlan({
     goal: "run with local worker",
     options: {
@@ -148,11 +148,11 @@ test("createHostRunPlan rejects run IDs that are not safe filename segments", ()
     options: { outputDir: "out" }
   }, {}, ["codex"]);
   assert.equal(plan.runId, "safe-run_1.2");
-  assert.equal(plan.layout.baseDir, join(plan.options.outputDir, ".king-local", "safe-run_1.2"));
+  assert.equal(plan.layout.baseDir, join(plan.options.outputDir, ".king-ai-local", "safe-run_1.2"));
 });
 
 test("createHostLaunchPlan reports launch readiness and preflight issues", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "king-host-launch-"));
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-host-launch-"));
   await writeFile(join(dir, "package.json"), "{}", "utf8");
   await writeFile(join(dir, "agents.json"), "{\"agents\":[]}", "utf8");
   await writeFile(join(dir, ".env"), "DB9_TOKEN=secret-token\n", "utf8");
@@ -176,14 +176,14 @@ test("createHostLaunchPlan reports launch readiness and preflight issues", async
   assert.equal(ready.config.source, "project");
   assert.equal(ready.config.path, join(dir, "agents.json"));
   assert.equal(ready.config.exists, true);
-  assert.equal(ready.layout.baseDir, join(ready.options.outputDir, ".king-local", ready.runId));
+  assert.equal(ready.layout.baseDir, join(ready.options.outputDir, ".king-ai-local", ready.runId));
   assert.equal(ready.layout.configPath, join(ready.layout.baseDir, "agents.json"));
   assert.equal(ready.layout.workspaceRoot, join(ready.layout.baseDir, "agents"));
   assert.equal(ready.layout.sharedSkillsDir, join(ready.layout.baseDir, "shared-skills"));
   assert.equal(ready.layout.gitRoot, dir);
   assert.equal(ready.layout.loopEventsPath, join(ready.options.outputDir, "loop-events.ndjson"));
   assert.equal(ready.layout.resultsPath, join(ready.options.outputDir, "results.tsv"));
-  assert.equal(ready.layout.heartbeatPath, join(ready.options.outputDir, ".king", "heartbeat.json"));
+  assert.equal(ready.layout.heartbeatPath, join(ready.options.outputDir, ".king-ai", "heartbeat.json"));
   assert.equal(ready.layout.metaPath, join(ready.options.outputDir, "meta.json"));
   assert.equal(ready.layout.collaborationPath, join(ready.layout.baseDir, "collaboration.json"));
   assert.equal(ready.layout.tasksPath, join(ready.options.outputDir, "tasks.jsonl"));
@@ -194,11 +194,11 @@ test("createHostLaunchPlan reports launch readiness and preflight issues", async
   assert.deepEqual(ready.availableEngines, ["codex"]);
   assert.match(ready.launchSummary, /session: codex-cli runtime=codex codex=default \/ default/);
   assert.match(ready.launchSummary, /config: agents\.json \(project\) source=project exists=yes/);
-  assert.match(ready.launchSummary, /layout: .*\.king-local.* exists=no/);
-  assert.match(ready.launchSummary, /workspace: .*\.king-local.*agents/);
+  assert.match(ready.launchSummary, /layout: .*\.king-ai-local.* exists=no/);
+  assert.match(ready.launchSummary, /workspace: .*\.king-ai-local.*agents/);
   assert.match(ready.launchSummary, /ready: yes/);
   assert.match(ready.launchSummary, /warning\/project-not-git/);
-  assert.match(ready.suggestedCommands.join("\n"), /king project-profile/);
+  assert.match(ready.suggestedCommands.join("\n"), /king-ai project-profile/);
 
   const missingEngine = createHostLaunchPlan({
     goal: "ship feature",
@@ -233,7 +233,7 @@ test("parseHostGitStatus reads branch, upstream, ahead/behind, and changed paths
 });
 
 test("createHostLaunchPlan exposes read-only local git observation", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "king-host-git-"));
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-host-git-"));
   execFileSync("git", ["init"], { cwd: dir, stdio: "ignore" });
   await writeFile(join(dir, "package.json"), "{}", "utf8");
 
@@ -252,7 +252,7 @@ test("createHostLaunchPlan exposes read-only local git observation", async () =>
 });
 
 test("createHostLaunchPlan exposes explicit configPath metadata without reading config content", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "king-host-config-"));
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-host-config-"));
   const configPath = join(dir, "custom-agents.json");
   await writeFile(configPath, "{\"agents\":[{\"systemPrompt\":\"secret prompt\"}]}", "utf8");
 
@@ -272,7 +272,7 @@ test("createHostLaunchPlan exposes explicit configPath metadata without reading 
 });
 
 test("createHostLaunchPlan reports local layout while honoring explicit workspace roots", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "king-host-layout-"));
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-host-layout-"));
   const workspaceRoot = join(dir, "custom-agents");
   const outputDir = join(dir, "out");
 
@@ -286,13 +286,13 @@ test("createHostLaunchPlan reports local layout while honoring explicit workspac
   }, {}, ["claude"]);
 
   assert.equal(plan.layout.outputDir, outputDir);
-  assert.equal(plan.layout.baseDir, join(outputDir, ".king-local", plan.runId));
+  assert.equal(plan.layout.baseDir, join(outputDir, ".king-ai-local", plan.runId));
   assert.equal(plan.layout.workspaceRoot, workspaceRoot);
   assert.equal(plan.layout.sharedSkillsDir, join(plan.layout.baseDir, "shared-skills"));
   assert.equal(plan.layout.configPath, join(plan.layout.baseDir, "agents.json"));
   assert.equal(plan.layout.loopEventsPath, join(outputDir, "loop-events.ndjson"));
   assert.equal(plan.layout.resultsPath, join(outputDir, "results.tsv"));
-  assert.equal(plan.layout.heartbeatPath, join(outputDir, ".king", "heartbeat.json"));
+  assert.equal(plan.layout.heartbeatPath, join(outputDir, ".king-ai", "heartbeat.json"));
   assert.equal(plan.layout.metaPath, join(outputDir, "meta.json"));
   assert.equal(plan.layout.collaborationPath, join(plan.layout.baseDir, "collaboration.json"));
   assert.equal(plan.layout.tasksPath, join(outputDir, "tasks.jsonl"));
@@ -311,7 +311,7 @@ test("createHostLaunchPlan accepts local role profiles", () => {
   assert.match(plan.summary, /role profile: small/);
 });
 
-test("createHostLaunchPlan exposes King hybrid worker session metadata", () => {
+test("createHostLaunchPlan exposes King AI hybrid worker session metadata", () => {
   const plan = createHostLaunchPlan({
     goal: "run hybrid",
     options: {

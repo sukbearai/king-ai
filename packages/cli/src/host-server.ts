@@ -88,7 +88,7 @@ export type HostStatusServerOptions = {
 };
 
 export function hostServerPortFromEnv(env: NodeJS.ProcessEnv = process.env): number {
-  const raw = env.KING_HOST_PORT;
+  const raw = env.KING_AI_HOST_PORT;
   if (!raw) return DEFAULT_HOST_SERVER_PORT;
   const port = Number.parseInt(raw, 10);
   if (!Number.isFinite(port) || port < 0 || port > 65535) {
@@ -218,7 +218,7 @@ function decodePathPart(value: string): string {
 }
 
 function normalizeStatusStreamInterval(value: unknown): number {
-  const n = Number(value ?? process.env.KING_HOST_STATUS_STREAM_INTERVAL_MS ?? 1000);
+  const n = Number(value ?? process.env.KING_AI_HOST_STATUS_STREAM_INTERVAL_MS ?? 1000);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 1000;
 }
 
@@ -232,7 +232,7 @@ function buildHostCapabilities() {
   const commands = listHostCommands();
   return {
     ok: true,
-    service: "king host",
+    service: "king-ai host",
     readOnly: true,
     localhostOnly: true,
     remoteApi: false,
@@ -674,7 +674,7 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
       if (url.pathname === "/" || url.pathname === "/health") {
         sendJson(res, 200, {
           ok: true,
-          service: "king host",
+          service: "king-ai host",
           readOnly: true,
           commands: listHostCommands().map((entry) => entry.name)
         }, headOnly);
@@ -934,7 +934,7 @@ function attachHostRunAutoExecutor(server: Server, options: HostStatusServerOpti
 }
 
 function normalizeExecuteRunsInterval(value: unknown): number {
-  const n = Number(value ?? process.env.KING_HOST_EXECUTE_RUNS_INTERVAL_MS ?? 1000);
+  const n = Number(value ?? process.env.KING_AI_HOST_EXECUTE_RUNS_INTERVAL_MS ?? 1000);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 1000;
 }
 

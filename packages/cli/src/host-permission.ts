@@ -88,13 +88,13 @@ export function hostCommandPermissionAction(command: string, input?: unknown): K
 }
 
 export function resolveActorRole(request: HostPermissionRequest, env: NodeJS.ProcessEnv = process.env): string | undefined {
-  return cleanString(request.actorRole) ?? cleanString(env.KING_TEAM_ROLE);
+  return cleanString(request.actorRole) ?? cleanString(env.KING_AI_TEAM_ROLE);
 }
 
 export function resolveTeamSpec(deps: HostPermissionDeps = {}): KingTeamSpec {
   const provided = deps.teamSpec?.();
   if (provided) return provided;
-  const raw = (deps.env ?? process.env).KING_TEAM_SPEC;
+  const raw = (deps.env ?? process.env).KING_AI_TEAM_SPEC;
   if (raw && raw.trim()) {
     try {
       const parsed = JSON.parse(raw) as unknown;
@@ -108,7 +108,7 @@ export function resolveTeamSpec(deps: HostPermissionDeps = {}): KingTeamSpec {
 
 /**
  * Evaluate whether `request.actorRole` may run `command` under the team governance policy.
- * Governance is opt-in: when no role is resolved (request field or KING_TEAM_ROLE), trusted local
+ * Governance is opt-in: when no role is resolved (request field or KING_AI_TEAM_ROLE), trusted local
  * automation proceeds exactly as before. This is not the host security boundary.
  */
 export function evaluateHostCommandPermission(command: string, input: unknown, request: HostPermissionRequest, deps: HostPermissionDeps = {}): HostPermissionOutcome {

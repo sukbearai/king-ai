@@ -12,7 +12,7 @@ test("engineInstallAdvice renders missing PATH remediation", () => {
   assert.equal(advice.category, "missing_engine");
   assert.equal(advice.severity, "error");
   assert.match(formatRemediationBlock(advice), /codex CLI is not on PATH/);
-  assert.match(formatRemediationBlock(advice), /king agent computer --doctor/);
+  assert.match(formatRemediationBlock(advice), /king-ai agent computer --doctor/);
 });
 
 test("engineRemediationAdvice classifies auth, quota, rate, context, and unknown failures", () => {

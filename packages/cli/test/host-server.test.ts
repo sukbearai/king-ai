@@ -116,9 +116,9 @@ test("host server exposes remote test device configuration endpoints", async (t)
 
 test("host server port can be read from env", () => {
   assert.equal(hostServerPortFromEnv({}), DEFAULT_HOST_SERVER_PORT);
-  assert.equal(hostServerPortFromEnv({ KING_HOST_PORT: "8801" }), 8801);
-  assert.equal(hostServerPortFromEnv({ KING_HOST_PORT: "8802" }), 8802);
-  assert.throws(() => hostServerPortFromEnv({ KING_HOST_PORT: "99999" }), /between 0 and 65535/);
+  assert.equal(hostServerPortFromEnv({ KING_AI_HOST_PORT: "8801" }), 8801);
+  assert.equal(hostServerPortFromEnv({ KING_AI_HOST_PORT: "8802" }), 8802);
+  assert.throws(() => hostServerPortFromEnv({ KING_AI_HOST_PORT: "99999" }), /between 0 and 65535/);
 });
 
 test("createHostStatusServer serves read-only app endpoints", async (t) => {
@@ -462,7 +462,7 @@ test("createHostStatusServer serves read-only app endpoints", async (t) => {
 });
 
 test("createHostStatusServer exposes app run request REST endpoints", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "king-host-server-runs-"));
+  const root = await mkdtemp(join(tmpdir(), "king-ai-host-server-runs-"));
   const runsPath = join(root, "host-runs.ndjson");
   const readState = async () => ({
     version: "0.1.0",
@@ -496,9 +496,9 @@ test("createHostStatusServer exposes app run request REST endpoints", async (t) 
     JSON.stringify({ type: "loop.classified", runId: "rest-1", loop: 1, classification: "productive", timestamp: "2026-06-02T00:00:00.000Z" }),
     JSON.stringify({ type: "queue.backlog", runId: "rest-1", loop: 1, agent: "feedback", pendingMessages: 3, timestamp: "2026-06-02T00:00:01.000Z" })
   ].join("\n") + "\n", "utf8");
-  await mkdir(join(eventsOutput, ".king"), { recursive: true });
-  await writeFile(join(eventsOutput, ".king", "heartbeat.json"), JSON.stringify({
-    schema: "king.host-run-heartbeat.v1",
+  await mkdir(join(eventsOutput, ".king-ai"), { recursive: true });
+  await writeFile(join(eventsOutput, ".king-ai", "heartbeat.json"), JSON.stringify({
+    schema: "king-ai.host-run-heartbeat.v1",
     status: "running",
     runId: "rest-1",
     lastTick: "2026-06-02T00:00:02.000Z",
@@ -507,7 +507,7 @@ test("createHostStatusServer exposes app run request REST endpoints", async (t) 
     outputDir: eventsOutput
   }) + "\n", "utf8");
   await writeFile(join(eventsOutput, "meta.json"), JSON.stringify({
-    schema: "king.host-run-meta.v1",
+    schema: "king-ai.host-run-meta.v1",
     status: "prepared",
     runId: "rest-1",
     goal: "rest queued run",
@@ -516,7 +516,7 @@ test("createHostStatusServer exposes app run request REST endpoints", async (t) 
     actualLoops: 0,
     paths: {
       outputDir: eventsOutput,
-      heartbeatPath: join(eventsOutput, ".king", "heartbeat.json")
+      heartbeatPath: join(eventsOutput, ".king-ai", "heartbeat.json")
     }
   }) + "\n", "utf8");
 
@@ -556,8 +556,8 @@ test("createHostStatusServer exposes app run request REST endpoints", async (t) 
   const singleRunStreamFrame = new TextDecoder().decode(singleRunStreamChunk.value);
   assert.match(singleRunStreamFrame, /event: run/);
   assert.match(singleRunStreamFrame, /"id":"rest-1"/);
-  assert.match(singleRunStreamFrame, /"heartbeat":\{"schema":"king\.host-run-heartbeat\.v1"/);
-  assert.match(singleRunStreamFrame, /"meta":\{"schema":"king\.host-run-meta\.v1"/);
+  assert.match(singleRunStreamFrame, /"heartbeat":\{"schema":"king-ai\.host-run-heartbeat\.v1"/);
+  assert.match(singleRunStreamFrame, /"meta":\{"schema":"king-ai\.host-run-meta\.v1"/);
 
   const single = await fetch(`${baseUrl}/runs/rest-1`).then((res) => res.json()) as { ok?: boolean; json?: { request?: { status?: string } } };
   assert.equal(single.ok, true);
@@ -624,7 +624,7 @@ test("createHostStatusServer exposes app run request REST endpoints", async (t) 
   assert.equal(runMeta.json?.meta?.runId, "rest-1");
   assert.equal(runMeta.json?.meta?.status, "prepared");
   assert.equal(runMeta.json?.meta?.goal, "rest queued run");
-  assert.equal(runMeta.json?.meta?.paths?.heartbeatPath, join(eventsOutput, ".king", "heartbeat.json"));
+  assert.equal(runMeta.json?.meta?.paths?.heartbeatPath, join(eventsOutput, ".king-ai", "heartbeat.json"));
 
   const updated = await fetch(`${baseUrl}/runs/rest-1`, {
     method: "PATCH",
@@ -717,7 +717,7 @@ test("createHostStatusServer exposes app run request REST endpoints", async (t) 
 });
 
 test("createHostStatusServer exposes app export REST endpoints with policy", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "king-host-server-exports-"));
+  const root = await mkdtemp(join(tmpdir(), "king-ai-host-server-exports-"));
   const workspaceRoot = join(root, "workspace");
   const outputDir = join(root, "deliverables");
   await mkdir(workspaceRoot, { recursive: true });

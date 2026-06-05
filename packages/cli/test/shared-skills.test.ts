@@ -6,17 +6,17 @@ import { delimiter, join } from "node:path";
 import { installSharedSkills, listSharedSkills, sharedSkillRoots, sharedSkillSnapshotsRoot } from "../src/shared-skills.js";
 
 test("sharedSkillRoots reads KING skill roots", () => {
-  assert.deepEqual(sharedSkillRoots({ KING_SHARED_SKILLS: `/a${delimiter}/b,/c` } as NodeJS.ProcessEnv), ["/a", "/b", "/c"]);
+  assert.deepEqual(sharedSkillRoots({ KING_AI_SHARED_SKILLS: `/a${delimiter}/b,/c` } as NodeJS.ProcessEnv), ["/a", "/b", "/c"]);
   assert.deepEqual(sharedSkillRoots({} as NodeJS.ProcessEnv), []);
 });
 
 test("sharedSkillSnapshotsRoot reads KING snapshot roots", () => {
-  assert.equal(sharedSkillSnapshotsRoot({ KING_SKILL_SNAPSHOTS_DIR: "/snapshots" } as NodeJS.ProcessEnv), "/snapshots");
+  assert.equal(sharedSkillSnapshotsRoot({ KING_AI_SKILL_SNAPSHOTS_DIR: "/snapshots" } as NodeJS.ProcessEnv), "/snapshots");
   assert.equal(sharedSkillSnapshotsRoot({} as NodeJS.ProcessEnv), undefined);
 });
 
 test("listSharedSkills finds directories containing SKILL.md", async () => {
-  const root = await mkdtemp(join(tmpdir(), "king-shared-skills-"));
+  const root = await mkdtemp(join(tmpdir(), "king-ai-shared-skills-"));
   try {
     await mkdir(join(root, "research"), { recursive: true });
     await mkdir(join(root, "ignored"), { recursive: true });
@@ -31,15 +31,15 @@ test("listSharedSkills finds directories containing SKILL.md", async () => {
 });
 
 test("installSharedSkills copies shared skills into Claude and Codex homes", async () => {
-  const root = await mkdtemp(join(tmpdir(), "king-shared-skills-"));
-  const home = await mkdtemp(join(tmpdir(), "king-agent-home-"));
-  const snapshotsRoot = await mkdtemp(join(tmpdir(), "king-skill-snapshots-"));
+  const root = await mkdtemp(join(tmpdir(), "king-ai-shared-skills-"));
+  const home = await mkdtemp(join(tmpdir(), "king-ai-agent-home-"));
+  const snapshotsRoot = await mkdtemp(join(tmpdir(), "king-ai-skill-snapshots-"));
   try {
     await mkdir(join(root, "takeover-context"), { recursive: true });
     await writeFile(join(root, "takeover-context", "SKILL.md"), "# Takeover\n", "utf8");
     await writeFile(join(root, "takeover-context", "notes.md"), "extra\n", "utf8");
 
-    const result = await installSharedSkills(home, [root], { KING_SKILL_SNAPSHOTS_DIR: snapshotsRoot } as NodeJS.ProcessEnv);
+    const result = await installSharedSkills(home, [root], { KING_AI_SKILL_SNAPSHOTS_DIR: snapshotsRoot } as NodeJS.ProcessEnv);
 
     assert.deepEqual(result.installed.map((skill) => skill.name), ["takeover-context"]);
     assert.ok(result.snapshot);

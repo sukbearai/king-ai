@@ -79,7 +79,7 @@ export interface SkillCheckResult {
 
 export function extractCommands(content: string): string[] {
   const commands: string[] = [];
-  const regex = /\bking\s+([a-z][\w:-]*)(?:\s+([a-z][\w:-]*))?/g;
+  const regex = /\bking-ai\s+([a-z][\w:-]*)(?:\s+([a-z][\w:-]*))?/g;
   let match: RegExpExecArray | null;
   while ((match = regex.exec(content)) !== null) {
     const topLevel = match[1];
@@ -106,7 +106,7 @@ export function checkSkill(filePath: string): SkillCheckResult {
   const referencedCommands = extractCommands(content);
   const invalidCommands = referencedCommands.filter((commandReference) => !validateCommand(commandReference));
   const warnings: string[] = [];
-  if (referencedCommands.length === 0) warnings.push("No king CLI commands referenced");
+  if (referencedCommands.length === 0) warnings.push("No king-ai CLI commands referenced");
   return {
     skillName: basename(dirname(filePath)),
     filePath,
@@ -135,7 +135,7 @@ export function checkAllSkills(skillsDir: string): SkillCheckResult[] {
   return findSkillFiles(skillsDir).map((filePath) => checkSkill(filePath));
 }
 
-export function formatDashboard(results: SkillCheckResult[], commandName = "king"): string {
+export function formatDashboard(results: SkillCheckResult[], commandName = "king-ai"): string {
   const lines: string[] = [
     `${commandName} skill-check - Skill command reference health`,
     "=".repeat(56)
@@ -155,7 +155,7 @@ export function formatDashboard(results: SkillCheckResult[], commandName = "king
   return lines.join("\n");
 }
 
-export function runSkillCheck(skillsDir: string, commandName = "king"): void {
+export function runSkillCheck(skillsDir: string, commandName = "king-ai"): void {
   if (!existsSync(skillsDir)) {
     throw new Error(`Skills directory not found: ${skillsDir}`);
   }

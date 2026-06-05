@@ -8,9 +8,9 @@ const HOST_READY_TIMEOUT_MS = 6000;
 const HOST_READY_INTERVAL_MS = 250;
 const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const wranglerArgs = normalizeWranglerArgs(process.argv.slice(2));
-const hostUrl = process.env.KING_HOST_URL || DEFAULT_HOST_URL;
-const shouldAutostartHost = process.env.KING_HOST_AUTOSTART !== "0" && hostUrl === DEFAULT_HOST_URL;
-const hostArgs = ["--filter", "@suwujs/king", "dev", "host", "serve"];
+const hostUrl = process.env.KING_AI_HOST_URL || DEFAULT_HOST_URL;
+const shouldAutostartHost = process.env.KING_AI_HOST_AUTOSTART !== "0" && hostUrl === DEFAULT_HOST_URL;
+const hostArgs = ["--filter", "@suwujs/king-ai", "dev", "host", "serve"];
 const guiArgs = ["exec", "wrangler", "dev", "--config", "wrangler.toml", ...wranglerArgs];
 const children = new Set();
 let shuttingDown = false;
@@ -74,7 +74,7 @@ function shutdown(code = 0) {
 process.on("SIGINT", () => shutdown(0));
 process.on("SIGTERM", () => shutdown(0));
 
-if (process.env.KING_GUI_DEV_DRY_RUN === "1") {
+if (process.env.KING_AI_GUI_DEV_DRY_RUN === "1") {
   console.log(JSON.stringify({
     hostUrl,
     shouldAutostartHost,
@@ -86,18 +86,18 @@ if (process.env.KING_GUI_DEV_DRY_RUN === "1") {
 
 if (shouldAutostartHost) {
   if (await hostReady(hostUrl)) {
-    console.log(`[gui] using existing king host server at ${hostUrl}`);
+    console.log(`[gui] using existing King AI host server at ${hostUrl}`);
   } else {
-    console.log(`[gui] starting king host server at ${hostUrl}`);
+    console.log(`[gui] starting King AI host server at ${hostUrl}`);
     spawnChild("host", pnpm, hostArgs);
     if (!(await waitForHost(hostUrl))) {
-      console.warn(`[gui] king host server was not ready within ${HOST_READY_TIMEOUT_MS}ms; GUI will keep retrying through ${hostUrl}`);
+      console.warn(`[gui] King AI host server was not ready within ${HOST_READY_TIMEOUT_MS}ms; GUI will keep retrying through ${hostUrl}`);
     }
   }
-} else if (!process.env.KING_HOST_URL) {
-  console.warn("[gui] KING_HOST_AUTOSTART=0 set without KING_HOST_URL; host bridge features will be unavailable.");
+} else if (!process.env.KING_AI_HOST_URL) {
+  console.warn("[gui] KING_AI_HOST_AUTOSTART=0 set without KING_AI_HOST_URL; host bridge features will be unavailable.");
 }
 
 spawnChild("gui", pnpm, guiArgs, {
-  env: { KING_HOST_URL: hostUrl }
+  env: { KING_AI_HOST_URL: hostUrl }
 });

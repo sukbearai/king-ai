@@ -4,11 +4,11 @@ import { join } from "node:path";
 const SHIM = `#!/usr/bin/env node
 'use strict'
 ;(async () => {
-  const commandName = require('path').basename(process.argv[1] || process.argv[0] || 'king')
-  const url = process.env.KING_AGENT_RUNTIME_URL
-  let token = process.env.KING_AGENT_RUNTIME_TOKEN
-  const tenant = process.env.KING_AGENT_RUNTIME_TENANT
-  const tokenFile = process.env.KING_AGENT_RUNTIME_TOKEN_FILE
+  const commandName = require('path').basename(process.argv[1] || process.argv[0] || 'king-ai')
+  const url = process.env.KING_AI_AGENT_RUNTIME_URL
+  let token = process.env.KING_AI_AGENT_RUNTIME_TOKEN
+  const tenant = process.env.KING_AI_AGENT_RUNTIME_TENANT
+  const tokenFile = process.env.KING_AI_AGENT_RUNTIME_TOKEN_FILE
   if (tokenFile) {
     try {
       const fresh = require('fs').readFileSync(tokenFile, 'utf8').trim()
@@ -38,8 +38,8 @@ const SHIM = `#!/usr/bin/env node
   }
   const res = await fetch(url + '/cli', {
     method: 'POST',
-    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', ...(tenant ? { 'X-King-Tenant': tenant } : {}) },
-    body: JSON.stringify({ argv, agentId: process.env.KING_AGENT_ID || undefined, engine: process.env.KING_AGENT_ENGINE || undefined })
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', ...(tenant ? { 'X-King-AI-Tenant': tenant } : {}) },
+    body: JSON.stringify({ argv, agentId: process.env.KING_AI_AGENT_ID || undefined, engine: process.env.KING_AI_AGENT_ENGINE || undefined })
   })
   if (!res.ok) {
     const text = await res.text().catch(() => '')
@@ -50,7 +50,7 @@ const SHIM = `#!/usr/bin/env node
   if (typeof data.text === 'string' && data.text) process.stdout.write(data.text + '\\n')
   process.exit(typeof data.exitCode === 'number' ? data.exitCode : 0)
 })().catch((err) => {
-  const commandName = require('path').basename(process.argv[1] || process.argv[0] || 'king')
+  const commandName = require('path').basename(process.argv[1] || process.argv[0] || 'king-ai')
   console.error(commandName + ':', err && err.message ? err.message : err)
   process.exit(70)
 })
@@ -58,7 +58,7 @@ const SHIM = `#!/usr/bin/env node
 
 export async function writeShim(binDir: string): Promise<void> {
   await mkdir(binDir, { recursive: true });
-  for (const name of ["king"]) {
+  for (const name of ["king-ai"]) {
     const shim = join(binDir, name);
     await writeFile(shim, SHIM, "utf8");
     await chmod(shim, 0o755);

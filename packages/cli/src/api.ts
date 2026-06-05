@@ -14,7 +14,7 @@ export async function api<T>(serverUrl: string, path: string, init: RequestInit 
 }
 
 export function tenantHeader(tenantId?: string): Record<string, string> {
-  return tenantId ? { "X-King-Tenant": tenantId } : {};
+  return tenantId ? { "X-King-AI-Tenant": tenantId } : {};
 }
 
 export async function runtimePost<T>(serverUrl: string, path: string, token: string, body: unknown, tenantId?: string): Promise<T | null> {

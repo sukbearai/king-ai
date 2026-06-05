@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
 import { CONFIG_DIR, CURRENT_VERSION, RUNNING_STATE_PATH, SERVICE_LABEL } from "./paths.js";
+import type { CommandName } from "./paths.js";
 import { loadConfig } from "./config.js";
 import type { LocalCapabilities } from "./workspace.js";
 import type { WorktreePlan } from "./worktree.js";
@@ -18,8 +19,6 @@ import type { AgentConfigWarning } from "./agent-config-validation.js";
 
 const execFileP = promisify(execFile);
 const LOG_MAX_BYTES = 20 * 1024 * 1024;
-export type CommandName = "king";
-
 export type DarwinServiceStatus = {
   pid: number | null;
   lastExitStatus: number | null;
@@ -80,11 +79,16 @@ export function daemonLogPath(): string {
   return join(CONFIG_DIR, "daemon.log");
 }
 
-export function serviceNames(_commandName: CommandName = "king"): { packageName: string; serviceUnit: string; displayName: string; serviceLabel: string } {
-  return { packageName: "@suwujs/king", serviceUnit: "king", displayName: "King", serviceLabel: "io.king.daemon" };
+export function serviceNames(commandName: CommandName = "king-ai"): { packageName: string; serviceUnit: string; displayName: string; serviceLabel: string } {
+  return {
+    packageName: "@suwujs/king-ai",
+    serviceUnit: "king-ai",
+    displayName: "King AI",
+    serviceLabel: "io.king-ai.daemon"
+  };
 }
 
-export function updateRegistryUrl(commandName: CommandName = "king"): string {
+export function updateRegistryUrl(commandName: CommandName = "king-ai"): string {
   return `https://registry.npmjs.org/${encodeURIComponent(serviceNames(commandName).packageName)}/latest`;
 }
 
@@ -103,24 +107,24 @@ function resolveNpx(): string {
   return existsSync(sibling) ? sibling : "npx";
 }
 
-function darwinPlistPath(commandName: CommandName = "king"): string {
+function darwinPlistPath(commandName: CommandName = "king-ai"): string {
   return join(homedir(), "Library", "LaunchAgents", `${serviceNames(commandName).serviceLabel}.plist`);
 }
 
-function linuxUnitPath(commandName: CommandName = "king"): string {
+function linuxUnitPath(commandName: CommandName = "king-ai"): string {
   return join(homedir(), ".config", "systemd", "user", `${serviceNames(commandName).serviceUnit}.service`);
 }
 
-function windowsServiceDir(commandName: CommandName = "king"): string {
+function windowsServiceDir(commandName: CommandName = "king-ai"): string {
   return join(CONFIG_DIR, "service", commandName);
 }
 
-export function windowsTaskName(commandName: CommandName = "king"): string {
-  return `King.BYOA.${serviceNames(commandName).serviceUnit}`;
+export function windowsTaskName(commandName: CommandName = "king-ai"): string {
+  return `KingAI.BYOA.${serviceNames(commandName).serviceUnit}`;
 }
 
-export function windowsWrapperPath(commandName: CommandName = "king"): string {
-  return join(windowsServiceDir(commandName), "king-agent-computer.cmd");
+export function windowsWrapperPath(commandName: CommandName = "king-ai"): string {
+  return join(windowsServiceDir(commandName), "king-ai-agent-computer.cmd");
 }
 
 export function buildWindowsServiceWrapper(args: string[], logPath = daemonLogPath()): string {
@@ -128,8 +132,8 @@ export function buildWindowsServiceWrapper(args: string[], logPath = daemonLogPa
   return [
     "@echo off",
     "setlocal",
-    "set KING_SUPERVISED=1",
-    `echo [%date% %time%] starting king daemon>>${windowsCmdQuote(logPath)}`,
+    "set KING_AI_SUPERVISED=1",
+    `echo [%date% %time%] starting King AI daemon>>${windowsCmdQuote(logPath)}`,
     `${quotedArgs} >>${windowsCmdQuote(logPath)} 2>&1`
   ].join("\r\n") + "\r\n";
 }
@@ -163,7 +167,7 @@ export function parseLinuxMainPid(stdout: string): number | null {
   return Number.isFinite(pid) && pid > 0 ? pid : null;
 }
 
-export async function reloadService(commandName: CommandName = "king"): Promise<void> {
+export async function reloadService(commandName: CommandName = "king-ai"): Promise<void> {
   const names = serviceNames(commandName);
   if (process.platform === "darwin") {
     const plistPath = darwinPlistPath(commandName);
@@ -176,7 +180,7 @@ export async function reloadService(commandName: CommandName = "king"): Promise<
   }
 }
 
-export async function installService(serverUrl?: string, commandName: CommandName = "king"): Promise<void> {
+export async function installService(serverUrl?: string, commandName: CommandName = "king-ai"): Promise<void> {
   const names = serviceNames(commandName);
   const cfg = await loadConfig();
   if (!cfg) throw new Error(`pair this computer first: ${names.displayName} agent computer --pair <code>`);
@@ -200,7 +204,7 @@ export async function installService(serverUrl?: string, commandName: CommandNam
   <key>StandardErrorPath</key><string>${logPath}</string>
   <key>EnvironmentVariables</key><dict>
     <key>PATH</key><string>${process.env.PATH ?? ""}</string>
-    <key>KING_SUPERVISED</key><string>1</string>
+    <key>KING_AI_SUPERVISED</key><string>1</string>
   </dict>
 </dict></plist>`;
     await writeFile(plistPath, plist, "utf8");
@@ -213,7 +217,7 @@ export async function installService(serverUrl?: string, commandName: CommandNam
     await mkdir(dirname(linuxUnitPath(commandName)), { recursive: true });
     const unitPath = linuxUnitPath(commandName);
     const unit = `[Unit]
-Description=King BYOA daemon
+Description=King AI BYOA daemon
 After=network-online.target
 
 [Service]
@@ -221,7 +225,7 @@ ExecStart=${npx} -y ${names.packageName}@latest agent computer --server ${resolv
 Restart=always
 RestartSec=5
 Environment=PATH=${process.env.PATH ?? ""}
-Environment=KING_SUPERVISED=1
+Environment=KING_AI_SUPERVISED=1
 
 [Install]
 WantedBy=default.target
@@ -253,7 +257,7 @@ WantedBy=default.target
   throw new Error(`service installation is not supported on ${process.platform}`);
 }
 
-export async function uninstallService(commandName: CommandName = "king"): Promise<void> {
+export async function uninstallService(commandName: CommandName = "king-ai"): Promise<void> {
   const names = serviceNames(commandName);
   if (process.platform === "darwin") {
     const plistPath = darwinPlistPath(commandName);
@@ -279,7 +283,7 @@ export async function uninstallService(commandName: CommandName = "king"): Promi
   throw new Error(`service removal is not supported on ${process.platform}`);
 }
 
-export function isServiceInstalled(commandName: CommandName = "king"): boolean {
+export function isServiceInstalled(commandName: CommandName = "king-ai"): boolean {
   if (process.platform === "darwin") return existsSync(darwinPlistPath(commandName));
   if (process.platform === "linux") return existsSync(linuxUnitPath(commandName));
   if (process.platform === "win32") {
@@ -293,7 +297,7 @@ export function isServiceInstalled(commandName: CommandName = "king"): boolean {
   return false;
 }
 
-export async function restartService(commandName: CommandName = "king"): Promise<void> {
+export async function restartService(commandName: CommandName = "king-ai"): Promise<void> {
   const names = serviceNames(commandName);
   if (!isServiceInstalled(commandName)) {
     console.log(`service not installed; run: ${names.displayName} agent computer --install-service`);
@@ -372,7 +376,7 @@ export async function killRunningDaemons(): Promise<number> {
   return victims.length;
 }
 
-export async function stopService(commandName: CommandName = "king"): Promise<void> {
+export async function stopService(commandName: CommandName = "king-ai"): Promise<void> {
   if (isServiceInstalled(commandName)) {
     await uninstallService(commandName);
   } else {
@@ -382,7 +386,7 @@ export async function stopService(commandName: CommandName = "king"): Promise<vo
   console.log(`stopped; killed ${killed} foreground daemon process(es)`);
 }
 
-export async function printStatus(commandName: CommandName = "king"): Promise<void> {
+export async function printStatus(commandName: CommandName = "king-ai"): Promise<void> {
   const names = serviceNames(commandName);
   const cfg = await loadConfig();
   console.log(`cli:     ${names.displayName} ${CURRENT_VERSION} (this command)`);
@@ -439,7 +443,7 @@ export async function printStatus(commandName: CommandName = "king"): Promise<vo
   console.log(`logs:    ${process.platform === "linux" ? `journalctl --user -u ${names.serviceUnit} -f` : daemonLogPath()}`);
 }
 
-export async function resolveRunningVersion(livePid?: number | null, commandName: CommandName = "king"): Promise<string> {
+export async function resolveRunningVersion(livePid?: number | null, commandName: CommandName = "king-ai"): Promise<string> {
   const names = serviceNames(commandName);
   try {
     const state = JSON.parse(await readFile(RUNNING_STATE_PATH, "utf8")) as { version?: string; pid?: number };
@@ -591,9 +595,9 @@ export function formatRunningStateSnapshot(state: RunningState | null, eventMax 
 }
 
 export function formatWatchSnapshot(state: RunningState | null, now = new Date()): string {
-  const lines = [`king watch ${now.toISOString()}`];
+  const lines = [`king-ai watch ${now.toISOString()}`];
   if (!state) {
-    lines.push("running: no running.json found; start the daemon with `king agent computer`");
+    lines.push("running: no running.json found; start the daemon with `king-ai agent computer`");
     return lines.join("\n");
   }
   lines.push(`running: ${state.version} pid=${state.pid}`);
@@ -603,7 +607,7 @@ export function formatWatchSnapshot(state: RunningState | null, now = new Date()
   return lines.join("\n");
 }
 
-export async function watchStatus(intervalMs = Number(process.env.KING_WATCH_INTERVAL_MS) || 2000): Promise<void> {
+export async function watchStatus(intervalMs = Number(process.env.KING_AI_WATCH_INTERVAL_MS) || 2000): Promise<void> {
   const render = async () => {
     process.stdout.write("\x1Bc");
     console.log(formatWatchSnapshot(await readRunningState()));
@@ -660,7 +664,7 @@ export async function rotateLogsIfNeeded(logPath = join(CONFIG_DIR, "daemon.log"
   }
 }
 
-export async function checkForUpdate(fetchImpl: typeof fetch = fetch, commandName: CommandName = "king"): Promise<string | null> {
+export async function checkForUpdate(fetchImpl: typeof fetch = fetch, commandName: CommandName = "king-ai"): Promise<string | null> {
   try {
     const res = await fetchImpl(updateRegistryUrl(commandName), {
       headers: { Accept: "application/json" }
@@ -673,7 +677,7 @@ export async function checkForUpdate(fetchImpl: typeof fetch = fetch, commandNam
   }
 }
 
-export async function tailLogs(commandName: CommandName = "king"): Promise<void> {
+export async function tailLogs(commandName: CommandName = "king-ai"): Promise<void> {
   const names = serviceNames(commandName);
   const state = await readRunningState();
   const recent = formatRunningEventSummary(state, 3) || formatRecentRunningEvents(state);

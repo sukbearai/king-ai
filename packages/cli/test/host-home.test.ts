@@ -7,11 +7,11 @@ import { linkHostHomeEntries, resolveHostHomeEntry, resolveHostHomeEntryNames } 
 
 test("resolveHostHomeEntryNames reads KING entries", () => {
   assert.deepEqual(resolveHostHomeEntryNames({} as NodeJS.ProcessEnv), []);
-  assert.deepEqual(resolveHostHomeEntryNames({ KING_HOST_HOME_ENTRIES: `.gitconfig${delimiter}.npmrc,.ssh` } as NodeJS.ProcessEnv), [".gitconfig", ".npmrc", ".ssh"]);
+  assert.deepEqual(resolveHostHomeEntryNames({ KING_AI_HOST_HOME_ENTRIES: `.gitconfig${delimiter}.npmrc,.ssh` } as NodeJS.ProcessEnv), [".gitconfig", ".npmrc", ".ssh"]);
 });
 
 test("resolveHostHomeEntry accepts only single host-home dot entries", async () => {
-  const home = await mkdtemp(join(tmpdir(), "king-host-home-"));
+  const home = await mkdtemp(join(tmpdir(), "king-ai-host-home-"));
   try {
     assert.deepEqual(resolveHostHomeEntry(".gitconfig", home), {
       name: ".gitconfig",
@@ -30,15 +30,15 @@ test("resolveHostHomeEntry accepts only single host-home dot entries", async () 
 });
 
 test("linkHostHomeEntries symlinks explicit existing entries and records skips", async () => {
-  const home = await mkdtemp(join(tmpdir(), "king-host-home-"));
-  const agentHome = await mkdtemp(join(tmpdir(), "king-agent-home-"));
+  const home = await mkdtemp(join(tmpdir(), "king-ai-host-home-"));
+  const agentHome = await mkdtemp(join(tmpdir(), "king-ai-agent-home-"));
   try {
     await writeFile(join(home, ".gitconfig"), "[user]\n", "utf8");
     await mkdir(join(home, ".ssh"));
     await writeFile(join(home, ".ssh", "config"), "Host *\n", "utf8");
 
     const entries = await linkHostHomeEntries(agentHome, {
-      KING_HOST_HOME_ENTRIES: `.gitconfig,.ssh,.missing,notes.txt`
+      KING_AI_HOST_HOME_ENTRIES: `.gitconfig,.ssh,.missing,notes.txt`
     } as NodeJS.ProcessEnv, home);
 
     assert.deepEqual(entries.map((entry) => [entry.name, entry.linked]), [
@@ -57,8 +57,8 @@ test("linkHostHomeEntries symlinks explicit existing entries and records skips",
 });
 
 test("linkHostHomeEntries does not link host credentials by default", async () => {
-  const home = await mkdtemp(join(tmpdir(), "king-host-home-"));
-  const agentHome = await mkdtemp(join(tmpdir(), "king-agent-home-"));
+  const home = await mkdtemp(join(tmpdir(), "king-ai-host-home-"));
+  const agentHome = await mkdtemp(join(tmpdir(), "king-ai-agent-home-"));
   try {
     await writeFile(join(home, ".gitconfig"), "[user]\n", "utf8");
     await mkdir(join(home, ".ssh"));

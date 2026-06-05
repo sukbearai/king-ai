@@ -58,17 +58,17 @@ test("evaluateHostCommandPermission applies the default-deny team policy", () =>
   assert.equal(opsDeploy.decision, "human-decision");
 });
 
-test("evaluateHostCommandPermission honors KING_TEAM_ROLE env fallback", () => {
-  const outcome = evaluateHostCommandPermission("usage", {}, {}, { env: { KING_TEAM_ROLE: "reviewer" } });
+test("evaluateHostCommandPermission honors KING_AI_TEAM_ROLE env fallback", () => {
+  const outcome = evaluateHostCommandPermission("usage", {}, {}, { env: { KING_AI_TEAM_ROLE: "reviewer" } });
   assert.equal(outcome.enforced, true);
   assert.equal(outcome.role, "reviewer");
   assert.equal(outcome.decision, "allow");
 });
 
-test("resolveTeamSpec parses a valid KING_TEAM_SPEC and falls back when invalid", () => {
+test("resolveTeamSpec parses a valid KING_AI_TEAM_SPEC and falls back when invalid", () => {
   const custom = resolveTeamSpec({
     env: {
-      KING_TEAM_SPEC: JSON.stringify({
+      KING_AI_TEAM_SPEC: JSON.stringify({
         id: "custom",
         name: "Custom",
         roles: [],
@@ -80,7 +80,7 @@ test("resolveTeamSpec parses a valid KING_TEAM_SPEC and falls back when invalid"
   assert.equal(custom.id, "custom");
   assert.equal(custom.permissionPolicy.rules[0]?.allow.includes("view-cost"), true);
 
-  const fallback = resolveTeamSpec({ env: { KING_TEAM_SPEC: "not json" } });
+  const fallback = resolveTeamSpec({ env: { KING_AI_TEAM_SPEC: "not json" } });
   assert.equal(fallback.id, "default-team");
 });
 
@@ -106,7 +106,7 @@ test("runHostCommand skips role enforcement for trusted internal calls", async (
 });
 
 test("runHostCommand escalates a human-decision command into a decision card and audit trail", async () => {
-  const root = await mkdtemp(join(tmpdir(), "king-host-permission-"));
+  const root = await mkdtemp(join(tmpdir(), "king-ai-host-permission-"));
   const outputDir = join(root, "out");
   const timelinePath = join(root, "host-events.ndjson");
   const runsPath = join(root, "host-runs.ndjson");
@@ -164,7 +164,7 @@ test("runHostCommand escalates a human-decision command into a decision card and
 });
 
 test("runHostCommand gates decision approval behind approve-decision permission", async () => {
-  const root = await mkdtemp(join(tmpdir(), "king-host-permission-approve-"));
+  const root = await mkdtemp(join(tmpdir(), "king-ai-host-permission-approve-"));
   const outputDir = join(root, "out");
 
   await runHostCommand({

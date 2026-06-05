@@ -10,7 +10,7 @@ import { createBrowserHostSdk, createDefaultHostSdkRunOptions, createDefaultRunO
 import { startHostStatusServer } from "../src/host-server.js";
 
 test("host SDK wraps localhost host server commands", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "king-host-sdk-"));
+  const root = await mkdtemp(join(tmpdir(), "king-ai-host-sdk-"));
   const runsPath = join(root, "host-runs.ndjson");
   const workspaceRoot = join(root, "workspace");
   const outputDir = join(root, "deliverables");
@@ -73,7 +73,7 @@ test("host SDK wraps localhost host server commands", async (t) => {
 
   const health = await sdk.health();
   assert.equal(health.ok, true);
-  assert.equal(health.service, "king host");
+  assert.equal(health.service, "king-ai host");
 
   const status = await sdk.status();
   assert.equal(status.computerId, "demo-computer");
@@ -279,9 +279,9 @@ test("host SDK wraps localhost host server commands", async (t) => {
     JSON.stringify({ type: "loop.classified", runId: "sdk-events-1", loop: 1, classification: "idle", timestamp: "2026-06-02T00:00:00.000Z" }),
     JSON.stringify({ type: "loop.classified", runId: "sdk-events-1", loop: 2, classification: "productive", timestamp: "2026-06-02T00:00:01.000Z" })
   ].join("\n") + "\n", "utf8");
-  await mkdir(join(outputDir, ".king"), { recursive: true });
-  await writeFile(join(outputDir, ".king", "heartbeat.json"), JSON.stringify({
-    schema: "king.host-run-heartbeat.v1",
+  await mkdir(join(outputDir, ".king-ai"), { recursive: true });
+  await writeFile(join(outputDir, ".king-ai", "heartbeat.json"), JSON.stringify({
+    schema: "king-ai.host-run-heartbeat.v1",
     status: "completed",
     runId: "sdk-events-1",
     lastTick: "2026-06-02T00:00:02.000Z",
@@ -290,7 +290,7 @@ test("host SDK wraps localhost host server commands", async (t) => {
     outputDir
   }) + "\n", "utf8");
   await writeFile(join(outputDir, "meta.json"), JSON.stringify({
-    schema: "king.host-run-meta.v1",
+    schema: "king-ai.host-run-meta.v1",
     status: "prepared",
     runId: "sdk-events-1",
     goal: "queue event run",
@@ -299,7 +299,7 @@ test("host SDK wraps localhost host server commands", async (t) => {
     actualLoops: 0,
     paths: {
       outputDir,
-      heartbeatPath: join(outputDir, ".king", "heartbeat.json")
+      heartbeatPath: join(outputDir, ".king-ai", "heartbeat.json")
     }
   }) + "\n", "utf8");
   const eventRun = await sdk.submitRun({ goal: "queue event run", requestId: "sdk-events-1", options: { engine: "codex", outputDir } });
@@ -340,7 +340,7 @@ test("host SDK wraps localhost host server commands", async (t) => {
   assert.equal(runMeta.command, "run-meta");
   assert.equal(runMeta.json?.meta?.status, "prepared");
   assert.equal(runMeta.json?.meta?.maxLoops, "infinite");
-  assert.equal(runMeta.json?.meta?.paths?.heartbeatPath, join(outputDir, ".king", "heartbeat.json"));
+  assert.equal(runMeta.json?.meta?.paths?.heartbeatPath, join(outputDir, ".king-ai", "heartbeat.json"));
 
   const submitWatchController = new AbortController();
   const submitWatch = sdk.submitAndWatchRun(
@@ -446,7 +446,7 @@ test("host SDK wraps localhost host server commands", async (t) => {
   assert.equal(takeoverStateRun.done, false);
   assert.equal(takeoverStateRun.value.event, "state");
   assert.equal(takeoverStateRun.value.data.request?.id, "sdk-takeover-watch-state-1");
-  assert.equal(takeoverStateRun.value.data.meta?.paths?.heartbeatPath, join(outputDir, ".king", "heartbeat.json"));
+  assert.equal(takeoverStateRun.value.data.meta?.paths?.heartbeatPath, join(outputDir, ".king-ai", "heartbeat.json"));
 
   const requests = await sdk.runRequests(20);
   assert.equal(requests.ok, true);
@@ -582,7 +582,7 @@ test("host SDK validates base URLs", () => {
   assert.throws(() => createHostSdk({ baseUrl: "file:///tmp/host" }), /http or https/);
 });
 
-test("host SDK run option helpers normalize King aliases", () => {
+test("host SDK run option helpers normalize King AI aliases", () => {
   const defaults = createDefaultHostSdkRunOptions();
   assert.equal(defaults.loops, 100);
   assert.equal(defaults.pollIntervalSeconds, 15);
@@ -641,7 +641,7 @@ test("host SDK exposes helper names", async (t) => {
       version: "0.1.0",
       pid: 765,
       startedAt: "2026-06-02T00:00:00.000Z",
-      computerId: "king-sdk",
+      computerId: "king-ai-sdk",
       agents: [],
       events: []
     }),
@@ -661,10 +661,10 @@ test("host SDK exposes helper names", async (t) => {
   assert.equal(createTakeoverRunOptions().infinite, true);
 
   const sdk = createKingHostSdk({ baseUrl: `http://127.0.0.1:${port}` });
-  assert.equal((await sdk.status()).computerId, "king-sdk");
+  assert.equal((await sdk.status()).computerId, "king-ai-sdk");
 });
 
-test("host SDK supports King adapter factories", async () => {
+test("host SDK supports King AI adapter factories", async () => {
   interface ConcreteTakeoverOptions {
     projectPath: string;
     goalOverride?: string;
@@ -748,10 +748,10 @@ test("host SDK can be configured from env", async (t) => {
 
   const address = server.address();
   const port = typeof address === "object" && address ? address.port : 0;
-  assert.equal(hostBaseUrlFromEnv({ KING_HOST_PORT: String(port) }), `http://127.0.0.1:${port}`);
-  assert.equal(hostBaseUrlFromEnv({ KING_HOST_URL: `http://localhost:${port}` }), `http://localhost:${port}`);
+  assert.equal(hostBaseUrlFromEnv({ KING_AI_HOST_PORT: String(port) }), `http://127.0.0.1:${port}`);
+  assert.equal(hostBaseUrlFromEnv({ KING_AI_HOST_URL: `http://localhost:${port}` }), `http://localhost:${port}`);
 
-  const sdk = createEnvBackedHostSdk({ KING_HOST_URL: `http://127.0.0.1:${port}` });
+  const sdk = createEnvBackedHostSdk({ KING_AI_HOST_URL: `http://127.0.0.1:${port}` });
   assert.equal((await sdk.status()).computerId, "env-computer");
 });
 

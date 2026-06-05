@@ -17,9 +17,9 @@ import {
 import { listHostWorkflowCards } from "../src/host-ledger.js";
 import { scenarioTemplate } from "../src/team-workflow.js";
 
-test("computerHelpText matches King command sections", () => {
+test("computerHelpText matches King AI command sections", () => {
   const text = computerHelpText("https://runtime.example");
-  assert.match(text, /king agent computer - run local BYOA agents/);
+  assert.match(text, /king-ai agent computer - run local BYOA agents/);
   assert.match(text, /Setup:/);
   assert.match(text, /Background service:/);
   assert.match(text, /Diagnostics:/);
@@ -32,25 +32,20 @@ test("computerHelpText matches King command sections", () => {
   assert.match(text, /https:\/\/runtime\.example/);
 });
 
-test("computerHelpText can render king command names", () => {
-  const text = computerHelpText("https://runtime.example", "king");
-  assert.match(text, /king agent computer - run local BYOA agents/);
-  assert.match(text, /king agent computer --pair <code>/);
-});
-
-test("normalizeComputerArgs accepts King bare help and doctor", () => {
+test("normalizeComputerArgs accepts King AI bare help and doctor", () => {
   assert.deepEqual(normalizeComputerArgs(["computer", "help"]), ["computer", "--help"]);
   assert.deepEqual(normalizeComputerArgs(["computer", "doctor"]), ["computer", "--doctor"]);
   assert.deepEqual(normalizeComputerArgs(["computer", "--doctor"]), ["computer", "--doctor"]);
   assert.deepEqual(normalizeComputerArgs(["computer", "--pair", "help"]), ["computer", "--pair", "help"]);
 });
 
-test("commandNameFromArgv resolves the king command", () => {
-  assert.equal(commandNameFromArgv("/usr/local/bin/king"), "king");
+test("commandNameFromArgv resolves the primary command", () => {
+  assert.equal(commandNameFromArgv("/usr/local/bin/king-ai"), "king-ai");
+  assert.equal(commandNameFromArgv("/usr/local/bin/unknown"), "king-ai");
 });
 
 test("defaultServerForCommand preserves the production default", () => {
-  assert.equal(defaultServerForCommand("king"), "https://api.king.ai");
+  assert.equal(defaultServerForCommand("king-ai"), "https://api.king-ai.ai");
 });
 
 test("hasExplicitServerArg detects only user supplied server flags", () => {
@@ -61,7 +56,7 @@ test("hasExplicitServerArg detects only user supplied server flags", () => {
 });
 
 test("versionText includes the command name", () => {
-  assert.equal(versionText("king", "1.2.3"), "king 1.2.3");
+  assert.equal(versionText("king-ai", "1.2.3"), "king-ai 1.2.3");
 });
 
 test("pair continues into foreground daemon when no service is installed", () => {
@@ -69,12 +64,13 @@ test("pair continues into foreground daemon when no service is installed", () =>
   assert.equal(shouldRunAfterPair(true), false);
 });
 
-test("package exposes king as the top-level bin", async () => {
+test("package exposes king-ai as the top-level bin", async () => {
   const pkg = JSON.parse(await readFile(new URL("package.json", `file://${process.cwd()}/`), "utf8")) as {
     bin?: Record<string, string>;
     exports?: Record<string, { types?: string; default?: string }>;
   };
-  assert.equal(pkg.bin?.king, "dist/src/cli.js");
+  assert.equal(pkg.bin?.["king-ai"], "dist/src/cli.js");
+  assert.deepEqual(Object.keys(pkg.bin ?? {}), ["king-ai"]);
   assert.equal(pkg.exports?.["./host-sdk"]?.types, "./dist/src/host-sdk.d.ts");
   assert.equal(pkg.exports?.["./host-sdk"]?.default, "./dist/src/host-sdk.js");
   assert.equal(pkg.exports?.["./team-workflow"]?.default, "./dist/src/team-workflow.js");
@@ -84,7 +80,7 @@ test("package exposes king as the top-level bin", async () => {
 });
 
 test("package host SDK export is importable", async () => {
-  const sdk = await import("@suwujs/king/host-sdk");
+  const sdk = await import("@suwujs/king-ai/host-sdk");
   assert.equal(typeof sdk.createHostSdk, "function");
   assert.equal(typeof sdk.createBrowserHostSdk, "function");
   assert.equal(typeof sdk.createKingHostSdk, "function");
@@ -95,15 +91,15 @@ test("package host SDK export is importable", async () => {
 });
 
 test("package attachment and run-stream exports are importable", async () => {
-  const attachments = await import("@suwujs/king/attachments");
-  const runStream = await import("@suwujs/king/run-stream");
+  const attachments = await import("@suwujs/king-ai/attachments");
+  const runStream = await import("@suwujs/king-ai/run-stream");
   assert.equal(typeof attachments.normalizeRuntimeAttachments, "function");
   assert.equal(typeof runStream.initialRunStreamState, "function");
 });
 
 test("package team collaboration exports are importable", async () => {
-  const workflow = await import("@suwujs/king/team-workflow");
-  const routing = await import("@suwujs/king/team-routing");
+  const workflow = await import("@suwujs/king-ai/team-workflow");
+  const routing = await import("@suwujs/king-ai/team-routing");
   assert.equal(typeof workflow.defaultTeamSpec, "function");
   assert.equal(typeof workflow.roleTemplateForAgent, "function");
   assert.equal(typeof workflow.requiredCapabilitiesForText, "function");
@@ -155,7 +151,7 @@ test("top-level help examples include local project profiling", async () => {
 });
 
 test("materializeTeamScenario writes built-in scenario cards to the workflow ledger", async () => {
-  const outputDir = join(await mkdtemp(join(tmpdir(), "king-team-scenario-")), "out");
+  const outputDir = join(await mkdtemp(join(tmpdir(), "king-ai-team-scenario-")), "out");
   const result = await materializeTeamScenario(scenarioTemplate("bug-investigation"), outputDir, "planner");
   assert.equal(result.cards.length, 4);
   assert.match(formatMaterializedTeamScenario(result), /workflow cards: 4/);

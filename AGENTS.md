@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This is a pnpm workspace for a local BYOA multi-agent collaboration system. The publishable CLI package lives in `packages/cli/`; `packages/cli/src/cli.ts` defines the `king` command, `packages/cli/src/daemon.ts` coordinates pairing and runner startup, `packages/cli/src/runner.ts` handles per-agent runtime loops, and `packages/cli/src/engine.ts` adapts local `claude` and `codex` CLIs. Shared runtime types are in `packages/cli/src/types.ts`.
+This is the `sukbearai/king-ai` pnpm workspace for a local BYOA multi-agent collaboration system. The publishable CLI package lives in `packages/cli/`; `packages/cli/src/cli.ts` defines the `king-ai` command, `packages/cli/src/daemon.ts` coordinates pairing and runner startup, `packages/cli/src/runner.ts` handles per-agent runtime loops, and `packages/cli/src/engine.ts` adapts local `claude` and `codex` CLIs. Shared runtime types are in `packages/cli/src/types.ts`.
 
 Multi-role collaboration logic is part of the core product. `packages/cli/src/team-workflow.ts` defines role templates, team specs, permissions, and built-in workflow scenarios; `packages/cli/src/team-routing.ts` handles capability-first owner selection, reviews, handoffs, and human-decision routing; `packages/cli/src/host-control.ts` applies host command governance and workflow materialization. When changing agent/runtime behavior, preserve the distinction between the local execution boundary and the collaboration governance layer.
 
@@ -37,4 +37,4 @@ Recent commits use Conventional Commit prefixes such as `feat:` and `fix:`; cont
 
 ## Security & Configuration Tips
 
-This daemon bridges remote runtime events to local CLI processes and is not an OS sandbox. Treat `serverUrl`, `deviceToken`, runtime tokens, and per-agent homes under `~/.king/` as sensitive. Do not log full tokens or persist secrets outside the existing config/token paths.
+This daemon bridges remote runtime events to local CLI processes and is not an OS sandbox. Treat `serverUrl`, `deviceToken`, runtime tokens, and per-agent homes under `~/.king-ai/` as sensitive. Do not log full tokens or persist secrets outside the existing config/token paths.

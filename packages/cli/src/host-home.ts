@@ -22,7 +22,7 @@ function splitEntries(value?: string): string[] {
 }
 
 export function resolveHostHomeEntryNames(env: NodeJS.ProcessEnv = process.env): string[] {
-  return splitEntries(env.KING_HOST_HOME_ENTRIES);
+  return splitEntries(env.KING_AI_HOST_HOME_ENTRIES);
 }
 
 export function resolveHostHomeEntry(entry: string, home = homedir()): { name: string; source: string } | null {

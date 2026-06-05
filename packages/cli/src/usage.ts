@@ -169,12 +169,12 @@ export function formatAgentRunStats(stats?: AgentRunStats): string {
 }
 
 export function tokenBudgetFromEnv(env: NodeJS.ProcessEnv = process.env): number | null {
-  const budget = envNum(env.KING_TOKEN_BUDGET);
+  const budget = envNum(env.KING_AI_TOKEN_BUDGET);
   return budget > 0 ? budget : null;
 }
 
 export function usagePricingFromEnv(env: NodeJS.ProcessEnv = process.env): UsagePricingRule[] {
-  const raw = env.KING_USAGE_PRICING;
+  const raw = env.KING_AI_USAGE_PRICING;
   if (!raw) return [];
   try {
     return normalizeUsagePricing(JSON.parse(raw));

@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { deleteRemoteDevice, listRemoteDeviceSummaries, loadRemoteDevicesConfig, saveRemoteDevicesConfig, setDefaultRemoteDevice, upsertRemoteDevice } from "../src/remote-devices.js";
 
 test("remote devices config normalizes and redacts summaries", async () => {
-  const root = await mkdtemp(join(tmpdir(), "king-remote-devices-"));
+  const root = await mkdtemp(join(tmpdir(), "king-ai-remote-devices-"));
   const path = join(root, "devices.json");
   const saved = await saveRemoteDevicesConfig({
     defaultDevice: "test-61",
@@ -37,7 +37,7 @@ test("remote devices config supports upsert delete and default", () => {
     id: "test-62",
     host: "10.12.9.62",
     user: "root",
-    passwordEnv: "KING_TEST_62_PASSWORD"
+    passwordEnv: "KING_AI_TEST_62_PASSWORD"
   });
   assert.equal(config.defaultDevice, "test-62");
   assert.equal(config.devices.length, 1);

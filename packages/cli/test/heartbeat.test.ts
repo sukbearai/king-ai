@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { FileHeartbeat } from "../src/heartbeat.js";
 
 test("FileHeartbeat writes liveness data and increments loop count", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "king-heartbeat-"));
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-heartbeat-"));
   const path = join(dir, "nested", "heartbeat.json");
   const heartbeat = new FileHeartbeat(path, {
     pid: 123,

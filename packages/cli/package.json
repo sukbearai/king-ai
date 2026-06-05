@@ -1,10 +1,10 @@
 {
-  "name": "@suwujs/king",
+  "name": "@suwujs/king-ai",
   "version": "0.1.0",
-  "description": "A local BYOA agent daemon that bridges remote runtime events to Claude or Codex CLI.",
+  "description": "King AI, a local BYOA agent daemon that bridges remote runtime events to Claude or Codex CLI.",
   "type": "module",
   "bin": {
-    "king": "dist/src/cli.js"
+    "king-ai": "dist/src/cli.js"
   },
   "exports": {
     "./host-sdk": {

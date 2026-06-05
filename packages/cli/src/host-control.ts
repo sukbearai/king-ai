@@ -114,8 +114,8 @@ const COMMANDS: HostCommandDefinition[] = [
   { name: "feedback-summary", description: "Summarize run feedback and skill metrics.", destructive: false },
   { name: "cron-check", description: "Evaluate local cron schedules and emit matching run events.", destructive: false },
   { name: "emit-run-event", description: "Append an app-facing event to a prepared host run output.", destructive: false },
-  { name: "watch-run", description: "Read King loop events from a prepared host run output.", destructive: false },
-  { name: "run-results", description: "Read King results.tsv rows from a prepared host run output.", destructive: false },
+  { name: "watch-run", description: "Read King AI loop events from a prepared host run output.", destructive: false },
+  { name: "run-results", description: "Read King AI results.tsv rows from a prepared host run output.", destructive: false },
   { name: "run-heartbeat", description: "Read a prepared or executing host run heartbeat file.", destructive: false },
   { name: "run-meta", description: "Read prepared host run metadata from a run output.", destructive: false },
   { name: "plan-export", description: "Preview host artifact and repo patch export outputs.", destructive: false },
@@ -263,7 +263,7 @@ async function executeHostCommand(request: HostCommandRequest, deps: HostCommand
         title: `Human decision marker required: ${command} (${permission.action})`,
         ownerRole: permission.role,
         decisionBy: permission.rule?.requireReviewBy ?? "human",
-        detail: `Role ${permission.role} requested ${permission.action} via ${command}; ${approval.reason ?? "human decision marker required"}. Retry with humanApproved=true and approvedBy=<approver different from ${permission.role}>. Role governance is opt-in for trusted local automation; omit actorRole/KING_TEAM_ROLE when this command should run unattended.`,
+        detail: `Role ${permission.role} requested ${permission.action} via ${command}; ${approval.reason ?? "human decision marker required"}. Retry with humanApproved=true and approvedBy=<approver different from ${permission.role}>. Role governance is opt-in for trusted local automation; omit actorRole/KING_AI_TEAM_ROLE when this command should run unattended.`,
         metadata: { blockedCommand: command, action: permission.action, requestedRole: permission.role, reason: approval.reason }
       }, deps.now);
       return {

@@ -38,7 +38,7 @@ export interface HostExportResult extends HostExportPlan {
 }
 
 export interface HostExportMeta {
-  schema: "king.host-export.v1";
+  schema: "king-ai.host-export.v1";
   runId: string;
   exportedAt: string;
   outputDir: string;
@@ -166,7 +166,7 @@ export function formatHostExportPlan(plan: HostExportPlan): string {
 
 export function createHostExportMeta(plan: HostExportPlan, writtenFiles: string[], now: Date = new Date()): HostExportMeta {
   return {
-    schema: "king.host-export.v1",
+    schema: "king-ai.host-export.v1",
     runId: plan.runId,
     exportedAt: now.toISOString(),
     outputDir: plan.outputDir,

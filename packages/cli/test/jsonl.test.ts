@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { appendJsonl, compactJsonl, readJsonl } from "../src/jsonl.js";
 
 test("appendJsonl serializes concurrent writes without interleaving lines", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "king-jsonl-"));
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-jsonl-"));
   const path = join(dir, "log.jsonl");
   const count = 200;
   // Fire all appends concurrently; the per-path lock must serialize them into intact lines.
@@ -25,7 +25,7 @@ test("appendJsonl serializes concurrent writes without interleaving lines", asyn
 });
 
 test("compactJsonl rewrites the log into the reduced snapshot atomically", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "king-jsonl-compact-"));
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-jsonl-compact-"));
   const path = join(dir, "state.jsonl");
   await appendJsonl(path, { id: "a", v: 1 });
   await appendJsonl(path, { id: "b", v: 1 });
@@ -44,6 +44,6 @@ test("compactJsonl rewrites the log into the reduced snapshot atomically", async
 });
 
 test("readJsonl returns an empty list for a missing file", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "king-jsonl-missing-"));
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-jsonl-missing-"));
   assert.deepEqual(await readJsonl(join(dir, "nope.jsonl")), []);
 });

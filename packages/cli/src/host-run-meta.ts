@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 export interface HostRunMetaData {
-  schema: "king.host-run-meta.v1";
+  schema: "king-ai.host-run-meta.v1";
   status: string;
   runId: string;
   goal?: string;
@@ -88,13 +88,13 @@ export async function updateHostRunMeta(input: HostRunMetaUpdateInput): Promise<
   const existing = await readHostRunMeta({ file });
   const now = (input.now ?? (() => new Date()))().toISOString();
   const base: HostRunMetaData = existing.meta ?? {
-    schema: "king.host-run-meta.v1",
+    schema: "king-ai.host-run-meta.v1",
     status: input.status,
     runId: input.runId
   };
   const next: HostRunMetaData = {
     ...base,
-    schema: "king.host-run-meta.v1",
+    schema: "king-ai.host-run-meta.v1",
     runId: base.runId || input.runId,
     status: cleanString(input.status) ?? base.status,
     updatedAt: now,
@@ -116,10 +116,10 @@ export async function updateHostRunMeta(input: HostRunMetaUpdateInput): Promise<
 function parseHostRunMeta(text: string): HostRunMetaData | null {
   try {
     const parsed = JSON.parse(text) as Partial<HostRunMetaData>;
-    if (!parsed || parsed.schema !== "king.host-run-meta.v1" || typeof parsed.runId !== "string") return null;
+    if (!parsed || parsed.schema !== "king-ai.host-run-meta.v1" || typeof parsed.runId !== "string") return null;
     return {
       ...parsed,
-      schema: "king.host-run-meta.v1",
+      schema: "king-ai.host-run-meta.v1",
       status: typeof parsed.status === "string" ? parsed.status : "",
       runId: parsed.runId,
       goal: typeof parsed.goal === "string" ? parsed.goal : undefined,

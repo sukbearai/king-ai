@@ -17,7 +17,7 @@ test("host commands expose only low-risk allowlisted actions", () => {
 });
 
 test("runHostCommand maintains first-class workflow objects", async () => {
-  const root = await mkdtemp(join(tmpdir(), "king-host-workflow-"));
+  const root = await mkdtemp(join(tmpdir(), "king-ai-host-workflow-"));
   const outputDir = join(root, "out");
 
   const initiative = await runHostCommand({
@@ -87,7 +87,7 @@ test("runHostCommand maintains first-class workflow objects", async () => {
 });
 
 test("runHostCommand maintains local task capsule agenda and feedback ledgers", async () => {
-  const root = await mkdtemp(join(tmpdir(), "king-host-ledger-"));
+  const root = await mkdtemp(join(tmpdir(), "king-ai-host-ledger-"));
   const outputDir = join(root, "out");
 
   await runHostCommand({
@@ -130,7 +130,7 @@ test("runHostCommand maintains local task capsule agenda and feedback ledgers", 
       allowedPaths: ["packages/cli/src/host-ledger.ts"],
       acceptance: ["agenda marks task ready"],
       reviewer: "cto",
-      verificationCommands: ["pnpm --filter @suwujs/king test"]
+      verificationCommands: ["pnpm --filter @suwujs/king-ai test"]
     }
   }, {
     now: () => new Date("2026-06-02T00:00:03.000Z")
@@ -160,7 +160,7 @@ test("runHostCommand maintains local task capsule agenda and feedback ledgers", 
 });
 
 test("runHostCommand cron-check emits matching local run events", async () => {
-  const root = await mkdtemp(join(tmpdir(), "king-host-cron-"));
+  const root = await mkdtemp(join(tmpdir(), "king-ai-host-cron-"));
   const outputDir = join(root, "out");
 
   const result = await runHostCommand({
@@ -187,7 +187,7 @@ test("runHostCommand cron-check emits matching local run events", async () => {
 });
 
 test("runHostCommand emits app events into host run loop event files", async () => {
-  const root = await mkdtemp(join(tmpdir(), "king-host-command-emit-event-"));
+  const root = await mkdtemp(join(tmpdir(), "king-ai-host-command-emit-event-"));
   const runsPath = join(root, "host-runs.ndjson");
   const outputDir = join(root, "out");
 
@@ -244,7 +244,7 @@ test("runHostCommand emits app events into host run loop event files", async () 
 });
 
 test("runHostCommand records and reads host command timeline", async () => {
-  const root = await mkdtemp(join(tmpdir(), "king-host-command-timeline-"));
+  const root = await mkdtemp(join(tmpdir(), "king-ai-host-command-timeline-"));
   const timelinePath = join(root, "host-events.ndjson");
   const readState = async () => ({
     version: "0.1.0",
@@ -275,7 +275,7 @@ test("runHostCommand records and reads host command timeline", async () => {
 });
 
 test("runHostCommand plans and writes host exports", async () => {
-  const root = await mkdtemp(join(tmpdir(), "king-host-command-export-"));
+  const root = await mkdtemp(join(tmpdir(), "king-ai-host-command-export-"));
   const workspace = join(root, "workspace");
   await mkdir(workspace, { recursive: true });
   await writeFile(join(workspace, "result.txt"), "done", "utf8");
@@ -405,7 +405,7 @@ test("runHostCommand returns status, usage, events, and doctor results", async (
 });
 
 test("runHostCommand materializes host run layouts only after confirmation", async () => {
-  const root = await mkdtemp(join(tmpdir(), "king-host-command-layout-"));
+  const root = await mkdtemp(join(tmpdir(), "king-ai-host-command-layout-"));
   const projectDir = join(root, "project");
   await mkdir(join(projectDir, ".git"), { recursive: true });
   await mkdir(join(projectDir, "agents", "dev"), { recursive: true });
@@ -449,7 +449,7 @@ test("runHostCommand materializes host run layouts only after confirmation", asy
   assert.equal(json.writtenFiles?.some((file) => file.endsWith("collaboration.json")), true);
   assert.equal(json.writtenFiles?.some((file) => file.endsWith("loop-events.ndjson")), true);
   assert.equal(json.writtenFiles?.some((file) => file.endsWith("results.tsv")), true);
-  assert.equal(json.writtenFiles?.some((file) => file.includes(`${join(".king", "heartbeat.json")}`)), true);
+  assert.equal(json.writtenFiles?.some((file) => file.includes(`${join(".king-ai", "heartbeat.json")}`)), true);
   assert.equal(json.writtenFiles?.some((file) => file.endsWith("meta.json")), true);
   assert.equal(json.writtenFiles?.some((file) => file.endsWith("tasks.jsonl")), true);
   assert.equal(json.writtenFiles?.some((file) => file.endsWith("capsules.jsonl")), true);
@@ -463,20 +463,20 @@ test("runHostCommand materializes host run layouts only after confirmation", asy
   assert.equal(await readFile(join(root, "out", "loop-events.ndjson"), "utf8"), "");
   const results = await readFile(join(root, "out", "results.tsv"), "utf8");
   assert.match(results, /^run_id\tloop\ttimestamp\tclassification\ttasks_created\ttasks_done\tartifacts_created\tpending_messages\tcompletion_rate\tnotes\n$/);
-  const heartbeat = JSON.parse(await readFile(join(root, "out", ".king", "heartbeat.json"), "utf8")) as { schema?: string; status?: string; runId?: string; loopCount?: number; outputDir?: string };
-  assert.equal(heartbeat.schema, "king.host-run-heartbeat.v1");
+  const heartbeat = JSON.parse(await readFile(join(root, "out", ".king-ai", "heartbeat.json"), "utf8")) as { schema?: string; status?: string; runId?: string; loopCount?: number; outputDir?: string };
+  assert.equal(heartbeat.schema, "king-ai.host-run-heartbeat.v1");
   assert.equal(heartbeat.status, "prepared");
   assert.equal(heartbeat.runId, "layout-1");
   assert.equal(heartbeat.loopCount, 0);
   assert.equal(heartbeat.outputDir, join(root, "out"));
   const meta = JSON.parse(await readFile(join(root, "out", "meta.json"), "utf8")) as { schema?: string; status?: string; runId?: string; actualLoops?: number; paths?: { workspaceRoot?: string; resultsPath?: string; heartbeatPath?: string; collaborationPath?: string; tasksPath?: string; capsulesPath?: string; workflowPath?: string; feedbackPath?: string } };
-  assert.equal(meta.schema, "king.host-run-meta.v1");
+  assert.equal(meta.schema, "king-ai.host-run-meta.v1");
   assert.equal(meta.status, "prepared");
   assert.equal(meta.runId, "layout-1");
   assert.equal(meta.actualLoops, 0);
   assert.equal(meta.paths?.workspaceRoot, json.launchPlan!.layout!.workspaceRoot);
   assert.equal(meta.paths?.resultsPath, join(root, "out", "results.tsv"));
-  assert.equal(meta.paths?.heartbeatPath, join(root, "out", ".king", "heartbeat.json"));
+  assert.equal(meta.paths?.heartbeatPath, join(root, "out", ".king-ai", "heartbeat.json"));
   assert.equal(meta.paths?.collaborationPath, json.launchPlan!.layout!.collaborationPath);
   assert.equal(meta.paths?.tasksPath, join(root, "out", "tasks.jsonl"));
   assert.equal(meta.paths?.capsulesPath, join(root, "out", "capsules.jsonl"));
@@ -487,10 +487,10 @@ test("runHostCommand materializes host run layouts only after confirmation", asy
   assert.equal(await readFile(join(root, "out", "workflow.jsonl"), "utf8"), "");
   assert.equal(await readFile(join(root, "out", "run-feedback.jsonl"), "utf8"), "");
   const collaboration = JSON.parse(await readFile(json.launchPlan!.layout!.collaborationPath!, "utf8")) as { schema?: string; governance?: { mode?: string; securityBoundary?: boolean; appliesWhen?: string }; team?: { roles?: Array<{ template?: string; responsibility?: string }>; routingPolicy?: { defaultMode?: string; capabilityFirst?: boolean }; permissionPolicy?: { defaultDecision?: string; rules?: Array<{ role?: string; allow?: string[]; requireHumanDecision?: string[] }> } }; agents?: Array<{ id?: string; roleTemplate?: string }>; workflowObjects?: string[]; taskRules?: { dependencyField?: string; localTaskCommands?: string[]; routingModes?: string[]; permissionRules?: Array<{ role?: string; allow?: string[] }> }; capsuleRules?: { requiredFields?: string[]; defaultReviewer?: string; localCapsuleCommands?: string[] }; worktreePlans?: Array<{ agentId?: string; plans?: Array<{ branch?: string; command?: string }> }>; paths?: { tasksPath?: string; capsulesPath?: string; workflowPath?: string; feedbackPath?: string } };
-  assert.equal(collaboration.schema, "king.host-run-collaboration.v1");
+  assert.equal(collaboration.schema, "king-ai.host-run-collaboration.v1");
   assert.equal(collaboration.governance?.mode, "opt-in");
   assert.equal(collaboration.governance?.securityBoundary, false);
-  assert.match(collaboration.governance?.appliesWhen ?? "", /KING_TEAM_ROLE/);
+  assert.match(collaboration.governance?.appliesWhen ?? "", /KING_AI_TEAM_ROLE/);
   assert.equal(collaboration.team?.routingPolicy?.capabilityFirst, true);
   assert.equal(collaboration.team?.permissionPolicy?.defaultDecision, "deny");
   assert.equal(collaboration.team?.permissionPolicy?.rules?.some((rule) => rule.role === "ops" && rule.requireHumanDecision?.includes("deploy-release")), true);
@@ -498,12 +498,12 @@ test("runHostCommand materializes host run layouts only after confirmation", asy
   assert.equal(collaboration.team?.roles?.some((role) => role.template === "builder"), true);
   assert.deepEqual(collaboration.workflowObjects, ["initiative", "task", "handoff", "review", "decision", "artifact"]);
   assert.equal(collaboration.taskRules?.dependencyField, "dependsOn");
-  assert.equal(collaboration.taskRules?.localTaskCommands?.includes("king host agenda"), true);
+  assert.equal(collaboration.taskRules?.localTaskCommands?.includes("king-ai host agenda"), true);
   assert.equal(collaboration.taskRules?.routingModes?.includes("human-decision"), true);
   assert.equal(collaboration.taskRules?.permissionRules?.some((rule) => rule.role === "planner" && rule.allow?.includes("assign-task")), true);
   assert.equal(collaboration.capsuleRules?.defaultReviewer, "reviewer");
   assert.equal(collaboration.capsuleRules?.requiredFields?.includes("verificationCommands"), true);
-  assert.equal(collaboration.capsuleRules?.localCapsuleCommands?.includes("king host capsule-create"), true);
+  assert.equal(collaboration.capsuleRules?.localCapsuleCommands?.includes("king-ai host capsule-create"), true);
   assert.equal(collaboration.worktreePlans?.[0]?.plans?.[0]?.branch, "agent/dev");
   assert.match(collaboration.worktreePlans?.[0]?.plans?.[0]?.command ?? "", /git -C .* worktree add -B agent\/dev/);
   assert.equal(collaboration.paths?.tasksPath, json.launchPlan!.layout!.tasksPath);
@@ -558,7 +558,7 @@ test("runHostCommand materializes host run layouts only after confirmation", asy
   assert.match(metaRead.text, /status: prepared/);
   assert.equal((metaRead.json as { meta?: { status?: string; runId?: string; paths?: { heartbeatPath?: string } } }).meta?.status, "prepared");
   assert.equal((metaRead.json as { meta?: { status?: string; runId?: string; paths?: { heartbeatPath?: string } } }).meta?.runId, "layout-1");
-  assert.equal((metaRead.json as { meta?: { status?: string; runId?: string; paths?: { heartbeatPath?: string } } }).meta?.paths?.heartbeatPath, join(root, "out", ".king", "heartbeat.json"));
+  assert.equal((metaRead.json as { meta?: { status?: string; runId?: string; paths?: { heartbeatPath?: string } } }).meta?.paths?.heartbeatPath, join(root, "out", ".king-ai", "heartbeat.json"));
 
   const duplicate = await runHostCommand({
     command: "prepare-run-layout",
@@ -576,8 +576,8 @@ test("runHostCommand materializes host run layouts only after confirmation", asy
   assert.match(duplicate.error ?? duplicate.text, /already exists/);
 });
 
-test("prepare-run-layout creates King default agents and missing guides", async () => {
-  const root = await mkdtemp(join(tmpdir(), "king-host-command-default-layout-"));
+test("prepare-run-layout creates King AI default agents and missing guides", async () => {
+  const root = await mkdtemp(join(tmpdir(), "king-ai-host-command-default-layout-"));
   const prepared = await runHostCommand({
     command: "prepare-run-layout",
     input: {
@@ -611,7 +611,7 @@ test("prepare-run-layout creates King default agents and missing guides", async 
 });
 
 test("prepare-run-layout supports compact role profiles", async () => {
-  const root = await mkdtemp(join(tmpdir(), "king-host-command-profile-layout-"));
+  const root = await mkdtemp(join(tmpdir(), "king-ai-host-command-profile-layout-"));
   const prepared = await runHostCommand({
     command: "prepare-run-layout",
     input: {
@@ -633,7 +633,7 @@ test("prepare-run-layout supports compact role profiles", async () => {
 });
 
 test("runHostCommand persists and lists pending host run requests", async () => {
-  const root = await mkdtemp(join(tmpdir(), "king-host-command-runs-"));
+  const root = await mkdtemp(join(tmpdir(), "king-ai-host-command-runs-"));
   const runsPath = join(root, "host-runs.ndjson");
   const projectDir = join(root, "project");
   await mkdir(join(projectDir, ".git"), { recursive: true });
@@ -685,7 +685,7 @@ test("runHostCommand persists and lists pending host run requests", async () => 
   assert.equal(running.ok, true);
   assert.match(running.text, /running/);
   assert.match(running.text, /executor picked it up/);
-  const runningHeartbeat = JSON.parse(await readFile(join(root, "request-out", ".king", "heartbeat.json"), "utf8")) as { status?: string; runId?: string; detail?: string; loopCount?: number };
+  const runningHeartbeat = JSON.parse(await readFile(join(root, "request-out", ".king-ai", "heartbeat.json"), "utf8")) as { status?: string; runId?: string; detail?: string; loopCount?: number };
   assert.equal(runningHeartbeat.status, "running");
   assert.equal(runningHeartbeat.runId, "app-request-1");
   assert.equal(runningHeartbeat.detail, "executor picked it up");
@@ -721,7 +721,7 @@ test("runHostCommand persists and lists pending host run requests", async () => 
   assert.equal(cancelled.ok, true);
   assert.match(cancelled.text, /app-request-1 cancelled/);
   assert.match(cancelled.text, /cancelled by app/);
-  const cancelledHeartbeat = JSON.parse(await readFile(join(root, "request-out", ".king", "heartbeat.json"), "utf8")) as { status?: string; detail?: string };
+  const cancelledHeartbeat = JSON.parse(await readFile(join(root, "request-out", ".king-ai", "heartbeat.json"), "utf8")) as { status?: string; detail?: string };
   assert.equal(cancelledHeartbeat.status, "cancelled");
   assert.equal(cancelledHeartbeat.detail, "cancelled by app");
   const cancelledEvents = parseNdjson(await readFile(join(root, "request-out", "loop-events.ndjson"), "utf8"));
@@ -739,7 +739,7 @@ test("runHostCommand persists and lists pending host run requests", async () => 
 });
 
 test("runHostCommand executes safe pending host run requests", async () => {
-  const root = await mkdtemp(join(tmpdir(), "king-host-command-execute-"));
+  const root = await mkdtemp(join(tmpdir(), "king-ai-host-command-execute-"));
   const runsPath = join(root, "host-runs.ndjson");
 
   await runHostCommand({
@@ -780,7 +780,7 @@ test("runHostCommand executes safe pending host run requests", async () => {
   assert.match(executed.text, /completed/);
   assert.equal((executed.json as { request?: { status?: string; result?: { command?: string } } }).request?.status, "completed");
   assert.equal((executed.json as { request?: { status?: string; result?: { command?: string } } }).request?.result?.command, "status");
-  const completedHeartbeat = JSON.parse(await readFile(join(root, "exec-out", ".king", "heartbeat.json"), "utf8")) as { status?: string; runId?: string; command?: string; exitCode?: number; loopCount?: number };
+  const completedHeartbeat = JSON.parse(await readFile(join(root, "exec-out", ".king-ai", "heartbeat.json"), "utf8")) as { status?: string; runId?: string; command?: string; exitCode?: number; loopCount?: number };
   assert.equal(completedHeartbeat.status, "completed");
   assert.equal(completedHeartbeat.runId, "exec-request-1");
   assert.equal(completedHeartbeat.command, "status");
@@ -822,7 +822,7 @@ test("runHostCommand executes safe pending host run requests", async () => {
   assert.equal(blocked.ok, false);
   assert.match(blocked.text, /not allowed/);
   assert.equal((blocked.json as { request?: { status?: string } }).request?.status, "failed");
-  const failedHeartbeat = JSON.parse(await readFile(join(root, "blocked-out", ".king", "heartbeat.json"), "utf8")) as { status?: string; runId?: string; command?: string; exitCode?: number; loopCount?: number };
+  const failedHeartbeat = JSON.parse(await readFile(join(root, "blocked-out", ".king-ai", "heartbeat.json"), "utf8")) as { status?: string; runId?: string; command?: string; exitCode?: number; loopCount?: number };
   assert.equal(failedHeartbeat.status, "failed");
   assert.equal(failedHeartbeat.runId, "exec-request-2");
   assert.equal(failedHeartbeat.command, "export");
@@ -842,7 +842,7 @@ test("runHostCommand executes safe pending host run requests", async () => {
 });
 
 test("safe host run executor enforces the submitting team role", async () => {
-  const root = await mkdtemp(join(tmpdir(), "king-host-executor-role-"));
+  const root = await mkdtemp(join(tmpdir(), "king-ai-host-executor-role-"));
   const runsPath = join(root, "host-runs.ndjson");
 
   const submitted = await runHostCommand({

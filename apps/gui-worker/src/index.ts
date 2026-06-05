@@ -6,15 +6,15 @@ import { betterAuth } from "better-auth";
 import { D1Dialect } from "kysely-d1";
 import { render as renderMarkdownHtml } from "@comark/html";
 import { renderPage } from "./page.js";
-import { cronMatches, parseCron } from "@suwujs/king/cron";
-import { formatAttachmentPrompt, normalizeRuntimeAttachments } from "@suwujs/king/attachments";
-import type { RuntimeAttachment } from "@suwujs/king/attachments";
-import { initialRunStreamState, reduceRunStream, renderRunStreamCard } from "@suwujs/king/run-stream";
-import type { RunStreamEvent, RunStreamState } from "@suwujs/king/run-stream";
-import { formatMessageRouteSummary, messageRouteTag, sortRuntimeMessages } from "@suwujs/king/message-routing";
-import { selectOwnerRole } from "@suwujs/king/team-routing";
-import { defaultTeamSpec, requiredCapabilitiesForText, roleTemplateForAgent } from "@suwujs/king/team-workflow";
-import { createHostSdk } from "@suwujs/king/host-sdk";
+import { cronMatches, parseCron } from "@suwujs/king-ai/cron";
+import { formatAttachmentPrompt, normalizeRuntimeAttachments } from "@suwujs/king-ai/attachments";
+import type { RuntimeAttachment } from "@suwujs/king-ai/attachments";
+import { initialRunStreamState, reduceRunStream, renderRunStreamCard } from "@suwujs/king-ai/run-stream";
+import type { RunStreamEvent, RunStreamState } from "@suwujs/king-ai/run-stream";
+import { formatMessageRouteSummary, messageRouteTag, sortRuntimeMessages } from "@suwujs/king-ai/message-routing";
+import { selectOwnerRole } from "@suwujs/king-ai/team-routing";
+import { defaultTeamSpec, requiredCapabilitiesForText, roleTemplateForAgent } from "@suwujs/king-ai/team-workflow";
+import { createHostSdk } from "@suwujs/king-ai/host-sdk";
 
 type Bindings = {
   GUI_STATE: DurableObjectNamespace;
@@ -23,9 +23,9 @@ type Bindings = {
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
   BETTER_AUTH_URL?: string;
-  KING_TEST_AUTH_USER?: string;
-  KING_HOST_URL?: string;
-  KING_HOST_OUTPUT_DIR?: string;
+  KING_AI_TEST_AUTH_USER?: string;
+  KING_AI_HOST_URL?: string;
+  KING_AI_HOST_OUTPUT_DIR?: string;
 };
 
 type Env = {
@@ -546,7 +546,7 @@ type State = {
 };
 
 type StateSnapshot = {
-  schema: "king.gui-state.v1";
+  schema: "king-ai.gui-state.v1";
   exportedAt: number;
   state: State;
 };
@@ -613,8 +613,8 @@ type AgendaPayload = {
 };
 
 const DEFAULT_AGENT: Agent = {
-  id: "king-ceo",
-  name: "King CEO",
+  id: "king-ai-ceo",
+  name: "King AI CEO",
   role: "Coordinate the conversation: clarify ambiguous human requests, split work into concrete tasks for available teammates, track progress, and summarize verified results back to the human. Role template: planner.",
   engine: "codex",
   lifecycle: "on-demand"
@@ -625,14 +625,14 @@ const DEFAULT_TEAM_AGENTS: Agent[] = [
   {
     id: "dev",
     name: "Dev",
-    role: "Implement only assigned tasks. Make concrete changes, run focused verification, report files changed and command results, then mark the task done so it can be reviewed or returned to King CEO. Role template: builder.",
+    role: "Implement only assigned tasks. Make concrete changes, run focused verification, report files changed and command results, then mark the task done so it can be reviewed or returned to King AI CEO. Role template: builder.",
     engine: "codex",
     lifecycle: "on-demand"
   },
   {
     id: "reviewer",
     name: "Reviewer",
-    role: "Review completed Dev work before King CEO summarizes. Check correctness, regressions, and missing tests; pass verified work back to King CEO or request specific revisions. Role template: reviewer.",
+    role: "Review completed Dev work before King AI CEO summarizes. Check correctness, regressions, and missing tests; pass verified work back to King AI CEO or request specific revisions. Role template: reviewer.",
     engine: "codex",
     lifecycle: "on-demand"
   },
@@ -666,14 +666,14 @@ const DEFAULT_TEAM_AGENTS: Agent[] = [
   }
 ];
 
-const LEGACY_DEFAULT_AGENT_NAME = "King Agent";
+const LEGACY_DEFAULT_AGENT_NAME = "King AI Agent";
 const LEGACY_DEFAULT_AGENT_ROLE = "Local BYOA agent";
-const LEGACY_DEFAULT_AGENT_ID = "king-agent";
+const LEGACY_DEFAULT_AGENT_ID = "king-ai-agent";
 const LEGACY_DEFAULT_DEV_ROLE = "Implement assigned work, report concrete changes, and move completed tasks to review.";
 const LEGACY_DEFAULT_REVIEWER_ROLE = "Review completed work, identify gaps, and ask for revisions before CEO summarizes.";
 
 const DEFAULT_CONVERSATION: Conversation = {
-  id: "king-convo",
+  id: "king-ai-convo",
   title: "all",
   kind: "group",
   created_at: 0,
@@ -741,7 +741,7 @@ const GUI_ATTACHMENT_CHUNK_CHARS = 256 * 1024;
 
 const styles = "    :root {\n      --accent: #ffd633;\n      --rail: #ffd83d;\n      --sidebar: #fbf4e6;\n      --active: #f15b93;\n      --canvas: #ffffff;\n      --panel: #fffaf0;\n      --line: #111111;\n      --soft-line: #d7d1c5;\n      --ink: #171717;\n      --body: #303030;\n      --muted: #7d7a73;\n      --avatar: #c8b6ff;\n      --shadow: rgba(17,17,17,0.16) 0 14px 36px;\n    }\n    * { box-sizing: border-box; }\n    body {\n      margin: 0;\n      background: var(--canvas);\n      color: var(--ink);\n      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n      font-size: 12px;\n      line-height: 1.35;\n      overflow: hidden;\n    }\n    h1, h2, h3, p { margin: 0; }\n    h1 { font-size: 17px; line-height: 1.1; }\n    h2 { font-size: 15px; line-height: 1.2; }\n    h3 { font-size: 13px; line-height: 1.2; }\n    p { color: var(--body); }\n    button, textarea, select, input { font: inherit; }\n    * {\n      scrollbar-width: thin;\n      scrollbar-color: var(--line) var(--accent);\n    }\n    *::-webkit-scrollbar {\n      width: 13px;\n      height: 13px;\n    }\n    *::-webkit-scrollbar-track {\n      background: var(--accent);\n      border-left: 1px solid var(--line);\n    }\n    *::-webkit-scrollbar-thumb {\n      background: var(--line);\n      border: 3px solid var(--accent);\n    }\n    *::-webkit-scrollbar-corner { background: var(--accent); }\n    button {\n      min-height: 27px;\n      border: 1px solid var(--line);\n      border-radius: 0;\n      padding: 4px 9px;\n      background: var(--canvas);\n      color: var(--ink);\n      font-weight: 800;\n      cursor: pointer;\n    }\n    button:hover, button.primary { background: var(--accent); }\n    button.icon {\n      width: 27px;\n      min-width: 27px;\n      padding: 0;\n      display: grid;\n      place-items: center;\n    }\n    textarea, input, select {\n      width: 100%;\n      border: 1px solid var(--line);\n      border-radius: 0;\n      background: var(--canvas);\n      color: var(--ink);\n      padding: 8px;\n    }\n    textarea {\n      min-height: 54px;\n      resize: vertical;\n      line-height: 1.45;\n    }\n    label {\n      color: var(--muted);\n      font-size: 10px;\n      font-weight: 900;\n      text-transform: uppercase;\n    }\n    .app {\n      height: 100vh;\n      min-height: 100vh;\n      display: grid;\n      grid-template-columns: 42px 180px minmax(0, 1fr);\n      background: var(--canvas);\n    }\n    .rail {\n      display: grid;\n      grid-template-rows: auto 1fr;\n      gap: 12px;\n      border-right: 2px solid var(--line);\n      background: var(--rail);\n      padding: 8px 6px;\n    }\n    .logo {\n      width: 27px;\n      display: grid;\n      grid-template-columns: 1fr;\n      gap: 6px;\n    }\n    .logo span {\n      width: 27px;\n      height: 27px;\n      display: grid;\n      place-items: center;\n      background: var(--line);\n      color: var(--accent);\n      font-size: 10px;\n      font-weight: 900;\n    }\n    .rail .icon { background: transparent; border-color: transparent; }\n    .rail .icon.active { background: var(--canvas); border-color: var(--line); }\n    .windows {\n      min-width: 0;\n      border-right: 2px solid var(--line);\n      background: var(--sidebar);\n      padding: 8px 6px;\n      overflow: hidden;\n      display: grid;\n      grid-template-rows: auto minmax(0, 1fr);\n      gap: 8px;\n    }\n    .windows-head {\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 8px;\n      padding: 0 2px 8px;\n      border-bottom: 1px solid var(--soft-line);\n      font-weight: 900;\n    }\n    .window-list {\n      min-height: 0;\n      overflow: auto;\n      display: grid;\n      align-content: start;\n      gap: 5px;\n    }\n    .window-item {\n      display: grid;\n      grid-template-columns: minmax(0, 1fr) auto auto;\n      gap: 6px;\n      align-items: center;\n      min-height: 32px;\n      padding: 5px 6px;\n      border: 1px solid transparent;\n      background: transparent;\n      text-align: left;\n      font-weight: 800;\n    }\n    .window-select {\n      min-width: 0;\n      min-height: 0;\n      padding: 0;\n      border: 0;\n      background: transparent;\n      text-align: left;\n      font-weight: 900;\n    }\n    .window-item.active {\n      border-color: var(--line);\n      background: var(--active);\n    }\n    .window-delete {\n      width: 18px;\n      min-width: 18px;\n      min-height: 18px;\n      padding: 0;\n      border-color: var(--line);\n      background: var(--canvas);\n      color: var(--line);\n      line-height: 1;\n    }\n    .window-delete:hover { background: var(--accent); }\n    .window-name {\n      overflow: hidden;\n      text-overflow: ellipsis;\n      white-space: nowrap;\n    }\n    .window-meta {\n      color: var(--muted);\n      font-size: 10px;\n      font-weight: 900;\n    }\n    .sidebar {\n      display: none;\n      min-width: 0;\n      border-right: 2px solid var(--line);\n      background: var(--sidebar);\n      padding: 9px 5px;\n      overflow: hidden;\n    }\n    .side-title {\n      display: flex;\n      justify-content: space-between;\n      align-items: center;\n      padding: 0 4px 11px;\n      border-bottom: 1px solid var(--soft-line);\n      margin-bottom: 8px;\n    }\n    .side-section { display: grid; gap: 3px; margin: 12px 0; }\n    .side-label {\n      padding: 0 7px;\n      color: var(--muted);\n      font-size: 10px;\n      font-weight: 900;\n      letter-spacing: 0.03em;\n      text-transform: uppercase;\n    }\n    .side-link, .channel {\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 8px;\n      min-height: 25px;\n      padding: 4px 6px;\n      border: 1px solid transparent;\n      color: var(--body);\n      text-decoration: none;\n      white-space: nowrap;\n      overflow: hidden;\n    }\n    .channel.active {\n      background: var(--active);\n      border-color: var(--line);\n      color: var(--line);\n      font-weight: 900;\n    }\n    .badge { color: var(--muted); font-size: 10px; font-weight: 900; }\n    .main {\n      min-width: 0;\n      min-height: 0;\n      height: 100vh;\n      display: grid;\n      grid-template-rows: auto auto minmax(0, 1fr);\n    }\n    .topbar {\n      height: 38px;\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 14px;\n      border-bottom: 2px solid var(--line);\n      padding: 6px 12px;\n    }\n    .channel-head {\n      display: grid;\n      grid-template-columns: 21px minmax(0, auto);\n      gap: 8px;\n      align-items: center;\n      min-width: 0;\n    }\n    .hash {\n      width: 21px;\n      height: 21px;\n      display: grid;\n      place-items: center;\n      background: var(--accent);\n      border: 1px solid var(--line);\n      font-weight: 900;\n    }\n    .channel-name { font-weight: 900; line-height: 1; }\n    .channel-desc {\n      color: var(--muted);\n      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;\n      font-size: 10px;\n      overflow: hidden;\n      text-overflow: ellipsis;\n      white-space: nowrap;\n    }\n    .top-actions { display: flex; gap: 6px; }\n    .tabs {\n      height: 24px;\n      display: flex;\n      align-items: stretch;\n      border-bottom: 2px solid var(--line);\n    }\n    .tab {\n      min-height: 0;\n      padding: 3px 12px;\n      border-width: 0 1px 0 0;\n      background: var(--canvas);\n      font-size: 11px;\n    }\n    .tab.active { background: var(--accent); }\n    .workspace {\n      min-height: 0;\n      overflow: auto;\n      background: var(--canvas);\n    }\n    .panel { display: none; min-height: 100%; }\n    .panel.active { display: block; }\n    .chat-panel {\n      position: relative;\n      min-height: 100%;\n      padding: 14px 0 124px;\n    }\n    .message-list {\n      display: grid;\n      gap: 11px;\n      width: 100%;\n      padding: 0 18px;\n    }\n    .system-line {\n      color: #aaa49a;\n      font-size: 10px;\n      text-align: center;\n      padding: 4px 0;\n    }\n    .post {\n      display: grid;\n      grid-template-columns: 24px minmax(0, 1fr);\n      gap: 8px;\n      padding: 8px;\n      border: 1px solid transparent;\n    }\n    .post.highlight { border-color: var(--line); }\n    .avatar {\n      width: 22px;\n      height: 22px;\n      display: grid;\n      place-items: center;\n      border: 1px solid var(--line);\n      background: var(--avatar);\n      color: var(--line);\n      font-size: 12px;\n      font-weight: 900;\n    }\n    .post-top {\n      display: flex;\n      align-items: baseline;\n      gap: 6px;\n      min-width: 0;\n      margin-bottom: 3px;\n    }\n    .author { font-weight: 900; }\n    .time { color: var(--muted); font-size: 10px; white-space: nowrap; }\n    .post-body {\n      color: var(--body);\n      line-height: 1.45;\n      white-space: pre-wrap;\n      word-break: break-word;\n    }\n    .jump {\n      position: sticky;\n      bottom: 104px;\n      display: none;\n      width: max-content;\n      margin: 16px auto;\n      box-shadow: var(--shadow);\n    }\n    .jump.visible { display: block; }\n    .composer {\n      position: fixed;\n      right: 16px;\n      bottom: 14px;\n      left: 238px;\n      z-index: 5;\n      display: grid;\n      grid-template-columns: minmax(0, 1fr) auto;\n      gap: 8px;\n      width: auto;\n      max-width: none;\n      border: 2px solid var(--line);\n      background: var(--canvas);\n      padding: 8px;\n    }\n    .composer textarea {\n      min-height: 44px;\n      max-height: 110px;\n      border: 0;\n      padding: 6px;\n    }\n    .composer button:disabled {\n      opacity: 0.62;\n      cursor: wait;\n    }\n    .tab-panel {\n      max-width: 920px;\n      padding: 18px;\n      gap: 10px;\n    }\n    .tab-panel.active { display: grid; }\n    .task-row {\n      display: grid;\n      gap: 5px;\n      max-width: 720px;\n      border: 1px solid var(--line);\n      padding: 10px;\n    }\n    .task-top {\n      display: flex;\n      align-items: baseline;\n      justify-content: space-between;\n      gap: 10px;\n    }\n    .model-grid { display: grid; gap: 10px; }\n    .model-row {\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 12px;\n      border-top: 1px solid var(--soft-line);\n      padding-top: 8px;\n      color: var(--body);\n    }\n    .model-row:first-child { border-top: 0; padding-top: 0; }\n    .available { color: #cc2f68; font-weight: 900; }\n    .unavailable { color: var(--muted); }\n    .cmd {\n      border: 1px solid var(--line);\n      background: var(--panel);\n      padding: 10px;\n      color: var(--body);\n      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;\n      font-size: 11px;\n      line-height: 1.5;\n      overflow: auto;\n      white-space: pre-wrap;\n      word-break: break-word;\n    }\n    .side-card {\n      display: grid;\n      gap: 10px;\n      border: 1px solid var(--line);\n      padding: 10px;\n    }\n    .settings-actions {\n      display: flex;\n      justify-content: flex-end;\n      gap: 8px;\n    }\n    .field { display: grid; gap: 5px; }\n    .muted { color: var(--muted); font-size: 11px; }\n    dialog {\n      width: min(520px, calc(100vw - 24px));\n      max-height: min(760px, calc(100vh - 24px));\n      border: 2px solid var(--line);\n      border-radius: 0;\n      padding: 0;\n      box-shadow: var(--shadow);\n      overflow: hidden;\n    }\n    dialog::backdrop { background: rgba(0,0,0,0.48); }\n    .computer-dialog { width: min(680px, calc(100vw - 24px)); }\n    .window-dialog { width: min(440px, calc(100vw - 24px)); }\n    .modal-form { margin: 0; }\n    .modal-head {\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 16px;\n      padding: 12px;\n      border-bottom: 2px solid var(--line);\n    }\n    .modal-body {\n      display: grid;\n      gap: 12px;\n      padding: 12px;\n      overflow: auto;\n      max-height: calc(100vh - 120px);\n    }\n    .computer-flow {\n      display: grid;\n      gap: 20px;\n      padding: 32px;\n    }\n    .computer-kicker {\n      color: var(--muted);\n      font-size: 11px;\n      font-weight: 900;\n      letter-spacing: 0.14em;\n      text-transform: uppercase;\n    }\n    .computer-title {\n      font-size: 20px;\n      line-height: 1.15;\n      text-transform: uppercase;\n    }\n    .computer-lead {\n      display: grid;\n      grid-template-columns: 36px minmax(0, 1fr);\n      gap: 14px;\n      align-items: start;\n      color: var(--body);\n      font-size: 15px;\n      line-height: 1.5;\n    }\n    .computer-icon {\n      width: 32px;\n      height: 32px;\n      display: grid;\n      place-items: center;\n      border: 2px solid var(--line);\n      background: var(--accent);\n      font-weight: 900;\n    }\n    .computer-muted {\n      margin-top: 8px;\n      color: var(--muted);\n      font-size: 12px;\n      line-height: 1.45;\n    }\n    .computer-rule { border-top: 2px solid var(--soft-line); }\n    .computer-actions {\n      display: flex;\n      align-items: center;\n      justify-content: flex-end;\n      gap: 12px;\n      flex-wrap: wrap;\n    }\n    .computer-actions.between { justify-content: space-between; }\n    .check-row {\n      display: flex;\n      align-items: center;\n      gap: 8px;\n      font-weight: 800;\n      color: var(--body);\n    }\n    .check-row input {\n      width: 16px;\n      height: 16px;\n      padding: 0;\n      accent-color: var(--accent);\n    }\n    .choice-grid {\n      display: grid;\n      grid-template-columns: repeat(2, minmax(0, 1fr));\n      gap: 10px;\n    }\n    .computer-choice {\n      display: grid;\n      grid-template-columns: 28px minmax(0, 1fr);\n      gap: 10px;\n      min-height: 82px;\n      border: 2px solid var(--line);\n      padding: 14px;\n      background: var(--canvas);\n      text-align: left;\n    }\n    .computer-choice.active { background: var(--accent); }\n    .computer-choice.disabled {\n      border-style: dashed;\n      color: var(--muted);\n      opacity: 0.56;\n      cursor: default;\n    }\n    .computer-choice-title {\n      display: block;\n      font-size: 14px;\n      text-transform: uppercase;\n    }\n    .connect-row {\n      display: grid;\n      grid-template-columns: minmax(0, 1fr) auto;\n      gap: 10px;\n      align-items: center;\n    }\n    .connect-stack {\n      display: grid;\n      gap: 8px;\n      min-width: 0;\n    }\n    .connect-help {\n      color: var(--body);\n      font-size: 12px;\n      font-weight: 900;\n    }\n    .connect-command {\n      border: 2px solid var(--line);\n      background: #080808;\n      color: #a7d66d;\n      padding: 14px;\n      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;\n      font-size: 12px;\n      line-height: 1.5;\n      white-space: pre-wrap;\n      word-break: break-word;\n    }\n    .connect-status {\n      display: flex;\n      align-items: center;\n      gap: 10px;\n      border: 2px solid var(--line);\n      background: #fff3c4;\n      padding: 14px;\n      font-weight: 900;\n    }\n    .status-dot {\n      width: 10px;\n      height: 10px;\n      border: 2px solid var(--line);\n      border-radius: 50%;\n      background: #ffad7a;\n    }\n    .status-dot.online { background: #74d67b; }\n    .button-shadow { box-shadow: 4px 5px 0 var(--line); }\n    button.primary-pink {\n      background: var(--active);\n      min-height: 36px;\n      padding: 8px 14px;\n      font-size: 14px;\n    }\n    button.disabled-action {\n      background: #edf5df;\n      color: var(--muted);\n      cursor: default;\n    }\n    @media (max-width: 760px) {\n      .app { grid-template-columns: 36px 132px minmax(0, 1fr); }\n      .logo {\n        width: 24px;\n        grid-template-columns: 1fr;\n      }\n      .logo span {\n        width: 22px;\n        height: 16px;\n        font-size: 10px;\n      }\n      .message-list { padding: 0 10px; }\n      .composer { left: 178px; right: 10px; width: auto; }\n      .top-actions .hide-mobile { display: none; }\n      .post { max-width: 100%; }\n      .computer-flow { padding: 22px; }\n      .choice-grid, .connect-row { grid-template-columns: 1fr; }\n    }\n";
 
-const clientScript = "const base = location.origin;\nlet pairCommand = '';\nlet pairCommandPrimary = '';\nlet pairCommandStart = '';\nlet computerStep = 'intro';\nlet lastConnection = { paired: false, online: false };\nlet promptedForComputer = false;\nlet visibleMessageCount = 20;\nlet lastMessageTotal = 0;\nlet loadingOlderMessages = false;\nlet sendingMessage = false;\nlet shouldStickToBottom = true;\nlet activeConversationId = localStorage.getItem('king:activeConversationId') || 'king-convo';\n\nfunction escapeHtml(value) {\n  return String(value ?? '').replace(/[&<>\"']/g, function(ch) {\n    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' })[ch];\n  });\n}\nfunction formatTime(value) {\n  if (!value) return '未收到';\n  return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });\n}\nfunction lifecycleLabel(value) {\n  return ({ 'on-demand': '按需启动', '24/7': '持续在线', idle_cached: '空闲保活', disabled: '停用' })[value] || value || '按需启动';\n}\nfunction taskStatusLabel(value) {\n  return ({ pending: '待分配', assigned: '已分配', in_progress: '进行中', review: '待评审', done: '已完成', failed: '失败', blocked: '被阻塞' })[value] || value || '未知';\n}\nfunction reasonLabel(reason) {\n  return String(reason || '')\n    .replace(/(\\\\\\\\d+) unread message\\\\\\\\(s\\\\\\\\) pending/g, '$1 条消息等待本地 AI 处理')\n    .replace(/(\\\\\\\\d+) failed run\\\\\\\\(s\\\\\\\\)/g, '$1 次运行失败')\n    .replace('no state changes detected', '等待下一条消息。');\n}\nasync function request(path, options) {\n  const res = await fetch(path, options);\n  if (!res.ok) throw new Error(await res.text());\n  return res.headers.get('Content-Type') && res.headers.get('Content-Type').includes('application/json') ? res.json() : res.text();\n}\nfunction openSettings() {\n  document.getElementById('settingsDialog').showModal();\n}\nfunction closeSettings() {\n  document.getElementById('settingsDialog').close();\n}\nfunction closeComputerDialog() {\n  document.getElementById('computerDialog').close();\n}\nasync function openComputerFlow(step) {\n  computerStep = step || 'intro';\n  const settings = document.getElementById('settingsDialog');\n  if (settings.open) settings.close();\n  renderComputerFlow();\n  const dialog = document.getElementById('computerDialog');\n  if (!dialog.open) dialog.showModal();\n  if (!pairCommand) await loadPairCommand();\n}\nasync function loadPairCommand() {\n  const summary = await request('/gui/summary?conversationId=' + encodeURIComponent(activeConversationId));\n  if (!summary.pairingCode) return;\n  pairCommandPrimary = 'king agent computer --pair ' + summary.pairingCode + ' --server ' + base + (summary.pairCommandTenantArg || '');\n  pairCommandStart = 'king agent computer --server ' + base + (summary.pairCommandTenantArg || '');\n  pairCommand = pairCommandPrimary + '\\n' + pairCommandStart;\n  lastConnection = summary.connection || lastConnection;\n  if (document.getElementById('computerDialog').open && computerStep === 'connect') renderComputerFlow();\n}\nfunction dismissComputerIntro() {\n  const checkbox = document.getElementById('dontRemindComputer');\n  if (checkbox && checkbox.checked) localStorage.setItem('king:addComputerDismissed', '1');\n  closeComputerDialog();\n}\nfunction renderComputerFlow() {\n  const connected = Boolean(lastConnection.online);\n  const paired = Boolean(lastConnection.paired);\n  const connectionText = connected ? 'Computer connected.' : paired ? 'Computer paired. Waiting for it to come online...' : 'Waiting for computer to connect...';\n  const flow = document.getElementById('computerFlow');\n  if (computerStep === 'select') {\n    flow.innerHTML =\n      '<div class=\"computer-actions\"><button class=\"icon button-shadow\" onclick=\"closeComputerDialog()\" aria-label=\"Close\">×</button></div>' +\n      '<h2 class=\"computer-title\">Add Computer</h2>' +\n      '<div class=\"choice-grid\">' +\n      '<button class=\"computer-choice active\" onclick=\"openComputerFlow(&quot;connect&quot;)\"><span class=\"computer-icon\">▭</span><span><strong class=\"computer-choice-title\">Your Computer</strong><span class=\"computer-muted\">Run agents on your own computer</span></span></button>' +\n      '<button class=\"computer-choice disabled\" type=\"button\"><span class=\"computer-icon\">☁</span><span><strong class=\"computer-choice-title\">Cloud Computer</strong><span class=\"computer-muted\">Coming soon</span></span></button>' +\n      '</div>' +\n      '<div class=\"computer-actions\"><button class=\"button-shadow\" onclick=\"closeComputerDialog()\">Cancel</button><button class=\"primary-pink button-shadow\" onclick=\"openComputerFlow(&quot;connect&quot;)\">Next</button></div>';\n    return;\n  }\n  if (computerStep === 'connect') {\n    flow.innerHTML =\n      '<div class=\"computer-actions\"><button class=\"icon button-shadow\" onclick=\"closeComputerDialog()\" aria-label=\"Close\">×</button></div>' +\n      '<h2 class=\"computer-title\">Connect Computer</h2>' +\n      '<p><strong>&gt;_ Run this command on your computer to connect:</strong></p>' +\n      '<div class=\"connect-row\"><div class=\"connect-stack\">' +\n      '<div class=\"connect-help\">First-time pairing: run this once to attach this browser session.</div>' +\n      '<pre class=\"connect-command\">' + escapeHtml(pairCommandPrimary || 'Loading pairing code...') + '</pre>' +\n      '<div class=\"connect-help\">Already paired: use this later to start the local computer runtime.</div>' +\n      '<pre class=\"connect-command\">' + escapeHtml(pairCommandStart || 'Loading start command...') + '</pre></div><button class=\"icon button-shadow\" onclick=\"copyPairCommand()\" aria-label=\"Copy commands\">□</button></div>' +\n      '<div class=\"connect-status\"><span class=\"status-dot' + (connected ? ' online' : '') + '\"></span><span>' + connectionText + '</span></div>' +\n      '<div class=\"computer-actions\"><button class=\"button-shadow\" onclick=\"closeComputerDialog()\">Cancel</button><button class=\"' + (connected ? 'primary-pink' : 'disabled-action') + ' button-shadow\" onclick=\"' + (connected ? 'closeComputerDialog()' : 'refresh()') + '\">' + (connected ? 'Done' : 'Done') + '</button></div>';\n    return;\n  }\n  flow.innerHTML =\n    '<div><div class=\"computer-kicker\">Meet King</div><h2 class=\"computer-title\">Add a Computer</h2></div>' +\n    '<div class=\"computer-lead\"><span class=\"computer-icon\">▭</span><div><p>Your agents need somewhere to run. Connect a computer and they will come online there.</p><p class=\"computer-muted\">Need an agent runtime installed: Claude Code or Codex CLI.</p></div></div>' +\n    '<div class=\"computer-rule\"></div>' +\n    '<div class=\"computer-actions between\"><label class=\"check-row\"><input id=\"dontRemindComputer\" type=\"checkbox\" />Do not remind me again</label><span class=\"computer-actions\"><button class=\"button-shadow\" onclick=\"dismissComputerIntro()\">Skip</button><button class=\"primary-pink button-shadow\" onclick=\"openComputerFlow(&quot;select&quot;)\">▭ Add Computer</button></span></div>';\n}\nfunction showPanel(name) {\n  ['chat', 'tasks', 'files'].forEach(function(panel) {\n    document.getElementById('panel-' + panel).classList.toggle('active', panel === name);\n    document.querySelector('[data-panel=\"' + panel + '\"]').classList.toggle('active', panel === name);\n  });\n}\nfunction scrollToBottom() {\n  const workspace = document.querySelector('.workspace');\n  workspace.scrollTop = workspace.scrollHeight;\n  shouldStickToBottom = true;\n  updateBackToBottom();\n}\nfunction updateBackToBottom() {\n  const workspace = document.querySelector('.workspace');\n  const jump = document.querySelector('.jump');\n  const distance = workspace.scrollHeight - workspace.clientHeight - workspace.scrollTop;\n  const away = distance > 180;\n  shouldStickToBottom = !away;\n  jump.classList.toggle('visible', away);\n}\nasync function handleWorkspaceScroll() {\n  updateBackToBottom();\n  const workspace = document.querySelector('.workspace');\n  if (loadingOlderMessages || workspace.scrollTop > 24 || visibleMessageCount >= lastMessageTotal) return;\n  loadingOlderMessages = true;\n  const beforeHeight = workspace.scrollHeight;\n  const beforeTop = workspace.scrollTop;\n  visibleMessageCount = Math.min(visibleMessageCount + 20, lastMessageTotal);\n  await refresh({ preserveScroll: true });\n  workspace.scrollTop = workspace.scrollHeight - beforeHeight + beforeTop;\n  loadingOlderMessages = false;\n}\nasync function copyPairCommand() {\n  if (!pairCommand) return;\n  await navigator.clipboard.writeText(pairCommand).catch(function() {});\n}\nasync function sendMessage() {\n  if (sendingMessage) return;\n  const input = document.getElementById('body');\n  const button = document.getElementById('sendButton');\n  const body = input.value.trim();\n  if (!body) return;\n  sendingMessage = true;\n  input.value = '';\n  input.blur();\n  button.disabled = true;\n  button.textContent = 'Sending';\n  try {\n    await request('/gui/message', {\n      method: 'POST',\n      headers: { 'Content-Type': 'application/json' },\n      body: JSON.stringify({ body, conversationId: activeConversationId })\n    });\n    visibleMessageCount = 20;\n    shouldStickToBottom = true;\n    await refresh();\n  } catch (error) {\n    input.value = body;\n    throw error;\n  } finally {\n    sendingMessage = false;\n    button.disabled = false;\n    button.textContent = 'Send';\n  }\n}\nasync function clearMessages() {\n  await request('/gui/clear-messages', { method: 'POST' });\n  visibleMessageCount = 20;\n  shouldStickToBottom = true;\n  await refresh();\n}\nasync function saveAgentConfig() {\n  await request('/gui/agent-config', {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify({\n      engine: document.getElementById('engine').value,\n      lifecycle: 'on-demand',\n      model: document.getElementById('model').value,\n      fastModel: document.getElementById('fastModel').value\n    })\n  });\n  await refresh();\n}\nfunction renderMessages(state, options) {\n  const allRows = (state.messages || []).filter(function(message) { return message.conversation_id === activeConversationId; });\n  if (allRows.length > lastMessageTotal) visibleMessageCount = 20;\n  lastMessageTotal = allRows.length;\n  visibleMessageCount = Math.min(Math.max(visibleMessageCount, 20), Math.max(lastMessageTotal, 20));\n  const rows = allRows.slice(-visibleMessageCount);\n  const hasOlder = rows.length < allRows.length;\n  const unread = rows.filter(function(message) { return !(message.readBy || []).includes('king-ceo') && message.author_kind === 'human'; }).length;\n  const olderLine = hasOlder ? 'Pull down or scroll to top to load older messages...' : 'No older messages';\n  const html = rows.length ? rows.map(function(message) {\n    if (message.author_kind === 'system') {\n      return '<div class=\"system-line\">' + escapeHtml(message.body) + '</div>';\n    }\n    const initial = message.author_kind === 'agent' ? 'A' : '人';\n    const name = message.author_kind === 'agent' ? (message.author_name || 'AI') : (message.author_name || 'you');\n    const unreadClass = message.author_kind === 'human' && !(message.readBy || []).includes('king-ceo') ? ' highlight' : '';\n    return '<article class=\"post' + unreadClass + '\"><div class=\"avatar\">' + initial + '</div><div><div class=\"post-top\"><span class=\"author\">' + escapeHtml(name) + '</span><span class=\"time\">' + formatTime(message.created_at) + '</span></div><div class=\"post-body\">' + escapeHtml(message.body) + '</div></div></article>';\n  }).join('') : '';\n  document.getElementById('chatWindow').innerHTML = '<div class=\"system-line\">' + olderLine + '</div>' + html;\n  if (options && options.preserveScroll) updateBackToBottom();\n  else if (shouldStickToBottom) scrollToBottom();\n  else updateBackToBottom();\n}\nfunction selectConversation(id) {\n  activeConversationId = id || 'king-convo';\n  localStorage.setItem('king:activeConversationId', activeConversationId);\n  visibleMessageCount = 20;\n  shouldStickToBottom = true;\n  refresh();\n}\nfunction createConversation() {\n  const input = document.getElementById('newWindowTitle');\n  input.value = '';\n  const dialog = document.getElementById('newWindowDialog');\n  if (!dialog.open) dialog.showModal();\n  setTimeout(function() { input.focus(); }, 0);\n}\nfunction closeNewWindowDialog() {\n  document.getElementById('newWindowDialog').close();\n}\nasync function submitConversation(event) {\n  event.preventDefault();\n  const input = document.getElementById('newWindowTitle');\n  const title = input.value.trim();\n  const submit = document.getElementById('newWindowSubmit');\n  submit.disabled = true;\n  submit.textContent = 'Creating';\n  try {\n    const result = await request('/gui/conversations', {\n      method: 'POST',\n      headers: { 'Content-Type': 'application/json' },\n      body: JSON.stringify({ title })\n    });\n    activeConversationId = result.conversation.id;\n    localStorage.setItem('king:activeConversationId', activeConversationId);\n    visibleMessageCount = 20;\n    shouldStickToBottom = true;\n    closeNewWindowDialog();\n    await refresh();\n  } finally {\n    submit.disabled = false;\n    submit.textContent = 'Create';\n  }\n}\nfunction activeConversationStatus(summary, active) {\n  const state = summary.state || {};\n  const typing = (state.typingLog || []).slice().reverse().find(function(row) { return row.conversationId === active.id && !row.done; });\n  const thinking = (state.thinkingLog || []).slice().reverse().find(function(row) { return row.action === 'mark' && (row.conversationIds || []).includes(active.id); });\n  if (typing) return 'agent 正在输入...';\n  if (thinking) return 'agent 正在处理...';\n  if ((active.unread || 0) > 0) return '等待本地 agent 回复';\n  return '';\n}\nfunction renderConversations(summary) {\n  const conversations = summary.conversations || [];\n  if (conversations.length && !conversations.some(function(row) { return row.id === activeConversationId; })) activeConversationId = conversations[0].id;\n  const active = conversations.find(function(row) { return row.id === activeConversationId; }) || conversations[0] || { id: 'king-convo', title: 'all' };\n  document.querySelector('.channel-name').textContent = active.title || active.id;\n  document.querySelector('.composer textarea').placeholder = 'Message #' + (active.title || active.id);\n  document.querySelector('.hash').textContent = active.id === 'king-convo' ? '#' : '~';\n  document.getElementById('routeSummary').textContent = activeConversationStatus(summary, active);\n  document.getElementById('conversationList').innerHTML = conversations.map(function(row) {\n    const deletable = row.id !== 'king-convo';\n    return '<div class=\"window-item' + (row.id === activeConversationId ? ' active' : '') + '\"><button class=\"window-select\" onclick=\"selectConversation(&quot;' + escapeHtml(row.id) + '&quot;)\"><span class=\"window-name\">' + escapeHtml(row.title || row.id) + '</span></button><span class=\"window-meta\">' + escapeHtml(row.unread || 0) + '</span>' + (deletable ? '<button class=\"window-delete\" onclick=\"deleteConversation(event, &quot;' + escapeHtml(row.id) + '&quot;)\" aria-label=\"Delete window\">×</button>' : '') + '</div>';\n  }).join('');\n}\nasync function deleteConversation(event, id) {\n  event.stopPropagation();\n  await request('/gui/conversations/' + encodeURIComponent(id) + '/delete', { method: 'POST' });\n  if (activeConversationId === id) {\n    activeConversationId = 'king-convo';\n    localStorage.setItem('king:activeConversationId', activeConversationId);\n  }\n  visibleMessageCount = 20;\n  shouldStickToBottom = true;\n  await refresh();\n}\nfunction renderTasks(state) {\n  const tasks = state.tasks || [];\n  document.getElementById('taskBadge').textContent = String(tasks.filter(function(task) { return task.status !== 'done'; }).length);\n  document.getElementById('panel-tasks').innerHTML = tasks.length ? tasks.slice().reverse().map(function(task) {\n    return '<div class=\"task-row\"><div class=\"task-top\"><h3>' + escapeHtml(task.title) + '</h3><span class=\"time\">' + escapeHtml(taskStatusLabel(task.status)) + ' P' + escapeHtml(task.priority) + '</span></div><p>' + escapeHtml(task.description || ((task.scope && task.scope.paths || []).join(', ')) || 'No description') + '</p></div>';\n  }).join('') : '<p class=\"muted\">No tasks yet.</p>';\n  const artifacts = state.artifacts || [];\n  document.getElementById('panel-files').innerHTML = artifacts.length ? artifacts.slice().reverse().map(function(artifact) {\n    return '<div class=\"task-row\"><div class=\"task-top\"><h3>' + escapeHtml(artifact.path || artifact.name || 'artifact') + '</h3><span class=\"time\">' + escapeHtml(artifact.kind || 'file') + '</span></div><p>' + escapeHtml(artifact.source || artifact.confidence || '') + '</p></div>';\n  }).join('') : '<p class=\"muted\">No files yet.</p>';\n}\nfunction renderSummary(summary) {\n  const connection = summary.connection || {};\n  const observation = summary.observation || { counts: {}, reasons: [] };\n  const counts = observation.counts || {};\n  const agent = summary.agent || {};\n  lastConnection = connection;\n  const heartbeatStat = document.getElementById('heartbeatStat');\n  if (heartbeatStat) heartbeatStat.textContent = '最近心跳：' + (connection.lastHeartbeatAt ? formatTime(connection.lastHeartbeatAt) : '未收到');\n  document.getElementById('unreadStat').textContent = String(counts.unreadMessages || 0);\n  document.getElementById('failedStat').textContent = String(counts.failedRuns || 0);\n  document.getElementById('activityBadge').textContent = String((counts.unreadMessages || 0) + (counts.failedRuns || 0));\n  renderConversations({ ...summary, state: window.__lastState || {} });\n  const observationReasons = document.getElementById('observationReasons');\n  if (observationReasons) observationReasons.textContent = (observation.reasons || []).map(reasonLabel).join('；') || '等待下一条消息。';\n  if (summary.pairingCode) {\n    pairCommandPrimary = 'king agent computer --pair ' + summary.pairingCode + ' --server ' + base + (summary.pairCommandTenantArg || '');\n  pairCommandStart = 'king agent computer --server ' + base + (summary.pairCommandTenantArg || '');\n  pairCommand = pairCommandPrimary + '\\n' + pairCommandStart;\n    if (document.getElementById('computerDialog').open) renderComputerFlow();\n  }\n  if (!connection.paired && !promptedForComputer && !localStorage.getItem('king:addComputerDismissed')) {\n    promptedForComputer = true;\n    setTimeout(function() {\n      if (!document.getElementById('settingsDialog').open && !document.getElementById('computerDialog').open) openComputerFlow('intro');\n    }, 250);\n  }\n  const engines = summary.availableEngines || [];\n  document.getElementById('engine').innerHTML = engines.length ? engines.map(function(engine) {\n    return '<option value=\"' + escapeHtml(engine) + '\"' + (engine === agent.engine ? ' selected' : '') + '>' + escapeHtml(engine) + '</option>';\n  }).join('') : '<option value=\"\">请先配对</option>';\n  document.getElementById('model').value = agent.model === 'default' ? '' : (agent.model || '');\n  document.getElementById('fastModel').value = agent.fastModel === 'default' ? '' : (agent.fastModel || '');\n  const modelRows = ['claude', 'codex'].map(function(engine) {\n    const available = engines.includes(engine);\n    const active = agent.engine === engine;\n    const label = active && !available ? '当前配置，未检测到本机' : available ? '可用' : '未检测到';\n    return '<div class=\"model-row\"><span>' + engine + (active ? ' · 当前' : '') + '</span><span class=\"' + (available ? 'available' : 'unavailable') + '\">' + label + '</span></div>';\n  }).join('');\n  document.getElementById('modelStatus').innerHTML = modelRows + '<div class=\"model-row\"><span>运行模式</span><span>' + lifecycleLabel(agent.lifecycle) + '</span></div>';\n}\nasync function refresh(options) {\n  const results = await Promise.all([\n    request('/gui/summary?conversationId=' + encodeURIComponent(activeConversationId)),\n    request('/gui/state')\n  ]);\n  window.__lastState = results[1];\n  renderSummary(results[0]);\n  renderMessages(results[1], options || {});\n  renderTasks(results[1]);\n}\nrefresh();\ndocument.querySelector('.workspace').addEventListener('scroll', handleWorkspaceScroll);\nsetInterval(refresh, 3500);\n";
+const clientScript = "const base = location.origin;\nlet pairCommand = '';\nlet pairCommandPrimary = '';\nlet pairCommandStart = '';\nlet computerStep = 'intro';\nlet lastConnection = { paired: false, online: false };\nlet promptedForComputer = false;\nlet visibleMessageCount = 20;\nlet lastMessageTotal = 0;\nlet loadingOlderMessages = false;\nlet sendingMessage = false;\nlet shouldStickToBottom = true;\nlet activeConversationId = localStorage.getItem('king-ai:activeConversationId') || 'king-ai-convo';\n\nfunction escapeHtml(value) {\n  return String(value ?? '').replace(/[&<>\"']/g, function(ch) {\n    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' })[ch];\n  });\n}\nfunction formatTime(value) {\n  if (!value) return '未收到';\n  return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });\n}\nfunction lifecycleLabel(value) {\n  return ({ 'on-demand': '按需启动', '24/7': '持续在线', idle_cached: '空闲保活', disabled: '停用' })[value] || value || '按需启动';\n}\nfunction taskStatusLabel(value) {\n  return ({ pending: '待分配', assigned: '已分配', in_progress: '进行中', review: '待评审', done: '已完成', failed: '失败', blocked: '被阻塞' })[value] || value || '未知';\n}\nfunction reasonLabel(reason) {\n  return String(reason || '')\n    .replace(/(\\\\\\\\d+) unread message\\\\\\\\(s\\\\\\\\) pending/g, '$1 条消息等待本地 AI 处理')\n    .replace(/(\\\\\\\\d+) failed run\\\\\\\\(s\\\\\\\\)/g, '$1 次运行失败')\n    .replace('no state changes detected', '等待下一条消息。');\n}\nasync function request(path, options) {\n  const res = await fetch(path, options);\n  if (!res.ok) throw new Error(await res.text());\n  return res.headers.get('Content-Type') && res.headers.get('Content-Type').includes('application/json') ? res.json() : res.text();\n}\nfunction openSettings() {\n  document.getElementById('settingsDialog').showModal();\n}\nfunction closeSettings() {\n  document.getElementById('settingsDialog').close();\n}\nfunction closeComputerDialog() {\n  document.getElementById('computerDialog').close();\n}\nasync function openComputerFlow(step) {\n  computerStep = step || 'intro';\n  const settings = document.getElementById('settingsDialog');\n  if (settings.open) settings.close();\n  renderComputerFlow();\n  const dialog = document.getElementById('computerDialog');\n  if (!dialog.open) dialog.showModal();\n  if (!pairCommand) await loadPairCommand();\n}\nasync function loadPairCommand() {\n  const summary = await request('/gui/summary?conversationId=' + encodeURIComponent(activeConversationId));\n  if (!summary.pairingCode) return;\n  pairCommandPrimary = 'king-ai agent computer --pair ' + summary.pairingCode + ' --server ' + base + (summary.pairCommandTenantArg || '');\n  pairCommandStart = 'king-ai agent computer --server ' + base + (summary.pairCommandTenantArg || '');\n  pairCommand = pairCommandPrimary + '\\n' + pairCommandStart;\n  lastConnection = summary.connection || lastConnection;\n  if (document.getElementById('computerDialog').open && computerStep === 'connect') renderComputerFlow();\n}\nfunction dismissComputerIntro() {\n  const checkbox = document.getElementById('dontRemindComputer');\n  if (checkbox && checkbox.checked) localStorage.setItem('king-ai:addComputerDismissed', '1');\n  closeComputerDialog();\n}\nfunction renderComputerFlow() {\n  const connected = Boolean(lastConnection.online);\n  const paired = Boolean(lastConnection.paired);\n  const connectionText = connected ? 'Computer connected.' : paired ? 'Computer paired. Waiting for it to come online...' : 'Waiting for computer to connect...';\n  const flow = document.getElementById('computerFlow');\n  if (computerStep === 'select') {\n    flow.innerHTML =\n      '<div class=\"computer-actions\"><button class=\"icon button-shadow\" onclick=\"closeComputerDialog()\" aria-label=\"Close\">×</button></div>' +\n      '<h2 class=\"computer-title\">Add Computer</h2>' +\n      '<div class=\"choice-grid\">' +\n      '<button class=\"computer-choice active\" onclick=\"openComputerFlow(&quot;connect&quot;)\"><span class=\"computer-icon\">▭</span><span><strong class=\"computer-choice-title\">Your Computer</strong><span class=\"computer-muted\">Run agents on your own computer</span></span></button>' +\n      '<button class=\"computer-choice disabled\" type=\"button\"><span class=\"computer-icon\">☁</span><span><strong class=\"computer-choice-title\">Cloud Computer</strong><span class=\"computer-muted\">Coming soon</span></span></button>' +\n      '</div>' +\n      '<div class=\"computer-actions\"><button class=\"button-shadow\" onclick=\"closeComputerDialog()\">Cancel</button><button class=\"primary-pink button-shadow\" onclick=\"openComputerFlow(&quot;connect&quot;)\">Next</button></div>';\n    return;\n  }\n  if (computerStep === 'connect') {\n    flow.innerHTML =\n      '<div class=\"computer-actions\"><button class=\"icon button-shadow\" onclick=\"closeComputerDialog()\" aria-label=\"Close\">×</button></div>' +\n      '<h2 class=\"computer-title\">Connect Computer</h2>' +\n      '<p><strong>&gt;_ Run this command on your computer to connect:</strong></p>' +\n      '<div class=\"connect-row\"><div class=\"connect-stack\">' +\n      '<div class=\"connect-help\">First-time pairing: run this once to attach this browser session.</div>' +\n      '<pre class=\"connect-command\">' + escapeHtml(pairCommandPrimary || 'Loading pairing code...') + '</pre>' +\n      '<div class=\"connect-help\">Already paired: use this later to start the local computer runtime.</div>' +\n      '<pre class=\"connect-command\">' + escapeHtml(pairCommandStart || 'Loading start command...') + '</pre></div><button class=\"icon button-shadow\" onclick=\"copyPairCommand()\" aria-label=\"Copy commands\">□</button></div>' +\n      '<div class=\"connect-status\"><span class=\"status-dot' + (connected ? ' online' : '') + '\"></span><span>' + connectionText + '</span></div>' +\n      '<div class=\"computer-actions\"><button class=\"button-shadow\" onclick=\"closeComputerDialog()\">Cancel</button><button class=\"' + (connected ? 'primary-pink' : 'disabled-action') + ' button-shadow\" onclick=\"' + (connected ? 'closeComputerDialog()' : 'refresh()') + '\">' + (connected ? 'Done' : 'Done') + '</button></div>';\n    return;\n  }\n  flow.innerHTML =\n    '<div><div class=\"computer-kicker\">Meet King AI</div><h2 class=\"computer-title\">Add a Computer</h2></div>' +\n    '<div class=\"computer-lead\"><span class=\"computer-icon\">▭</span><div><p>Your agents need somewhere to run. Connect a computer and they will come online there.</p><p class=\"computer-muted\">Need an agent runtime installed: Claude Code or Codex CLI.</p></div></div>' +\n    '<div class=\"computer-rule\"></div>' +\n    '<div class=\"computer-actions between\"><label class=\"check-row\"><input id=\"dontRemindComputer\" type=\"checkbox\" />Do not remind me again</label><span class=\"computer-actions\"><button class=\"button-shadow\" onclick=\"dismissComputerIntro()\">Skip</button><button class=\"primary-pink button-shadow\" onclick=\"openComputerFlow(&quot;select&quot;)\">▭ Add Computer</button></span></div>';\n}\nfunction showPanel(name) {\n  ['chat', 'tasks', 'files'].forEach(function(panel) {\n    document.getElementById('panel-' + panel).classList.toggle('active', panel === name);\n    document.querySelector('[data-panel=\"' + panel + '\"]').classList.toggle('active', panel === name);\n  });\n}\nfunction scrollToBottom() {\n  const workspace = document.querySelector('.workspace');\n  workspace.scrollTop = workspace.scrollHeight;\n  shouldStickToBottom = true;\n  updateBackToBottom();\n}\nfunction updateBackToBottom() {\n  const workspace = document.querySelector('.workspace');\n  const jump = document.querySelector('.jump');\n  const distance = workspace.scrollHeight - workspace.clientHeight - workspace.scrollTop;\n  const away = distance > 180;\n  shouldStickToBottom = !away;\n  jump.classList.toggle('visible', away);\n}\nasync function handleWorkspaceScroll() {\n  updateBackToBottom();\n  const workspace = document.querySelector('.workspace');\n  if (loadingOlderMessages || workspace.scrollTop > 24 || visibleMessageCount >= lastMessageTotal) return;\n  loadingOlderMessages = true;\n  const beforeHeight = workspace.scrollHeight;\n  const beforeTop = workspace.scrollTop;\n  visibleMessageCount = Math.min(visibleMessageCount + 20, lastMessageTotal);\n  await refresh({ preserveScroll: true });\n  workspace.scrollTop = workspace.scrollHeight - beforeHeight + beforeTop;\n  loadingOlderMessages = false;\n}\nasync function copyPairCommand() {\n  if (!pairCommand) return;\n  await navigator.clipboard.writeText(pairCommand).catch(function() {});\n}\nasync function sendMessage() {\n  if (sendingMessage) return;\n  const input = document.getElementById('body');\n  const button = document.getElementById('sendButton');\n  const body = input.value.trim();\n  if (!body) return;\n  sendingMessage = true;\n  input.value = '';\n  input.blur();\n  button.disabled = true;\n  button.textContent = 'Sending';\n  try {\n    await request('/gui/message', {\n      method: 'POST',\n      headers: { 'Content-Type': 'application/json' },\n      body: JSON.stringify({ body, conversationId: activeConversationId })\n    });\n    visibleMessageCount = 20;\n    shouldStickToBottom = true;\n    await refresh();\n  } catch (error) {\n    input.value = body;\n    throw error;\n  } finally {\n    sendingMessage = false;\n    button.disabled = false;\n    button.textContent = 'Send';\n  }\n}\nasync function clearMessages() {\n  await request('/gui/clear-messages', { method: 'POST' });\n  visibleMessageCount = 20;\n  shouldStickToBottom = true;\n  await refresh();\n}\nasync function saveAgentConfig() {\n  await request('/gui/agent-config', {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify({\n      engine: document.getElementById('engine').value,\n      lifecycle: 'on-demand',\n      model: document.getElementById('model').value,\n      fastModel: document.getElementById('fastModel').value\n    })\n  });\n  await refresh();\n}\nfunction renderMessages(state, options) {\n  const allRows = (state.messages || []).filter(function(message) { return message.conversation_id === activeConversationId; });\n  if (allRows.length > lastMessageTotal) visibleMessageCount = 20;\n  lastMessageTotal = allRows.length;\n  visibleMessageCount = Math.min(Math.max(visibleMessageCount, 20), Math.max(lastMessageTotal, 20));\n  const rows = allRows.slice(-visibleMessageCount);\n  const hasOlder = rows.length < allRows.length;\n  const unread = rows.filter(function(message) { return !(message.readBy || []).includes('king-ai-ceo') && message.author_kind === 'human'; }).length;\n  const olderLine = hasOlder ? 'Pull down or scroll to top to load older messages...' : 'No older messages';\n  const html = rows.length ? rows.map(function(message) {\n    if (message.author_kind === 'system') {\n      return '<div class=\"system-line\">' + escapeHtml(message.body) + '</div>';\n    }\n    const initial = message.author_kind === 'agent' ? 'A' : '人';\n    const name = message.author_kind === 'agent' ? (message.author_name || 'AI') : (message.author_name || 'you');\n    const unreadClass = message.author_kind === 'human' && !(message.readBy || []).includes('king-ai-ceo') ? ' highlight' : '';\n    return '<article class=\"post' + unreadClass + '\"><div class=\"avatar\">' + initial + '</div><div><div class=\"post-top\"><span class=\"author\">' + escapeHtml(name) + '</span><span class=\"time\">' + formatTime(message.created_at) + '</span></div><div class=\"post-body\">' + escapeHtml(message.body) + '</div></div></article>';\n  }).join('') : '';\n  document.getElementById('chatWindow').innerHTML = '<div class=\"system-line\">' + olderLine + '</div>' + html;\n  if (options && options.preserveScroll) updateBackToBottom();\n  else if (shouldStickToBottom) scrollToBottom();\n  else updateBackToBottom();\n}\nfunction selectConversation(id) {\n  activeConversationId = id || 'king-ai-convo';\n  localStorage.setItem('king-ai:activeConversationId', activeConversationId);\n  visibleMessageCount = 20;\n  shouldStickToBottom = true;\n  refresh();\n}\nfunction createConversation() {\n  const input = document.getElementById('newWindowTitle');\n  input.value = '';\n  const dialog = document.getElementById('newWindowDialog');\n  if (!dialog.open) dialog.showModal();\n  setTimeout(function() { input.focus(); }, 0);\n}\nfunction closeNewWindowDialog() {\n  document.getElementById('newWindowDialog').close();\n}\nasync function submitConversation(event) {\n  event.preventDefault();\n  const input = document.getElementById('newWindowTitle');\n  const title = input.value.trim();\n  const submit = document.getElementById('newWindowSubmit');\n  submit.disabled = true;\n  submit.textContent = 'Creating';\n  try {\n    const result = await request('/gui/conversations', {\n      method: 'POST',\n      headers: { 'Content-Type': 'application/json' },\n      body: JSON.stringify({ title })\n    });\n    activeConversationId = result.conversation.id;\n    localStorage.setItem('king-ai:activeConversationId', activeConversationId);\n    visibleMessageCount = 20;\n    shouldStickToBottom = true;\n    closeNewWindowDialog();\n    await refresh();\n  } finally {\n    submit.disabled = false;\n    submit.textContent = 'Create';\n  }\n}\nfunction activeConversationStatus(summary, active) {\n  const state = summary.state || {};\n  const typing = (state.typingLog || []).slice().reverse().find(function(row) { return row.conversationId === active.id && !row.done; });\n  const thinking = (state.thinkingLog || []).slice().reverse().find(function(row) { return row.action === 'mark' && (row.conversationIds || []).includes(active.id); });\n  if (typing) return 'agent 正在输入...';\n  if (thinking) return 'agent 正在处理...';\n  if ((active.unread || 0) > 0) return '等待本地 agent 回复';\n  return '';\n}\nfunction renderConversations(summary) {\n  const conversations = summary.conversations || [];\n  if (conversations.length && !conversations.some(function(row) { return row.id === activeConversationId; })) activeConversationId = conversations[0].id;\n  const active = conversations.find(function(row) { return row.id === activeConversationId; }) || conversations[0] || { id: 'king-ai-convo', title: 'all' };\n  document.querySelector('.channel-name').textContent = active.title || active.id;\n  document.querySelector('.composer textarea').placeholder = 'Message #' + (active.title || active.id);\n  document.querySelector('.hash').textContent = active.id === 'king-ai-convo' ? '#' : '~';\n  document.getElementById('routeSummary').textContent = activeConversationStatus(summary, active);\n  document.getElementById('conversationList').innerHTML = conversations.map(function(row) {\n    const deletable = row.id !== 'king-ai-convo';\n    return '<div class=\"window-item' + (row.id === activeConversationId ? ' active' : '') + '\"><button class=\"window-select\" onclick=\"selectConversation(&quot;' + escapeHtml(row.id) + '&quot;)\"><span class=\"window-name\">' + escapeHtml(row.title || row.id) + '</span></button><span class=\"window-meta\">' + escapeHtml(row.unread || 0) + '</span>' + (deletable ? '<button class=\"window-delete\" onclick=\"deleteConversation(event, &quot;' + escapeHtml(row.id) + '&quot;)\" aria-label=\"Delete window\">×</button>' : '') + '</div>';\n  }).join('');\n}\nasync function deleteConversation(event, id) {\n  event.stopPropagation();\n  await request('/gui/conversations/' + encodeURIComponent(id) + '/delete', { method: 'POST' });\n  if (activeConversationId === id) {\n    activeConversationId = 'king-ai-convo';\n    localStorage.setItem('king-ai:activeConversationId', activeConversationId);\n  }\n  visibleMessageCount = 20;\n  shouldStickToBottom = true;\n  await refresh();\n}\nfunction renderTasks(state) {\n  const tasks = state.tasks || [];\n  document.getElementById('taskBadge').textContent = String(tasks.filter(function(task) { return task.status !== 'done'; }).length);\n  document.getElementById('panel-tasks').innerHTML = tasks.length ? tasks.slice().reverse().map(function(task) {\n    return '<div class=\"task-row\"><div class=\"task-top\"><h3>' + escapeHtml(task.title) + '</h3><span class=\"time\">' + escapeHtml(taskStatusLabel(task.status)) + ' P' + escapeHtml(task.priority) + '</span></div><p>' + escapeHtml(task.description || ((task.scope && task.scope.paths || []).join(', ')) || 'No description') + '</p></div>';\n  }).join('') : '<p class=\"muted\">No tasks yet.</p>';\n  const artifacts = state.artifacts || [];\n  document.getElementById('panel-files').innerHTML = artifacts.length ? artifacts.slice().reverse().map(function(artifact) {\n    return '<div class=\"task-row\"><div class=\"task-top\"><h3>' + escapeHtml(artifact.path || artifact.name || 'artifact') + '</h3><span class=\"time\">' + escapeHtml(artifact.kind || 'file') + '</span></div><p>' + escapeHtml(artifact.source || artifact.confidence || '') + '</p></div>';\n  }).join('') : '<p class=\"muted\">No files yet.</p>';\n}\nfunction renderSummary(summary) {\n  const connection = summary.connection || {};\n  const observation = summary.observation || { counts: {}, reasons: [] };\n  const counts = observation.counts || {};\n  const agent = summary.agent || {};\n  lastConnection = connection;\n  const heartbeatStat = document.getElementById('heartbeatStat');\n  if (heartbeatStat) heartbeatStat.textContent = '最近心跳：' + (connection.lastHeartbeatAt ? formatTime(connection.lastHeartbeatAt) : '未收到');\n  document.getElementById('unreadStat').textContent = String(counts.unreadMessages || 0);\n  document.getElementById('failedStat').textContent = String(counts.failedRuns || 0);\n  document.getElementById('activityBadge').textContent = String((counts.unreadMessages || 0) + (counts.failedRuns || 0));\n  renderConversations({ ...summary, state: window.__lastState || {} });\n  const observationReasons = document.getElementById('observationReasons');\n  if (observationReasons) observationReasons.textContent = (observation.reasons || []).map(reasonLabel).join('；') || '等待下一条消息。';\n  if (summary.pairingCode) {\n    pairCommandPrimary = 'king-ai agent computer --pair ' + summary.pairingCode + ' --server ' + base + (summary.pairCommandTenantArg || '');\n  pairCommandStart = 'king-ai agent computer --server ' + base + (summary.pairCommandTenantArg || '');\n  pairCommand = pairCommandPrimary + '\\n' + pairCommandStart;\n    if (document.getElementById('computerDialog').open) renderComputerFlow();\n  }\n  if (!connection.paired && !promptedForComputer && !localStorage.getItem('king-ai:addComputerDismissed')) {\n    promptedForComputer = true;\n    setTimeout(function() {\n      if (!document.getElementById('settingsDialog').open && !document.getElementById('computerDialog').open) openComputerFlow('intro');\n    }, 250);\n  }\n  const engines = summary.availableEngines || [];\n  document.getElementById('engine').innerHTML = engines.length ? engines.map(function(engine) {\n    return '<option value=\"' + escapeHtml(engine) + '\"' + (engine === agent.engine ? ' selected' : '') + '>' + escapeHtml(engine) + '</option>';\n  }).join('') : '<option value=\"\">请先配对</option>';\n  document.getElementById('model').value = agent.model === 'default' ? '' : (agent.model || '');\n  document.getElementById('fastModel').value = agent.fastModel === 'default' ? '' : (agent.fastModel || '');\n  const modelRows = ['claude', 'codex'].map(function(engine) {\n    const available = engines.includes(engine);\n    const active = agent.engine === engine;\n    const label = active && !available ? '当前配置，未检测到本机' : available ? '可用' : '未检测到';\n    return '<div class=\"model-row\"><span>' + engine + (active ? ' · 当前' : '') + '</span><span class=\"' + (available ? 'available' : 'unavailable') + '\">' + label + '</span></div>';\n  }).join('');\n  document.getElementById('modelStatus').innerHTML = modelRows + '<div class=\"model-row\"><span>运行模式</span><span>' + lifecycleLabel(agent.lifecycle) + '</span></div>';\n}\nasync function refresh(options) {\n  const results = await Promise.all([\n    request('/gui/summary?conversationId=' + encodeURIComponent(activeConversationId)),\n    request('/gui/state')\n  ]);\n  window.__lastState = results[1];\n  renderSummary(results[0]);\n  renderMessages(results[1], options || {});\n  renderTasks(results[1]);\n}\nrefresh();\ndocument.querySelector('.workspace').addEventListener('scroll', handleWorkspaceScroll);\nsetInterval(refresh, 3500);\n";
 
 
 function json(data: unknown, init?: ResponseInit): Response {
@@ -788,7 +788,7 @@ function publicBaseUrl(request: Request, env: Bindings): string {
 function authForRequest(request: Request, env: Bindings) {
   if (!authIsConfigured(env) || !env.AUTH_DB) return null;
   return betterAuth({
-    appName: "King",
+    appName: "King AI",
     baseURL: publicBaseUrl(request, env),
     basePath: "/api/auth",
     secret: env.BETTER_AUTH_SECRET,
@@ -808,7 +808,7 @@ function authForRequest(request: Request, env: Bindings) {
 }
 
 async function getAuthUser(c: RequestContext): Promise<AuthUser | null> {
-  const testUser = c.env.KING_TEST_AUTH_USER ? c.req.header("X-King-Test-User") : undefined;
+  const testUser = c.env.KING_AI_TEST_AUTH_USER ? c.req.header("X-King-AI-Test-User") : undefined;
   if (testUser) {
     const parsed = JSON.parse(testUser) as AuthUser;
     return { id: parsed.id, email: parsed.email, name: parsed.name };
@@ -816,7 +816,7 @@ async function getAuthUser(c: RequestContext): Promise<AuthUser | null> {
   const auth = authForRequest(c.req.raw, c.env);
   if (!auth) {
     if (isLocalDevRequest(c.req.raw)) {
-      return { id: "local-dev", email: "local-dev@king.local", name: "Local Dev" };
+      return { id: "local-dev", email: "local-dev@king-ai.local", name: "Local Dev" };
     }
     return null;
   }
@@ -830,7 +830,7 @@ function isLocalDevRequest(request: Request): boolean {
 }
 
 function authUserFromRequest(request: Request): AuthUser | undefined {
-  const raw = request.headers.get("X-King-Auth-User");
+  const raw = request.headers.get("X-King-AI-Auth-User");
   if (!raw) return undefined;
   try {
     const parsed = JSON.parse(raw) as AuthUser;
@@ -842,7 +842,7 @@ function authUserFromRequest(request: Request): AuthUser | undefined {
 }
 
 function displayNameForAuthUser(user: AuthUser | undefined): string {
-  return user?.name?.trim() || user?.email?.trim() || user?.id?.trim() || "King Human";
+  return user?.name?.trim() || user?.email?.trim() || user?.id?.trim() || "King AI Human";
 }
 
 async function sha256Hex(value: string): Promise<string> {
@@ -852,7 +852,7 @@ async function sha256Hex(value: string): Promise<string> {
 
 function displayNameForHuman(state: State, user: AuthUser | undefined): string {
   const fromAuth = displayNameForAuthUser(user);
-  if (fromAuth !== "King Human") return fromAuth;
+  if (fromAuth !== "King AI Human") return fromAuth;
   const fromMessages = [...state.messages].reverse().find((message) => message.author_kind === "human" && message.author_name.trim());
   return fromMessages?.author_name.trim() || fromAuth;
 }
@@ -863,8 +863,8 @@ function tenantFromAuthUser(user: AuthUser): string {
 
 async function remoteAssistTenantFromRequest(c: RequestContext): Promise<string | undefined> {
   const url = new URL(c.req.url);
-  const tokenValue = url.searchParams.get("assist") || c.req.header("X-King-Assist-Token");
-  const tenantValue = url.searchParams.get("tenant") || c.req.header("X-King-Tenant");
+  const tokenValue = url.searchParams.get("assist") || c.req.header("X-King-AI-Assist-Token");
+  const tenantValue = url.searchParams.get("tenant") || c.req.header("X-King-AI-Tenant");
   if (!tokenValue || !tenantValue) return undefined;
   const tenantId = sanitizeTenantId(tenantValue);
   const stub = c.env.GUI_STATE.get(c.env.GUI_STATE.idFromName(tenantId));
@@ -877,7 +877,7 @@ async function remoteAssistTenantFromRequest(c: RequestContext): Promise<string 
 
 async function tenantFromRequest(c: RequestContext): Promise<string> {
   const url = new URL(c.req.url);
-  const explicit = url.searchParams.get("tenant") || c.req.header("X-King-Tenant");
+  const explicit = url.searchParams.get("tenant") || c.req.header("X-King-AI-Tenant");
   if (explicit) return sanitizeTenantId(explicit);
   const user = await getAuthUser(c);
   if (user) return tenantFromAuthUser(user);
@@ -909,7 +909,7 @@ function splitPairCode(value: unknown): { tenantId?: string; code?: string } {
 function pairingLocator(args: { serverUrl: string; tenantId: string; code: string }): string {
   const params = new URLSearchParams({ server: args.serverUrl, code: args.code });
   if (args.tenantId !== "global") params.set("tenant", args.tenantId);
-  return `king://pair?${params.toString()}`;
+  return `king-ai://pair?${params.toString()}`;
 }
 
 	async function stateForRequest(c: RequestContext): Promise<DurableObjectStub> {
@@ -920,10 +920,10 @@ async function forwardHeaders(c: RequestContext, headers: Record<string, string>
   const forwarded = new Headers(headers);
   const auth = c.req.header("Authorization");
   if (auth) forwarded.set("Authorization", auth);
-  forwarded.set("X-King-Tenant", await tenantForGuiRequest(c));
-  forwarded.set("X-King-Public-Base", publicBaseUrl(c.req.raw, c.env));
+  forwarded.set("X-King-AI-Tenant", await tenantForGuiRequest(c));
+  forwarded.set("X-King-AI-Public-Base", publicBaseUrl(c.req.raw, c.env));
   const user = await getAuthUser(c);
-  if (user) forwarded.set("X-King-Auth-User", JSON.stringify(user));
+  if (user) forwarded.set("X-King-AI-Auth-User", JSON.stringify(user));
   return forwarded;
 }
 
@@ -938,7 +938,7 @@ function loginPage(): string {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>King Sign In</title>
+  <title>King AI Sign In</title>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -1040,7 +1040,7 @@ function loginPage(): string {
 </head>
 <body>
   <header class="topbar">
-    <div class="brand"><span class="brand-mark">↗</span>King</div>
+    <div class="brand"><span class="brand-mark">↗</span>King AI</div>
   </header>
   <main>
     <section class="panel" aria-label="Sign in">
@@ -1109,7 +1109,7 @@ type HostCommandResult<T = unknown> = {
 };
 
 function hostBridgeOutputDir(env: Bindings): Record<string, string> {
-  const dir = typeof env.KING_HOST_OUTPUT_DIR === "string" ? env.KING_HOST_OUTPUT_DIR.trim() : "";
+  const dir = typeof env.KING_AI_HOST_OUTPUT_DIR === "string" ? env.KING_AI_HOST_OUTPUT_DIR.trim() : "";
   return dir ? { outputDir: dir } : {};
 }
 
@@ -1121,7 +1121,7 @@ function localHostBridgeUrl(request: Request): string {
 }
 
 function hostBridgeSdk(env: Bindings, request: Request) {
-  const configuredUrl = typeof env.KING_HOST_URL === "string" ? env.KING_HOST_URL.trim() : "";
+  const configuredUrl = typeof env.KING_AI_HOST_URL === "string" ? env.KING_AI_HOST_URL.trim() : "";
   const baseUrl = configuredUrl || localHostBridgeUrl(request);
   if (!baseUrl) return null;
   return createHostSdk({ baseUrl, fetch: (input, init) => fetch(input as RequestInfo, init) });
@@ -1195,10 +1195,10 @@ app.get("/favicon.ico", () => new Response(null, { status: 204 }));
 app.post("/api/computers/pair", async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const pairCode = splitPairCode((body as { code?: unknown }).code);
-  const tenantId = c.req.header("X-King-Tenant") || pairCode.tenantId || await tenantFromRequest(c);
+  const tenantId = c.req.header("X-King-AI-Tenant") || pairCode.tenantId || await tenantFromRequest(c);
   const stub = c.env.GUI_STATE.get(c.env.GUI_STATE.idFromName(sanitizeTenantId(tenantId)));
   const headers = await forwardHeaders(c);
-  headers.set("X-King-Tenant", sanitizeTenantId(tenantId));
+  headers.set("X-King-AI-Tenant", sanitizeTenantId(tenantId));
   return stub.fetch("https://state/pair", {
     method: "POST",
     headers,
@@ -1314,7 +1314,7 @@ app.post("/runtime/conversation/mark-read", async (c) => await (await stateForRe
 app.get("/gui/state", async (c) => {
   const blocked = await requireGuiAuth(c);
   if (blocked) return blocked;
-  const isRemoteAssist = Boolean(new URL(c.req.url).searchParams.get("assist") || c.req.header("X-King-Assist-Token"));
+  const isRemoteAssist = Boolean(new URL(c.req.url).searchParams.get("assist") || c.req.header("X-King-AI-Assist-Token"));
   return (await stateForRequest(c)).fetch(`https://state/gui-state${isRemoteAssist ? "?redact=1" : ""}`);
 });
 app.get("/gui/summary", async (c) => {
@@ -1366,7 +1366,7 @@ app.post("/gui/attachments", async (c) => {
 });
 app.get("/gui/attachments/:attachmentId", async (c) => {
   const url = new URL(c.req.url);
-  const tenantId = url.searchParams.get("tenant") || c.req.header("X-King-Tenant") || "global";
+  const tenantId = url.searchParams.get("tenant") || c.req.header("X-King-AI-Tenant") || "global";
   return (await stateForTenant(c, tenantId)).fetch(`https://state/gui-attachments/${encodeURIComponent(c.req.param("attachmentId"))}?${url.searchParams.toString()}`);
 });
 app.post("/gui/conversations", async (c) => {
@@ -1731,7 +1731,7 @@ export class GuiState implements DurableObject {
 
   private snapshot(state: State): StateSnapshot {
     return {
-      schema: "king.gui-state.v1",
+      schema: "king-ai.gui-state.v1",
       exportedAt: Date.now(),
       state
     };
@@ -1740,7 +1740,7 @@ export class GuiState implements DurableObject {
   private async importSnapshot(payload: unknown): Promise<Response> {
     if (!payload || typeof payload !== "object") return json({ error: "expected state snapshot JSON" }, { status: 400 });
     const record = payload as Partial<StateSnapshot> & { state?: unknown };
-    if (record.schema !== "king.gui-state.v1" || !record.state || typeof record.state !== "object") {
+    if (record.schema !== "king-ai.gui-state.v1" || !record.state || typeof record.state !== "object") {
       return json({ error: "unsupported or malformed state snapshot" }, { status: 400 });
     }
     const incoming = this.normalizeState(record.state as State);
@@ -1809,9 +1809,9 @@ export class GuiState implements DurableObject {
     const unread = unreadMessagesFor(state, DEFAULT_AGENT.id);
     const tenantId = tenantHeader(request);
     const encodedPairingCode = tenantId === "global" ? state.pairingCode : `${tenantId}:${state.pairingCode}`;
-    const publicBase = request.headers.get("X-King-Public-Base") || new URL(request.url).origin;
+    const publicBase = request.headers.get("X-King-AI-Public-Base") || new URL(request.url).origin;
     const remoteAssist = activeRemoteAssistGrant(state);
-    const isRemoteAssist = Boolean(new URL(request.url).searchParams.get("assist") || request.headers.get("X-King-Assist-Token"));
+    const isRemoteAssist = Boolean(new URL(request.url).searchParams.get("assist") || request.headers.get("X-King-AI-Assist-Token"));
     const requestedConversationId = new URL(request.url).searchParams.get("conversationId") || DEFAULT_CONVERSATION.id;
     const activeConversation = state.conversations.find((row) => row.id === requestedConversationId) ?? state.conversations.find((row) => row.id === DEFAULT_CONVERSATION.id);
     const activeAgents = teamAgentsFor(state, activeConversation);
@@ -1960,7 +1960,7 @@ export class GuiState implements DurableObject {
       verdict: unread.length ? {
         actionable: top ? top.route !== "ignore" : true,
         reason: top ? `gui unread message routed ${messageRouteTag(top)}` : "gui unread message",
-        promptNote: "Handle the highest-priority routed message first. Reply through king reply king-convo --file notes/reply.md or a short inline reply.",
+        promptNote: "Handle the highest-priority routed message first. Reply through king-ai reply king-ai-convo --file notes/reply.md or a short inline reply.",
         routeHint: top?.route,
         priority: top?.priority
       } : { actionable: false, reason: "inbox empty", routeHint: "ignore", priority: "normal" }
@@ -2018,7 +2018,7 @@ export class GuiState implements DurableObject {
     const authorEngine = activeRunEngine(state) ?? normalizeEngineId(payload.engine) ?? actor.engine;
     let result = "";
     if (argv[0] === "reply") {
-      const conversationId = argv[1] || "king-convo";
+      const conversationId = argv[1] || "king-ai-convo";
       const quoteIdx = argv.indexOf("--quote");
       const quoted = quoteIdx >= 0 ? argv[quoteIdx + 1] : undefined;
       const bodyArgs = argv.slice(2).filter((_, idx) => {
@@ -2070,13 +2070,13 @@ export class GuiState implements DurableObject {
     } else if (argv[0] === "inbox") {
       result = JSON.stringify(unreadMessagesFor(state, actor.id), null, 2);
     } else if (argv[0] === "messages") {
-      const conversationId = argv[1] || "king-convo";
+      const conversationId = argv[1] || "king-ai-convo";
       const tailIdx = argv.indexOf("--tail");
       const tail = tailIdx >= 0 ? Number(argv[tailIdx + 1]) : 0;
       const rows = state.messages.filter((m) => m.conversation_id === conversationId && isRuntimeVisibleMessage(m));
       result = JSON.stringify(tail > 0 ? rows.slice(-tail) : rows, null, 2);
     } else if (argv[0] === "glance") {
-      const conversationId = argv[1] || "king-convo";
+      const conversationId = argv[1] || "king-ai-convo";
       const rows = state.messages.filter((m) => m.conversation_id === conversationId && isRuntimeVisibleMessage(m)).slice(-10);
       const now = Date.now();
       state.composing = state.composing.filter((claim) => claim.expires_at > now);
@@ -2180,44 +2180,44 @@ export class GuiState implements DurableObject {
       result = JSON.stringify((await this.agenda(actor.id).then((res) => res.json())) as AgendaPayload, null, 2);
     } else if (argv[0] === "help" || argv[0] === "--help") {
       result = [
-        "king gui commands:",
-        "  king inbox",
-        "  king messages <conversationId> [--tail n]",
-        "  king glance <conversationId>",
-        "  king agents [spawn|destroy]",
-        "  king roster",
-        "  king participants",
-        "  king preamble [--agent agent-id] [--reason wake|agenda] [--run run-id]",
-        "  king contacts [query]",
-        "  king whoami",
-        "  king reply <conversationId> <text>",
-        "  king send <agentId> <message> [--steer] [--type message|decision|blocker]",
-        "  king recv [--agent agent-id]",
-        "  king escalate <message>",
-        "  king status",
-        "  king state export|import|reset",
-        "  king observe [--json] [--classification productive|idle|blocked|backlog_stuck|error]",
-        "  king loop tick|emit|classify|recent|snapshot [--json] [--type eventType] [--agent agent-id]",
-        "  king task create|list|get|update|done [--after a,b] [--path a,b] [--assign agent-id]",
-        "  king initiative create|list|get|update [--goal text] [--status active|paused|completed|abandoned]",
-        "  king capsule create|list|mine|get|update [--paths a,b] [--owner agent-id] [--reviewer agent-id]",
-        "  king merge enqueue|list|get|mark [--capsule id] [--task id] [--branch name]",
-        "  king eval parse|record|list|get '<json evaluation>' [--artifact id] [--initiative id]",
-        "  king feedback record|list|summary|get [--agent agent-id] [--completed true|false]",
-        "  king review record|list|get [--capsule id] [--coverage pct] [--checks true|false]",
-        "  king route set|list|delete|emit <eventType> [--agent agent-id] [--source source] '<payload json>'",
-        "  king card list|create|claim|move|done|release [--paths a,b] [--owner agent-id]",
-        "  king calendar list|create",
-        "  king claim <name> [--in <conversationId>] [--paths a,b] [--owner agent-id]",
-        "  king unclaim <claimId>",
-        "  king dm <agentId> <text>",
-        "  king react <messageId> <emoji>",
-        "  king doc list|create|show|append|update",
-        "  king artifact put|list|get|check --kind <kind> --path <path> --source <source> --confidence <0-1>",
-        "  king context get|set|list|delete <key> [value]",
-        "  king hypothesis create|list|update [--status <status>] [--evidence artifact-ids]",
-        "  king plan parse|apply '<json plan>' [--assign agent-id] [--initiative id]",
-        "  king safety check|request|list|get|approve|deny <action|approvalId>"
+        "king-ai gui commands:",
+        "  king-ai inbox",
+        "  king-ai messages <conversationId> [--tail n]",
+        "  king-ai glance <conversationId>",
+        "  king-ai agents [spawn|destroy]",
+        "  king-ai roster",
+        "  king-ai participants",
+        "  king-ai preamble [--agent agent-id] [--reason wake|agenda] [--run run-id]",
+        "  king-ai contacts [query]",
+        "  king-ai whoami",
+        "  king-ai reply <conversationId> <text>",
+        "  king-ai send <agentId> <message> [--steer] [--type message|decision|blocker]",
+        "  king-ai recv [--agent agent-id]",
+        "  king-ai escalate <message>",
+        "  king-ai status",
+        "  king-ai state export|import|reset",
+        "  king-ai observe [--json] [--classification productive|idle|blocked|backlog_stuck|error]",
+        "  king-ai loop tick|emit|classify|recent|snapshot [--json] [--type eventType] [--agent agent-id]",
+        "  king-ai task create|list|get|update|done [--after a,b] [--path a,b] [--assign agent-id]",
+        "  king-ai initiative create|list|get|update [--goal text] [--status active|paused|completed|abandoned]",
+        "  king-ai capsule create|list|mine|get|update [--paths a,b] [--owner agent-id] [--reviewer agent-id]",
+        "  king-ai merge enqueue|list|get|mark [--capsule id] [--task id] [--branch name]",
+        "  king-ai eval parse|record|list|get '<json evaluation>' [--artifact id] [--initiative id]",
+        "  king-ai feedback record|list|summary|get [--agent agent-id] [--completed true|false]",
+        "  king-ai review record|list|get [--capsule id] [--coverage pct] [--checks true|false]",
+        "  king-ai route set|list|delete|emit <eventType> [--agent agent-id] [--source source] '<payload json>'",
+        "  king-ai card list|create|claim|move|done|release [--paths a,b] [--owner agent-id]",
+        "  king-ai calendar list|create",
+        "  king-ai claim <name> [--in <conversationId>] [--paths a,b] [--owner agent-id]",
+        "  king-ai unclaim <claimId>",
+        "  king-ai dm <agentId> <text>",
+        "  king-ai react <messageId> <emoji>",
+        "  king-ai doc list|create|show|append|update",
+        "  king-ai artifact put|list|get|check --kind <kind> --path <path> --source <source> --confidence <0-1>",
+        "  king-ai context get|set|list|delete <key> [value]",
+        "  king-ai hypothesis create|list|update [--status <status>] [--evidence artifact-ids]",
+        "  king-ai plan parse|apply '<json plan>' [--assign agent-id] [--initiative id]",
+        "  king-ai safety check|request|list|get|approve|deny <action|approvalId>"
       ].join("\n");
     } else {
       result = `gui runtime received: ${argv.join(" ")}`;
@@ -2269,12 +2269,12 @@ export class GuiState implements DurableObject {
       const column = args[2] as Card["column"] | undefined;
       const card = state.cards.find((row) => row.id === id);
       if (!card) return `card not found: ${id}`;
-      if (column !== "todo" && column !== "doing" && column !== "done") return "usage: king card move <id> todo|doing|done";
+      if (column !== "todo" && column !== "doing" && column !== "done") return "usage: king-ai card move <id> todo|doing|done";
       card.column = column;
       if (column === "done") card.claimedBy = undefined;
       return `card moved ${card.id} ${column}`;
     }
-    return "usage: king card list|create|claim|move|done|release";
+    return "usage: king-ai card list|create|claim|move|done|release";
   }
 
   private async stateCommand(state: State, args: string[]): Promise<string> {
@@ -2282,7 +2282,7 @@ export class GuiState implements DurableObject {
     if (cmd === "export") return JSON.stringify(this.snapshot(state), null, 2);
     if (cmd === "import") {
       const raw = args.slice(1).join(" ").trim();
-      if (!raw) return "usage: king state import '<snapshot json>'";
+      if (!raw) return "usage: king-ai state import '<snapshot json>'";
       let payload: unknown;
       try {
         payload = JSON.parse(raw);
@@ -2296,7 +2296,7 @@ export class GuiState implements DurableObject {
       const res = await this.resetState();
       return await res.text();
     }
-    return "usage: king state export|import|reset";
+    return "usage: king-ai state export|import|reset";
   }
 
   private agentsCommand(state: State, args: string[]): string {
@@ -2337,7 +2337,7 @@ export class GuiState implements DurableObject {
     }
     if (cmd === "emit") {
       const type = args[1];
-      if (!isLoopEventType(type)) return "usage: king loop emit <eventType> [--agent id] [--task id] [--pending n] '<payload json>'";
+      if (!isLoopEventType(type)) return "usage: king-ai loop emit <eventType> [--agent id] [--task id] [--pending n] '<payload json>'";
       const event = pushLoopEvent(state, {
         type,
         agent: readOption(args, "--agent"),
@@ -2386,7 +2386,7 @@ export class GuiState implements DurableObject {
       if (rows.length === 0) return "No loop events found.";
       return rows.map(formatLoopEventLine).join("\n") + `\n\n${rows.length} loop event(s)`;
     }
-    return "usage: king loop tick|emit|classify|recent|snapshot";
+    return "usage: king-ai loop tick|emit|classify|recent|snapshot";
   }
 
   private taskCommand(state: State, args: string[], actor = defaultAgentFor(state)): string {
@@ -2412,7 +2412,7 @@ export class GuiState implements DurableObject {
     }
     if (cmd === "create") {
       const title = stripOptions(args.slice(1), ["--assign", "--assignee", "--priority", "--parent", "--after", "--path", "--pattern", "--desc", "--initiative", "--capsule", "--subsystem", "--profile", "--owner-role", "--reviewer-role", "--acceptance", "--blocked-by"]).join(" ").trim();
-      if (!title) return "usage: king task create <title> [--assign agent-id] [--priority 1-10] [--after id1,id2] [--path a,b] [--pattern a,b] [--desc text]";
+      if (!title) return "usage: king-ai task create <title> [--assign agent-id] [--priority 1-10] [--after id1,id2] [--path a,b] [--pattern a,b] [--desc text]";
       const now = Date.now();
       const task: Task = {
         id: `task-${now}-${Math.random().toString(36).slice(2)}`,
@@ -2507,7 +2507,7 @@ export class GuiState implements DurableObject {
       if (review === "approved") task.reviewResult = "approved";
       return advanceTaskDone(state, task, actor, resultText);
     }
-    return "usage: king task create|list|get|update|done";
+    return "usage: king-ai task create|list|get|update|done";
   }
 
   private initiativeCommand(state: State, args: string[]): string {
@@ -2530,7 +2530,7 @@ export class GuiState implements DurableObject {
       const title = stripOptions(args.slice(1), ["--goal", "--summary", "--priority", "--source", "--status", "--agent"]).join(" ").trim();
       const goal = readOption(args, "--goal");
       const status = readOption(args, "--status") || "active";
-      if (!title || !goal) return "usage: king initiative create <title> --goal <goal> [--summary text] [--priority 1-10] [--source a,b]";
+      if (!title || !goal) return "usage: king-ai initiative create <title> --goal <goal> [--summary text] [--priority 1-10] [--source a,b]";
       if (!isInitiativeStatus(status)) return `invalid initiative status: ${status}`;
       const now = Date.now();
       const initiative: Initiative = {
@@ -2562,7 +2562,7 @@ export class GuiState implements DurableObject {
       initiative.updated_at = Date.now();
       return `Initiative ${initiative.id} updated [${initiative.status}]`;
     }
-    return "usage: king initiative create|list|get|update";
+    return "usage: king-ai initiative create|list|get|update";
   }
 
   private capsuleCommand(state: State, args: string[]): string {
@@ -2598,12 +2598,12 @@ export class GuiState implements DurableObject {
     if (cmd === "create") {
       const goal = readOption(args, "--goal") || stripOptions(args.slice(1), ["--owner", "--branch", "--base", "--paths", "--path", "--acceptance", "--reviewer", "--initiative", "--task", "--subsystem", "--scope-type", "--blocked-by", "--supersedes"]).join(" ").trim();
       const ownerAgent = readOption(args, "--owner") || DEFAULT_AGENT.id;
-      const branch = readOption(args, "--branch") || `king/${ownerAgent}/${Date.now()}`;
+      const branch = readOption(args, "--branch") || `king-ai/${ownerAgent}/${Date.now()}`;
       const baseCommit = readOption(args, "--base") || "unknown";
       const allowedPaths = parseAllowedPaths(args);
       const acceptance = readOption(args, "--acceptance") || "Owner documents the change and required verification.";
       const scopeType = readOption(args, "--scope-type");
-      if (!goal || allowedPaths.length === 0) return "usage: king capsule create --goal <goal> --paths a,b [--owner agent-id] [--branch name] [--base sha] [--acceptance text]";
+      if (!goal || allowedPaths.length === 0) return "usage: king-ai capsule create --goal <goal> --paths a,b [--owner agent-id] [--branch name] [--base sha] [--acceptance text]";
       if (scopeType && !isCapsuleScopeType(scopeType)) return `invalid capsule scope type: ${scopeType}`;
       const now = Date.now();
       const capsule: ChangeCapsule = {
@@ -2655,7 +2655,7 @@ export class GuiState implements DurableObject {
       capsule.updated_at = Date.now();
       return `Capsule ${capsule.id} updated [${capsule.status}]`;
     }
-    return "usage: king capsule create|list|mine|get|update";
+    return "usage: king-ai capsule create|list|mine|get|update";
   }
 
   private mergeCommand(state: State, args: string[]): string {
@@ -2676,7 +2676,7 @@ export class GuiState implements DurableObject {
       const taskId = readOption(args, "--task") || capsule?.taskId;
       const agentId = readOption(args, "--agent") || capsule?.ownerAgent || DEFAULT_AGENT.id;
       const targetBranch = readOption(args, "--target") || "main";
-      if (!branch) return "usage: king merge enqueue --branch <name> [--task id] [--capsule id] [--agent id] [--target main]";
+      if (!branch) return "usage: king-ai merge enqueue --branch <name> [--task id] [--capsule id] [--agent id] [--target main]";
       if (!isSafeBranchName(branch) || !isSafeBranchName(targetBranch)) return `invalid branch name: ${branch}`;
       const existing = state.mergeQueue.find((request) => request.branch === branch && request.status !== "merged" && request.status !== "failed");
       if (existing) return `merge request already queued ${existing.id}`;
@@ -2703,7 +2703,7 @@ export class GuiState implements DurableObject {
       const request = findMergeRequest(state, args[1]);
       const status = args[2];
       if (!request) return `merge request not found: ${args[1] || ""}`;
-      if (!isMergeStatus(status)) return "usage: king merge mark <id> queued|testing|merged|conflict|failed [--error text]";
+      if (!isMergeStatus(status)) return "usage: king-ai merge mark <id> queued|testing|merged|conflict|failed [--error text]";
       request.status = status;
       request.updatedAt = Date.now();
       request.error = readOption(args, "--error") ?? request.error;
@@ -2723,7 +2723,7 @@ export class GuiState implements DurableObject {
       }
       return `merge ${request.id} marked ${request.status}${request.error ? ` error=${request.error}` : ""}`;
     }
-    return "usage: king merge enqueue|list|get|mark";
+    return "usage: king-ai merge enqueue|list|get|mark";
   }
 
   private evalCommand(state: State, args: string[]): string {
@@ -2738,7 +2738,7 @@ export class GuiState implements DurableObject {
       const evaluation = findEvaluation(state, args[1]);
       return evaluation ? JSON.stringify(evaluation, null, 2) : `evaluation not found: ${args[1] || ""}`;
     }
-    if (cmd !== "parse" && cmd !== "record") return "usage: king eval parse|record|list|get '<json evaluation>' [--artifact id] [--initiative id]";
+    if (cmd !== "parse" && cmd !== "record") return "usage: king-ai eval parse|record|list|get '<json evaluation>' [--artifact id] [--initiative id]";
     let evaluation: EvaluationRecord;
     try {
       evaluation = parseEvaluationRecord(firstJsonArg(args.slice(1)) || "", {
@@ -2784,7 +2784,7 @@ export class GuiState implements DurableObject {
       state.runFeedback.push(feedback);
       return `feedback recorded ${feedback.id} agent=${feedback.agentId} completed=${feedback.taskCompleted} errored=${feedback.errored}`;
     }
-    return "usage: king feedback record|list|summary|get [--agent agent-id] [--completed true|false]";
+    return "usage: king-ai feedback record|list|summary|get [--agent agent-id] [--completed true|false]";
   }
 
   private reviewCommand(state: State, args: string[]): string {
@@ -2807,7 +2807,7 @@ export class GuiState implements DurableObject {
     }
     if (cmd === "record") {
       const capsule = findCapsule(state, readOption(args, "--capsule"));
-      if (!capsule) return "usage: king review record --capsule <id> --coverage <pct> [--checks true|false] [--acceptance true|false] [--scope true|false] [--tests true|false] [--regressions true|false]";
+      if (!capsule) return "usage: king-ai review record --capsule <id> --coverage <pct> [--checks true|false] [--acceptance true|false] [--scope true|false] [--tests true|false] [--regressions true|false]";
       const review = parseReviewRecord(args, capsule);
       state.reviews.push(review);
       if (review.decision === "approved") {
@@ -2822,7 +2822,7 @@ export class GuiState implements DurableObject {
       }
       return `review recorded ${review.id} capsule=${review.capsuleId} decision=${review.decision}${review.reasons.length ? ` reasons=${review.reasons.join("; ")}` : ""}`;
     }
-    return "usage: king review record|list|get [--capsule id] [--coverage pct] [--checks true|false]";
+    return "usage: king-ai review record|list|get [--capsule id] [--coverage pct] [--checks true|false]";
   }
 
   private routeCommand(state: State, args: string[]): string {
@@ -2836,7 +2836,7 @@ export class GuiState implements DurableObject {
     if (cmd === "set") {
       const eventType = args[1];
       const agentId = readOption(args, "--agent") || args[2] || DEFAULT_AGENT.id;
-      if (!eventType) return "usage: king route set <eventType> --agent <agentId>";
+      if (!eventType) return "usage: king-ai route set <eventType> --agent <agentId>";
       if (!state.agents.some((agent) => agent.id === agentId)) state.agents.push({ ...DEFAULT_AGENT, id: agentId, name: agentId, role: "Event subscriber" });
       if (!state.eventRoutes.some((route) => route.eventType === eventType && route.agentId === agentId)) {
         state.eventRoutes.push({ eventType, agentId, createdAt: Date.now() });
@@ -2849,7 +2849,7 @@ export class GuiState implements DurableObject {
     if (cmd === "delete" || cmd === "remove") {
       const eventType = args[1];
       const agentId = readOption(args, "--agent") || args[2];
-      if (!eventType) return "usage: king route delete <eventType> [--agent <agentId>]";
+      if (!eventType) return "usage: king-ai route delete <eventType> [--agent <agentId>]";
       const before = state.eventRoutes.length;
       state.eventRoutes = state.eventRoutes.filter((route) => route.eventType !== eventType || (agentId && route.agentId !== agentId));
       for (const agent of state.agents) {
@@ -2859,7 +2859,7 @@ export class GuiState implements DurableObject {
     }
     if (cmd === "emit") {
       const eventType = args[1];
-      if (!eventType) return "usage: king route emit <eventType> [--source source] '<payload json>'";
+      if (!eventType) return "usage: king-ai route emit <eventType> [--source source] '<payload json>'";
       const event = parseExternalEventArgs(eventType, args.slice(2));
       const routed = routeExternalEvent(state, event);
       for (const agentId of routed) {
@@ -2874,7 +2874,7 @@ export class GuiState implements DurableObject {
         ? `event routed ${event.type} -> ${routed.join(",")}`
         : `event ignored ${event.type}: no subscribers`;
     }
-    return "usage: king route set|list|delete|emit <eventType> [--agent agent-id] [--source source] '<payload json>'";
+    return "usage: king-ai route set|list|delete|emit <eventType> [--agent agent-id] [--source source] '<payload json>'";
   }
 
   private calendarCommand(state: State, args: string[]): string {
@@ -2905,7 +2905,7 @@ export class GuiState implements DurableObject {
       state.calendar.push(item);
       return `calendar created ${item.id}${cron ? ` cron=${cron}` : ""}`;
     }
-    return "usage: king calendar list|create <title> --at <iso> [--cron expr] [--assignee <id>] [--prompt <text>]";
+    return "usage: king-ai calendar list|create <title> --at <iso> [--cron expr] [--assignee <id>] [--prompt <text>]";
   }
 
   private claimCommand(state: State, args: string[]): string {
@@ -2960,10 +2960,10 @@ export class GuiState implements DurableObject {
     const target = args[0];
     const messageType = readOption(args, "--type") || "message";
     if (messageType !== "message" && messageType !== "decision" && messageType !== "blocker") {
-      return "usage: king send <agentId> <message> [--steer] [--type message|decision|blocker]";
+      return "usage: king-ai send <agentId> <message> [--steer] [--type message|decision|blocker]";
     }
     const body = stripOptions(args.slice(1), ["--type"]).filter((arg) => arg !== "--steer").join(" ").trim();
-    if (!target || !body) return "usage: king send <agentId> <message> [--steer] [--type message|decision|blocker]";
+    if (!target || !body) return "usage: king-ai send <agentId> <message> [--steer] [--type message|decision|blocker]";
     const message = this.newAgentMessage({
       target,
       fromId: DEFAULT_AGENT.id,
@@ -2995,7 +2995,7 @@ export class GuiState implements DurableObject {
 
   private escalateCommand(state: State, args: string[]): string {
     const body = args.join(" ").trim();
-    if (!body) return "usage: king escalate <message>";
+    if (!body) return "usage: king-ai escalate <message>";
     const target = state.agents.find((agent) => agent.id === "ceo" || agent.name.toLowerCase().includes("ceo"))?.id ?? DEFAULT_AGENT.id;
     const message = this.newAgentMessage({
       target,
@@ -3014,7 +3014,7 @@ export class GuiState implements DurableObject {
   private reactCommand(state: State, args: string[]): string {
     const messageId = args[0];
     const emoji = args[1] || "(ok)";
-    if (!messageId) return "usage: king react <messageId> <emoji>";
+    if (!messageId) return "usage: king-ai react <messageId> <emoji>";
     state.reactions.push({ messageId, emoji, authorId: DEFAULT_AGENT.id, created_at: Date.now() });
     return `reaction posted ${messageId} ${emoji}`;
   }
@@ -3054,7 +3054,7 @@ export class GuiState implements DurableObject {
       state.docs.push(doc);
       return `doc created ${doc.id}`;
     }
-    return "usage: king doc list|create|show|append|update";
+    return "usage: king-ai doc list|create|show|append|update";
   }
 
   private artifactCommand(state: State, args: string[]): string {
@@ -3078,7 +3078,7 @@ export class GuiState implements DurableObject {
     if (cmd === "check") {
       const existing = findArtifact(state, args[1]);
       const candidate = existing ?? artifactCandidateFromArgs(args);
-      if (!candidate) return "usage: king artifact check <id> OR king artifact check --kind <kind> --path <domain/category/item> --source <source> --confidence <0-1>";
+      if (!candidate) return "usage: king-ai artifact check <id> OR king-ai artifact check --kind <kind> --path <domain/category/item> --source <source> --confidence <0-1>";
       const check = checkArtifactQuality(candidate);
       return formatArtifactQualityCheck(check);
     }
@@ -3088,7 +3088,7 @@ export class GuiState implements DurableObject {
       const source = readOption(args, "--source");
       const confidence = Number.parseFloat(readOption(args, "--confidence") || "");
       if (!kind || !path || !source || !Number.isFinite(confidence)) {
-        return "usage: king artifact put --kind <kind> --path <domain/category/item> --source <source> --confidence <0-1> [--task id] [--content text] '<metadata json>'";
+        return "usage: king-ai artifact put --kind <kind> --path <domain/category/item> --source <source> --confidence <0-1> [--task id] [--content text] '<metadata json>'";
       }
       if (confidence < 0 || confidence > 1) return "artifact confidence must be between 0 and 1";
       const allowNonstandard = args.includes("--allow-nonstandard");
@@ -3124,7 +3124,7 @@ export class GuiState implements DurableObject {
       });
       return `artifact stored ${artifact.id} kind=${artifact.kind} source=${artifact.source} confidence=${artifact.confidence}${quality.warnings.length ? ` warnings=${quality.warnings.length}` : ""}`;
     }
-    return "usage: king artifact put|list|get|check";
+    return "usage: king-ai artifact put|list|get|check";
   }
 
   private contextCommand(state: State, args: string[]): string {
@@ -3139,14 +3139,14 @@ export class GuiState implements DurableObject {
     }
     if (cmd === "get") {
       const key = args[1];
-      if (!key) return "usage: king context get <key>";
+      if (!key) return "usage: king-ai context get <key>";
       const entry = state.context.find((row) => row.key === key);
       return entry ? entry.value : `Key "${key}" not found.`;
     }
     if (cmd === "set") {
       const key = args[1];
       const value = stripOptions(args.slice(2), ["--agent"]).join(" ").trim();
-      if (!key || !value) return "usage: king context set <key> <value>";
+      if (!key || !value) return "usage: king-ai context set <key> <value>";
       const updatedBy = readOption(args, "--agent") || DEFAULT_AGENT.id;
       const existing = state.context.find((row) => row.key === key);
       if (existing) {
@@ -3160,12 +3160,12 @@ export class GuiState implements DurableObject {
     }
     if (cmd === "delete" || cmd === "unset") {
       const key = args[1];
-      if (!key) return "usage: king context delete <key>";
+      if (!key) return "usage: king-ai context delete <key>";
       const before = state.context.length;
       state.context = state.context.filter((row) => row.key !== key);
       return state.context.length < before ? `Deleted "${key}"` : `Key "${key}" not found.`;
     }
-    return "usage: king context get|set|list|delete <key> [value]";
+    return "usage: king-ai context get|set|list|delete <key> [value]";
   }
 
   private hypothesisCommand(state: State, args: string[]): string {
@@ -3182,7 +3182,7 @@ export class GuiState implements DurableObject {
     }
     if (cmd === "create") {
       const title = stripOptions(args.slice(1), ["--rationale", "--expected-value", "--estimated-cost", "--parent", "--agent"]).join(" ").trim();
-      if (!title) return "usage: king hypothesis create <title> [--rationale text] [--expected-value text] [--estimated-cost text] [--parent id]";
+      if (!title) return "usage: king-ai hypothesis create <title> [--rationale text] [--expected-value text] [--estimated-cost text] [--parent id]";
       const now = Date.now();
       const hypothesis: Hypothesis = {
         id: `hyp-${now}-${Math.random().toString(36).slice(2)}`,
@@ -3211,12 +3211,12 @@ export class GuiState implements DurableObject {
       hypothesis.updated_at = Date.now();
       return `Hypothesis ${hypothesis.id} updated: status=${hypothesis.status}`;
     }
-    return "usage: king hypothesis create|list|update";
+    return "usage: king-ai hypothesis create|list|update";
   }
 
   private planCommand(state: State, args: string[]): string {
     const cmd = args[0] || "parse";
-    if (cmd !== "parse" && cmd !== "apply") return "usage: king plan parse|apply '<json plan>' [--assign agent-id] [--initiative id]";
+    if (cmd !== "parse" && cmd !== "apply") return "usage: king-ai plan parse|apply '<json plan>' [--assign agent-id] [--initiative id]";
     let plan: ExecutionPlan;
     try {
       plan = parseExecutionPlan(args.slice(1).find((arg) => !arg.startsWith("--")) || "");
@@ -3264,14 +3264,14 @@ export class GuiState implements DurableObject {
     const cmd = args[0] || "list";
     if (cmd === "check") {
       const action = args[1];
-      if (!isSafetyAction(action)) return `usage: king safety check <action>\nknown actions: ${Array.from(SAFETY_ACTIONS).join(", ")}`;
+      if (!isSafetyAction(action)) return `usage: king-ai safety check <action>\nknown actions: ${Array.from(SAFETY_ACTIONS).join(", ")}`;
       return safetyCheck(action).allowed
         ? `allowed: ${action} does not require approval in this gui gate`
         : `approval required: ${action}`;
     }
     if (cmd === "request") {
       const action = args[1];
-      if (!isSafetyAction(action)) return "usage: king safety request <action> [--reason text] [--context json]";
+      if (!isSafetyAction(action)) return "usage: king-ai safety request <action> [--reason text] [--context json]";
       if (safetyCheck(action).allowed) return `allowed: ${action} does not require approval in this gui gate`;
       const context = parseSafetyContext(args);
       const request: ApprovalRequest = {
@@ -3313,7 +3313,7 @@ export class GuiState implements DurableObject {
       request.resolvedAt = Date.now();
       return `approval denied ${request.id}: ${request.reason}`;
     }
-    return "usage: king safety check|request|list|get|approve|deny <action|approvalId>";
+    return "usage: king-ai safety check|request|list|get|approve|deny <action|approvalId>";
   }
 
   private async resolveApproval(approvalId: string, payload: { decision?: string; reason?: string }): Promise<Response> {
@@ -3509,7 +3509,7 @@ export class GuiState implements DurableObject {
 	      if (attachment.url || !attachment.id) return attachment;
 	      const upload = state.uploads?.[attachment.id];
 	      if (!upload) return attachment;
-	      const base = request.headers.get("X-King-Public-Base") || new URL(request.url).origin;
+	      const base = request.headers.get("X-King-AI-Public-Base") || new URL(request.url).origin;
 	      const tenantId = tenantHeader(request);
 	      return { ...attachment, url: `${base}/gui/attachments/${encodeURIComponent(upload.id)}?token=${encodeURIComponent(upload.token)}&tenant=${encodeURIComponent(tenantId)}` };
 	    });
@@ -3587,7 +3587,7 @@ export class GuiState implements DurableObject {
 	      throw error;
 	    }
 	    await this.deleteUploads(prunedUploads);
-	    const base = request.headers.get("X-King-Public-Base") || new URL(request.url).origin;
+	    const base = request.headers.get("X-King-AI-Public-Base") || new URL(request.url).origin;
 	    const tenantId = tenantHeader(request);
 	    return json({
 	      attachment: {
@@ -3673,7 +3673,7 @@ export class GuiState implements DurableObject {
       uses: 0
     };
     await this.put(state);
-    const publicBase = request.headers.get("X-King-Public-Base") || new URL(request.url).origin;
+    const publicBase = request.headers.get("X-King-AI-Public-Base") || new URL(request.url).origin;
     const url = new URL(publicBase);
     url.searchParams.set("tenant", tenantId);
     url.searchParams.set("assist", tokenValue);
@@ -3702,7 +3702,7 @@ export class GuiState implements DurableObject {
 
   private async guiMarkRead(payload: { conversationId?: string; upToMessageId?: string }): Promise<Response> {
     return this.markRead({
-      conversationId: payload.conversationId || "king-convo",
+      conversationId: payload.conversationId || "king-ai-convo",
       upToMessageId: payload.upToMessageId
     });
   }
@@ -3779,7 +3779,7 @@ export class GuiState implements DurableObject {
       updated_at: now
     };
     state.tasks.push(task);
-    queueTaskAssignmentMessage(state, task, "King");
+    queueTaskAssignmentMessage(state, task, "King AI");
     pushLoopEvent(state, {
       type: "queue.backlog",
       agent: assignee,
@@ -3846,7 +3846,7 @@ export class GuiState implements DurableObject {
         task.assignee = task.coordinatorAgentId ?? defaultAgentFor(state).id;
         queueTaskCompletionMessage(state, task, defaultAgentFor(state).id);
       } else if (task.assignee) {
-        queueTaskAssignmentMessage(state, task, "King");
+        queueTaskAssignmentMessage(state, task, "King AI");
       }
     }
     await this.put(state);
@@ -4007,7 +4007,7 @@ function token(request: Request): string {
 }
 
 function tenantHeader(request: Request): string {
-  return sanitizeTenantId(request.headers.get("X-King-Tenant") || "global");
+  return sanitizeTenantId(request.headers.get("X-King-AI-Tenant") || "global");
 }
 
 function normalizeAgentId(value: unknown): string | undefined {
@@ -5725,7 +5725,7 @@ function firstJsonArg(args: string[]): string | undefined {
 }
 
 function parseExecutionPlan(raw: string): ExecutionPlan {
-  if (!raw.trim()) throw new Error("usage: king plan parse|apply '<json plan>'");
+  if (!raw.trim()) throw new Error("usage: king-ai plan parse|apply '<json plan>'");
   let parsed: unknown;
   try {
     parsed = JSON.parse(stripJsonFence(raw));
@@ -5778,7 +5778,7 @@ function parsePlannedTask(item: unknown, index: number): PlannedTask {
 }
 
 function parseEvaluationRecord(raw: string, refs: { artifactId?: string; initiativeId?: string } = {}): EvaluationRecord {
-  if (!raw.trim()) throw new Error("usage: king eval parse|record '<json evaluation>'");
+  if (!raw.trim()) throw new Error("usage: king-ai eval parse|record '<json evaluation>'");
   let parsed: unknown;
   try {
     parsed = JSON.parse(stripJsonFence(raw));

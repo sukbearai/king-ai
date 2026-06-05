@@ -23,7 +23,7 @@ test("resolveHostName avoids localhost and uses platform names on macOS", () => 
 });
 
 test("parsePairLocator supports GUI-provided server and tenant", () => {
-  const locator = parsePairLocator("king://pair?server=https%3A%2F%2Fgui.example.com%2F&tenant=user-octo&code=abc123");
+  const locator = parsePairLocator("king-ai://pair?server=https%3A%2F%2Fgui.example.com%2F&tenant=user-octo&code=abc123");
   assert.deepEqual(locator, {
     code: "abc123",
     serverUrl: "https://gui.example.com",
@@ -36,7 +36,7 @@ test("missingEngineMessage gives actionable install guidance", () => {
   const message = missingEngineMessage();
   assert.match(message, /Claude Code/);
   assert.match(message, /Codex/);
-  assert.match(message, /king agent computer --pair <code>/);
+  assert.match(message, /king-ai agent computer --pair <code>/);
 });
 
 test("formatDoctorReport summarizes brains, failures, and install guidance", () => {
@@ -54,7 +54,7 @@ test("formatDoctorReport summarizes brains, failures, and install guidance", () 
     "1.2.3"
   );
 
-  assert.match(report, /king 1\.2\.3 engine doctor/);
+  assert.match(report, /king-ai 1\.2\.3 engine doctor/);
   assert.match(report, /big brain = main reasoning/);
   assert.match(report, /x claude - not found on PATH/);
   assert.match(report, /claude CLI is not on PATH/);
@@ -62,7 +62,7 @@ test("formatDoctorReport summarizes brains, failures, and install guidance", () 
   assert.match(report, /ok big brain/);
   assert.match(report, /small brain.*FAILED: usage limit reached/);
   assert.match(report, /codex quota or billing limit is blocking runs/);
-  assert.match(report, /king agent computer --doctor/);
+  assert.match(report, /king-ai agent computer --doctor/);
   assert.match(report, /no engine has BOTH brains healthy/);
 });
 

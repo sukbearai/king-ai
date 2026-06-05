@@ -94,8 +94,8 @@ test("formatEngineLogLine drops noisy engine JSON", () => {
 
 test("formatEngineLogLine summarizes Codex app-server events", () => {
   assert.equal(
-    formatEngineLogLine("codex", '{"method":"item/started","params":{"item":{"type":"commandExecution","command":"king reply demo hi"}}}'),
-    "[codex] $ king reply demo hi"
+    formatEngineLogLine("codex", '{"method":"item/started","params":{"item":{"type":"commandExecution","command":"king-ai reply demo hi"}}}'),
+    "[codex] $ king-ai reply demo hi"
   );
   assert.equal(
     formatEngineLogLine("codex", '{"method":"item/completed","params":{"item":{"type":"agentMessage","text":"done"}}}'),
@@ -105,13 +105,13 @@ test("formatEngineLogLine summarizes Codex app-server events", () => {
 
 test("formatEngineLogLine can keep raw Codex app-server events", () => {
   const raw = '{"method":"thread/started","params":{"thread":{"id":"t1"}}}';
-  const old = process.env.KING_CODEX_VERBOSE;
-  process.env.KING_CODEX_VERBOSE = "1";
+  const old = process.env.KING_AI_CODEX_VERBOSE;
+  process.env.KING_AI_CODEX_VERBOSE = "1";
   try {
     assert.equal(formatEngineLogLine("codex", raw), raw);
   } finally {
-    if (old === undefined) delete process.env.KING_CODEX_VERBOSE;
-    else process.env.KING_CODEX_VERBOSE = old;
+    if (old === undefined) delete process.env.KING_AI_CODEX_VERBOSE;
+    else process.env.KING_AI_CODEX_VERBOSE = old;
   }
 });
 
@@ -175,7 +175,7 @@ test("reduceCodexAppEvent reports failed turn completion", () => {
 });
 
 test("Codex app-server session falls back from failed resume to a fresh thread", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "king-codex-session-"));
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-codex-session-"));
   const binDir = join(dir, "bin");
   const imagePath = join(dir, "screen.png");
   await mkdir(binDir);
@@ -238,18 +238,18 @@ rl.on('line', (line) => {
   ]);
 });
 
-test("writeShim installs the king command", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "king-shim-"));
+test("writeShim installs the king-ai command", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-shim-"));
   await writeShim(dir);
-  const mode = (await stat(join(dir, "king"))).mode & 0o777;
+  const mode = (await stat(join(dir, "king-ai"))).mode & 0o777;
   assert.equal(mode, 0o755);
 });
 
 test("writeShim reports errors under the invoked command name", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "king-shim-name-"));
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-shim-name-"));
   await writeShim(dir);
   await assert.rejects(
-    execFileP(join(dir, "king"), [], {
+    execFileP(join(dir, "king-ai"), [], {
       env: {
         PATH: process.env.PATH
       }
@@ -257,7 +257,7 @@ test("writeShim reports errors under the invoked command name", async () => {
     (err) => {
       const actual = err as { code?: number; stderr?: string };
       assert.equal(actual.code, 70);
-      assert.match(actual.stderr ?? "", /^king: runtime env not set/);
+      assert.match(actual.stderr ?? "", /^king-ai: runtime env not set/);
       return true;
     }
   );
@@ -281,18 +281,18 @@ test("writeShim forwards --file and --stdin bodies as single CLI args", async ()
   try {
     const address = server.address() as AddressInfo;
     const url = `http://127.0.0.1:${address.port}`;
-    const dir = await mkdtemp(join(tmpdir(), "king-shim-file-"));
+    const dir = await mkdtemp(join(tmpdir(), "king-ai-shim-file-"));
     const bodyPath = join(dir, "reply.md");
     await writeFile(bodyPath, "line 1\n`code` and $var", "utf8");
     await writeShim(dir);
 
-    await execFileP(join(dir, "king"), ["reply", "demo-convo", "--file", bodyPath], {
-      env: { PATH: process.env.PATH, KING_AGENT_RUNTIME_URL: url, KING_AGENT_RUNTIME_TOKEN: "token", KING_AGENT_ID: "demo-agent", KING_AGENT_ENGINE: "claude" }
+    await execFileP(join(dir, "king-ai"), ["reply", "demo-convo", "--file", bodyPath], {
+      env: { PATH: process.env.PATH, KING_AI_AGENT_RUNTIME_URL: url, KING_AI_AGENT_RUNTIME_TOKEN: "token", KING_AI_AGENT_ID: "demo-agent", KING_AI_AGENT_ENGINE: "claude" }
     });
-    await runWithStdin(join(dir, "king"), ["reply", "demo-convo", "--stdin"], "from stdin\nwith quotes", {
+    await runWithStdin(join(dir, "king-ai"), ["reply", "demo-convo", "--stdin"], "from stdin\nwith quotes", {
       PATH: process.env.PATH,
-      KING_AGENT_RUNTIME_URL: url,
-      KING_AGENT_RUNTIME_TOKEN: "token"
+      KING_AI_AGENT_RUNTIME_URL: url,
+      KING_AI_AGENT_RUNTIME_TOKEN: "token"
     });
 
     assert.deepEqual(
@@ -338,5 +338,5 @@ test("personaHeader documents workspace, memory, and privacy boundaries", () => 
   assert.match(header, /workspace\/ project files/);
   assert.match(header, /memory\/MEMORY\.md/);
   assert.match(header, /Stay inside this home directory/);
-  assert.match(header, /king` command on PATH/);
+  assert.match(header, /king-ai` command on PATH/);
 });

@@ -25,7 +25,7 @@ test("safeBranchSegment normalizes agent ids for git branches", () => {
 });
 
 test("planAgentWorktrees creates non-executing git worktree plans for git repos", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "king-worktree-"));
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-worktree-"));
   const repo = join(dir, "repo");
   const plain = join(dir, "plain");
   await mkdir(join(repo, ".git"), { recursive: true });
@@ -43,7 +43,7 @@ test("planAgentWorktrees creates non-executing git worktree plans for git repos"
 });
 
 test("isGitRepo accepts gitdir files from existing worktrees", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "king-gitfile-"));
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-gitfile-"));
   await writeFile(join(dir, ".git"), "gitdir: ../main/.git/worktrees/agent\n", "utf8");
   assert.equal(isGitRepo(dir), true);
 });
@@ -60,7 +60,7 @@ test("isGitHubRepoUrl accepts canonical GitHub repository remotes only", () => {
 });
 
 test("planAgentWorktrees includes valid GitHub origin metadata", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "king-worktree-origin-"));
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-worktree-origin-"));
   const repo = join(dir, "repo");
   await mkdir(join(repo, ".git"), { recursive: true });
   await writeFile(join(repo, ".git", "config"), [
@@ -81,7 +81,7 @@ test("commandText quotes shell-sensitive worktree commands", () => {
 });
 
 test("prepareWorktreePlans dry-runs plans and can create missing worktrees", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "king-worktree-prepare-"));
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-worktree-prepare-"));
   const repo = join(dir, "repo");
   await mkdir(join(repo, ".git"), { recursive: true });
   const [plan] = planAgentWorktrees({ agentId: "demo-agent", workspaces: [repo], baseRoot: join(dir, "agents", "demo-agent") });
@@ -103,7 +103,7 @@ test("prepareWorktreePlans dry-runs plans and can create missing worktrees", asy
 });
 
 test("prepareWorktreePlans skips existing worktree paths", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "king-worktree-existing-"));
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-worktree-existing-"));
   const repo = join(dir, "repo");
   await mkdir(join(repo, ".git"), { recursive: true });
   const [plan] = planAgentWorktrees({ agentId: "demo-agent", workspaces: [repo], baseRoot: join(dir, "agents", "demo-agent") });
@@ -122,7 +122,7 @@ test("prepareWorktreePlans skips existing worktree paths", async () => {
 });
 
 test("cleanupWorktreePlans dry-runs and removes existing planned worktrees", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "king-worktree-cleanup-"));
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-worktree-cleanup-"));
   const repo = join(dir, "repo");
   await mkdir(join(repo, ".git"), { recursive: true });
   const [plan] = planAgentWorktrees({ agentId: "demo-agent", workspaces: [repo], baseRoot: join(dir, "agents", "demo-agent") });
@@ -146,7 +146,7 @@ test("cleanupWorktreePlans dry-runs and removes existing planned worktrees", asy
 });
 
 test("cleanupWorktreePlans skips missing paths", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "king-worktree-cleanup-missing-"));
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-worktree-cleanup-missing-"));
   const repo = join(dir, "repo");
   await mkdir(join(repo, ".git"), { recursive: true });
   const [plan] = planAgentWorktrees({ agentId: "demo-agent", workspaces: [repo], baseRoot: join(dir, "agents", "demo-agent") });

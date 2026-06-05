@@ -523,9 +523,9 @@ export function createBrowserHostSdk(options: HostSdkBrowserOptions = {}): HostS
 }
 
 export function hostBaseUrlFromEnv(env: HostSdkEnvLike = process.env): string {
-  if (env.KING_HOST_URL) return env.KING_HOST_URL;
-  const host = env.KING_HOST || "127.0.0.1";
-  const port = env.KING_HOST_PORT || "8799";
+  if (env.KING_AI_HOST_URL) return env.KING_AI_HOST_URL;
+  const host = env.KING_AI_HOST || "127.0.0.1";
+  const port = env.KING_AI_HOST_PORT || "8799";
   return `http://${host}:${port}`;
 }
 

@@ -18,8 +18,8 @@ import { cleanLine, stripLoneSurrogates } from "./text.js";
 const IS_WIN = process.platform === "win32";
 const DOCTOR_PROMPT = "Connectivity check. Reply with exactly: OK";
 const MAX_FAILURE_CHARS = 4000;
-const TURN_TIMEOUT_MS = Number(process.env.KING_TURN_TIMEOUT_MS) || 0;
-const SESSION_TIMEOUT_MS = Number(process.env.KING_SESSION_TIMEOUT_MS) || 0;
+const TURN_TIMEOUT_MS = Number(process.env.KING_AI_TURN_TIMEOUT_MS) || 0;
+const SESSION_TIMEOUT_MS = Number(process.env.KING_AI_SESSION_TIMEOUT_MS) || 0;
 
 export function splitExtraArgs(raw: string | undefined): string[] {
   if (!raw) return [];
@@ -122,7 +122,7 @@ export function formatEngineLogLine(engine: EngineId, line: string): string | nu
       return null;
     }
     if (engine === "codex") {
-      if (process.env.KING_CODEX_VERBOSE === "1") return cleaned;
+      if (process.env.KING_AI_CODEX_VERBOSE === "1") return cleaned;
       const method = typeof obj.method === "string" ? obj.method : "";
       const params = obj.params as { item?: { type?: unknown; command?: unknown; text?: unknown } } | undefined;
       const item = params?.item;
@@ -206,7 +206,7 @@ Privacy boundary:
 - Do not read, list, search, quote, summarize, or send files outside this home directory.
 - If a task seems to need a file outside this home, ask in the runtime first.
 
-Use the \`king\` command on PATH to interact with the remote runtime.
+Use the \`king-ai\` command on PATH to interact with the remote runtime.
 `;
 }
 
@@ -490,7 +490,7 @@ class ClaudeSession implements EngineSession {
         pending.timer = setTimeout(() => {
           this.settle({
             exitCode: 124,
-            error: `engine turn exceeded KING_TURN_TIMEOUT_MS (${Math.round(SESSION_TIMEOUT_MS / 1000)}s) - aborted; session will respawn`,
+            error: `engine turn exceeded KING_AI_TURN_TIMEOUT_MS (${Math.round(SESSION_TIMEOUT_MS / 1000)}s) - aborted; session will respawn`,
             sessionId: this.sid
           });
           this.stop();
@@ -596,9 +596,9 @@ class ClaudeSession implements EngineSession {
 function ensureGitRepoForCodex(home: string): void {
   if (existsSync(join(home, ".git"))) return;
   const gitEnv = { cwd: home, stdio: "ignore" as const };
-  const identity = ["-c", "user.name=king", "-c", "user.email=king@local", "-c", "commit.gpgsign=false"];
+  const identity = ["-c", "user.name=king-ai", "-c", "user.email=king-ai@local", "-c", "commit.gpgsign=false"];
   execFileSync("git", ["init"], gitEnv);
-  execFileSync("git", [...identity, "commit", "--allow-empty", "-m", "king init"], gitEnv);
+  execFileSync("git", [...identity, "commit", "--allow-empty", "-m", "king-ai init"], gitEnv);
 }
 
 class CodexSession implements EngineSession {
@@ -638,7 +638,7 @@ class CodexSession implements EngineSession {
     this.child.on("error", (err) => this.die(1, err.message));
     this.child.on("close", (code, sig) => this.die(code ?? (sig ? 128 : 1), sig ? `terminated by ${sig}` : `exited with code ${code ?? 1}`));
     queueMicrotask(() => {
-      this.initializeId = this.req("initialize", { clientInfo: { name: "king", version: "0.1.0" }, capabilities: { experimentalApi: true } });
+      this.initializeId = this.req("initialize", { clientInfo: { name: "king-ai", version: "0.1.0" }, capabilities: { experimentalApi: true } });
     });
   }
 
@@ -742,7 +742,7 @@ class CodexSession implements EngineSession {
         this.opts.onLog(line);
         continue;
       }
-      if (process.env.KING_CODEX_VERBOSE === "1") this.opts.onLog(line);
+      if (process.env.KING_AI_CODEX_VERBOSE === "1") this.opts.onLog(line);
       this.handle(msg);
     }
   }
@@ -853,7 +853,7 @@ class ClaudeAdapter implements EngineAdapter {
   }
 
   async classify(args: EngineClassifyArgs): Promise<{ text: string; error?: string; usage?: EngineUsage }> {
-    const extra = envExtraArgs("KING_TRIAGE_ARGS");
+    const extra = envExtraArgs("KING_AI_TRIAGE_ARGS");
     const model = ["--model", args.model || "haiku"];
     const { command, shell, wantsStdinPrompt } = resolveSpawn(this.bin);
     const usingJson = extra.length === 0;
@@ -891,7 +891,7 @@ class ClaudeAdapter implements EngineAdapter {
   }
 
   run(args: EngineRunArgs): Promise<EngineResult> {
-    const extra = envExtraArgs("KING_CLAUDE_ARGS");
+    const extra = envExtraArgs("KING_AI_CLAUDE_ARGS");
     const model = args.model ? ["--model", args.model] : [];
     const resume = args.resumeSessionId ? ["--resume", args.resumeSessionId] : [];
     const { command, shell, wantsStdinPrompt } = resolveSpawn(this.bin);
@@ -908,10 +908,10 @@ class ClaudeAdapter implements EngineAdapter {
   }
 
   startSession(args: Omit<EngineRunArgs, "prompt" | "signal">): EngineSession | null {
-    if (IS_WIN || envExtraArgs("KING_CLAUDE_ARGS").length) return null;
+    if (IS_WIN || envExtraArgs("KING_AI_CLAUDE_ARGS").length) return null;
     const model = args.model ? ["--model", args.model] : [];
     const resume = args.resumeSessionId ? ["--resume", args.resumeSessionId] : [];
-    const standingFile = join(args.home, ".king-standing-prompt.md");
+    const standingFile = join(args.home, ".king-ai-standing-prompt.md");
     let systemPrompt: string[] = [];
     let carriesStandingPrompt = false;
     if (args.standingPrompt) {
@@ -952,7 +952,7 @@ class CodexAdapter implements EngineAdapter {
   }
 
   classify(args: EngineClassifyArgs): Promise<{ text: string; error?: string }> {
-    const extra = envExtraArgs("KING_TRIAGE_ARGS");
+    const extra = envExtraArgs("KING_AI_TRIAGE_ARGS");
     const model = ["--model", args.model || "gpt-5.4-mini"];
     const { command, shell } = resolveSpawn(this.bin);
     const argv = extra.length ? ["exec", ...extra, args.prompt] : ["exec", ...model, "--skip-git-repo-check", args.prompt];
@@ -977,7 +977,7 @@ class CodexAdapter implements EngineAdapter {
   }
 
   run(args: EngineRunArgs): Promise<EngineResult> {
-    const extra = envExtraArgs("KING_CODEX_ARGS");
+    const extra = envExtraArgs("KING_AI_CODEX_ARGS");
     const model = args.model ? ["--model", args.model] : [];
     const { command, shell } = resolveSpawn(this.bin);
     const base = extra.length ? extra : ["--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check"];
@@ -990,8 +990,8 @@ class CodexAdapter implements EngineAdapter {
   startSession(args: Omit<EngineRunArgs, "prompt" | "signal">): EngineSession | null {
     if (
       IS_WIN ||
-      envExtraArgs("KING_CODEX_ARGS").length ||
-      process.env.KING_CODEX_NO_APP_SERVER === "1"
+      envExtraArgs("KING_AI_CODEX_ARGS").length ||
+      process.env.KING_AI_CODEX_NO_APP_SERVER === "1"
     ) return null;
     try {
       ensureGitRepoForCodex(args.home);

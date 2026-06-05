@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 test("saveConfig writes loadable 0600 config", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "king-config-"));
-  process.env.KING_CONFIG_DIR = dir;
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-config-"));
+  process.env.KING_AI_CONFIG_DIR = dir;
   const mod = await import(`../src/config.js?case=${Date.now()}`);
   await mod.saveConfig({ serverUrl: "https://runtime.test", computerId: "c1", deviceToken: "secret", tenantId: "user-alice" });
   const loaded = await mod.loadConfig();
@@ -15,18 +15,19 @@ test("saveConfig writes loadable 0600 config", async () => {
   assert.equal(mode, 0o600);
 });
 
-test("resolveConfigDir uses the King home", async () => {
-  const old = process.env.KING_CONFIG_DIR;
-  delete process.env.KING_CONFIG_DIR;
+test("resolveConfigDir uses the King AI home", async () => {
+  const old = process.env.KING_AI_CONFIG_DIR;
+  delete process.env.KING_AI_CONFIG_DIR;
   const mod = await import(`../src/paths.js?case=paths-${Date.now()}`);
   try {
-    assert.equal(mod.commandNameFromProcess("/usr/local/bin/king"), "king");
-    assert.equal(mod.resolveConfigDir("king").endsWith(".king"), true);
+    assert.equal(mod.commandNameFromProcess("/usr/local/bin/king-ai"), "king-ai");
+    assert.equal(mod.commandNameFromProcess("/usr/local/bin/unknown"), "king-ai");
+    assert.equal(mod.resolveConfigDir("king-ai").endsWith(".king-ai"), true);
 
-    process.env.KING_CONFIG_DIR = "/tmp/king-config";
-    assert.equal(mod.resolveConfigDir("king"), "/tmp/king-config");
+    process.env.KING_AI_CONFIG_DIR = "/tmp/king-config";
+    assert.equal(mod.resolveConfigDir("king-ai"), "/tmp/king-config");
   } finally {
-    if (old === undefined) delete process.env.KING_CONFIG_DIR;
-    else process.env.KING_CONFIG_DIR = old;
+    if (old === undefined) delete process.env.KING_AI_CONFIG_DIR;
+    else process.env.KING_AI_CONFIG_DIR = old;
   }
 });

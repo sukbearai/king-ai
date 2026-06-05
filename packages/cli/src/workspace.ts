@@ -17,7 +17,7 @@ function splitList(value?: string): string[] {
 }
 
 export function resolveWorkspaceAllowlist(env: NodeJS.ProcessEnv = process.env): string[] {
-  const explicit = splitList(env.KING_WORKSPACES);
+  const explicit = splitList(env.KING_AI_WORKSPACES);
   const candidates = explicit.length > 0 ? explicit : [resolve(homedir(), "workspace")];
   const seen = new Set<string>();
   const result: string[] = [];
@@ -38,7 +38,7 @@ export function detectLocalCapabilities(env: NodeJS.ProcessEnv = process.env): L
 }
 
 export function resolveAgentWorkspaceBase(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const raw = env.KING_AGENT_WORKSPACE_ROOT;
+  const raw = env.KING_AI_AGENT_WORKSPACE_ROOT;
   return raw ? resolve(raw.replace(/^~(?=$|\/|\\)/, homedir())) : undefined;
 }
 
@@ -52,7 +52,7 @@ export function formatWorkspacePolicy(workspaces: string[], agentRoot?: string):
   if (workspaces.length === 0) {
     return [
       rootLine,
-      "Workspace access: no external workspace directories are explicitly allowed. Stay in your agent workspace root unless the operator configures KING_WORKSPACES."
+      "Workspace access: no external workspace directories are explicitly allowed. Stay in your agent workspace root unless the operator configures KING_AI_WORKSPACES."
     ].filter(Boolean).join("\n");
   }
   return [
