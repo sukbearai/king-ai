@@ -233,6 +233,164 @@ test("gui state renders message markdown with sanitized Comark html", async () =
   assert.equal(exported.state.messages.some((message) => message.body_html), false);
 });
 
+test("gui correction rpc returns a runtime-corrected message", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  await json<{ ok: true }>(await worker.fetch(new Request("https://gui/api/computers/heartbeat", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${paired.deviceToken}` },
+    body: JSON.stringify({ version: "test" })
+  }), bindings));
+  const token = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+
+  const pendingResponse = worker.fetch(
+    new Request("https://gui/gui/correct-message", {
+      method: "POST",
+      body: JSON.stringify({ body: "helo wrld", conversationId: "king-convo" })
+    }),
+    bindings
+  );
+  let requestId = "";
+  for (let i = 0; i < 20 && !requestId; i += 1) {
+    const state = await json<{ correctionRequests?: { id: string; body: string; requesterAgentId: string; status: string }[]; wakeLog?: { event: string; data: { correctionRequestId?: string; agentId?: string } }[] }>(
+      await worker.fetch(new Request("https://gui/gui/state"), bindings)
+    );
+    const request = state.correctionRequests?.find((row) => row.body === "helo wrld");
+    requestId = request?.id ?? "";
+    if (request) {
+      assert.equal(request.requesterAgentId, "king-ceo");
+      assert.equal(request.status, "pending");
+      assert.equal(state.wakeLog?.some((row) => row.event === "correction" && row.data.correctionRequestId === request.id && row.data.agentId === "king-ceo"), true);
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  assert.ok(requestId);
+
+  const payload = await json<{ id: string; body: string; instructions: string }>(
+    await worker.fetch(new Request(`https://gui/runtime/corrections/${encodeURIComponent(requestId)}`, {
+      headers: { Authorization: `Bearer ${token.token}` }
+    }), bindings)
+  );
+  assert.equal(payload.body, "helo wrld");
+  assert.match(payload.instructions, /Return strict JSON/);
+
+  await json<{ ok: true }>(
+    await worker.fetch(new Request(`https://gui/runtime/corrections/${encodeURIComponent(requestId)}/complete`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token.token}` },
+      body: JSON.stringify({ corrected: "hello world" })
+    }), bindings)
+  );
+
+  const correctionResult = await json<{ corrected: string; changed: boolean; fallback: boolean; correctionRequestId: string }>(await pendingResponse);
+  assert.equal(correctionResult.corrected, "hello world");
+  assert.equal(correctionResult.changed, true);
+  assert.equal(correctionResult.fallback, false);
+  assert.equal(correctionResult.correctionRequestId, requestId);
+});
+
+test("completed correction replaces the bound human message", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  await json<{ ok: true }>(await worker.fetch(new Request("https://gui/api/computers/heartbeat", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${paired.deviceToken}` },
+    body: JSON.stringify({ version: "test" })
+  }), bindings));
+  const token = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+
+  const pendingResponse = worker.fetch(
+    new Request("https://gui/gui/correct-message", {
+      method: "POST",
+      body: JSON.stringify({ body: "helo wrld", conversationId: "king-convo" })
+    }),
+    bindings
+  );
+  let requestId = "";
+  for (let i = 0; i < 20 && !requestId; i += 1) {
+    const state = await json<{ correctionRequests?: { id: string; body: string }[] }>(
+      await worker.fetch(new Request("https://gui/gui/state"), bindings)
+    );
+    requestId = state.correctionRequests?.find((row) => row.body === "helo wrld")?.id ?? "";
+    if (!requestId) await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.ok(requestId);
+
+  const posted = await json<{ message: { id: string; body: string; correctionRequestId?: string } }>(
+    await worker.fetch(new Request("https://gui/gui/message", {
+      method: "POST",
+      body: JSON.stringify({ body: "helo wrld", conversationId: "king-convo", correctionRequestId: requestId })
+    }), bindings)
+  );
+  assert.equal(posted.message.body, "helo wrld");
+  assert.equal(posted.message.correctionRequestId, requestId);
+
+  await json<{ ok: true }>(
+    await worker.fetch(new Request(`https://gui/runtime/corrections/${encodeURIComponent(requestId)}/complete`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token.token}` },
+      body: JSON.stringify({ corrected: "hello world" })
+    }), bindings)
+  );
+
+  const state = await json<{ messages: { id: string; author_kind: string; body: string; correctionRequestId?: string }[]; correctionRequests?: { id: string; status: string; messageId?: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  const human = state.messages.find((message) => message.id === posted.message.id);
+  assert.equal(human?.author_kind, "human");
+  assert.equal(human?.body, "hello world");
+  assert.equal(human?.correctionRequestId, requestId);
+  const correction = state.correctionRequests?.find((row) => row.id === requestId);
+  assert.equal(correction?.status, "done");
+  assert.equal(correction?.messageId, posted.message.id);
+
+  const correctionResult = await json<{ corrected: string; changed: boolean; fallback: boolean; correctionRequestId: string }>(await pendingResponse);
+  assert.equal(correctionResult.corrected, "hello world");
+  assert.equal(correctionResult.changed, true);
+  assert.equal(correctionResult.fallback, false);
+  assert.equal(correctionResult.correctionRequestId, requestId);
+});
+
+test("gui correction rpc falls back immediately when no runtime is online", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+
+  const response = await json<{ corrected: string; changed: boolean; fallback: boolean; error?: string }>(
+    await worker.fetch(new Request("https://gui/gui/correct-message", {
+      method: "POST",
+      body: JSON.stringify({ body: "helo wrld", conversationId: "king-convo" })
+    }), bindings)
+  );
+  assert.deepEqual(response, {
+    corrected: "helo wrld",
+    changed: false,
+    fallback: true,
+    error: "correction runtime unavailable"
+  });
+
+  const state = await json<{ correctionRequests?: unknown[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  assert.deepEqual(state.correctionRequests ?? [], []);
+});
+
 test("gui runtime marks read only through the requested message", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["claude", "codex"] });
@@ -1315,6 +1473,10 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /function deleteConversation/);
   assert.match(html, /id="clearButton"/);
   assert.match(html, /function clearMessages/);
+  assert.match(html, /\/gui\/correct-message/);
+  assert.match(html, /let outgoingBody = body/);
+  assert.match(html, /let correctionRequestId = ''/);
+  assert.match(html, /body: JSON\.stringify\(\{ body: outgoingBody, conversationId: activeConversationId, correctionRequestId \}\)/);
   assert.match(html, /renderMessages = function/);
   assert.match(html, /\.post-body\.markdown-body/);
   assert.match(html, /const renderedBody = message\.body_html \|\| ''/);

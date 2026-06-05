@@ -1352,10 +1352,21 @@ sendMessage = async function() {
   button.disabled = true;
   button.textContent = t('sending');
   try {
+    let outgoingBody = body;
+    let correctionRequestId = '';
+    try {
+      const correction = await request('/gui/correct-message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body, conversationId: activeConversationId })
+      });
+      if (correction && typeof correction.correctionRequestId === 'string') correctionRequestId = correction.correctionRequestId;
+      if (correction && typeof correction.corrected === 'string' && correction.corrected.trim()) outgoingBody = correction.corrected.trim();
+    } catch (correctionError) {}
     await request('/gui/message', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ body, conversationId: activeConversationId })
+      body: JSON.stringify({ body: outgoingBody, conversationId: activeConversationId, correctionRequestId })
     });
     visibleMessageCount = 20;
     shouldStickToBottom = true;

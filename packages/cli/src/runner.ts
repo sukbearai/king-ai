@@ -94,9 +94,17 @@ interface RuntimePreamblePayload {
   text?: string;
 }
 
+interface CorrectionPayload {
+  id?: string;
+  body?: string;
+  conversationId?: string;
+  instructions?: string;
+}
+
 export interface WakeEventInfo {
   conversationId: string | null;
   agentId: string | null;
+  correctionRequestId: string | null;
   sentAt: number | null;
   deliveryLatencyMs: number | null;
 }
@@ -306,25 +314,40 @@ export function agentSessionFile(agentId: string, engine: EngineId): string {
 }
 
 export function parseWakeEventInfo(rawData: string | undefined, now = Date.now()): WakeEventInfo {
-  if (!rawData) return { conversationId: null, agentId: null, sentAt: null, deliveryLatencyMs: null };
+  if (!rawData) return { conversationId: null, agentId: null, correctionRequestId: null, sentAt: null, deliveryLatencyMs: null };
   try {
-    const data = JSON.parse(rawData) as { conversationId?: unknown; agentId?: unknown; at?: unknown };
+    const data = JSON.parse(rawData) as { conversationId?: unknown; agentId?: unknown; correctionRequestId?: unknown; at?: unknown };
     const conversationId = typeof data.conversationId === "string" ? data.conversationId : null;
     const agentId = typeof data.agentId === "string" ? data.agentId : null;
+    const correctionRequestId = typeof data.correctionRequestId === "string" ? data.correctionRequestId : null;
     const sentAt = typeof data.at === "number" && Number.isFinite(data.at) ? data.at : null;
     return {
       conversationId,
       agentId,
+      correctionRequestId,
       sentAt,
       deliveryLatencyMs: sentAt == null ? null : Math.max(0, now - sentAt)
     };
   } catch {
-    return { conversationId: null, agentId: null, sentAt: null, deliveryLatencyMs: null };
+    return { conversationId: null, agentId: null, correctionRequestId: null, sentAt: null, deliveryLatencyMs: null };
   }
 }
 
 export function shouldHandleWakeEvent(info: WakeEventInfo, agentId: string): boolean {
   return !info.agentId || info.agentId === agentId;
+}
+
+export function parseCorrectionResult(text: string, fallback: string): string {
+  const cleaned = text.trim();
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  const raw = start >= 0 && end >= start ? cleaned.slice(start, end + 1) : cleaned;
+  try {
+    const obj = JSON.parse(raw) as { corrected?: unknown };
+    return typeof obj.corrected === "string" && obj.corrected.trim() ? obj.corrected.trim() : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 export class AgentRunner {
@@ -767,6 +790,54 @@ export class AgentRunner {
     }
   }
 
+  private async handleCorrectionRequest(token: string, requestId: string): Promise<void> {
+    let payload: CorrectionPayload | null = null;
+    try {
+      payload = await runtimeGet<CorrectionPayload>(this.cfg.serverUrl, `/corrections/${encodeURIComponent(requestId)}`, token, this.cfg.tenantId);
+      if (!payload?.id || typeof payload.body !== "string") return;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), TRIAGE_TIMEOUT_MS);
+      try {
+        await mkdir(TRIAGE_DIR, { recursive: true });
+        const prompt = `${payload.instructions || "Return strict JSON: {\"corrected\":\"...\"}."}\n\nMessage:\n${payload.body}`;
+        await triageSem.acquire();
+        try {
+          const res = await this.adapter.classify({
+            cwd: TRIAGE_DIR,
+            prompt,
+            env: this.engineEnv(),
+            model: process.env.KING_TRIAGE_MODEL,
+            signal: controller.signal
+          });
+          if (res.error || !res.text.trim()) {
+            await runtimePost(this.cfg.serverUrl, `/corrections/${encodeURIComponent(payload.id)}/complete`, token, {
+              corrected: payload.body,
+              error: res.error || "correction produced no output"
+            }, this.cfg.tenantId);
+            return;
+          }
+          await runtimePost(this.cfg.serverUrl, `/corrections/${encodeURIComponent(payload.id)}/complete`, token, {
+            corrected: parseCorrectionResult(res.text, payload.body),
+            usage: usageForRuntime(res.usage)
+          }, this.cfg.tenantId);
+        } finally {
+          triageSem.release();
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (payload?.id && typeof payload.body === "string") {
+        await runtimePost(this.cfg.serverUrl, `/corrections/${encodeURIComponent(payload.id)}/complete`, token, {
+          corrected: payload.body,
+          error: message
+        }, this.cfg.tenantId).catch(() => undefined);
+      }
+      await this.publishEvent("correction.failed", { requestId, error: message }, "warn").catch(() => undefined);
+    }
+  }
+
   private async snapshotUnread(token: string): Promise<{ seen: Map<string, string>; digest: string; hasReal: boolean }> {
     const inbox = await runtimeGet<InboxPayload>(this.cfg.serverUrl, "/inbox", token, this.cfg.tenantId);
     const rows = inbox?.rows ?? [];
@@ -1144,9 +1215,13 @@ ${delta}`;
         this.scheduleWake("reconnect-catchup");
         for await (const evt of parseSseStream(res.body)) {
           if (this.stopped) break;
-          if (evt.event !== "wake" && evt.event !== "steer") continue;
+          if (evt.event !== "wake" && evt.event !== "steer" && evt.event !== "correction") continue;
           const info = parseWakeEventInfo(evt.data);
           if (!shouldHandleWakeEvent(info, this.agent.id)) continue;
+          if (evt.event === "correction" && info.correctionRequestId) {
+            void this.handleCorrectionRequest(token, info.correctionRequestId);
+            continue;
+          }
           const conversationId = info.conversationId;
           if (evt.event === "steer") {
             if (conversationId) void this.maybeSteer(conversationId);
