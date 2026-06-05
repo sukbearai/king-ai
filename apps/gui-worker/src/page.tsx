@@ -810,9 +810,9 @@ export function renderPage(styles: string, clientScript: string): string {
       max-width: 100%;
     }
     .task-card {
-      display: grid;
+      display: flex;
+      flex-direction: column;
       gap: 8px;
-      align-content: start;
       min-height: 122px;
       border: 1px solid var(--soft-line);
       background: #fff8df;
@@ -821,7 +821,9 @@ export function renderPage(styles: string, clientScript: string): string {
     .task-card-action {
       width: 100%;
       min-height: 0;
-      display: grid;
+      display: flex;
+      flex: 1 1 auto;
+      flex-direction: column;
       gap: 8px;
       padding: 0;
       border: 0;
@@ -905,7 +907,7 @@ export function renderPage(styles: string, clientScript: string): string {
       justify-content: flex-end;
       align-items: center;
       gap: 8px;
-      margin-top: 2px;
+      margin-top: auto;
     }
     .task-chat-open {
       min-height: 24px;

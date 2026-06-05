@@ -1607,7 +1607,11 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /body\.mobile-layout \.team-strip\s*\{[\s\S]*overflow-x:\s*auto/);
   assert.match(html, /body\.mobile-layout \.team-strip\s*\{[\s\S]*flex-wrap:\s*nowrap/);
   assert.match(html, /\.task-grid\s*\{[\s\S]*repeat\(auto-fill, minmax\(min\(300px, 100%\), 1fr\)\)/);
+  assert.match(html, /\.task-card\s*\{[\s\S]*display:\s*flex/);
+  assert.match(html, /\.task-card\s*\{[\s\S]*flex-direction:\s*column/);
   assert.match(html, /\.task-card\s*\{[\s\S]*min-height:\s*122px/);
+  assert.match(html, /\.task-card-action\s*\{[\s\S]*flex:\s*1 1 auto/);
+  assert.match(html, /\.task-card-footer\s*\{[\s\S]*margin-top:\s*auto/);
   assert.match(html, /body\.mobile-layout \.task-card\s*\{[\s\S]*min-height:\s*0/);
   assert.match(html, /body\.mobile-layout \.task-card p\s*\{[\s\S]*-webkit-line-clamp:\s*2/);
   assert.match(html, /let taskFilterMode = localStorage\.getItem\('king:taskFilter'\)/);
