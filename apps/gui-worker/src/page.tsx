@@ -2024,8 +2024,18 @@ function taskConversationTitle(conversationId) {
 function taskChatRows(task) {
   if (!task || !task.conversationId) return [];
   const state = window.__lastState || {};
+  const allRows = state.messages || [];
+  const request = task.requestMessageId ? allRows.find(function(message) { return message.id === task.requestMessageId; }) : null;
+  const nextRequestAt = request ? (allRows.find(function(message) {
+    return message.conversation_id === task.conversationId &&
+      message.author_kind === 'human' &&
+      message.kind !== 'system' &&
+      message.created_at > request.created_at;
+  }) || {}).created_at : 0;
   return (state.messages || []).filter(function(message) {
     if (message.conversation_id !== task.conversationId) return false;
+    if (request && message.created_at < request.created_at) return false;
+    if (request && nextRequestAt && message.created_at >= nextRequestAt) return false;
     return shouldRenderChatMessage(message);
   });
 }
@@ -2057,7 +2067,7 @@ function taskChatMessageHtml(message) {
 }
 function openTaskChat(taskId) {
   const state = window.__lastState || {};
-  const task = (state.tasks || []).find(function(row) { return row.id === taskId; });
+  const task = visibleTasksForState(state).find(function(row) { return row.id === taskId; });
   if (!task) return;
   const dialog = document.getElementById('taskChatDialog');
   const title = document.getElementById('taskChatTitle');
@@ -2100,6 +2110,54 @@ function taskMatchesConversation(task) {
   if (isAllConversationView()) return true;
   return task && task.conversationId === activeConversationId;
 }
+function messageMatchesConversation(message) {
+  if (isAllConversationView()) return true;
+  return message && message.conversation_id === activeConversationId;
+}
+function derivedRequestTasks(state, existingTasks) {
+  const taskRequestIds = {};
+  existingTasks.forEach(function(task) {
+    if (task && task.requestMessageId) taskRequestIds[task.requestMessageId] = true;
+  });
+  return (state.messages || [])
+    .filter(function(message) {
+      return message.author_kind === 'human' && message.kind !== 'system' && messageMatchesConversation(message) && !taskRequestIds[message.id];
+    })
+    .map(function(message) {
+      const nextRequestAt = ((state.messages || []).find(function(row) {
+        return row.conversation_id === message.conversation_id &&
+          row.author_kind === 'human' &&
+          row.kind !== 'system' &&
+          row.created_at > message.created_at;
+      }) || {}).created_at;
+      const hasAgentReply = (state.messages || []).some(function(row) {
+        return row.conversation_id === message.conversation_id &&
+          row.author_kind === 'agent' &&
+          row.status !== 'pending' &&
+          row.created_at > message.created_at &&
+          (!nextRequestAt || row.created_at < nextRequestAt);
+      });
+      return {
+        id: 'request-' + message.id,
+        title: message.body || t('taskBoardTitle'),
+        description: message.body || '',
+        status: hasAgentReply ? 'done' : 'in_progress',
+        assignee: message.to_agent_id || 'king-ceo',
+        ownerRole: 'request',
+        priority: 5,
+        conversationId: message.conversation_id,
+        requestMessageId: message.id,
+        derived: true,
+        created_at: message.created_at,
+        updated_at: message.created_at
+      };
+    });
+}
+function visibleTasksForState(state) {
+  const allTasks = state.tasks || [];
+  const explicitTasks = allTasks.filter(taskMatchesConversation);
+  return explicitTasks.concat(derivedRequestTasks(state, allTasks));
+}
 function taskByIdMap(tasks) {
   const map = {};
   tasks.forEach(function(task) {
@@ -2112,6 +2170,41 @@ function artifactMatchesConversation(artifact, tasksById) {
   if (!artifact || !artifact.taskId) return false;
   const task = tasksById[artifact.taskId];
   return task && task.conversationId === activeConversationId;
+}
+function attachmentFilesForState(state) {
+  const seen = {};
+  const files = [];
+  (state.messages || []).filter(messageMatchesConversation).forEach(function(message) {
+    (message.attachments || []).forEach(function(attachment) {
+      const key = attachment.id || attachment.url || (attachment.name + ':' + attachment.size + ':' + message.id);
+      if (seen[key]) return;
+      seen[key] = true;
+      files.push({
+        id: key,
+        name: attachment.name || 'attachment',
+        kind: attachment.mime || 'attachment',
+        source: t('attachments'),
+        size: attachment.size,
+        url: attachment.url,
+        created_at: message.created_at
+      });
+    });
+  });
+  return files;
+}
+function fileCardHtml(file) {
+  const title = escapeHtml(file.path || file.name || 'artifact');
+  const href = file.url ? ' href="' + escapeHtml(file.url) + '" target="_blank" rel="noreferrer noopener"' : '';
+  const open = file.url ? '<a class="task-chat-open" href="' + escapeHtml(file.url) + '" target="_blank" rel="noreferrer noopener">' + t('files') + '</a>' : '';
+  const size = file.size ? ' · ' + escapeHtml(formatBytes(file.size)) : '';
+  return '<article class="task-card done">' +
+    '<div class="task-card-action">' +
+    '<div class="task-card-top"><span class="task-chip">' + escapeHtml(file.kind || 'file') + '</span><span class="task-state"><span class="task-state-dot done"></span>' + t('files') + '</span></div>' +
+    '<h3>' + (href ? '<a' + href + '>' + title + '</a>' : title) + '</h3>' +
+    '<p>' + escapeHtml((file.source || file.confidence || t('noDescription')) + size) + '</p>' +
+    '</div>' +
+    (open ? '<div class="task-card-footer">' + open + '</div>' : '') +
+    '</article>';
 }
 function contextStringValue(context, key) {
   return context && typeof context[key] === 'string' ? context[key] : '';
@@ -2137,14 +2230,13 @@ function approvalMatchesConversation(approval, tasksById) {
 }
 renderTasks = function(state) {
   const allTasks = state.tasks || [];
-  const tasks = allTasks.filter(taskMatchesConversation);
-  const tasksById = taskByIdMap(allTasks);
+  const tasks = visibleTasksForState(state);
+  const tasksById = taskByIdMap(tasks);
   document.getElementById('taskBadge').textContent = String(tasks.filter(function(task) { return task.status !== 'done'; }).length);
   document.getElementById('panel-tasks').innerHTML = taskBoardHtml(tasks);
   const artifacts = (state.artifacts || []).filter(function(artifact) { return artifactMatchesConversation(artifact, tasksById); });
-  document.getElementById('panel-files').innerHTML = artifacts.length ? '<div class="task-board"><div class="task-grid">' + artifacts.slice().reverse().map(function(artifact) {
-    return '<article class="task-card done"><div class="task-card-top"><span class="task-chip">' + escapeHtml(artifact.kind || 'file') + '</span><span class="task-state"><span class="task-state-dot done"></span>' + t('files') + '</span></div><h3>' + escapeHtml(artifact.path || artifact.name || 'artifact') + '</h3><p>' + escapeHtml(artifact.source || artifact.confidence || t('noDescription')) + '</p></article>';
-  }).join('') + '</div></div>' : '<div class="task-board"><div class="task-empty">' + t('fileEmpty') + '</div></div>';
+  const files = artifacts.concat(attachmentFilesForState(state));
+  document.getElementById('panel-files').innerHTML = files.length ? '<div class="task-board"><div class="task-grid">' + files.slice().reverse().map(fileCardHtml).join('') + '</div></div>' : '<div class="task-board"><div class="task-empty">' + t('fileEmpty') + '</div></div>';
 };
 saveAgentConfig = async function() {
   const button = document.getElementById('applyAgentButton');
