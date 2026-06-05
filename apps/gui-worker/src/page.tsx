@@ -1696,11 +1696,55 @@ function taskBoardHtml(tasks) {
     (filtered.length ? '<div class="task-grid">' + filtered.map(taskCardHtml).join('') + '</div>' : '<div class="task-empty">' + t('taskEmpty') + '</div>') +
     '</div>';
 }
+function isAllConversationView() {
+  return !activeConversationId || activeConversationId === 'king-convo';
+}
+function taskMatchesConversation(task) {
+  if (isAllConversationView()) return true;
+  return task && task.conversationId === activeConversationId;
+}
+function taskByIdMap(tasks) {
+  const map = {};
+  tasks.forEach(function(task) {
+    if (task && task.id) map[task.id] = task;
+  });
+  return map;
+}
+function artifactMatchesConversation(artifact, tasksById) {
+  if (isAllConversationView()) return true;
+  if (!artifact || !artifact.taskId) return false;
+  const task = tasksById[artifact.taskId];
+  return task && task.conversationId === activeConversationId;
+}
+function contextStringValue(context, key) {
+  return context && typeof context[key] === 'string' ? context[key] : '';
+}
+function approvalConversationId(approval) {
+  if (!approval) return '';
+  if (typeof approval.conversationId === 'string') return approval.conversationId;
+  return contextStringValue(approval.context || {}, 'conversationId');
+}
+function approvalTaskId(approval) {
+  if (!approval) return '';
+  if (typeof approval.taskId === 'string') return approval.taskId;
+  return contextStringValue(approval.context || {}, 'taskId');
+}
+function approvalMatchesConversation(approval, tasksById) {
+  if (isAllConversationView()) return true;
+  const conversationId = approvalConversationId(approval);
+  if (conversationId) return conversationId === activeConversationId;
+  const taskId = approvalTaskId(approval);
+  if (!taskId) return false;
+  const task = tasksById[taskId];
+  return task && task.conversationId === activeConversationId;
+}
 renderTasks = function(state) {
-  const tasks = state.tasks || [];
+  const allTasks = state.tasks || [];
+  const tasks = allTasks.filter(taskMatchesConversation);
+  const tasksById = taskByIdMap(allTasks);
   document.getElementById('taskBadge').textContent = String(tasks.filter(function(task) { return task.status !== 'done'; }).length);
   document.getElementById('panel-tasks').innerHTML = taskBoardHtml(tasks);
-  const artifacts = state.artifacts || [];
+  const artifacts = (state.artifacts || []).filter(function(artifact) { return artifactMatchesConversation(artifact, tasksById); });
   document.getElementById('panel-files').innerHTML = artifacts.length ? '<div class="task-board"><div class="task-grid">' + artifacts.slice().reverse().map(function(artifact) {
     return '<article class="task-card done"><div class="task-card-top"><span class="task-chip">' + escapeHtml(artifact.kind || 'file') + '</span><span class="task-state"><span class="task-state-dot done"></span>' + t('files') + '</span></div><h3>' + escapeHtml(artifact.path || artifact.name || 'artifact') + '</h3><p>' + escapeHtml(artifact.source || artifact.confidence || t('noDescription')) + '</p></article>';
   }).join('') + '</div></div>' : '<div class="task-board"><div class="task-empty">' + t('fileEmpty') + '</div></div>';
@@ -2082,8 +2126,9 @@ async function resolveHostDecision(id, decision) {
   await refresh();
 }
 function renderDecisions(state, hostResult) {
-  const approvals = (state.approvals || []).slice().reverse();
-  const hostCards = (hostResult && hostResult.cards) || [];
+  const tasksById = taskByIdMap(state.tasks || []);
+  const approvals = (state.approvals || []).filter(function(approval) { return approvalMatchesConversation(approval, tasksById); }).slice().reverse();
+  const hostCards = isAllConversationView() ? ((hostResult && hostResult.cards) || []) : [];
   const pending = approvals.filter(function(approval) { return approval.status === 'pending'; });
   const badge = document.getElementById('decisionBadge');
   const count = pending.length + hostCards.length;

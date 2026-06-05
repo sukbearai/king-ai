@@ -448,6 +448,8 @@ type ApprovalRequest = {
   action: SafetyAction;
   context: Record<string, unknown>;
   status: ApprovalStatus;
+  conversationId?: string;
+  taskId?: string;
   createdAt: number;
   resolvedAt?: number;
   reason?: string;
@@ -3217,11 +3219,14 @@ export class GuiState implements DurableObject {
       const action = args[1];
       if (!isSafetyAction(action)) return "usage: king safety request <action> [--reason text] [--context json]";
       if (safetyCheck(action).allowed) return `allowed: ${action} does not require approval in this gui gate`;
+      const context = parseSafetyContext(args);
       const request: ApprovalRequest = {
         id: `approval-${Date.now()}-${Math.random().toString(36).slice(2)}`,
         action,
-        context: parseSafetyContext(args),
+        context,
         status: "pending",
+        conversationId: stringContextValue(context, "conversationId"),
+        taskId: stringContextValue(context, "taskId"),
         createdAt: Date.now()
       };
       state.approvals.push(request);
@@ -5638,6 +5643,11 @@ function parseSafetyContext(args: string[]): Record<string, unknown> {
   }
   if (reason) context.reason = reason;
   return context;
+}
+
+function stringContextValue(context: Record<string, unknown>, key: string): string | undefined {
+  const value = context[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function findApproval(state: State, id: string | undefined): ApprovalRequest | undefined {

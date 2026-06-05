@@ -1448,6 +1448,14 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /function latestTaskEvent\(task\)/);
   assert.match(html, /message\.payload && message\.payload\.taskEventType/);
   assert.match(html, /renderTasks = function\(state\)/);
+  assert.match(html, /function isAllConversationView\(\)/);
+  assert.match(html, /function taskMatchesConversation\(task\)/);
+  assert.match(html, /function artifactMatchesConversation\(artifact, tasksById\)/);
+  assert.match(html, /artifact\.taskId/);
+  assert.match(html, /function approvalMatchesConversation\(approval, tasksById\)/);
+  assert.match(html, /approvalConversationId\(approval\)/);
+  assert.match(html, /approvalTaskId\(approval\)/);
+  assert.match(html, /const hostCards = isAllConversationView\(\) \? \(\(hostResult && hostResult\.cards\) \|\| \[\]\) : \[\]/);
   assert.match(html, /taskFilterActive: '进行中'/);
   assert.match(html, /taskStatusInProgress: 'In progress'/);
   assert.match(html, /class="task-filter"/);
@@ -2831,7 +2839,7 @@ test("gui runtime supports safety approval gate commands", async () => {
   assert.match((await callCli(["safety", "check", "git_commit"])).text, /allowed: git_commit/);
   assert.match((await callCli(["safety", "check", "deploy_production"])).text, /approval required: deploy_production/);
 
-  const requested = await callCli(["safety", "request", "deploy_production", "--reason", "ship release", "--context", "{\"ticket\":\"REL-1\"}"]);
+  const requested = await callCli(["safety", "request", "deploy_production", "--reason", "ship release", "--context", "{\"ticket\":\"REL-1\",\"conversationId\":\"room-1\",\"taskId\":\"task-1\"}"]);
   assert.match(requested.text, /approval requested approval-/);
   const approvalId = requested.text.match(/approval requested (approval-[^ ]+)/)?.[1];
   assert.equal(typeof approvalId, "string");
@@ -2847,13 +2855,15 @@ test("gui runtime supports safety approval gate commands", async () => {
   assert.match((await callCli(["safety", "deny", deniedId ?? "", "--reason", "too broad"])).text, /approval denied/);
   assert.match((await callCli(["safety", "list", "--status", "denied"])).text, /too broad/);
 
-  const state = await json<{ approvals: { action: string; status: string }[] }>(
+  const state = await json<{ approvals: { action: string; status: string; conversationId?: string; taskId?: string }[] }>(
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
   assert.deepEqual(state.approvals.map((approval) => `${approval.action}:${approval.status}`), [
     "deploy_production:approved",
     "delete_data:denied"
   ]);
+  assert.equal(state.approvals[0]?.conversationId, "room-1");
+  assert.equal(state.approvals[0]?.taskId, "task-1");
 });
 
 test("gui runtime detects path conflicts for cards and claims", async () => {
