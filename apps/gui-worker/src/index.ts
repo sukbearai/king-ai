@@ -7,6 +7,10 @@ import { D1Dialect } from "kysely-d1";
 import { render as renderMarkdownHtml } from "@comark/html";
 import { renderPage } from "./page.js";
 import { cronMatches, parseCron } from "@suwujs/king/cron";
+import { formatAttachmentPrompt, normalizeRuntimeAttachments } from "@suwujs/king/attachments";
+import type { RuntimeAttachment } from "@suwujs/king/attachments";
+import { initialRunStreamState, reduceRunStream, renderRunStreamCard } from "@suwujs/king/run-stream";
+import type { RunStreamEvent, RunStreamState } from "@suwujs/king/run-stream";
 import { formatMessageRouteSummary, messageRouteTag, sortRuntimeMessages } from "@suwujs/king/message-routing";
 import { selectOwnerRole } from "@suwujs/king/team-routing";
 import { defaultTeamSpec, requiredCapabilitiesForText, roleTemplateForAgent } from "@suwujs/king/team-workflow";
@@ -75,8 +79,20 @@ type Message = {
   to_agent_id?: string;
   quoted_message_id?: string;
   payload?: unknown;
+  attachments?: RuntimeAttachment[];
   created_at: number;
   readBy: string[];
+};
+
+type UploadedAttachment = {
+  id: string;
+  token: string;
+  name: string;
+  mime: string;
+  size: number;
+  bytesBase64?: string;
+  chunkCount?: number;
+  createdAt: number;
 };
 
 type Conversation = {
@@ -505,7 +521,8 @@ type State = {
   loopEvents: LoopEvent[];
   noticeLog: { at: number; body: unknown }[];
   triageLog: { at: number; body: unknown }[];
-  runLog: { at: number; runId: string; action: "start" | "heartbeat" | "finish"; body?: unknown }[];
+  runLog: { at: number; runId: string; action: "start" | "heartbeat" | "finish" | "stream"; body?: unknown; card?: unknown }[];
+  runStreams?: Record<string, RunStreamState>;
   initiatives: Initiative[];
   tasks: Task[];
   taskEvents: TaskEvent[];
@@ -524,6 +541,7 @@ type State = {
   reactions: Reaction[];
   composing: ComposingClaim[];
   approvals: ApprovalRequest[];
+  uploads?: Record<string, UploadedAttachment>;
   remoteAssist?: RemoteAssistGrant;
 };
 
@@ -716,6 +734,10 @@ const RUN_LOG_CAPACITY = 500;
 const CLI_LOG_CAPACITY = 500;
 const NOTICE_LOG_CAPACITY = 200;
 const TRIAGE_LOG_CAPACITY = 200;
+const GUI_ATTACHMENT_MAX_COUNT = 10;
+const GUI_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
+const GUI_ATTACHMENT_STORE_CAPACITY = 50;
+const GUI_ATTACHMENT_CHUNK_CHARS = 256 * 1024;
 
 const styles = "    :root {\n      --accent: #ffd633;\n      --rail: #ffd83d;\n      --sidebar: #fbf4e6;\n      --active: #f15b93;\n      --canvas: #ffffff;\n      --panel: #fffaf0;\n      --line: #111111;\n      --soft-line: #d7d1c5;\n      --ink: #171717;\n      --body: #303030;\n      --muted: #7d7a73;\n      --avatar: #c8b6ff;\n      --shadow: rgba(17,17,17,0.16) 0 14px 36px;\n    }\n    * { box-sizing: border-box; }\n    body {\n      margin: 0;\n      background: var(--canvas);\n      color: var(--ink);\n      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n      font-size: 12px;\n      line-height: 1.35;\n      overflow: hidden;\n    }\n    h1, h2, h3, p { margin: 0; }\n    h1 { font-size: 17px; line-height: 1.1; }\n    h2 { font-size: 15px; line-height: 1.2; }\n    h3 { font-size: 13px; line-height: 1.2; }\n    p { color: var(--body); }\n    button, textarea, select, input { font: inherit; }\n    * {\n      scrollbar-width: thin;\n      scrollbar-color: var(--line) var(--accent);\n    }\n    *::-webkit-scrollbar {\n      width: 13px;\n      height: 13px;\n    }\n    *::-webkit-scrollbar-track {\n      background: var(--accent);\n      border-left: 1px solid var(--line);\n    }\n    *::-webkit-scrollbar-thumb {\n      background: var(--line);\n      border: 3px solid var(--accent);\n    }\n    *::-webkit-scrollbar-corner { background: var(--accent); }\n    button {\n      min-height: 27px;\n      border: 1px solid var(--line);\n      border-radius: 0;\n      padding: 4px 9px;\n      background: var(--canvas);\n      color: var(--ink);\n      font-weight: 800;\n      cursor: pointer;\n    }\n    button:hover, button.primary { background: var(--accent); }\n    button.icon {\n      width: 27px;\n      min-width: 27px;\n      padding: 0;\n      display: grid;\n      place-items: center;\n    }\n    textarea, input, select {\n      width: 100%;\n      border: 1px solid var(--line);\n      border-radius: 0;\n      background: var(--canvas);\n      color: var(--ink);\n      padding: 8px;\n    }\n    textarea {\n      min-height: 54px;\n      resize: vertical;\n      line-height: 1.45;\n    }\n    label {\n      color: var(--muted);\n      font-size: 10px;\n      font-weight: 900;\n      text-transform: uppercase;\n    }\n    .app {\n      height: 100vh;\n      min-height: 100vh;\n      display: grid;\n      grid-template-columns: 42px 180px minmax(0, 1fr);\n      background: var(--canvas);\n    }\n    .rail {\n      display: grid;\n      grid-template-rows: auto 1fr;\n      gap: 12px;\n      border-right: 2px solid var(--line);\n      background: var(--rail);\n      padding: 8px 6px;\n    }\n    .logo {\n      width: 27px;\n      display: grid;\n      grid-template-columns: 1fr;\n      gap: 6px;\n    }\n    .logo span {\n      width: 27px;\n      height: 27px;\n      display: grid;\n      place-items: center;\n      background: var(--line);\n      color: var(--accent);\n      font-size: 10px;\n      font-weight: 900;\n    }\n    .rail .icon { background: transparent; border-color: transparent; }\n    .rail .icon.active { background: var(--canvas); border-color: var(--line); }\n    .windows {\n      min-width: 0;\n      border-right: 2px solid var(--line);\n      background: var(--sidebar);\n      padding: 8px 6px;\n      overflow: hidden;\n      display: grid;\n      grid-template-rows: auto minmax(0, 1fr);\n      gap: 8px;\n    }\n    .windows-head {\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 8px;\n      padding: 0 2px 8px;\n      border-bottom: 1px solid var(--soft-line);\n      font-weight: 900;\n    }\n    .window-list {\n      min-height: 0;\n      overflow: auto;\n      display: grid;\n      align-content: start;\n      gap: 5px;\n    }\n    .window-item {\n      display: grid;\n      grid-template-columns: minmax(0, 1fr) auto auto;\n      gap: 6px;\n      align-items: center;\n      min-height: 32px;\n      padding: 5px 6px;\n      border: 1px solid transparent;\n      background: transparent;\n      text-align: left;\n      font-weight: 800;\n    }\n    .window-select {\n      min-width: 0;\n      min-height: 0;\n      padding: 0;\n      border: 0;\n      background: transparent;\n      text-align: left;\n      font-weight: 900;\n    }\n    .window-item.active {\n      border-color: var(--line);\n      background: var(--active);\n    }\n    .window-delete {\n      width: 18px;\n      min-width: 18px;\n      min-height: 18px;\n      padding: 0;\n      border-color: var(--line);\n      background: var(--canvas);\n      color: var(--line);\n      line-height: 1;\n    }\n    .window-delete:hover { background: var(--accent); }\n    .window-name {\n      overflow: hidden;\n      text-overflow: ellipsis;\n      white-space: nowrap;\n    }\n    .window-meta {\n      color: var(--muted);\n      font-size: 10px;\n      font-weight: 900;\n    }\n    .sidebar {\n      display: none;\n      min-width: 0;\n      border-right: 2px solid var(--line);\n      background: var(--sidebar);\n      padding: 9px 5px;\n      overflow: hidden;\n    }\n    .side-title {\n      display: flex;\n      justify-content: space-between;\n      align-items: center;\n      padding: 0 4px 11px;\n      border-bottom: 1px solid var(--soft-line);\n      margin-bottom: 8px;\n    }\n    .side-section { display: grid; gap: 3px; margin: 12px 0; }\n    .side-label {\n      padding: 0 7px;\n      color: var(--muted);\n      font-size: 10px;\n      font-weight: 900;\n      letter-spacing: 0.03em;\n      text-transform: uppercase;\n    }\n    .side-link, .channel {\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 8px;\n      min-height: 25px;\n      padding: 4px 6px;\n      border: 1px solid transparent;\n      color: var(--body);\n      text-decoration: none;\n      white-space: nowrap;\n      overflow: hidden;\n    }\n    .channel.active {\n      background: var(--active);\n      border-color: var(--line);\n      color: var(--line);\n      font-weight: 900;\n    }\n    .badge { color: var(--muted); font-size: 10px; font-weight: 900; }\n    .main {\n      min-width: 0;\n      min-height: 0;\n      height: 100vh;\n      display: grid;\n      grid-template-rows: auto auto minmax(0, 1fr);\n    }\n    .topbar {\n      height: 38px;\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 14px;\n      border-bottom: 2px solid var(--line);\n      padding: 6px 12px;\n    }\n    .channel-head {\n      display: grid;\n      grid-template-columns: 21px minmax(0, auto);\n      gap: 8px;\n      align-items: center;\n      min-width: 0;\n    }\n    .hash {\n      width: 21px;\n      height: 21px;\n      display: grid;\n      place-items: center;\n      background: var(--accent);\n      border: 1px solid var(--line);\n      font-weight: 900;\n    }\n    .channel-name { font-weight: 900; line-height: 1; }\n    .channel-desc {\n      color: var(--muted);\n      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;\n      font-size: 10px;\n      overflow: hidden;\n      text-overflow: ellipsis;\n      white-space: nowrap;\n    }\n    .top-actions { display: flex; gap: 6px; }\n    .tabs {\n      height: 24px;\n      display: flex;\n      align-items: stretch;\n      border-bottom: 2px solid var(--line);\n    }\n    .tab {\n      min-height: 0;\n      padding: 3px 12px;\n      border-width: 0 1px 0 0;\n      background: var(--canvas);\n      font-size: 11px;\n    }\n    .tab.active { background: var(--accent); }\n    .workspace {\n      min-height: 0;\n      overflow: auto;\n      background: var(--canvas);\n    }\n    .panel { display: none; min-height: 100%; }\n    .panel.active { display: block; }\n    .chat-panel {\n      position: relative;\n      min-height: 100%;\n      padding: 14px 0 124px;\n    }\n    .message-list {\n      display: grid;\n      gap: 11px;\n      width: 100%;\n      padding: 0 18px;\n    }\n    .system-line {\n      color: #aaa49a;\n      font-size: 10px;\n      text-align: center;\n      padding: 4px 0;\n    }\n    .post {\n      display: grid;\n      grid-template-columns: 24px minmax(0, 1fr);\n      gap: 8px;\n      padding: 8px;\n      border: 1px solid transparent;\n    }\n    .post.highlight { border-color: var(--line); }\n    .avatar {\n      width: 22px;\n      height: 22px;\n      display: grid;\n      place-items: center;\n      border: 1px solid var(--line);\n      background: var(--avatar);\n      color: var(--line);\n      font-size: 12px;\n      font-weight: 900;\n    }\n    .post-top {\n      display: flex;\n      align-items: baseline;\n      gap: 6px;\n      min-width: 0;\n      margin-bottom: 3px;\n    }\n    .author { font-weight: 900; }\n    .time { color: var(--muted); font-size: 10px; white-space: nowrap; }\n    .post-body {\n      color: var(--body);\n      line-height: 1.45;\n      white-space: pre-wrap;\n      word-break: break-word;\n    }\n    .jump {\n      position: sticky;\n      bottom: 104px;\n      display: none;\n      width: max-content;\n      margin: 16px auto;\n      box-shadow: var(--shadow);\n    }\n    .jump.visible { display: block; }\n    .composer {\n      position: fixed;\n      right: 16px;\n      bottom: 14px;\n      left: 238px;\n      z-index: 5;\n      display: grid;\n      grid-template-columns: minmax(0, 1fr) auto;\n      gap: 8px;\n      width: auto;\n      max-width: none;\n      border: 2px solid var(--line);\n      background: var(--canvas);\n      padding: 8px;\n    }\n    .composer textarea {\n      min-height: 44px;\n      max-height: 110px;\n      border: 0;\n      padding: 6px;\n    }\n    .composer button:disabled {\n      opacity: 0.62;\n      cursor: wait;\n    }\n    .tab-panel {\n      max-width: 920px;\n      padding: 18px;\n      gap: 10px;\n    }\n    .tab-panel.active { display: grid; }\n    .task-row {\n      display: grid;\n      gap: 5px;\n      max-width: 720px;\n      border: 1px solid var(--line);\n      padding: 10px;\n    }\n    .task-top {\n      display: flex;\n      align-items: baseline;\n      justify-content: space-between;\n      gap: 10px;\n    }\n    .model-grid { display: grid; gap: 10px; }\n    .model-row {\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 12px;\n      border-top: 1px solid var(--soft-line);\n      padding-top: 8px;\n      color: var(--body);\n    }\n    .model-row:first-child { border-top: 0; padding-top: 0; }\n    .available { color: #cc2f68; font-weight: 900; }\n    .unavailable { color: var(--muted); }\n    .cmd {\n      border: 1px solid var(--line);\n      background: var(--panel);\n      padding: 10px;\n      color: var(--body);\n      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;\n      font-size: 11px;\n      line-height: 1.5;\n      overflow: auto;\n      white-space: pre-wrap;\n      word-break: break-word;\n    }\n    .side-card {\n      display: grid;\n      gap: 10px;\n      border: 1px solid var(--line);\n      padding: 10px;\n    }\n    .settings-actions {\n      display: flex;\n      justify-content: flex-end;\n      gap: 8px;\n    }\n    .field { display: grid; gap: 5px; }\n    .muted { color: var(--muted); font-size: 11px; }\n    dialog {\n      width: min(520px, calc(100vw - 24px));\n      max-height: min(760px, calc(100vh - 24px));\n      border: 2px solid var(--line);\n      border-radius: 0;\n      padding: 0;\n      box-shadow: var(--shadow);\n      overflow: hidden;\n    }\n    dialog::backdrop { background: rgba(0,0,0,0.48); }\n    .computer-dialog { width: min(680px, calc(100vw - 24px)); }\n    .window-dialog { width: min(440px, calc(100vw - 24px)); }\n    .modal-form { margin: 0; }\n    .modal-head {\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 16px;\n      padding: 12px;\n      border-bottom: 2px solid var(--line);\n    }\n    .modal-body {\n      display: grid;\n      gap: 12px;\n      padding: 12px;\n      overflow: auto;\n      max-height: calc(100vh - 120px);\n    }\n    .computer-flow {\n      display: grid;\n      gap: 20px;\n      padding: 32px;\n    }\n    .computer-kicker {\n      color: var(--muted);\n      font-size: 11px;\n      font-weight: 900;\n      letter-spacing: 0.14em;\n      text-transform: uppercase;\n    }\n    .computer-title {\n      font-size: 20px;\n      line-height: 1.15;\n      text-transform: uppercase;\n    }\n    .computer-lead {\n      display: grid;\n      grid-template-columns: 36px minmax(0, 1fr);\n      gap: 14px;\n      align-items: start;\n      color: var(--body);\n      font-size: 15px;\n      line-height: 1.5;\n    }\n    .computer-icon {\n      width: 32px;\n      height: 32px;\n      display: grid;\n      place-items: center;\n      border: 2px solid var(--line);\n      background: var(--accent);\n      font-weight: 900;\n    }\n    .computer-muted {\n      margin-top: 8px;\n      color: var(--muted);\n      font-size: 12px;\n      line-height: 1.45;\n    }\n    .computer-rule { border-top: 2px solid var(--soft-line); }\n    .computer-actions {\n      display: flex;\n      align-items: center;\n      justify-content: flex-end;\n      gap: 12px;\n      flex-wrap: wrap;\n    }\n    .computer-actions.between { justify-content: space-between; }\n    .check-row {\n      display: flex;\n      align-items: center;\n      gap: 8px;\n      font-weight: 800;\n      color: var(--body);\n    }\n    .check-row input {\n      width: 16px;\n      height: 16px;\n      padding: 0;\n      accent-color: var(--accent);\n    }\n    .choice-grid {\n      display: grid;\n      grid-template-columns: repeat(2, minmax(0, 1fr));\n      gap: 10px;\n    }\n    .computer-choice {\n      display: grid;\n      grid-template-columns: 28px minmax(0, 1fr);\n      gap: 10px;\n      min-height: 82px;\n      border: 2px solid var(--line);\n      padding: 14px;\n      background: var(--canvas);\n      text-align: left;\n    }\n    .computer-choice.active { background: var(--accent); }\n    .computer-choice.disabled {\n      border-style: dashed;\n      color: var(--muted);\n      opacity: 0.56;\n      cursor: default;\n    }\n    .computer-choice-title {\n      display: block;\n      font-size: 14px;\n      text-transform: uppercase;\n    }\n    .connect-row {\n      display: grid;\n      grid-template-columns: minmax(0, 1fr) auto;\n      gap: 10px;\n      align-items: center;\n    }\n    .connect-stack {\n      display: grid;\n      gap: 8px;\n      min-width: 0;\n    }\n    .connect-help {\n      color: var(--body);\n      font-size: 12px;\n      font-weight: 900;\n    }\n    .connect-command {\n      border: 2px solid var(--line);\n      background: #080808;\n      color: #a7d66d;\n      padding: 14px;\n      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;\n      font-size: 12px;\n      line-height: 1.5;\n      white-space: pre-wrap;\n      word-break: break-word;\n    }\n    .connect-status {\n      display: flex;\n      align-items: center;\n      gap: 10px;\n      border: 2px solid var(--line);\n      background: #fff3c4;\n      padding: 14px;\n      font-weight: 900;\n    }\n    .status-dot {\n      width: 10px;\n      height: 10px;\n      border: 2px solid var(--line);\n      border-radius: 50%;\n      background: #ffad7a;\n    }\n    .status-dot.online { background: #74d67b; }\n    .button-shadow { box-shadow: 4px 5px 0 var(--line); }\n    button.primary-pink {\n      background: var(--active);\n      min-height: 36px;\n      padding: 8px 14px;\n      font-size: 14px;\n    }\n    button.disabled-action {\n      background: #edf5df;\n      color: var(--muted);\n      cursor: default;\n    }\n    @media (max-width: 760px) {\n      .app { grid-template-columns: 36px 132px minmax(0, 1fr); }\n      .logo {\n        width: 24px;\n        grid-template-columns: 1fr;\n      }\n      .logo span {\n        width: 22px;\n        height: 16px;\n        font-size: 10px;\n      }\n      .message-list { padding: 0 10px; }\n      .composer { left: 178px; right: 10px; width: auto; }\n      .top-actions .hide-mobile { display: none; }\n      .post { max-width: 100%; }\n      .computer-flow { padding: 22px; }\n      .choice-grid, .connect-row { grid-template-columns: 1fr; }\n    }\n";
 
@@ -864,11 +886,15 @@ async function tenantFromRequest(c: RequestContext): Promise<string> {
   const accessSub = c.req.header("Cf-Access-User-Sub");
   if (accessSub) return `user-${sanitizeTenantId(accessSub)}`;
   return "global";
-}
+	}
 
-async function tenantForGuiRequest(c: RequestContext): Promise<string> {
-  return await remoteAssistTenantFromRequest(c) ?? await tenantFromRequest(c);
-}
+	async function tenantForGuiRequest(c: RequestContext): Promise<string> {
+	  return await remoteAssistTenantFromRequest(c) ?? await tenantFromRequest(c);
+	}
+
+	async function stateForTenant(c: RequestContext, tenantId: string): Promise<DurableObjectStub> {
+	  return c.env.GUI_STATE.get(c.env.GUI_STATE.idFromName(sanitizeTenantId(tenantId)));
+	}
 
 function splitPairCode(value: unknown): { tenantId?: string; code?: string } {
   if (typeof value !== "string") return {};
@@ -886,9 +912,9 @@ function pairingLocator(args: { serverUrl: string; tenantId: string; code: strin
   return `king://pair?${params.toString()}`;
 }
 
-async function stateForRequest(c: RequestContext): Promise<DurableObjectStub> {
-  return c.env.GUI_STATE.get(c.env.GUI_STATE.idFromName(await tenantForGuiRequest(c)));
-}
+	async function stateForRequest(c: RequestContext): Promise<DurableObjectStub> {
+	  return c.env.GUI_STATE.get(c.env.GUI_STATE.idFromName(await tenantForGuiRequest(c)));
+	}
 
 async function forwardHeaders(c: RequestContext, headers: Record<string, string> = {}): Promise<Headers> {
   const forwarded = new Headers(headers);
@@ -1271,7 +1297,8 @@ app.post("/runtime/runs", async (c) => await (await stateForRequest(c)).fetch("h
 }));
 app.post("/runtime/runs/:runId/heartbeat", async (c) => await (await stateForRequest(c)).fetch(`https://state/runs/${c.req.param("runId")}/heartbeat`, {
   method: "POST",
-  headers: await forwardHeaders(c)
+  headers: await forwardHeaders(c, { "Content-Type": "application/json" }),
+  body: JSON.stringify(await c.req.json().catch(() => ({})))
 }));
 app.post("/runtime/runs/:runId/finish", async (c) => await (await stateForRequest(c)).fetch(`https://state/runs/${c.req.param("runId")}/finish`, {
   method: "POST",
@@ -1327,6 +1354,20 @@ app.post("/gui/message", async (c) => {
   headers: await forwardHeaders(c, { "Content-Type": "application/json" }),
   body: JSON.stringify(await c.req.json().catch(() => ({})))
   });
+});
+app.post("/gui/attachments", async (c) => {
+  const blocked = await requireGuiAuth(c);
+  if (blocked) return blocked;
+  return (await stateForRequest(c)).fetch("https://state/gui-attachments", {
+    method: "POST",
+    headers: await forwardHeaders(c, { "Content-Type": "application/json" }),
+    body: JSON.stringify(await c.req.json().catch(() => ({})))
+  });
+});
+app.get("/gui/attachments/:attachmentId", async (c) => {
+  const url = new URL(c.req.url);
+  const tenantId = url.searchParams.get("tenant") || c.req.header("X-King-Tenant") || "global";
+  return (await stateForTenant(c, tenantId)).fetch(`https://state/gui-attachments/${encodeURIComponent(c.req.param("attachmentId"))}?${url.searchParams.toString()}`);
 });
 app.post("/gui/conversations", async (c) => {
   const blocked = await requireGuiAuth(c);
@@ -1529,7 +1570,7 @@ export class GuiState implements DurableObject {
     if (path === "/notices") return this.authRuntime(request, async () => this.logBody("noticeLog", await request.json().catch(() => null)));
     if (path === "/triage-log") return this.authRuntime(request, async () => this.logBody("triageLog", await request.json().catch(() => null)));
     if (path === "/runs") return this.authRuntime(request, async () => this.startRun(await request.json().catch(() => null)));
-    if (path.startsWith("/runs/") && path.endsWith("/heartbeat")) return this.authRuntime(request, async () => this.runAction(path.split("/")[2] || "run", "heartbeat"));
+    if (path.startsWith("/runs/") && path.endsWith("/heartbeat")) return this.authRuntime(request, async () => this.runAction(path.split("/")[2] || "run", "heartbeat", await request.json().catch(() => null)));
     if (path.startsWith("/runs/") && path.endsWith("/finish")) return this.authRuntime(request, async () => this.runAction(path.split("/")[2] || "run", "finish", await request.json().catch(() => null)));
     if (path === "/gui-state") return json(await stateForGui(await this.get(), url.searchParams.get("redact") === "1"));
     if (path === "/gui-summary") return this.guiSummary(request);
@@ -1537,7 +1578,9 @@ export class GuiState implements DurableObject {
     if (path === "/gui-export-state") return json(this.snapshot(await this.get()));
     if (path === "/gui-import-state") return this.importSnapshot(await request.json().catch(() => null));
     if (path === "/gui-reset-state") return this.resetState();
-    if (path === "/gui-message") return this.guiMessage(request, await request.json() as { body?: string; conversationId?: string });
+    if (path === "/gui-message") return this.guiMessage(request, await request.json() as { body?: string; conversationId?: string; attachments?: unknown });
+    if (path === "/gui-attachments" && request.method === "POST") return this.guiAttachment(request, await request.json().catch(() => ({})));
+    if (path.startsWith("/gui-attachments/") && request.method === "GET") return this.guiAttachmentFile(new URL(request.url), decodeURIComponent(path.slice("/gui-attachments/".length)));
     if (path === "/gui-conversations") return this.guiConversation(await request.json().catch(() => ({})) as GuiConversationPayload);
     if (path.startsWith("/gui-conversations/") && path.endsWith("/team")) return this.guiUpdateConversationTeam(path.split("/")[2], await request.json().catch(() => ({})) as GuiConversationPayload);
     if (path.startsWith("/gui-conversations/") && path.endsWith("/delete")) return this.guiDeleteConversation(path.split("/")[2]);
@@ -1609,11 +1652,12 @@ export class GuiState implements DurableObject {
       artifacts: [],
       context: [],
       hypotheses: [],
-      reactions: [],
-      composing: [],
-      approvals: [],
-      remoteAssist: undefined
-    };
+	      reactions: [],
+	      composing: [],
+	      approvals: [],
+	      uploads: {},
+	      remoteAssist: undefined
+	    };
     return initial;
   }
 
@@ -1643,9 +1687,10 @@ export class GuiState implements DurableObject {
     saved.artifacts ??= [];
     saved.context ??= [];
     saved.hypotheses ??= [];
-    saved.reactions ??= [];
-    saved.composing ??= [];
-    saved.runtimeTokens = normalizeRuntimeTokens(saved.runtimeTokens);
+	    saved.reactions ??= [];
+	    saved.composing ??= [];
+	    saved.uploads ??= {};
+	    saved.runtimeTokens = normalizeRuntimeTokens(saved.runtimeTokens);
     saved.remoteAssist = normalizeRemoteAssistGrant(saved.remoteAssist, (saved as State & { remoteAssistGrants?: unknown }).remoteAssistGrants);
     saved.agents = normalizeAgents(saved.agents);
     saved.messages = normalizeMessages(saved.messages ?? []);
@@ -1678,6 +1723,7 @@ export class GuiState implements DurableObject {
     saved.noticeLog = (saved.noticeLog ?? []).slice(-NOTICE_LOG_CAPACITY);
     saved.triageLog = (saved.triageLog ?? []).slice(-TRIAGE_LOG_CAPACITY);
     saved.runLog = (saved.runLog ?? []).slice(-RUN_LOG_CAPACITY);
+    saved.runStreams = saved.runStreams ?? {};
     saved.capabilities ??= { workspaces: [] };
     saved.availableEngines ??= [];
     return saved;
@@ -3366,6 +3412,7 @@ export class GuiState implements DurableObject {
     const state = await this.get();
     const runId = `run-${Date.now()}`;
     state.loopRunId = runId;
+    state.runStreams = { ...(state.runStreams ?? {}), [runId]: initialRunStreamState() };
     state.runLog.push({ at: Date.now(), runId, action: "start", body });
     await this.put(state);
     return json({ runId });
@@ -3373,7 +3420,22 @@ export class GuiState implements DurableObject {
 
   private async runAction(runId: string, action: "heartbeat" | "finish", body?: unknown): Promise<Response> {
     const state = await this.get();
-    state.runLog.push({ at: Date.now(), runId, action, body });
+    const streamEvent = normalizeRunStreamEvent(body);
+    if (streamEvent) {
+      const current = state.runStreams?.[runId] ?? initialRunStreamState();
+      state.runStreams = { ...(state.runStreams ?? {}), [runId]: reduceRunStream(current, streamEvent) };
+      state.runLog.push({ at: Date.now(), runId, action: "stream", body: streamEvent, card: renderRunStreamCard(state.runStreams[runId]) });
+    }
+    if (action === "finish") {
+      const current = state.runStreams?.[runId] ?? initialRunStreamState();
+      const terminal = body && typeof body === "object" && (body as { status?: unknown }).status === "failed"
+        ? reduceRunStream(current, { type: "error", message: typeof (body as { error?: unknown }).error === "string" ? (body as { error: string }).error : "run failed" })
+        : reduceRunStream(current, { type: "done" });
+      state.runStreams = { ...(state.runStreams ?? {}), [runId]: terminal };
+      state.runLog.push({ at: Date.now(), runId, action, body, card: renderRunStreamCard(terminal) });
+    } else {
+      state.runLog.push({ at: Date.now(), runId, action, body, card: state.runStreams?.[runId] ? renderRunStreamCard(state.runStreams[runId]) : undefined });
+    }
     await this.put(state);
     return json({ ok: true, runId });
   }
@@ -3437,22 +3499,31 @@ export class GuiState implements DurableObject {
     return json({ ok: true, deleted: before !== state.conversations.length });
   }
 
-  private async guiMessage(request: Request, payload: { body?: string; conversationId?: string }): Promise<Response> {
+  private async guiMessage(request: Request, payload: { body?: string; conversationId?: string; attachments?: unknown }): Promise<Response> {
     const state = await this.get();
     const conversation = ensureConversation(state, payload.conversationId || DEFAULT_CONVERSATION.id);
-    const now = Date.now();
-    const targetAgent = coordinatorAgentFor(state, conversation);
-    const humanName = displayNameForAuthUser(authUserFromRequest(request));
-    const message: Message = {
+	    const now = Date.now();
+	    const targetAgent = coordinatorAgentFor(state, conversation);
+	    const humanName = displayNameForAuthUser(authUserFromRequest(request));
+	    const attachments = normalizeRuntimeAttachments(payload.attachments).map((attachment) => {
+	      if (attachment.url || !attachment.id) return attachment;
+	      const upload = state.uploads?.[attachment.id];
+	      if (!upload) return attachment;
+	      const base = request.headers.get("X-King-Public-Base") || new URL(request.url).origin;
+	      const tenantId = tenantHeader(request);
+	      return { ...attachment, url: `${base}/gui/attachments/${encodeURIComponent(upload.id)}?token=${encodeURIComponent(upload.token)}&tenant=${encodeURIComponent(tenantId)}` };
+	    });
+	    const message: Message = {
       id: `msg-${now}`,
       conversation_id: conversation.id,
       conversation_title: conversation.title,
       conversation_kind: conversation.kind,
       author_name: humanName,
-      author_kind: "human",
-      kind: "message",
-      body: payload.body || "Hello from the local gui runtime.",
-      to_agent_id: targetAgent.id,
+	      author_kind: "human",
+	      kind: "message",
+	      body: payload.body || "Hello from the local gui runtime.",
+	      attachments: normalizeRuntimeAttachments(attachments),
+	      to_agent_id: targetAgent.id,
       created_at: now,
       readBy: []
     };
@@ -3485,11 +3556,105 @@ export class GuiState implements DurableObject {
     const delegated = state.tasks.find((task) => task.requestMessageId === message.id);
     if (delegated?.assignee) {
       await this.broadcast({ event: "wake", data: { agenda: true, conversationId: conversation.id, taskId: delegated.id, agentId: delegated.assignee, at: Date.now() } });
-    }
-    return json({ ok: true, message });
-  }
+	    }
+	    return json({ ok: true, message });
+	  }
 
-  private async guiWake(payload: unknown): Promise<Response> {
+	  private async guiAttachment(request: Request, payload: unknown): Promise<Response> {
+	    const row = payload && typeof payload === "object" ? payload as { name?: unknown; mime?: unknown; size?: unknown; bytesBase64?: unknown } : {};
+	    const name = typeof row.name === "string" && row.name.trim() ? row.name.trim().slice(0, 240) : "attachment";
+	    const mime = typeof row.mime === "string" && row.mime.trim() ? row.mime.trim().toLowerCase().slice(0, 120) : "application/octet-stream";
+	    const bytesBase64 = typeof row.bytesBase64 === "string" ? row.bytesBase64 : "";
+	    const actualSize = approximateBase64Bytes(bytesBase64);
+	    const size = Number.isFinite(row.size) && Number(row.size) >= 0 ? Math.floor(Number(row.size)) : actualSize;
+	    if (!bytesBase64) return json({ error: "missing attachment bytes" }, { status: 400 });
+	    if (size > GUI_ATTACHMENT_MAX_BYTES || actualSize > GUI_ATTACHMENT_MAX_BYTES) return json({ error: "attachment too large" }, { status: 413 });
+	    const id = `att-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+	    const token = crypto.randomUUID();
+	    const chunkCount = await this.writeUploadBytes(id, bytesBase64);
+	    const upload: UploadedAttachment = { id, token, name, mime, size, chunkCount, createdAt: Date.now() };
+	    let prunedUploads: UploadedAttachment[] = [];
+	    try {
+	      const state = await this.get();
+	      const unprunedUploads = { ...(state.uploads ?? {}), [id]: upload };
+	      state.uploads = pruneUploads(unprunedUploads);
+	      prunedUploads = Object.entries(unprunedUploads)
+	        .filter(([uploadId]) => !state.uploads?.[uploadId])
+	        .map(([, value]) => value);
+	      await this.put(state);
+	    } catch (error) {
+	      await this.deleteUploadBytes(upload);
+	      throw error;
+	    }
+	    await this.deleteUploads(prunedUploads);
+	    const base = request.headers.get("X-King-Public-Base") || new URL(request.url).origin;
+	    const tenantId = tenantHeader(request);
+	    return json({
+	      attachment: {
+	        id,
+	        name,
+	        mime,
+	        size,
+	        url: `${base}/gui/attachments/${encodeURIComponent(id)}?token=${encodeURIComponent(token)}&tenant=${encodeURIComponent(tenantId)}`,
+	        source: "gui-upload"
+	      }
+	    });
+	  }
+
+	  private async guiAttachmentFile(url: URL, attachmentId: string): Promise<Response> {
+	    const state = await this.get();
+	    const upload = state.uploads?.[attachmentId];
+	    if (!upload || url.searchParams.get("token") !== upload.token) return json({ error: "attachment not found" }, { status: 404 });
+	    const bytesBase64 = await this.readUploadBytes(upload);
+	    if (!bytesBase64) return json({ error: "attachment not found" }, { status: 404 });
+	    const bytes = base64ToBytes(bytesBase64);
+	    return new Response(bytes, {
+	      headers: {
+	        "Content-Type": upload.mime,
+	        "Content-Length": String(bytes.byteLength),
+	        "Content-Disposition": `attachment; filename="${upload.name.replace(/["\r\n]/g, "_")}"`
+	      }
+	    });
+	  }
+
+	  private async writeUploadBytes(id: string, bytesBase64: string): Promise<number> {
+	    const chunkCount = Math.max(1, Math.ceil(bytesBase64.length / GUI_ATTACHMENT_CHUNK_CHARS));
+	    const writtenKeys: string[] = [];
+	    try {
+	      for (let index = 0; index < chunkCount; index += 1) {
+	        const key = uploadChunkKey(id, index);
+	        await this.state.storage.put(key, bytesBase64.slice(index * GUI_ATTACHMENT_CHUNK_CHARS, (index + 1) * GUI_ATTACHMENT_CHUNK_CHARS));
+	        writtenKeys.push(key);
+	      }
+	      return chunkCount;
+	    } catch (error) {
+	      await Promise.all(writtenKeys.map((key) => this.state.storage.delete(key)));
+	      throw error;
+	    }
+	  }
+
+	  private async readUploadBytes(upload: UploadedAttachment): Promise<string | null> {
+	    if (upload.bytesBase64) return upload.bytesBase64;
+	    if (!upload.chunkCount || upload.chunkCount < 1) return null;
+	    const chunks = await Promise.all(
+	      Array.from({ length: upload.chunkCount }, (_, index) => this.state.storage.get<string>(uploadChunkKey(upload.id, index)))
+	    );
+	    if (chunks.some((chunk) => typeof chunk !== "string")) return null;
+	    return chunks.join("");
+	  }
+
+	  private async deleteUploadBytes(upload: UploadedAttachment): Promise<void> {
+	    if (!upload.chunkCount || upload.chunkCount < 1) return;
+	    await Promise.all(
+	      Array.from({ length: upload.chunkCount }, (_, index) => this.state.storage.delete(uploadChunkKey(upload.id, index)))
+	    );
+	  }
+
+	  private async deleteUploads(uploads: UploadedAttachment[]): Promise<void> {
+	    await Promise.all(uploads.map((upload) => this.deleteUploadBytes(upload)));
+	  }
+
+	  private async guiWake(payload: unknown): Promise<Response> {
     await this.broadcast({ event: "wake", data: { ...(payload && typeof payload === "object" ? payload as Record<string, unknown> : {}), at: Date.now() } });
     return json({ ok: true });
   }
@@ -4660,6 +4825,71 @@ function runtimeBodyEngine(body: unknown): string | undefined {
   return typeof engine === "string" ? engine : undefined;
 }
 
+function normalizeRunStreamEvent(value: unknown): RunStreamEvent | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as { stream?: unknown; event?: unknown; type?: unknown; text?: unknown; name?: unknown; id?: unknown; input?: unknown; output?: unknown; error?: unknown; message?: unknown };
+  const event = row.stream && typeof row.stream === "object"
+    ? row.stream as typeof row
+    : row.event && typeof row.event === "object"
+      ? row.event as typeof row
+      : row;
+  if (event.type === "reasoning_delta" && typeof event.text === "string") return { type: "reasoning_delta", text: event.text };
+  if (event.type === "message_delta" && typeof event.text === "string") return { type: "message_delta", text: event.text };
+  if (event.type === "tool_started" && typeof event.name === "string") {
+    return {
+      type: "tool_started",
+      id: typeof event.id === "string" ? event.id : undefined,
+      name: event.name,
+      input: typeof event.input === "string" ? event.input : undefined
+    };
+  }
+  if (event.type === "tool_delta" && typeof event.text === "string") {
+    return {
+      type: "tool_delta",
+      id: typeof event.id === "string" ? event.id : undefined,
+      text: event.text
+    };
+  }
+  if (event.type === "tool_done") {
+    return {
+      type: "tool_done",
+      id: typeof event.id === "string" ? event.id : undefined,
+      output: typeof event.output === "string" ? event.output : undefined,
+      error: typeof event.error === "string" ? event.error : undefined
+    };
+  }
+  if (event.type === "done") return { type: "done" };
+  if (event.type === "interrupted") return { type: "interrupted" };
+  if (event.type === "error") return { type: "error", message: typeof event.message === "string" ? event.message : "run failed" };
+  return null;
+}
+
+function approximateBase64Bytes(value: string): number {
+  const clean = value.replace(/\s+/g, "");
+  if (!clean) return 0;
+  const padding = clean.endsWith("==") ? 2 : clean.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((clean.length * 3) / 4) - padding);
+}
+
+function base64ToBytes(value: string): Uint8Array {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+function uploadChunkKey(id: string, index: number): string {
+  return `upload:${id}:chunk:${index}`;
+}
+
+function pruneUploads(uploads: Record<string, UploadedAttachment>): Record<string, UploadedAttachment> {
+  return Object.fromEntries(
+    Object.entries(uploads)
+      .sort(([, a], [, b]) => b.createdAt - a.createdAt)
+      .slice(0, GUI_ATTACHMENT_STORE_CAPACITY)
+  );
+}
+
 function normalizeEngineId(value: unknown): Agent["engine"] | undefined {
   return value === "claude" || value === "codex" ? value : undefined;
 }
@@ -4766,6 +4996,10 @@ function buildRuntimePreamble(
     for (const message of unread) {
       const priority = message.priority === "steer" ? " [STEER]" : "";
       lines.push(`- ${message.author_name}${priority}: ${(message.body || "").replace(/\s+/g, " ").slice(0, 120)}`);
+      const attachments = formatAttachmentPrompt(message.attachments ?? []);
+      if (attachments) {
+        for (const line of attachments.split("\n")) lines.push(`  ${line}`);
+      }
     }
   }
   if (state.context.length > 0) {

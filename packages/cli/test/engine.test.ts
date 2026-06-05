@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
-import { chmod, mkdir, mkdtemp, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -177,7 +177,9 @@ test("reduceCodexAppEvent reports failed turn completion", () => {
 test("Codex app-server session falls back from failed resume to a fresh thread", async () => {
   const dir = await mkdtemp(join(tmpdir(), "king-codex-session-"));
   const binDir = join(dir, "bin");
+  const imagePath = join(dir, "screen.png");
   await mkdir(binDir);
+  await writeFile(imagePath, "png", "utf8");
   const codex = join(binDir, "codex");
   await writeFile(
     codex,
@@ -185,8 +187,10 @@ test("Codex app-server session falls back from failed resume to a fresh thread",
 const readline = require('node:readline');
 const rl = readline.createInterface({ input: process.stdin });
 function send(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
+const seen = [];
 rl.on('line', (line) => {
   const msg = JSON.parse(line);
+  seen.push(msg);
   if (msg.method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: {} });
   else if (msg.method === 'thread/resume') send({ jsonrpc: '2.0', id: msg.id, error: { message: 'missing thread' } });
   else if (msg.method === 'thread/start') {
@@ -196,6 +200,7 @@ rl.on('line', (line) => {
     send({ method: 'thread/tokenUsage/updated', params: { tokenUsage: { total: { inputTokens: 12, cachedInputTokens: 2, outputTokens: 3, reasoningOutputTokens: 4 } } } });
     send({ method: 'item/completed', params: { item: { type: 'agentMessage', text: 'ok' } } });
     send({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
+    require('node:fs').writeFileSync(process.env.SEEN_FILE, JSON.stringify(seen, null, 2));
   }
 });
 `,
@@ -204,15 +209,16 @@ rl.on('line', (line) => {
   await chmod(codex, 0o755);
 
   const logs: string[] = [];
+  const seenFile = join(dir, "seen.json");
   const session = getAdapter("codex").startSession?.({
     home: dir,
-    env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` },
+    env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}`, SEEN_FILE: seenFile },
     resumeSessionId: "stale-thread",
     standingPrompt: "standing",
     onLog: (line) => logs.push(line)
   });
   assert.ok(session);
-  const result = await session.send("hello");
+  const result = await session.send("hello", { imagePaths: [imagePath] });
   session.stop();
 
   assert.equal(result.exitCode, 0);
@@ -224,6 +230,12 @@ rl.on('line', (line) => {
   });
   assert.match(logs.join("\n"), /thread\/resume failed \(missing thread\) - starting a fresh thread/);
   assert.match(logs.join("\n"), /\[codex\] ok/);
+  const seen = JSON.parse(await readFile(seenFile, "utf8")) as Array<{ method?: string; params?: { input?: unknown[] } }>;
+  const turnStart = seen.find((msg) => msg.method === "turn/start");
+  assert.deepEqual(turnStart?.params?.input, [
+    { type: "text", text: "hello", text_elements: [] },
+    { type: "localImage", path: imagePath }
+  ]);
 });
 
 test("writeShim installs the king command", async () => {

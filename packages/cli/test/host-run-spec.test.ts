@@ -110,6 +110,28 @@ test("createHostRunPlan accepts King worker run options without leaking worker k
   assert.equal(plan.summary.includes("worker-secret-key"), false);
 });
 
+test("createHostRunPlan carries accepted attachments and blocks rejected required attachments", () => {
+  const plan = createHostRunPlan({
+    goal: "inspect attached screenshot",
+    attachments: [
+      { name: "screen.png", mime: "image/png", size: 12, filePath: "/tmp/screen.png", required: true }
+    ]
+  });
+  assert.equal(plan.spec.attachments[0]?.decision, "accepted");
+  assert.match(plan.summary, /Runtime attachments/);
+  assert.match(plan.summary, /\[screen\.png\] image\/png 12B @\/tmp\/screen\.png/);
+
+  assert.throws(
+    () => createHostRunPlan({
+      goal: "inspect attached binary",
+      attachments: [
+        { name: "tool.exe", mime: "application/x-msdownload", size: 12, filePath: "/tmp/tool.exe", required: true }
+      ]
+    }),
+    /required attachment rejected: tool\.exe/
+  );
+});
+
 test("createHostRunPlan rejects run IDs that are not safe filename segments", () => {
   assert.throws(
     () => createHostRunPlan({ goal: "unsafe run", runId: "../../outside" }),

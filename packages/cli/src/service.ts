@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -111,6 +111,37 @@ function linuxUnitPath(commandName: CommandName = "king"): string {
   return join(homedir(), ".config", "systemd", "user", `${serviceNames(commandName).serviceUnit}.service`);
 }
 
+function windowsServiceDir(commandName: CommandName = "king"): string {
+  return join(CONFIG_DIR, "service", commandName);
+}
+
+export function windowsTaskName(commandName: CommandName = "king"): string {
+  return `King.BYOA.${serviceNames(commandName).serviceUnit}`;
+}
+
+export function windowsWrapperPath(commandName: CommandName = "king"): string {
+  return join(windowsServiceDir(commandName), "king-agent-computer.cmd");
+}
+
+export function buildWindowsServiceWrapper(args: string[], logPath = daemonLogPath()): string {
+  const quotedArgs = args.map(windowsCmdQuote).join(" ");
+  return [
+    "@echo off",
+    "setlocal",
+    "set KING_SUPERVISED=1",
+    `echo [%date% %time%] starting king daemon>>${windowsCmdQuote(logPath)}`,
+    `${quotedArgs} >>${windowsCmdQuote(logPath)} 2>&1`
+  ].join("\r\n") + "\r\n";
+}
+
+export function parseWindowsTaskStatus(stdout: string): { status?: string; lastResult?: string; taskName?: string } {
+  return {
+    taskName: stdout.match(/^TaskName:\s*(.+)$/im)?.[1]?.trim(),
+    status: stdout.match(/^Status:\s*(.+)$/im)?.[1]?.trim(),
+    lastResult: stdout.match(/^Last Result:\s*(.+)$/im)?.[1]?.trim()
+  };
+}
+
 export function shouldKillDaemonCommand(command: string): boolean {
   return (
     /agent computer/.test(command) &&
@@ -201,6 +232,24 @@ WantedBy=default.target
     console.log(`installed systemd --user service ${names.serviceUnit}`);
     return;
   }
+  if (process.platform === "win32") {
+    await mkdir(windowsServiceDir(commandName), { recursive: true });
+    const resolvedArgs = [resolveNpx(), "-y", `${names.packageName}@latest`, "agent", "computer", "--server", resolvedServerUrl, ...tenantArgs];
+    const wrapperPath = windowsWrapperPath(commandName);
+    await writeFile(wrapperPath, buildWindowsServiceWrapper(resolvedArgs), "utf8");
+    await execFileP("schtasks", ["/Delete", "/TN", windowsTaskName(commandName), "/F"]).catch(() => undefined);
+    await execFileP("schtasks", [
+      "/Create",
+      "/TN", windowsTaskName(commandName),
+      "/SC", "ONLOGON",
+      "/TR", wrapperPath,
+      "/RL", "LIMITED",
+      "/F"
+    ]);
+    await execFileP("schtasks", ["/Run", "/TN", windowsTaskName(commandName)]).catch(() => undefined);
+    console.log(`installed Windows scheduled task ${windowsTaskName(commandName)}. Logs: ${daemonLogPath()}`);
+    return;
+  }
   throw new Error(`service installation is not supported on ${process.platform}`);
 }
 
@@ -220,12 +269,27 @@ export async function uninstallService(commandName: CommandName = "king"): Promi
     console.log(`removed systemd --user service ${names.serviceUnit}`);
     return;
   }
+  if (process.platform === "win32") {
+    await execFileP("schtasks", ["/End", "/TN", windowsTaskName(commandName)]).catch(() => undefined);
+    await execFileP("schtasks", ["/Delete", "/TN", windowsTaskName(commandName), "/F"]).catch(() => undefined);
+    await rm(windowsServiceDir(commandName), { recursive: true, force: true });
+    console.log(`removed Windows scheduled task ${windowsTaskName(commandName)}`);
+    return;
+  }
   throw new Error(`service removal is not supported on ${process.platform}`);
 }
 
 export function isServiceInstalled(commandName: CommandName = "king"): boolean {
   if (process.platform === "darwin") return existsSync(darwinPlistPath(commandName));
   if (process.platform === "linux") return existsSync(linuxUnitPath(commandName));
+  if (process.platform === "win32") {
+    try {
+      execFileSync("schtasks", ["/Query", "/TN", windowsTaskName(commandName)], { stdio: "ignore" });
+      return true;
+    } catch {
+      return false;
+    }
+  }
   return false;
 }
 
@@ -240,6 +304,9 @@ export async function restartService(commandName: CommandName = "king"): Promise
     await execFileP("launchctl", ["kickstart", "-k", `gui/${uid}/${names.serviceLabel}`]).catch(() => reloadService(commandName));
   } else if (process.platform === "linux") {
     await execFileP("systemctl", ["--user", "restart", names.serviceUnit]);
+  } else if (process.platform === "win32") {
+    await execFileP("schtasks", ["/End", "/TN", windowsTaskName(commandName)]).catch(() => undefined);
+    await execFileP("schtasks", ["/Run", "/TN", windowsTaskName(commandName)]);
   } else {
     throw new Error(`restart is not supported on ${process.platform}`);
   }
@@ -347,6 +414,12 @@ export async function printStatus(commandName: CommandName = "king"): Promise<vo
         .catch(() => "");
       livePid = parseLinuxMainPid(pidText);
       console.log(`service: installed; ${active}${livePid ? ` (pid ${livePid})` : ""}`);
+    } else if (process.platform === "win32") {
+      const stdout = await execFileP("schtasks", ["/Query", "/TN", windowsTaskName(commandName), "/V", "/FO", "LIST"])
+        .then((result) => result.stdout)
+        .catch(() => "");
+      const status = parseWindowsTaskStatus(stdout);
+      console.log(`service: installed; ${status.status ?? "unknown"}${status.lastResult ? ` (last result ${status.lastResult})` : ""}`);
     }
   }
 
@@ -623,4 +696,8 @@ export async function tailLogs(commandName: CommandName = "king"): Promise<void>
     child.on("close", () => resolve());
     child.on("error", () => resolve());
   });
+}
+
+function windowsCmdQuote(value: string): string {
+  return `"${value.replace(/"/g, "\"\"")}"`;
 }

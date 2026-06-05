@@ -10,6 +10,7 @@ import type {
   EngineResult,
   EngineRunArgs,
   EngineSession,
+  EngineTurnOptions,
   EngineUsage
 } from "./types.js";
 import { cleanLine, stripLoneSurrogates } from "./text.js";
@@ -231,6 +232,21 @@ export interface CodexAppEventResult {
   turnCompletedError?: string;
   usage?: unknown;
   threadId?: string;
+}
+
+type CodexUserInput =
+  | { type: "text"; text: string; text_elements: [] }
+  | { type: "localImage"; path: string };
+
+function codexUserInput(text: string, imagePaths: readonly string[] = []): CodexUserInput[] {
+  return [
+    { type: "text", text: stripLoneSurrogates(text), text_elements: [] },
+    ...imagePaths.filter((path) => path.trim()).map((path) => ({ type: "localImage" as const, path }))
+  ];
+}
+
+function codexImageArgs(imagePaths: readonly string[] | undefined): string[] {
+  return (imagePaths ?? []).filter((path) => path.trim()).flatMap((path) => ["--image", path]);
 }
 
 function unknownRecord(value: unknown): Record<string, unknown> | null {
@@ -594,7 +610,7 @@ class CodexSession implements EngineSession {
   private turnStart = { input: 0, cached: 0, output: 0 };
   private usage = { input: 0, cached: 0, output: 0 };
   private pending: { resolve: (result: EngineResult) => void; timer: NodeJS.Timeout | null } | null = null;
-  private queuedPrompt: string | null = null;
+  private queuedTurn: { prompt: string; options?: EngineTurnOptions } | null = null;
   private ready = false;
   private exited = false;
   private exitCode = 0;
@@ -634,7 +650,7 @@ class CodexSession implements EngineSession {
     return this.threadId;
   }
 
-  send(prompt: string): Promise<EngineResult> {
+  send(prompt: string, options?: EngineTurnOptions): Promise<EngineResult> {
     if (this.pending) return Promise.resolve({ exitCode: 1, error: "engine session is already running a turn", sessionId: this.threadId });
     if (!this.alive) {
       const exitCode = this.exitCode || 1;
@@ -651,8 +667,8 @@ class CodexSession implements EngineSession {
       }
       this.pending = pending;
       this.turnStart = { ...this.usage };
-      if (this.ready && this.threadId) this.startTurn(prompt);
-      else this.queuedPrompt = prompt;
+      if (this.ready && this.threadId) this.startTurn(prompt, options);
+      else this.queuedTurn = { prompt, options };
     });
   }
 
@@ -661,7 +677,7 @@ class CodexSession implements EngineSession {
     this.req("turn/steer", {
       threadId: this.threadId,
       expectedTurnId: this.activeTurnId,
-      input: [{ type: "text", text: stripLoneSurrogates(text) }]
+      input: codexUserInput(text)
     });
   }
 
@@ -705,9 +721,9 @@ class CodexSession implements EngineSession {
       : this.req("thread/start", params);
   }
 
-  private startTurn(prompt: string): void {
+  private startTurn(prompt: string, options?: EngineTurnOptions): void {
     if (!this.threadId) return;
-    this.req("turn/start", { threadId: this.threadId, input: [{ type: "text", text: stripLoneSurrogates(prompt) }] });
+    this.req("turn/start", { threadId: this.threadId, input: codexUserInput(prompt, options?.imagePaths) });
   }
 
   private onStdout(buf: Buffer): void {
@@ -771,10 +787,10 @@ class CodexSession implements EngineSession {
       this.threadReqId = null;
       this.threadWasResume = false;
       this.ready = true;
-      if (this.queuedPrompt && this.pending) {
-        const queued = this.queuedPrompt;
-        this.queuedPrompt = null;
-        this.startTurn(queued);
+      if (this.queuedTurn && this.pending) {
+        const queued = this.queuedTurn;
+        this.queuedTurn = null;
+        this.startTurn(queued.prompt, queued.options);
       }
     }
     if (method === "turn/completed") {
@@ -965,7 +981,7 @@ class CodexAdapter implements EngineAdapter {
     const model = args.model ? ["--model", args.model] : [];
     const { command, shell } = resolveSpawn(this.bin);
     const base = extra.length ? extra : ["--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check"];
-    return spawnEngine(command, ["exec", ...model, ...base, args.prompt], {
+    return spawnEngine(command, ["exec", ...model, ...codexImageArgs(args.imagePaths), ...base, args.prompt], {
       ...args,
       shell
     });

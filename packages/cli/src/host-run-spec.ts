@@ -2,6 +2,8 @@ import { existsSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { basename, join, resolve } from "node:path";
 import { hostRunHeartbeatPathForOutputDir } from "./host-run-heartbeat.js";
+import { formatAttachmentPrompt, normalizeRuntimeAttachments, requiredAttachmentsRejected } from "./attachments.js";
+import type { RuntimeAttachment } from "./attachments.js";
 import type { EngineId } from "./types.js";
 
 export type HostRunMode = "run" | "takeover";
@@ -47,6 +49,7 @@ export interface HostProjectRunSpec {
   threadSync?: ThreadSyncSpec;
   roleProfile: HostRunRoleProfile;
   hooks?: unknown;
+  attachments: RuntimeAttachment[];
 }
 
 export type ProjectRunSpec<THooks = unknown> = Omit<Partial<HostProjectRunSpec>, "hooks"> & {
@@ -146,10 +149,11 @@ export type JsonSafeHostLaunchPlan = Omit<HostLaunchPlan, "options"> & {
   };
 };
 
-export type HostRunSpecInput = Partial<HostProjectRunSpec> & {
+export type HostRunSpecInput = Omit<Partial<HostProjectRunSpec>, "attachments"> & {
   goal: string;
   options?: Partial<HostRunOptions>;
   runId?: string;
+  attachments?: unknown;
 };
 
 export function createDefaultHostRunOptions(overrides: Partial<HostRunOptions> = {}): HostRunOptions {
@@ -196,8 +200,13 @@ export function createHostRunPlan(input: HostRunSpecInput, env: NodeJS.ProcessEn
     githubToken: cleanString(input.githubToken),
     threadSync: normalizeThreadSync(input.threadSync),
     roleProfile: normalizeRoleProfile(input.roleProfile),
-    hooks: input.hooks
+    hooks: input.hooks,
+    attachments: normalizeRuntimeAttachments(input.attachments)
   };
+  const rejectedRequired = requiredAttachmentsRejected(spec.attachments);
+  if (rejectedRequired.length) {
+    throw new Error(`required attachment rejected: ${rejectedRequired.map((attachment) => `${attachment.name} (${attachment.rejectionReason ?? attachment.decision})`).join(", ")}`);
+  }
   return {
     runId: explicitRunId ? safeFilenameSegment(explicitRunId, "runId") : buildHostRunId(goal),
     spec,
@@ -286,6 +295,8 @@ export function formatHostRunPlanSummary(plan: Pick<HostRunPlan, "spec" | "optio
   if (plan.spec.workspaceRoot) lines.push(`workspace root: ${plan.spec.workspaceRoot}`);
   if (plan.spec.gitRoot) lines.push(`git root: ${plan.spec.gitRoot}`);
   if (plan.spec.threadSync) lines.push(`thread sync: ${plan.spec.threadSync.threadId}`);
+  const attachmentPrompt = formatAttachmentPrompt(plan.spec.attachments);
+  if (attachmentPrompt) lines.push(attachmentPrompt);
   lines.push(`role profile: ${plan.spec.roleProfile}`);
   return lines.join("\n");
 }

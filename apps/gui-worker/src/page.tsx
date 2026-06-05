@@ -360,13 +360,73 @@ export function renderPage(styles: string, clientScript: string): string {
       min-width: 0;
       overflow-x: hidden;
     }
-    .composer {
-      left: 196px;
-      padding-top: 10px;
-    }
-    .composer-tools {
-      position: absolute;
-      bottom: calc(100% + 10px);
+	    .composer {
+	      left: 196px;
+	      padding-top: 10px;
+	    }
+	    #sendButton {
+	      align-self: end;
+	      width: 54px;
+	      min-width: 54px;
+	      height: 54px;
+	      min-height: 54px;
+	      padding: 0 8px;
+	    }
+	    .composer-main {
+	      display: grid;
+	      gap: 6px;
+	      min-width: 0;
+	    }
+	    .attachment-tray,
+	    .message-attachments {
+	      display: inline-flex;
+	      align-items: baseline;
+	      gap: 5px;
+	      flex-wrap: wrap;
+	      min-width: 0;
+	    }
+	    .attachment-tray:empty,
+	    .message-attachments:empty {
+	      display: none;
+	    }
+	    .message-attachments {
+	      margin-top: 2px;
+	    }
+	    .attachment-token {
+	      display: inline-flex;
+	      align-items: baseline;
+	      gap: 4px;
+	      max-width: min(320px, 100%);
+	      color: var(--line);
+	      background: var(--accent);
+	      border: 1px solid var(--line);
+	      padding: 1px 5px;
+	      font-size: 12px;
+	      font-weight: 900;
+	      line-height: 1.35;
+	      text-decoration: none;
+	    }
+	    .attachment-token span {
+	      overflow: hidden;
+	      text-overflow: ellipsis;
+	      white-space: nowrap;
+	    }
+	    .attachment-token .attachment-size {
+	      color: var(--muted);
+	      font-size: 10px;
+	      text-decoration: none;
+	    }
+	    .attachment-remove {
+	      min-width: 18px;
+	      width: 18px;
+	      min-height: 18px;
+	      padding: 0;
+	      line-height: 1;
+	      background: var(--canvas);
+	    }
+	    .composer-tools {
+	      position: absolute;
+	      bottom: calc(100% + 10px);
       right: 8px;
       display: flex;
       gap: 6px;
@@ -383,11 +443,14 @@ export function renderPage(styles: string, clientScript: string): string {
     .composer-tools .jump.visible {
       display: inline-flex;
     }
-    .composer-tools button {
-      min-height: 24px;
-      padding: 3px 8px;
-      font-size: 11px;
-    }
+	    .composer-tools button {
+	      min-height: 24px;
+	      padding: 3px 8px;
+	      font-size: 11px;
+	    }
+	    .composer-file-input {
+	      display: none;
+	    }
     .message-list.empty-state {
       position: sticky;
       top: 14px;
@@ -953,6 +1016,11 @@ export function renderPage(styles: string, clientScript: string): string {
       min-width: 54px;
       padding: 6px 10px;
     }
+    body.mobile-layout #sendButton {
+      height: 54px;
+      min-height: 54px;
+      padding: 0 8px;
+    }
     body.mobile-layout .composer-tools button {
       min-height: 28px;
       padding: 4px 10px;
@@ -1071,9 +1139,12 @@ const TRANSLATIONS = {
     dataResetButton: '清除当前账号数据',
     dataResetConfirm: '再次点击确认清除',
     dataResetting: '正在清除...',
-    dataResetDone: '已清除，可以重新开始。',
-    dataResetFailed: '清除失败，请稍后重试。',
-    newWindow: '新窗口',
+	    dataResetDone: '已清除，可以重新开始。',
+	    dataResetFailed: '清除失败，请稍后重试。',
+	    attachFile: '添加附件',
+	    attachments: '附件',
+	    removeAttachment: '移除',
+	    newWindow: '新窗口',
     windowName: '名称',
     windowMode: '协作方式',
     singleAgent: '单 Agent',
@@ -1206,9 +1277,12 @@ const TRANSLATIONS = {
     dataResetButton: 'Clear current account data',
     dataResetConfirm: 'Click again to confirm',
     dataResetting: 'Clearing...',
-    dataResetDone: 'Cleared. You can start over.',
-    dataResetFailed: 'Clear failed. Try again.',
-    newWindow: 'New Window',
+	    dataResetDone: 'Cleared. You can start over.',
+	    dataResetFailed: 'Clear failed. Try again.',
+	    attachFile: 'Attach',
+	    attachments: 'Attachments',
+	    removeAttachment: 'Remove',
+	    newWindow: 'New Window',
     windowName: 'Name',
     windowMode: 'Collaboration',
     singleAgent: 'Single agent',
@@ -1407,15 +1481,89 @@ function updateBackToBottom() {
   shouldStickToBottom = distanceFromBottom < 80;
   jumpButton.classList.toggle('visible', !shouldStickToBottom);
 }
-function copyText(value, button) {
-  if (!value) return;
-  navigator.clipboard.writeText(value).catch(function() {});
-  if (!button) return;
-  const old = button.textContent;
-  button.textContent = t('copied');
-  setTimeout(function() { button.textContent = old || t('copy'); }, 900);
+	function copyText(value, button) {
+	  if (!value) return;
+	  navigator.clipboard.writeText(value).catch(function() {});
+	  if (!button) return;
+	  const old = button.textContent;
+	  button.textContent = t('copied');
+	  setTimeout(function() { button.textContent = old || t('copy'); }, 900);
+	}
+	let pendingAttachments = [];
+	function formatBytes(value) {
+	  const bytes = Number(value || 0);
+	  if (bytes < 1024) return bytes + 'B';
+	  if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + 'KB';
+	  return (bytes / 1024 / 1024).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0) + 'MB';
+	}
+function renderAttachmentTray() {
+  const tray = document.getElementById('attachmentTray');
+  if (!tray) return;
+  tray.innerHTML = pendingAttachments.map(function(file, index) {
+    return '<span class="attachment-token" title="' + escapeHtml(file.name) + '"><span>[' + escapeHtml(file.name) + ']</span><span class="attachment-size">' + escapeHtml(formatBytes(file.size)) + '</span></span><button class="attachment-remove" type="button" onclick="removePendingAttachment(' + index + ')" aria-label="' + escapeHtml(t('removeAttachment')) + '">×</button>';
+  }).join('');
 }
-const REMOTE_ASSIST_URL_KEY = 'king:remoteAssistUrl';
+	function openAttachmentPicker() {
+	  const input = document.getElementById('attachmentInput');
+	  if (input) input.click();
+	}
+	function handleAttachmentFiles(input) {
+	  const files = Array.from(input.files || []);
+	  pendingAttachments = pendingAttachments.concat(files).slice(0, 10);
+	  input.value = '';
+	  renderAttachmentTray();
+	}
+	function removePendingAttachment(index) {
+	  pendingAttachments.splice(index, 1);
+	  renderAttachmentTray();
+	}
+	function fileToBase64(file) {
+	  return new Promise(function(resolve, reject) {
+	    const reader = new FileReader();
+	    reader.onload = function() {
+	      const value = String(reader.result || '');
+	      resolve(value.includes(',') ? value.slice(value.indexOf(',') + 1) : value);
+	    };
+	    reader.onerror = function() { reject(reader.error || new Error('failed to read file')); };
+	    reader.readAsDataURL(file);
+	  });
+	}
+	async function uploadPendingAttachments() {
+	  const uploaded = [];
+	  for (const file of pendingAttachments) {
+	    const bytesBase64 = await fileToBase64(file);
+	    const result = await request('/gui/attachments', {
+	      method: 'POST',
+	      headers: { 'Content-Type': 'application/json' },
+	      body: JSON.stringify({
+	        name: file.name || 'attachment',
+	        mime: file.type || 'application/octet-stream',
+	        size: file.size || 0,
+	        bytesBase64
+	      })
+	    });
+	    if (result.attachment) uploaded.push({
+	      id: result.attachment.id,
+	      name: result.attachment.name,
+	      mime: result.attachment.mime,
+	      size: result.attachment.size,
+	      url: result.attachment.url,
+	      source: result.attachment.source || 'gui-upload',
+	      required: true
+	    });
+	  }
+	  return uploaded;
+	}
+	function attachmentListHtml(attachments) {
+	  const rows = Array.isArray(attachments) ? attachments : [];
+  if (!rows.length) return '';
+  return '<div class="message-attachments" aria-label="' + escapeHtml(t('attachments')) + '">' + rows.map(function(attachment) {
+    const name = attachment.name || 'attachment';
+    const href = attachment.url ? ' href="' + escapeHtml(attachment.url) + '" target="_blank" rel="noreferrer noopener"' : '';
+    return '<a class="attachment-token"' + href + ' title="' + escapeHtml(name) + '"><span>[' + escapeHtml(name) + ']</span><span class="attachment-size">' + escapeHtml(formatBytes(attachment.size)) + '</span></a>';
+  }).join('') + '</div>';
+}
+	const REMOTE_ASSIST_URL_KEY = 'king:remoteAssistUrl';
 let remoteAssistUrl = localStorage.getItem(REMOTE_ASSIST_URL_KEY) || '';
 function setRemoteAssistUrl(value) {
   remoteAssistUrl = value || '';
@@ -1905,7 +2053,7 @@ function taskChatMessageHtml(message) {
   const renderedBody = message.body_html || '';
   const bodyClass = renderedBody ? 'post-body markdown-body' : 'post-body plain';
   const bodyHtml = renderedBody || escapeHtml(message.body);
-  return '<article class="post"><div class="avatar">' + escapeHtml(initial) + '</div><div><div class="post-top"><span class="author">' + escapeHtml(author) + engine + '</span><span class="time">' + formatTime(message.created_at) + '</span></div><div class="' + bodyClass + '">' + bodyHtml + '</div></div></article>';
+	  return '<article class="post"><div class="avatar">' + escapeHtml(initial) + '</div><div><div class="post-top"><span class="author">' + escapeHtml(author) + engine + '</span><span class="time">' + formatTime(message.created_at) + '</span></div><div class="' + bodyClass + '">' + bodyHtml + '</div>' + attachmentListHtml(message.attachments) + '</div></article>';
 }
 function openTaskChat(taskId) {
   const state = window.__lastState || {};
@@ -2030,27 +2178,33 @@ saveAgentConfig = async function() {
 };
 sendMessage = async function() {
   if (sendingMessage) return;
-  const input = document.getElementById('body');
-  const button = document.getElementById('sendButton');
-  const body = input.value.trim();
-  if (!body) return;
-  sendingMessage = true;
-  input.value = '';
-  input.blur();
-  button.disabled = true;
-  button.textContent = t('sending');
-  try {
-    await request('/gui/message', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ body, conversationId: activeConversationId })
-    });
-    visibleMessageCount = 20;
-    shouldStickToBottom = true;
-    await refresh();
-  } catch (error) {
-    input.value = body;
-    throw error;
+	  const input = document.getElementById('body');
+	  const button = document.getElementById('sendButton');
+	  const body = input.value.trim();
+	  const attachmentsToSend = pendingAttachments.slice();
+	  if (!body && !attachmentsToSend.length) return;
+	  sendingMessage = true;
+	  input.value = '';
+	  input.blur();
+	  button.disabled = true;
+	  button.textContent = t('sending');
+	  try {
+	    const attachments = await uploadPendingAttachments();
+	    await request('/gui/message', {
+	      method: 'POST',
+	      headers: { 'Content-Type': 'application/json' },
+	      body: JSON.stringify({ body: body || t('attachments'), conversationId: activeConversationId, attachments })
+	    });
+	    pendingAttachments = [];
+	    renderAttachmentTray();
+	    visibleMessageCount = 20;
+	    shouldStickToBottom = true;
+	    await refresh();
+	  } catch (error) {
+	    input.value = body;
+	    pendingAttachments = attachmentsToSend;
+	    renderAttachmentTray();
+	    throw error;
   } finally {
     sendingMessage = false;
     button.disabled = false;
@@ -2117,7 +2271,7 @@ renderMessages = function(state, options) {
     const renderedBody = message.body_html || '';
     const bodyHtml = message.status === 'pending' ? '<span class="typing-dots"><span></span><span></span><span></span></span><span>' + escapeHtml(t('agentThinking')) + '</span>' : (renderedBody || escapeHtml(message.body));
     const bodyClass = renderedBody && message.status !== 'pending' ? 'post-body markdown-body' : 'post-body plain';
-    return '<article class="post' + pendingClass + unreadClass + '"><div class="avatar">' + escapeHtml(initial) + '</div><div><div class="post-top"><span class="author">' + authorHtml(message) + '</span><span class="time">' + formatTime(message.created_at) + '</span></div><div class="' + bodyClass + '">' + bodyHtml + '</div></div></article>';
+	    return '<article class="post' + pendingClass + unreadClass + '"><div class="avatar">' + escapeHtml(initial) + '</div><div><div class="post-top"><span class="author">' + authorHtml(message) + '</span><span class="time">' + formatTime(message.created_at) + '</span></div><div class="' + bodyClass + '">' + bodyHtml + '</div>' + attachmentListHtml(message.attachments) + '</div></article>';
   }).join('');
   const chatWindow = document.getElementById('chatWindow');
   chatWindow.classList.toggle('empty-state', !visibleRows.length);
@@ -2504,14 +2658,19 @@ refresh();
               <section id="panel-chat" class="panel active chat-panel">
                 <div id="chatWindow" class="message-list"></div>
                 <div class="composer">
-                  <div class="composer-tools">
-                    <button class="jump" onclick="scrollToBottom()" data-i18n="backToBottom">↓ Back to bottom</button>
-                    <button id="clearButton" onclick="clearMessages()" data-i18n="clearScreen">Clear</button>
-                    <button onclick="refresh()" data-i18n="refresh">Refresh</button>
-                  </div>
-                  <textarea id="body" placeholder="Message #all"></textarea>
-                  <button id="sendButton" class="primary" onclick="sendMessage()">Send</button>
-                </div>
+	                  <div class="composer-tools">
+	                    <button class="jump" onclick="scrollToBottom()" data-i18n="backToBottom">↓ Back to bottom</button>
+	                    <button onclick="openAttachmentPicker()" data-i18n="attachFile">Attach</button>
+	                    <button id="clearButton" onclick="clearMessages()" data-i18n="clearScreen">Clear</button>
+	                    <button onclick="refresh()" data-i18n="refresh">Refresh</button>
+	                  </div>
+	                  <div class="composer-main">
+	                    <div id="attachmentTray" class="attachment-tray"></div>
+	                    <textarea id="body" placeholder="Message #all"></textarea>
+	                  </div>
+	                  <input id="attachmentInput" class="composer-file-input" type="file" multiple onchange="handleAttachmentFiles(this)" />
+	                  <button id="sendButton" class="primary" onclick="sendMessage()">Send</button>
+	                </div>
               </section>
               <section id="panel-tasks" class="panel tab-panel"></section>
               <section id="panel-files" class="panel tab-panel"></section>

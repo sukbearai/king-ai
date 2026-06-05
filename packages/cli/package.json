@@ -26,6 +26,14 @@
     "./team-workflow": {
       "types": "./dist/src/team-workflow.d.ts",
       "default": "./dist/src/team-workflow.js"
+    },
+    "./attachments": {
+      "types": "./dist/src/attachments.d.ts",
+      "default": "./dist/src/attachments.js"
+    },
+    "./run-stream": {
+      "types": "./dist/src/run-stream.d.ts",
+      "default": "./dist/src/run-stream.js"
     }
   },
   "scripts": {

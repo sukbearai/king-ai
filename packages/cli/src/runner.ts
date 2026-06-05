@@ -19,6 +19,7 @@ import type { SharedSkillSnapshot } from "./shared-skills.js";
 import { linkHostHomeEntries } from "./host-home.js";
 import type { HostHomeEntry } from "./host-home.js";
 import { formatMessageRouteSummary, messageRouteTag, sortRuntimeMessages } from "./message-routing.js";
+import { cacheLocalAttachments, formatAttachmentPrompt, normalizeRuntimeAttachments } from "./attachments.js";
 import { engineRemediationAdvice } from "./remediation.js";
 import type { RemediationAdvice } from "./remediation.js";
 import { validateAgentConfig } from "./agent-config-validation.js";
@@ -68,6 +69,7 @@ interface InboxRow {
   author_kind?: string;
   kind?: string;
   body?: string;
+  attachments?: unknown;
   priority?: string;
   message_type?: string;
   to_agent_id?: string;
@@ -769,11 +771,12 @@ export class AgentRunner {
     }
   }
 
-  private async snapshotUnread(token: string): Promise<{ seen: Map<string, string>; digest: string; hasReal: boolean }> {
+  private async snapshotUnread(token: string): Promise<{ seen: Map<string, string>; digest: string; hasReal: boolean; imagePaths: string[] }> {
     const inbox = await runtimeGet<InboxPayload>(this.cfg.serverUrl, "/inbox", token, this.cfg.tenantId);
     const rows = inbox?.rows ?? [];
     const seen = new Map<string, string>();
     const lines: string[] = [];
+    const imagePaths: string[] = [];
     let hasReal = false;
     const headered = new Set<string>();
     for (const row of [...rows].sort((a, b) => (a.created_at ?? 0) - (b.created_at ?? 0))) {
@@ -796,8 +799,16 @@ export class AgentRunner {
       const who = row.author_name ?? "someone";
       const body = row.kind === "system" ? "[system]" : (row.body ?? "").replace(/\s+/g, " ").slice(0, 600);
       lines.push(`  [${row.id ?? "?"}] [${messageRouteTag(routed)}] ${who}: ${body}`);
+      const attachments = await cacheLocalAttachments(normalizeRuntimeAttachments(row.attachments));
+      for (const attachment of attachments) {
+        if (attachment.kind === "image" && attachment.decision === "accepted" && attachment.localPath) imagePaths.push(attachment.localPath);
+      }
+      const attachmentPrompt = formatAttachmentPrompt(attachments);
+      if (attachmentPrompt) {
+        for (const line of attachmentPrompt.split("\n")) lines.push(`    ${line}`);
+      }
     }
-    return { seen, digest: lines.slice(-40).join("\n"), hasReal };
+    return { seen, digest: lines.slice(-40).join("\n"), hasReal, imagePaths };
   }
 
   private async ackSeen(token: string, seen: Map<string, string>): Promise<void> {
@@ -883,7 +894,7 @@ ${delta}`;
         const activeConversationId = this.lastWakeConvo;
         this.lastWakeConvo = null;
         await this.publishEvent("turn.check", { reason, conversationId: activeConversationId });
-        const { seen, digest, hasReal } = await this.snapshotUnread(token);
+        const { seen, digest, hasReal, imagePaths } = await this.snapshotUnread(token);
         if (!hasReal) {
           await this.ackSeen(token, seen);
           await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" }, this.cfg.tenantId);
@@ -946,7 +957,7 @@ ${delta}`;
           const resumeSessionId = this.sessionId;
           const session = this.ensureEngineSession();
           const result = session
-            ? await session.send(prompt)
+            ? await session.send(prompt, { imagePaths })
             : await this.adapter.run({
                 home: this.home,
                 prompt,
@@ -955,6 +966,7 @@ ${delta}`;
                 fastModel: this.agent.fastModel,
                 resumeSessionId: this.sessionId,
                 standingPrompt: this.standingPrompt(),
+                imagePaths,
                 signal: controller.signal,
                 onLog: (line) => this.logEngineLine(line)
               });

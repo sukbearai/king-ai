@@ -79,6 +79,8 @@ test("package exposes king as the top-level bin", async () => {
   assert.equal(pkg.exports?.["./host-sdk"]?.default, "./dist/src/host-sdk.js");
   assert.equal(pkg.exports?.["./team-workflow"]?.default, "./dist/src/team-workflow.js");
   assert.equal(pkg.exports?.["./team-routing"]?.default, "./dist/src/team-routing.js");
+  assert.equal(pkg.exports?.["./attachments"]?.default, "./dist/src/attachments.js");
+  assert.equal(pkg.exports?.["./run-stream"]?.default, "./dist/src/run-stream.js");
 });
 
 test("package host SDK export is importable", async () => {
@@ -90,6 +92,13 @@ test("package host SDK export is importable", async () => {
   assert.equal(typeof sdk.createDefaultRunOptions, "function");
   assert.equal(typeof sdk.createRunOptions, "function");
   assert.equal(typeof sdk.createTakeoverRunOptions, "function");
+});
+
+test("package attachment and run-stream exports are importable", async () => {
+  const attachments = await import("@suwujs/king/attachments");
+  const runStream = await import("@suwujs/king/run-stream");
+  assert.equal(typeof attachments.normalizeRuntimeAttachments, "function");
+  assert.equal(typeof runStream.initialRunStreamState, "function");
 });
 
 test("package team collaboration exports are importable", async () => {

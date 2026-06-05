@@ -13,6 +13,7 @@ import {
   groupRunningEvents,
   parseDarwinLaunchctlStatus,
   parseLinuxMainPid,
+  parseWindowsTaskStatus,
   runningEventCategory,
   updateRunningStateData,
   rotateLogsIfNeeded,
@@ -20,6 +21,8 @@ import {
   shouldKillDaemonCommand,
   updateRegistryUrl,
   versionGt,
+  buildWindowsServiceWrapper,
+  windowsTaskName,
   worktreePlansFromRunningState
 } from "../src/service.js";
 
@@ -89,6 +92,23 @@ test("parseLinuxMainPid ignores empty and zero pids", () => {
   assert.equal(parseLinuxMainPid("456\n"), 456);
   assert.equal(parseLinuxMainPid("0\n"), null);
   assert.equal(parseLinuxMainPid("\n"), null);
+});
+
+test("Windows service helpers render task names, wrappers, and status", () => {
+  assert.equal(windowsTaskName("king"), "King.BYOA.king");
+  const wrapper = buildWindowsServiceWrapper(["npx", "-y", "@suwujs/king@latest", "agent", "computer", "--server", "https://gui"]);
+  assert.match(wrapper, /KING_SUPERVISED=1/);
+  assert.match(wrapper, /@suwujs\/king@latest/);
+  const status = parseWindowsTaskStatus([
+    "TaskName: \\King.BYOA.king",
+    "Status: Running",
+    "Last Result: 0"
+  ].join("\r\n"));
+  assert.deepEqual(status, {
+    taskName: "\\King.BYOA.king",
+    status: "Running",
+    lastResult: "0"
+  });
 });
 
 test("updateRunningStateData merges daemon status and keeps a bounded event buffer", () => {

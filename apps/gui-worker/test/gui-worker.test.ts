@@ -17,6 +17,10 @@ class FakeStorage {
   async put(key: string, value: unknown): Promise<void> {
     this.map.set(key, value);
   }
+
+  async delete(key: string): Promise<boolean> {
+    return this.map.delete(key);
+  }
 }
 
 function env(initialState?: unknown, extraBindings: Record<string, unknown> = {}): { GUI_STATE: DurableObjectNamespace } & Record<string, unknown> {
@@ -144,6 +148,18 @@ test("gui requires login when Better Auth is configured", async () => {
   const state = await worker.fetch(new Request("https://gui/gui/state"), bindings);
   assert.equal(state.status, 401);
   assert.deepEqual(await state.json(), { error: "login_required" });
+});
+
+test("gui page exposes attachment controls in the composer", async () => {
+  const bindings = env();
+  const page = await worker.fetch(new Request("https://gui/"), bindings);
+  assert.equal(page.status, 200);
+  const body = await page.text();
+  assert.match(body, /id="attachmentInput"/);
+  assert.match(body, /openAttachmentPicker\(\)/);
+  assert.match(body, /data-i18n="attachFile"/);
+  assert.match(body, /\.attachment-token/);
+  assert.match(body, /\[' \+ escapeHtml\(file\.name\) \+ '\]/);
 });
 
 test("gui still requires login on localhost when Better Auth is configured", async () => {
@@ -340,7 +356,156 @@ test("gui state renders message markdown with sanitized Comark html", async () =
   assert.equal(exported.state.messages.some((message) => message.body_html), false);
 });
 
-test("gui runtime marks read only through the requested message", async () => {
+test("gui messages preserve attachment metadata for runtime prompts", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const upload = await json<{ attachment: { id: string; name: string; mime: string; size: number; url: string } }>(
+    await worker.fetch(new Request("https://gui/gui/attachments", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "screen.png",
+        mime: "image/png",
+        size: 4,
+        bytesBase64: Buffer.from("pong", "utf8").toString("base64")
+      })
+    }), bindings)
+  );
+  assert.match(upload.attachment.url, /\/gui\/attachments\/att-/);
+  const download = await worker.fetch(new Request(upload.attachment.url), bindings);
+  assert.equal(download.status, 200);
+  assert.equal(await download.text(), "pong");
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    body: JSON.stringify({
+      body: "inspect attachment",
+      attachments: [
+        { id: upload.attachment.id, name: "screen.png", mime: "image/png", size: 42, required: true }
+      ]
+    })
+  }), bindings);
+
+  const state = await json<{ messages: { author_kind: string; attachments?: { name: string; decision: string; url?: string }[] }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  const human = state.messages.find((message) => message.author_kind === "human");
+  assert.equal(human?.attachments?.[0]?.name, "screen.png");
+  assert.equal(human?.attachments?.[0]?.decision, "accepted");
+  assert.match(human?.attachments?.[0]?.url ?? "", /\/gui\/attachments\//);
+
+  const tokenRes = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  const preamble = await json<{ text: string }>(
+    await worker.fetch(new Request("https://gui/runtime/preamble?agent=king-ceo", {
+      headers: { Authorization: `Bearer ${tokenRes.token}` }
+    }), bindings)
+  );
+  assert.match(preamble.text, /Runtime attachments/);
+  assert.match(preamble.text, /\[screen\.png\] image\/png 42B/);
+  assert.match(preamble.text, /\/gui\/attachments\//);
+});
+
+test("gui attachments store large files outside the shared state value", async () => {
+  const bindings = env();
+  const largeHtml = `<!doctype html><title>large</title><main>${"x".repeat(2_200_000)}</main>`;
+  const upload = await json<{ attachment: { id: string; name: string; mime: string; size: number; url: string } }>(
+    await worker.fetch(new Request("https://gui/gui/attachments", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "large.html",
+        mime: "text/html",
+        size: Buffer.byteLength(largeHtml),
+        bytesBase64: Buffer.from(largeHtml, "utf8").toString("base64")
+      })
+    }), bindings)
+  );
+  assert.equal(upload.attachment.size, Buffer.byteLength(largeHtml));
+
+  const state = await json<{ uploads: Record<string, { name: string; bytesBase64?: string; chunkCount?: number }> }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  assert.equal(state.uploads[upload.attachment.id]?.name, "large.html");
+  assert.equal(state.uploads[upload.attachment.id]?.bytesBase64, undefined);
+  assert.equal((state.uploads[upload.attachment.id]?.chunkCount ?? 0) > 1, true);
+
+  const download = await worker.fetch(new Request(upload.attachment.url), bindings);
+  assert.equal(download.status, 200);
+  assert.equal(await download.text(), largeHtml);
+});
+
+test("gui html attachments remain readable in runtime prompts", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const html = "<!doctype html><title>prototype</title>";
+  const upload = await json<{ attachment: { id: string; name: string; mime: string; size: number; url: string } }>(
+    await worker.fetch(new Request("https://gui/gui/attachments", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "prototype.html",
+        mime: "text/html",
+        size: Buffer.byteLength(html),
+        bytesBase64: Buffer.from(html, "utf8").toString("base64")
+      })
+    }), bindings)
+  );
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    body: JSON.stringify({
+      body: "read html",
+      attachments: [{ id: upload.attachment.id, name: upload.attachment.name, mime: upload.attachment.mime, size: upload.attachment.size, required: true }]
+    })
+  }), bindings);
+
+  const tokenRes = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/king-ceo/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  const preamble = await json<{ text: string }>(
+    await worker.fetch(new Request("https://gui/runtime/preamble?agent=king-ceo", {
+      headers: { Authorization: `Bearer ${tokenRes.token}` }
+    }), bindings)
+  );
+  assert.match(preamble.text, /\[prototype\.html\] text\/html/);
+  assert.doesNotMatch(preamble.text, /unsupported-file-mime/);
+});
+
+	test("gui attachment token URLs are readable by local runtimes without browser login", async () => {
+	  const bindings = env(undefined, {
+	    AUTH_DB: {} as D1Database,
+	    BETTER_AUTH_SECRET: "test-secret-test-secret-test-secret",
+	    GITHUB_CLIENT_ID: "github-client",
+	    GITHUB_CLIENT_SECRET: "github-secret",
+	    KING_TEST_AUTH_USER: "1"
+	  });
+	  const headers = {
+	    "X-King-Test-User": JSON.stringify({ id: "github-1", email: "octo@example.com", name: "Octo" })
+	  };
+	  const upload = await json<{ attachment: { url: string } }>(
+	    await worker.fetch(new Request("https://gui/gui/attachments", {
+	      method: "POST",
+	      headers,
+	      body: JSON.stringify({
+	        name: "screen.png",
+	        mime: "image/png",
+	        size: 4,
+	        bytesBase64: Buffer.from("pong", "utf8").toString("base64")
+	      })
+	    }), bindings)
+	  );
+	  assert.match(upload.attachment.url, /tenant=user-octo-example\.com/);
+
+	  const unauthenticated = await worker.fetch(new Request(upload.attachment.url), bindings);
+	  assert.equal(unauthenticated.status, 200);
+	  assert.equal(unauthenticated.headers.get("Content-Type"), "image/png");
+	  assert.equal(await unauthenticated.text(), "pong");
+	});
+
+	test("gui runtime marks read only through the requested message", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["claude", "codex"] });
   const guiState = await json<{ availableEngines: string[] }>(
@@ -1510,6 +1675,8 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /Message #all/);
   assert.doesNotMatch(html, /agent 电脑怎么弄/);
   assert.match(html, /id="sendButton"/);
+  assert.match(html, /#sendButton[\s\S]*align-self:\s*end/);
+  assert.match(html, /#sendButton[\s\S]*height:\s*54px/);
   assert.match(html, /button\.textContent = 'Sending'/);
   assert.doesNotMatch(html, /<span class="author">AI<\/span><span class="time">soon<\/span>/);
   assert.doesNotMatch(html, /已唤醒，等待本地 Claude\/Codex 回复/);
@@ -1590,6 +1757,7 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /\.composer-tools \.jump\.visible[\s\S]*display:\s*inline-flex/);
   assert.match(html, /body\.mobile-layout \.chat-panel[\s\S]*padding:\s*10px 0 156px/);
   assert.match(html, /body\.mobile-layout \.composer[\s\S]*bottom:\s*16px/);
+  assert.match(html, /body\.mobile-layout #sendButton[\s\S]*height:\s*54px/);
   assert.match(html, /body\.mobile-layout \.composer-tools[\s\S]*position:\s*absolute/);
   assert.match(html, /body\.mobile-layout \.composer-tools[\s\S]*bottom:\s*calc\(100% \+ 8px\)/);
   assert.doesNotMatch(html, /body\.mobile-layout \.composer-tools[\s\S]*position:\s*static/);
@@ -1861,6 +2029,8 @@ test("gui runtime records status, typing, thinking, events, and runs", async () 
   await worker.fetch(new Request("https://gui/runtime/notices", { method: "POST", headers: auth, body: JSON.stringify({ noticeKind: "byoa_engine_failed" }) }), bindings);
   await worker.fetch(new Request("https://gui/runtime/triage", { method: "POST", headers: auth, body: JSON.stringify({ source: "byoa-codex", actionable: true }) }), bindings);
   const run = await json<{ runId: string }>(await worker.fetch(new Request("https://gui/runtime/runs", { method: "POST", headers: auth, body: JSON.stringify({ trigger: "test" }) }), bindings));
+  await worker.fetch(new Request(`https://gui/runtime/runs/${run.runId}/heartbeat`, { method: "POST", headers: auth, body: JSON.stringify({ stream: { type: "tool_started", id: "tool-1", name: "shell", input: "pnpm test" } }) }), bindings);
+  await worker.fetch(new Request(`https://gui/runtime/runs/${run.runId}/heartbeat`, { method: "POST", headers: auth, body: JSON.stringify({ stream: { type: "message_delta", text: "done" } }) }), bindings);
   await worker.fetch(new Request(`https://gui/runtime/runs/${run.runId}/heartbeat`, { method: "POST", headers: auth }), bindings);
   await worker.fetch(new Request(`https://gui/runtime/runs/${run.runId}/finish`, { method: "POST", headers: auth, body: JSON.stringify({ status: "completed" }) }), bindings);
   await worker.fetch(new Request("https://gui/runtime/thinking/unmark", { method: "POST", headers: auth, body: JSON.stringify({ conversationIds: ["king-convo"] }) }), bindings);
@@ -1872,7 +2042,8 @@ test("gui runtime records status, typing, thinking, events, and runs", async () 
     eventLog: { body: { kind?: string } }[];
     noticeLog: { body: { noticeKind?: string } }[];
     triageLog: { body: { source?: string } }[];
-    runLog: { action: string }[];
+    runLog: { action: string; card?: { summary?: string; sections?: { kind: string; title: string }[] } }[];
+    runStreams?: Record<string, { message?: string; tools?: { name: string }[] }>;
   }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
   assert.equal(state.statusLog.at(-1)?.status, "thinking");
   assert.equal(state.typingLog.at(-1)?.conversationId, "king-convo");
@@ -1880,7 +2051,11 @@ test("gui runtime records status, typing, thinking, events, and runs", async () 
   assert.equal(state.eventLog.at(-1)?.body.kind, "gui.event");
   assert.equal(state.noticeLog.at(-1)?.body.noticeKind, "byoa_engine_failed");
   assert.equal(state.triageLog.at(-1)?.body.source, "byoa-codex");
-  assert.deepEqual(state.runLog.map((row) => row.action), ["start", "heartbeat", "finish"]);
+  assert.deepEqual(state.runLog.map((row) => row.action), ["start", "stream", "heartbeat", "stream", "heartbeat", "heartbeat", "finish"]);
+  assert.equal(state.runStreams?.[run.runId]?.message, "done");
+  assert.equal(state.runStreams?.[run.runId]?.tools?.[0]?.name, "shell");
+  assert.equal(state.runLog.at(-1)?.card?.summary, "Completed");
+  assert.equal(state.runLog.at(-1)?.card?.sections?.some((section) => section.kind === "tool"), true);
 });
 
 test("gui runtime bounds append-only signal logs so persisted state cannot grow without limit", async () => {

@@ -46,11 +46,15 @@ export interface EngineResult {
   model?: string | null;
 }
 
+export interface EngineTurnOptions {
+  imagePaths?: string[];
+}
+
 export interface EngineSession {
   readonly alive: boolean;
   readonly sessionId: string | null;
   readonly carriesStandingPrompt: boolean;
-  send(prompt: string): Promise<EngineResult>;
+  send(prompt: string, options?: EngineTurnOptions): Promise<EngineResult>;
   steer(text: string): void;
   stop(): void;
 }
@@ -63,6 +67,7 @@ export interface EngineRunArgs {
   fastModel?: string;
   resumeSessionId?: string | null;
   standingPrompt?: string;
+  imagePaths?: string[];
   signal: AbortSignal;
   onLog: (line: string) => void;
 }
