@@ -14,11 +14,104 @@ import {
   startHostStatusServer
 } from "../src/host-server.js";
 
+const EXPECTED_HOST_COMMANDS = ["status", "usage", "expenses", "events", "timeline", "policy", "doctor", "plan-run", "preflight", "prepare-run-layout", "submit-run", "run-requests", "run-request", "update-run", "cancel-run", "execute-run", "task-create", "task-list", "task-update", "agenda", "capsule-create", "capsule-list", "capsule-update", "workflow-create", "workflow-list", "workflow-update", "initiative-create", "handoff-create", "review-create", "decision-create", "artifact-create", "feedback-record", "feedback-list", "feedback-summary", "cron-check", "emit-run-event", "watch-run", "run-results", "run-heartbeat", "run-meta", "plan-export", "export", "compact-ledger", "remote-config-get", "remote-config-save", "remote-list", "remote-save-device", "remote-delete-device", "remote-default-device", "remote-probe", "remote-profile", "remote-run", "remote-logs", "remote-find-logs", "remote-pg", "remote-redis"];
+
 test("host server config only allows localhost bindings", () => {
   assert.equal(normalizeHostServerHost(), "127.0.0.1");
   assert.equal(normalizeHostServerHost("localhost"), "localhost");
   assert.equal(normalizeHostServerHost("::1"), "::1");
   assert.throws(() => normalizeHostServerHost("0.0.0.0"), /localhost bindings/);
+});
+
+test("host server exposes remote test device configuration endpoints", async (t) => {
+  let devices: Array<{ id?: string; password?: string; auth?: string }> = [];
+  const server = await startHostStatusServer({
+    port: 0,
+    runCommand: async (request) => {
+      if (request.command === "remote-config-save") {
+        const input = request.input as { devices?: Array<{ id?: string; password?: string }> };
+        devices = (input.devices ?? []).map((device) => ({
+          id: device.id,
+          auth: device.password ? "password" : "ssh-agent"
+        }));
+        return { ok: true, command: request.command, exitCode: 0, text: "config saved", json: { config: input, devices } };
+      }
+      if (request.command === "remote-config-get") {
+        return { ok: true, command: request.command, exitCode: 0, text: "config", json: { config: { defaultDevice: devices[0]?.id, devices }, devices } };
+      }
+      if (request.command === "remote-save-device") {
+        const input = request.input as { id?: string; password?: string };
+        devices = [{ id: input.id, auth: input.password ? "password" : "ssh-agent" }];
+        return { ok: true, command: request.command, exitCode: 0, text: "saved", json: { device: devices[0], devices } };
+      }
+      if (request.command === "remote-list") {
+        return { ok: true, command: request.command, exitCode: 0, text: "list", json: { devices } };
+      }
+      if (request.command === "remote-delete-device") {
+        devices = [];
+        return { ok: true, command: request.command, exitCode: 0, text: "deleted", json: { devices } };
+      }
+      return { ok: false, command: request.command, exitCode: 64, text: "unsupported", error: "unsupported" };
+    }
+  });
+  t.after(async () => {
+    server.close();
+    await once(server, "close").catch(() => undefined);
+  });
+
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  const configSaved = await fetch(`${baseUrl}/remote/config`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      defaultDevice: "test-61",
+      devices: [
+        { id: "test-61", host: "10.12.9.61", user: "root", password: "secret" },
+        { id: "test-62", host: "10.12.9.62", user: "root" }
+      ]
+    })
+  }).then((res) => res.json()) as { ok?: boolean; command?: string; json?: { devices?: Array<{ id?: string; password?: string; auth?: string }> } };
+  assert.equal(configSaved.ok, true);
+  assert.equal(configSaved.command, "remote-config-save");
+  assert.deepEqual(configSaved.json?.devices?.map((device) => device.id), ["test-61", "test-62"]);
+  assert.equal(configSaved.json?.devices?.[0]?.password, undefined);
+  assert.equal(configSaved.json?.devices?.[0]?.auth, "password");
+
+  const configLoaded = await fetch(`${baseUrl}/remote/config`).then((res) => res.json()) as { ok?: boolean; command?: string; json?: { config?: { devices?: Array<{ id?: string }> } } };
+  assert.equal(configLoaded.ok, true);
+  assert.equal(configLoaded.command, "remote-config-get");
+  assert.deepEqual(configLoaded.json?.config?.devices?.map((device) => device.id), ["test-61", "test-62"]);
+
+  const saved = await fetch(`${baseUrl}/remote/devices`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      id: "test-61",
+      host: "10.12.9.61",
+      user: "root",
+      password: "secret",
+      defaultApp: "fc",
+      apps: { fc: { logRoots: ["/gpfc/logs"] } }
+    })
+  }).then((res) => res.json()) as { ok?: boolean; command?: string; json?: { device?: { id?: string; password?: string; auth?: string } } };
+  assert.equal(saved.ok, true);
+  assert.equal(saved.command, "remote-save-device");
+  assert.equal(saved.json?.device?.id, "test-61");
+  assert.equal(saved.json?.device?.password, undefined);
+  assert.equal(saved.json?.device?.auth, "password");
+
+  const listed = await fetch(`${baseUrl}/remote/devices`).then((res) => res.json()) as { ok?: boolean; json?: { devices?: Array<{ id?: string; password?: string }> } };
+  assert.equal(listed.ok, true);
+  assert.equal(listed.json?.devices?.[0]?.id, "test-61");
+  assert.equal(listed.json?.devices?.[0]?.password, undefined);
+
+  const removed = await fetch(`${baseUrl}/remote/devices/test-61`, { method: "DELETE" }).then((res) => res.json()) as { ok?: boolean; command?: string; json?: { devices?: unknown[] } };
+  assert.equal(removed.ok, true);
+  assert.equal(removed.command, "remote-delete-device");
+  assert.equal(removed.json?.devices?.length, 0);
 });
 
 test("host server port can be read from env", () => {
@@ -197,7 +290,7 @@ test("createHostStatusServer serves read-only app endpoints", async (t) => {
   const commands = await fetch(`http://127.0.0.1:${port}/commands`).then((res) => res.json()) as {
     commands?: Array<{ name: string; destructive: boolean }>;
   };
-  assert.deepEqual(commands.commands?.map((entry) => entry.name), ["status", "usage", "expenses", "events", "timeline", "policy", "doctor", "plan-run", "preflight", "prepare-run-layout", "submit-run", "run-requests", "run-request", "update-run", "cancel-run", "execute-run", "task-create", "task-list", "task-update", "agenda", "capsule-create", "capsule-list", "capsule-update", "workflow-create", "workflow-list", "workflow-update", "initiative-create", "handoff-create", "review-create", "decision-create", "artifact-create", "feedback-record", "feedback-list", "feedback-summary", "cron-check", "emit-run-event", "watch-run", "run-results", "run-heartbeat", "run-meta", "plan-export", "export", "compact-ledger"]);
+  assert.deepEqual(commands.commands?.map((entry) => entry.name), EXPECTED_HOST_COMMANDS);
   assert.deepEqual(commands.commands?.filter((entry) => entry.destructive).map((entry) => entry.name), ["prepare-run-layout", "export", "compact-ledger"]);
 
   const capabilities = await fetch(`http://127.0.0.1:${port}/capabilities`).then((res) => res.json()) as {

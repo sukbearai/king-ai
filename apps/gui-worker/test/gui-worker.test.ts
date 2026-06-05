@@ -136,9 +136,27 @@ test("gui requires login when Better Auth is configured", async () => {
   const body = await html.text();
   assert.match(body, /Continue with GitHub/);
   assert.match(body, /<svg class="github-icon" viewBox="0 0 16 16" aria-hidden="true">/);
+  assert.match(body, /fetch\(location\.origin \+ '\/api\/auth\/sign-in\/social'/);
+  assert.match(body, /callbackURL: location\.origin \+ '\/'/);
   assert.doesNotMatch(body, /<span class="github-icon">G<\/span>/);
 
   const state = await worker.fetch(new Request("https://gui/gui/state"), bindings);
+  assert.equal(state.status, 401);
+  assert.deepEqual(await state.json(), { error: "login_required" });
+});
+
+test("gui still requires login on localhost when Better Auth is configured", async () => {
+  const bindings = env(undefined, {
+    AUTH_DB: {} as D1Database,
+    BETTER_AUTH_SECRET: "test-secret-test-secret-test-secret",
+    GITHUB_CLIENT_ID: "github-client",
+    GITHUB_CLIENT_SECRET: "github-secret"
+  });
+
+  const html = await worker.fetch(new Request("http://127.0.0.1/"), bindings);
+  assert.equal(html.status, 401);
+
+  const state = await worker.fetch(new Request("http://127.0.0.1/gui/state"), bindings);
   assert.equal(state.status, 401);
   assert.deepEqual(await state.json(), { error: "login_required" });
 });

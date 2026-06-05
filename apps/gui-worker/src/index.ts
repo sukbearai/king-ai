@@ -790,9 +790,19 @@ async function getAuthUser(c: RequestContext): Promise<AuthUser | null> {
     return { id: parsed.id, email: parsed.email, name: parsed.name };
   }
   const auth = authForRequest(c.req.raw, c.env);
-  if (!auth) return null;
+  if (!auth) {
+    if (isLocalDevRequest(c.req.raw)) {
+      return { id: "local-dev", email: "local-dev@king.local", name: "Local Dev" };
+    }
+    return null;
+  }
   const session = await auth.api.getSession({ headers: c.req.raw.headers });
   return session?.user ? { id: session.user.id, email: session.user.email, name: session.user.name } : null;
+}
+
+function isLocalDevRequest(request: Request): boolean {
+  const host = new URL(request.url).hostname;
+  return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
 }
 
 function authUserFromRequest(request: Request): AuthUser | undefined {
@@ -894,7 +904,7 @@ function bearer(c: { req: { header(name: string): string | undefined } }): strin
   return raw.startsWith("Bearer ") ? raw.slice("Bearer ".length) : "";
 }
 
-function loginPage(baseUrl: string): string {
+function loginPage(): string {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -1013,10 +1023,10 @@ function loginPage(baseUrl: string): string {
   </main>
   <script>
     document.getElementById('githubSignIn').addEventListener('click', async function() {
-      const response = await fetch('${baseUrl}/api/auth/sign-in/social', {
+      const response = await fetch(location.origin + '/api/auth/sign-in/social', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: 'github', callbackURL: '/' })
+        body: JSON.stringify({ provider: 'github', callbackURL: location.origin + '/' })
       });
       if (!response.ok) throw new Error(await response.text());
       const payload = await response.json();
@@ -1035,7 +1045,7 @@ async function requireGuiAuth(c: RequestContext): Promise<Response | null> {
   if (new URL(c.req.url).pathname.startsWith("/gui/")) {
     return json({ error: "login_required" }, { status: 401 });
   }
-  return new Response(loginPage(publicBaseUrl(c.req.raw, c.env)), {
+  return new Response(loginPage(), {
     headers: { "Content-Type": "text/html; charset=utf-8" },
     status: 401
   });
@@ -1060,6 +1070,13 @@ type HostBridgeCard = {
 type HostDecisionsResult = {
   configured: boolean;
   cards: HostBridgeCard[];
+  error?: string;
+};
+
+type HostCommandResult<T = unknown> = {
+  ok?: boolean;
+  text?: string;
+  json?: T;
   error?: string;
 };
 
@@ -1109,6 +1126,17 @@ async function resolveHostDecision(env: Bindings, id: string, decision: "approve
     return { ok: result.ok, card: result.json?.card, error: result.ok ? undefined : result.error || result.text };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function runHostRemoteCommand<T = unknown>(env: Bindings, command: string, input?: unknown): Promise<{ configured: boolean; result?: HostCommandResult<T>; error?: string }> {
+  const sdk = hostBridgeSdk(env);
+  if (!sdk) return { configured: false, error: "host bridge not configured" };
+  try {
+    const result = await sdk.runCommand<T>({ command, input });
+    return { configured: true, result };
+  } catch (err) {
+    return { configured: true, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -1417,6 +1445,50 @@ app.post("/gui/host-decisions/:id/resolve", async (c) => {
   if (!decision) return json({ ok: false, error: "decision must be approve or deny" }, { status: 400 });
   const result = await resolveHostDecision(c.env, c.req.param("id"), decision);
   return json(result, { status: result.ok ? 200 : result.error === "host bridge not configured" ? 404 : 400 });
+});
+app.get("/gui/remote-config", async (c) => {
+  const blocked = await requireOwnerGuiAuth(c);
+  if (blocked) return blocked;
+  const result = await runHostRemoteCommand(c.env, "remote-config-get", { revealSecrets: true });
+  return json(result, { status: result.configured ? 200 : 404 });
+});
+app.put("/gui/remote-config", async (c) => {
+  const blocked = await requireOwnerGuiAuth(c);
+  if (blocked) return blocked;
+  const payload = await c.req.json().catch(() => ({}));
+  const result = await runHostRemoteCommand(c.env, "remote-config-save", payload);
+  return json(result, { status: result.configured && result.result?.ok !== false ? 200 : result.configured ? 400 : 404 });
+});
+app.get("/gui/remote-devices", async (c) => {
+  const blocked = await requireGuiAuth(c);
+  if (blocked) return blocked;
+  const result = await runHostRemoteCommand(c.env, "remote-list");
+  return json(result, { status: result.configured ? 200 : 404 });
+});
+app.post("/gui/remote-devices", async (c) => {
+  const blocked = await requireOwnerGuiAuth(c);
+  if (blocked) return blocked;
+  const payload = await c.req.json().catch(() => ({}));
+  const result = await runHostRemoteCommand(c.env, "remote-save-device", payload);
+  return json(result, { status: result.configured && result.result?.ok !== false ? 200 : result.configured ? 400 : 404 });
+});
+app.delete("/gui/remote-devices/:id", async (c) => {
+  const blocked = await requireOwnerGuiAuth(c);
+  if (blocked) return blocked;
+  const result = await runHostRemoteCommand(c.env, "remote-delete-device", { id: c.req.param("id") });
+  return json(result, { status: result.configured && result.result?.ok !== false ? 200 : result.configured ? 400 : 404 });
+});
+app.post("/gui/remote-devices/:id/probe", async (c) => {
+  const blocked = await requireGuiAuth(c);
+  if (blocked) return blocked;
+  const result = await runHostRemoteCommand(c.env, "remote-probe", { device: c.req.param("id") });
+  return json(result, { status: result.configured ? 200 : 404 });
+});
+app.post("/gui/remote-devices/:id/profile", async (c) => {
+  const blocked = await requireGuiAuth(c);
+  if (blocked) return blocked;
+  const result = await runHostRemoteCommand(c.env, "remote-profile", { device: c.req.param("id") });
+  return json(result, { status: result.configured ? 200 : 404 });
 });
 
 export class GuiState implements DurableObject {

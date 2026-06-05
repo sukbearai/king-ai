@@ -177,6 +177,8 @@ The daemon also writes an activation snapshot under .king/skill-snapshots, or KI
 
 Host home entries: when KING_HOST_HOME_ENTRIES is configured, the operator has explicitly linked selected host-home dotfiles or dot directories into this agent home. Treat them as sensitive credentials/configuration and use them only for the runtime task.
 
+Remote test diagnostics: when a human asks you to investigate bugs, logs, database records, Redis state, or statistics on test environments, use king host remote-list --json to discover configured devices and autonomously use king host remote-profile, king host remote-probe, king host remote-run, king host remote-logs, king host remote-find-logs, king host remote-pg, and king host remote-redis. Do not ask the human for SSH commands unless the target device, app, or business object is missing. When reporting, include conclusion, evidence sources, checked scope, and remaining unknowns.
+
 Memory: durable memory lives in memory/MEMORY.md and detail files under memory/. When asked to remember something, write it to a memory file and add a one-line pointer to MEMORY.md.
 
 Coordination:

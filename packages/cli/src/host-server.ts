@@ -54,7 +54,15 @@ const HOST_RESOURCE_ENDPOINTS = [
   "POST /exports/plan",
   "POST /exports",
   "GET /policy/:command",
-  "POST /policy/:command"
+  "POST /policy/:command",
+  "GET /remote/config",
+  "PUT /remote/config",
+  "GET /remote/devices",
+  "POST /remote/devices",
+  "PATCH /remote/devices/:id",
+  "DELETE /remote/devices/:id",
+  "POST /remote/devices/:id/probe",
+  "POST /remote/devices/:id/profile"
 ];
 
 const HOST_STREAM_ENDPOINTS = [
@@ -568,6 +576,93 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
           format: "json",
           input: { ...(input && typeof input === "object" ? input as object : {}), command }
         }, headOnly);
+        return;
+      }
+
+      if (url.pathname === "/remote/config") {
+        if (method === "GET" || method === "HEAD") {
+          await runHostCommandRoute(res, runCommand, {
+            command: "remote-config-get",
+            format: "json",
+            input: { revealSecrets: true }
+          }, headOnly);
+          return;
+        }
+        if (method === "PUT" || method === "POST") {
+          await runHostCommandRoute(res, runCommand, {
+            command: "remote-config-save",
+            format: "json",
+            input: await readJsonBody(req)
+          });
+          return;
+        }
+        sendJson(res, 405, { ok: false, error: "method not allowed" }, headOnly);
+        return;
+      }
+
+      if (url.pathname === "/remote/devices") {
+        if (method === "GET" || method === "HEAD") {
+          await runHostCommandRoute(res, runCommand, {
+            command: "remote-list",
+            format: "json"
+          }, headOnly);
+          return;
+        }
+        if (method === "POST") {
+          await runHostCommandRoute(res, runCommand, {
+            command: "remote-save-device",
+            format: "json",
+            input: await readJsonBody(req)
+          });
+          return;
+        }
+        sendJson(res, 405, { ok: false, error: "method not allowed" }, headOnly);
+        return;
+      }
+
+      const remoteDevicePath = url.pathname.match(/^\/remote\/devices\/([^/]+)(?:\/([^/]+))?$/);
+      if (remoteDevicePath) {
+        const id = decodePathPart(remoteDevicePath[1] ?? "");
+        const action = remoteDevicePath[2] ? decodePathPart(remoteDevicePath[2]) : undefined;
+        if (!id) {
+          sendJson(res, 400, { ok: false, error: "remote device id is required" }, headOnly);
+          return;
+        }
+        if (!action && method === "PATCH") {
+          const body = await readJsonBody(req);
+          await runHostCommandRoute(res, runCommand, {
+            command: "remote-save-device",
+            format: "json",
+            input: { ...(body && typeof body === "object" ? body as object : {}), id }
+          });
+          return;
+        }
+        if (!action && method === "DELETE") {
+          await runHostCommandRoute(res, runCommand, {
+            command: "remote-delete-device",
+            format: "json",
+            input: { id }
+          });
+          return;
+        }
+        if (action === "default" && method === "POST") {
+          await runHostCommandRoute(res, runCommand, {
+            command: "remote-default-device",
+            format: "json",
+            input: { id }
+          });
+          return;
+        }
+        if ((action === "probe" || action === "profile") && method === "POST") {
+          const body = await readJsonBody(req);
+          await runHostCommandRoute(res, runCommand, {
+            command: action === "probe" ? "remote-probe" : "remote-profile",
+            format: "json",
+            input: { ...(body && typeof body === "object" ? body as object : {}), device: id }
+          });
+          return;
+        }
+        sendJson(res, 405, { ok: false, error: "method not allowed" }, headOnly);
         return;
       }
 

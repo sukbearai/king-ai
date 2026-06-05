@@ -39,6 +39,83 @@ export function renderPage(styles: string, clientScript: string): string {
       justify-content: flex-end;
       flex-wrap: wrap;
     }
+    .remote-device-list {
+      display: grid;
+      gap: 6px;
+      max-height: 160px;
+      overflow: auto;
+    }
+    .remote-device-item {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 6px;
+      align-items: center;
+      border: 1px solid var(--line);
+      background: #fff;
+      padding: 6px;
+    }
+    .remote-device-main {
+      min-width: 0;
+      display: grid;
+      gap: 2px;
+    }
+    .remote-device-title {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 900;
+    }
+    .remote-device-meta {
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 10px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .remote-device-form {
+      display: grid;
+      gap: 8px;
+      min-width: 0;
+    }
+    .remote-config-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }
+    .remote-device-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .remote-device-form textarea {
+      width: 100%;
+      max-width: 100%;
+      box-sizing: border-box;
+      min-height: 260px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .remote-device-form textarea#remoteConfigJson {
+      min-height: 360px;
+    }
+    .remote-output {
+      min-height: 28px;
+      max-height: 140px;
+      overflow: auto;
+      border: 1px solid var(--soft-line);
+      background: #080808;
+      color: #a7d66d;
+      padding: 7px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 10px;
+    }
     .computer-glyph {
       position: relative;
       width: 17px;
@@ -860,6 +937,16 @@ const TRANSLATIONS = {
     addComputer: '添加电脑',
     remoteAssist: '远程协助',
     remoteAssistDesc: '生成一个可多人使用的远程协助链接，同事打开后可以在这个窗口里发消息、看任务和处理决策；链接长期有效，直到你撤销。',
+    remoteDevices: '远端测试机',
+    remoteDevicesDesc: '配置 agent 可自主连接的测试机，用于查看日志、数据库记录、Redis 状态和统计信息。',
+    remoteConfigJson: 'JSON 配置',
+    loadRemoteConfig: '加载当前配置',
+    copyRemoteConfig: '复制 JSON',
+    saveRemoteConfig: '保存 JSON 配置',
+    probeDevice: '测试连接',
+    profileDevice: '探测环境',
+    noRemoteDevices: '尚未配置远端测试机',
+    hostBridgeMissing: '未配置 KING_HOST_URL，无法连接本机 host server。',
     createAssistLink: '生成链接',
     revokeAssistLink: '撤销链接',
     assistNoLink: '尚未生成远程协助链接',
@@ -973,6 +1060,16 @@ const TRANSLATIONS = {
     addComputer: 'Add computer',
     remoteAssist: 'Remote Assist',
     remoteAssistDesc: 'Create one reusable remote assist link so teammates can chat, view tasks, and resolve decisions in this workspace. The link stays valid until revoked.',
+    remoteDevices: 'Remote Test Devices',
+    remoteDevicesDesc: 'Configure test machines agents may use for logs, database records, Redis state, and statistics.',
+    remoteConfigJson: 'JSON config',
+    loadRemoteConfig: 'Load current config',
+    copyRemoteConfig: 'Copy JSON',
+    saveRemoteConfig: 'Save JSON config',
+    probeDevice: 'Test',
+    profileDevice: 'Profile',
+    noRemoteDevices: 'No remote test devices configured',
+    hostBridgeMissing: 'KING_HOST_URL is not configured; local host server is unavailable.',
     createAssistLink: 'Create link',
     revokeAssistLink: 'Revoke link',
     assistNoLink: 'No remote assist link yet',
@@ -1246,6 +1343,198 @@ function renderRemoteAssist(summary) {
   revokeButton.disabled = !grant.active;
   copyButton.disabled = !remoteAssistUrl;
 }
+const REMOTE_CONFIG_EXAMPLE = {
+  _help: {
+    note: "_help 只用于 GUI 说明，保存时会自动删除，不会写入真实配置。",
+    required: [
+      "devices: 测试机数组，必填，可一次配置 N 台。",
+      "devices[].id: 设备唯一 id，必填，例如 test-61。",
+      "devices[].host: SSH 主机 IP 或域名，必填。",
+      "devices[].user: SSH 用户，必填，例如 root。",
+      "devices[].databases.<db>.command: 配置某个数据库别名时必填。",
+      "devices[].redis.<name>.command: 配置某个 Redis 别名时必填。"
+    ],
+    optional: [
+      "defaultDevice: 默认设备 id；填写时必须匹配 devices[].id。",
+      "devices[].name: 展示名称，可写 IP、环境名或业务名。",
+      "devices[].port: SSH 端口，默认 22。",
+      "devices[].password: 测试机明文密码。",
+      "devices[].passwordEnv: 从本机环境变量读取 SSH 密码；优先级高于 password。",
+      "devices[].identityFile: SSH 私钥文件路径；可与 password/passwordEnv 任选，或留空走 ssh-agent。",
+      "devices[].defaultApp: 默认应用名；remote-logs 未传 app 时会使用它。",
+      "devices[].apps: 应用配置对象；key 是应用名，例如 fc。",
+      "devices[].databases: 数据库配置对象；key 是数据库别名，例如 fc。",
+      "devices[].redis: Redis 配置对象；key 是 Redis 别名，例如 default。"
+    ],
+    fields: {
+      defaultDevice: "string，可选；默认设备 id。",
+      devices: "RemoteDevice[]，必填；测试机列表。",
+      "devices[].id": "string，必填；设备唯一 id。",
+      "devices[].name": "string，可选；展示名称。",
+      "devices[].host": "string，必填；SSH 主机。",
+      "devices[].port": "number，可选；1-65535，默认 22。",
+      "devices[].user": "string，必填；SSH 用户。",
+      "devices[].password": "string，可选；明文 SSH 密码。",
+      "devices[].passwordEnv": "string，可选；本机环境变量名，存在时优先读取该变量作为密码。",
+      "devices[].identityFile": "string，可选；SSH 私钥路径。",
+      "devices[].defaultApp": "string，可选；默认应用名。",
+      "devices[].apps": "object，可选；应用名到 RemoteAppConfig 的映射。",
+      "devices[].apps.<app>.logRoots": "string[]，可选；日志根目录，remote-logs/remote-find-logs 使用。",
+      "devices[].apps.<app>.installMarkers": "string[]，可选；安装标记文件，remote-profile 使用。",
+      "devices[].apps.<app>.errorPatterns": "string[]，可选；常用错误模式，目前作为配置记录。",
+      "devices[].databases": "object，可选；数据库别名到 RemoteServiceCommand 的映射。",
+      "devices[].databases.<db>.type": "string，可选；数据库类型说明，例如 postgres。",
+      "devices[].databases.<db>.command": "string，必填；配置该 db 时必须有基础命令，remote-pg 会追加 -c <sql>。",
+      "devices[].redis": "object，可选；Redis 别名到 RemoteServiceCommand 的映射。",
+      "devices[].redis.<name>.type": "string，可选；Redis 类型说明。",
+      "devices[].redis.<name>.command": "string，必填；配置该 Redis 时必须有基础命令，remote-redis 会追加 <cmd>。"
+    }
+  },
+  defaultDevice: "test-61",
+  devices: [
+    {
+      id: "test-61",
+      name: "10.12.9.61",
+      host: "10.12.9.61",
+      port: 22,
+      user: "root",
+      password: "plain-test-password",
+      defaultApp: "fc",
+      apps: {
+        fc: {
+          logRoots: ["/gpfc/logs"],
+          installMarkers: ["/etc/gpfc/install_app_dir"],
+          errorPatterns: ["ERROR", "Exception"]
+        }
+      },
+      databases: {
+        fc: {
+          type: "postgres",
+          command: "psql -h 127.0.0.1 -U postgres -d gpfc"
+        }
+      },
+      redis: {
+        default: {
+          command: "redis-cli -h 127.0.0.1 -p 6379"
+        }
+      }
+    }
+  ]
+};
+function formatRemoteConfig(value) {
+  return JSON.stringify(value, null, 2);
+}
+function stripRemoteConfigHelp(value) {
+  if (Array.isArray(value)) return value.map(stripRemoteConfigHelp);
+  if (!value || typeof value !== 'object') return value;
+  const result = {};
+  for (const key of Object.keys(value)) {
+    if (key === '_help') continue;
+    result[key] = stripRemoteConfigHelp(value[key]);
+  }
+  return result;
+}
+function showRemoteOutput(text) {
+  const out = document.getElementById('remoteDeviceOutput');
+  if (!out) return;
+  out.textContent = text || '';
+  out.hidden = !text;
+}
+async function loadRemoteConfig() {
+  const listEl = document.getElementById('remoteDeviceList');
+  const statusEl = document.getElementById('remoteDeviceStatus');
+  const configEl = document.getElementById('remoteConfigJson');
+  if (!listEl || !statusEl) return;
+  showRemoteOutput('');
+  try {
+    const response = await request('/gui/remote-config');
+    const result = response.result || {};
+    const config = (result.json && result.json.config) || { devices: [] };
+    if (configEl) configEl.value = formatRemoteConfig(config.devices && config.devices.length ? config : REMOTE_CONFIG_EXAMPLE);
+    renderRemoteDeviceList((result.json && result.json.devices) || config.devices || [], config.defaultDevice || result.json?.defaultDevice);
+    statusEl.textContent = result.error || response.error || '';
+  } catch (error) {
+    if (configEl && !configEl.value.trim()) configEl.value = formatRemoteConfig(REMOTE_CONFIG_EXAMPLE);
+    listEl.innerHTML = '<div class="muted">' + escapeHtml(t('hostBridgeMissing')) + '</div>';
+    statusEl.textContent = error && error.message ? error.message : String(error);
+  }
+}
+async function loadRemoteDevices() {
+  const listEl = document.getElementById('remoteDeviceList');
+  const statusEl = document.getElementById('remoteDeviceStatus');
+  if (!listEl || !statusEl) return;
+  showRemoteOutput('');
+  try {
+    const response = await request('/gui/remote-devices');
+    const result = response.result || {};
+    renderRemoteDeviceList((result.json && result.json.devices) || [], result.json && result.json.defaultDevice);
+    statusEl.textContent = result.error || response.error || '';
+  } catch (error) {
+    listEl.innerHTML = '<div class="muted">' + escapeHtml(t('hostBridgeMissing')) + '</div>';
+    statusEl.textContent = error && error.message ? error.message : String(error);
+  }
+}
+function renderRemoteDeviceList(devices, defaultDevice) {
+  const listEl = document.getElementById('remoteDeviceList');
+  if (!listEl) return;
+  if (!devices.length) {
+    listEl.innerHTML = '<div class="muted">' + escapeHtml(t('noRemoteDevices')) + '</div>';
+    return;
+  }
+  listEl.innerHTML = devices.map(function(device) {
+    const title = (device.id || '') + (device.id === defaultDevice ? ' *' : '');
+    const meta = (device.user || '') + '@' + (device.host || '') + ':' + (device.port || 22) + ' ' + (device.auth || '');
+    return '<article class="remote-device-item">' +
+      '<div class="remote-device-main"><div class="remote-device-title">' + escapeHtml(title) + '</div><div class="remote-device-meta">' + escapeHtml(meta) + '</div></div>' +
+      '<button onclick="probeRemoteDevice(' + escapeHtml(JSON.stringify(device.id || '')) + ')">' + escapeHtml(t('probeDevice')) + '</button>' +
+      '<button onclick="profileRemoteDevice(' + escapeHtml(JSON.stringify(device.id || '')) + ')">' + escapeHtml(t('profileDevice')) + '</button>' +
+      '</article>';
+  }).join('');
+}
+async function saveRemoteConfig() {
+  const statusEl = document.getElementById('remoteDeviceStatus');
+  const configEl = document.getElementById('remoteConfigJson');
+  showRemoteOutput('');
+  try {
+    const body = stripRemoteConfigHelp(JSON.parse(configEl?.value || '{"devices":[]}'));
+    const response = await request('/gui/remote-config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (statusEl) statusEl.textContent = response.result?.text || response.error || t('saved');
+    await loadRemoteConfig();
+  } catch (error) {
+    if (statusEl) statusEl.textContent = error && error.message ? error.message : String(error);
+  }
+}
+async function copyRemoteConfig() {
+  const statusEl = document.getElementById('remoteDeviceStatus');
+  const configEl = document.getElementById('remoteConfigJson');
+  try {
+    const text = configEl?.value || '';
+    await navigator.clipboard.writeText(text);
+    if (statusEl) statusEl.textContent = t('copied');
+  } catch (error) {
+    if (statusEl) statusEl.textContent = error && error.message ? error.message : String(error);
+  }
+}
+async function probeRemoteDevice(id) {
+  showRemoteOutput(t('saving'));
+  const response = await request('/gui/remote-devices/' + encodeURIComponent(id) + '/probe', { method: 'POST' });
+  showRemoteOutput(response.result?.text || response.error || '');
+}
+async function profileRemoteDevice(id) {
+  showRemoteOutput(t('saving'));
+  const response = await request('/gui/remote-devices/' + encodeURIComponent(id) + '/profile', { method: 'POST' });
+  showRemoteOutput(response.result?.text || response.error || '');
+}
+const previousOpenSettings = typeof openSettings === 'function' ? openSettings : null;
+openSettings = function() {
+  if (previousOpenSettings) previousOpenSettings();
+  else document.getElementById('settingsDialog').showModal();
+  loadRemoteConfig();
+};
 renderComputerFlow = function() {
   const connected = Boolean(lastConnection.online);
   const paired = Boolean(lastConnection.paired);
@@ -1964,6 +2253,24 @@ refresh();
               <div class="apply-row">
                 <span id="applyStatus" class="apply-status"></span>
                 <button id="applyAgentButton" onclick="saveAgentConfig()" data-i18n="apply">Apply</button>
+              </div>
+            </section>
+            <section class="side-card">
+              <h2 data-i18n="remoteDevices">Remote Test Devices</h2>
+              <p class="muted" data-i18n="remoteDevicesDesc">Configure test machines agents may use for logs, database records, Redis state, and statistics.</p>
+              <div id="remoteDeviceList" class="remote-device-list"></div>
+              <div class="remote-device-form">
+                <div class="field">
+                  <label for="remoteConfigJson" data-i18n="remoteConfigJson">JSON config</label>
+                  <textarea id="remoteConfigJson" spellCheck={false}></textarea>
+                </div>
+                <div class="remote-config-actions">
+                  <button class="button-shadow" onclick="loadRemoteConfig()" data-i18n="loadRemoteConfig">Load current config</button>
+                  <button class="button-shadow" onclick="copyRemoteConfig()" data-i18n="copyRemoteConfig">Copy JSON</button>
+                  <button class="primary-pink button-shadow" onclick="saveRemoteConfig()" data-i18n="saveRemoteConfig">Save JSON config</button>
+                </div>
+                <div id="remoteDeviceOutput" class="remote-output" hidden></div>
+                <div id="remoteDeviceStatus" class="apply-status"></div>
               </div>
             </section>
             <section class="side-card">

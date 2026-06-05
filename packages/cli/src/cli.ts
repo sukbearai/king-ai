@@ -531,6 +531,12 @@ function runHostCommandFromCli(request: HostCommandRequest): Promise<HostCommand
   return runHostCommand(request, { recordTimeline: true });
 }
 
+async function printHostCommandResult(request: HostCommandRequest, json: boolean): Promise<void> {
+  const result = await runHostCommandFromCli({ ...request, format: json ? "json" : "text" });
+  console.log(json ? JSON.stringify(result.json ?? result, null, 2) : result.text);
+  if (!result.ok || result.exitCode !== 0) process.exitCode = result.exitCode || 1;
+}
+
 const roleFlag = {
   role: {
     type: String,
@@ -1462,6 +1468,138 @@ const hostTimelineCommand = command({
   console.log(argv.flags.json ? JSON.stringify(result.json, null, 2) : result.text);
 });
 
+const remoteCommonFlags = {
+  json: {
+    type: Boolean,
+    description: "Print structured JSON for host applications"
+  },
+  device: {
+    type: String,
+    description: "Remote test device id or host"
+  },
+  timeout: {
+    type: String,
+    description: "Remote command timeout in milliseconds"
+  },
+  maxOutput: {
+    type: String,
+    description: "Maximum output bytes to keep"
+  }
+};
+
+function remoteInput(flags: { device?: string; timeout?: string; maxOutput?: string }): Record<string, unknown> {
+  return {
+    ...(flags.device ? { device: flags.device } : {}),
+    ...(flags.timeout ? { timeoutMs: flags.timeout } : {}),
+    ...(flags.maxOutput ? { maxOutputBytes: flags.maxOutput } : {})
+  };
+}
+
+const hostRemoteListCommand = command({
+  name: "remote-list",
+  flags: {
+    help: { type: Boolean, alias: "h", description: "Show help" },
+    json: { type: Boolean, description: "Print structured JSON for host applications" }
+  },
+  help: { description: "List configured remote test devices" }
+}, async (argv) => {
+  await printHostCommandResult({ command: "remote-list" }, Boolean(argv.flags.json));
+});
+
+const hostRemoteProbeCommand = command({
+  name: "remote-probe",
+  flags: {
+    help: { type: Boolean, alias: "h", description: "Show help" },
+    ...remoteCommonFlags
+  },
+  help: { description: "Probe SSH connectivity for a remote test device" }
+}, async (argv) => {
+  await printHostCommandResult({ command: "remote-probe", input: remoteInput(argv.flags) }, Boolean(argv.flags.json));
+});
+
+const hostRemoteProfileCommand = command({
+  name: "remote-profile",
+  flags: {
+    help: { type: Boolean, alias: "h", description: "Show help" },
+    ...remoteCommonFlags
+  },
+  help: { description: "Collect a remote test device profile" }
+}, async (argv) => {
+  await printHostCommandResult({ command: "remote-profile", input: remoteInput(argv.flags) }, Boolean(argv.flags.json));
+});
+
+const hostRemoteRunCommand = command({
+  name: "remote-run",
+  flags: {
+    help: { type: Boolean, alias: "h", description: "Show help" },
+    ...remoteCommonFlags,
+    cmd: { type: String, description: "Shell command to run on the remote test device" }
+  },
+  help: { description: "Run a command on a remote test device" }
+}, async (argv) => {
+  if (!argv.flags.cmd) throw new Error("--cmd is required");
+  await printHostCommandResult({ command: "remote-run", input: { ...remoteInput(argv.flags), cmd: argv.flags.cmd } }, Boolean(argv.flags.json));
+});
+
+const hostRemoteLogsCommand = command({
+  name: "remote-logs",
+  flags: {
+    help: { type: Boolean, alias: "h", description: "Show help" },
+    ...remoteCommonFlags,
+    app: { type: String, description: "Configured app name" },
+    path: { type: String, description: "Log file path" },
+    tail: { type: String, description: "Number of lines to tail", default: "200" }
+  },
+  help: { description: "Tail logs on a remote test device" }
+}, async (argv) => {
+  await printHostCommandResult({ command: "remote-logs", input: { ...remoteInput(argv.flags), app: argv.flags.app, path: argv.flags.path, tail: argv.flags.tail } }, Boolean(argv.flags.json));
+});
+
+const hostRemoteFindLogsCommand = command({
+  name: "remote-find-logs",
+  flags: {
+    help: { type: Boolean, alias: "h", description: "Show help" },
+    ...remoteCommonFlags,
+    app: { type: String, description: "Configured app name" },
+    path: { type: String, description: "Log file or directory path" },
+    pattern: { type: String, description: "grep -E pattern to search" },
+    since: { type: String, description: "Human label for the intended time window" },
+    tail: { type: String, description: "Number of matches to keep", default: "200" }
+  },
+  help: { description: "Search logs on a remote test device" }
+}, async (argv) => {
+  if (!argv.flags.pattern) throw new Error("--pattern is required");
+  await printHostCommandResult({ command: "remote-find-logs", input: { ...remoteInput(argv.flags), app: argv.flags.app, path: argv.flags.path, pattern: argv.flags.pattern, since: argv.flags.since, tail: argv.flags.tail } }, Boolean(argv.flags.json));
+});
+
+const hostRemotePgCommand = command({
+  name: "remote-pg",
+  flags: {
+    help: { type: Boolean, alias: "h", description: "Show help" },
+    ...remoteCommonFlags,
+    db: { type: String, description: "Configured database name", default: "default" },
+    sql: { type: String, description: "SQL to execute through the configured psql command" }
+  },
+  help: { description: "Run PostgreSQL SQL on a remote test device" }
+}, async (argv) => {
+  if (!argv.flags.sql) throw new Error("--sql is required");
+  await printHostCommandResult({ command: "remote-pg", input: { ...remoteInput(argv.flags), db: argv.flags.db, sql: argv.flags.sql } }, Boolean(argv.flags.json));
+});
+
+const hostRemoteRedisCommand = command({
+  name: "remote-redis",
+  flags: {
+    help: { type: Boolean, alias: "h", description: "Show help" },
+    ...remoteCommonFlags,
+    name: { type: String, description: "Configured Redis name", default: "default" },
+    cmd: { type: String, description: "Redis command arguments" }
+  },
+  help: { description: "Run Redis command on a remote test device" }
+}, async (argv) => {
+  if (!argv.flags.cmd) throw new Error("--cmd is required");
+  await printHostCommandResult({ command: "remote-redis", input: { ...remoteInput(argv.flags), name: argv.flags.name, cmd: argv.flags.cmd } }, Boolean(argv.flags.json));
+});
+
 const hostWorkflowCommand = command({
   name: "workflow",
   parameters: ["<action>"],
@@ -1519,7 +1657,7 @@ const hostCommand = command({
     {
       name: `${commandNameFromArgv(process.argv[1])} host`,
       strictFlags: true,
-      commands: [hostStatusCommand, hostServeCommand, hostCommandsCommand, hostRunCommand, hostPlanRunCommand, hostPreflightCommand, hostPrepareRunLayoutCommand, hostSubmitRunCommand, hostRunRequestsCommand, hostRunRequestCommand, hostUpdateRunCommand, hostCancelRunCommand, hostExecuteRunCommand, hostEmitRunEventCommand, hostWatchRunCommand, hostRunResultsCommand, hostRunHeartbeatCommand, hostRunMetaCommand, hostPlanExportCommand, hostExportCommand, hostTimelineCommand, hostPolicyCommand, hostWorkflowCommand],
+      commands: [hostStatusCommand, hostServeCommand, hostCommandsCommand, hostRunCommand, hostPlanRunCommand, hostPreflightCommand, hostPrepareRunLayoutCommand, hostSubmitRunCommand, hostRunRequestsCommand, hostRunRequestCommand, hostUpdateRunCommand, hostCancelRunCommand, hostExecuteRunCommand, hostEmitRunEventCommand, hostWatchRunCommand, hostRunResultsCommand, hostRunHeartbeatCommand, hostRunMetaCommand, hostPlanExportCommand, hostExportCommand, hostTimelineCommand, hostPolicyCommand, hostRemoteListCommand, hostRemoteProbeCommand, hostRemoteProfileCommand, hostRemoteRunCommand, hostRemoteLogsCommand, hostRemoteFindLogsCommand, hostRemotePgCommand, hostRemoteRedisCommand, hostWorkflowCommand],
       help: {
         description: "Host application integration commands"
       }

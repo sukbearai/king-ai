@@ -5,9 +5,11 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { listHostCommands, normalizeHostCommandName, runHostCommand } from "../src/host-control.js";
 
+const EXPECTED_HOST_COMMANDS = ["status", "usage", "expenses", "events", "timeline", "policy", "doctor", "plan-run", "preflight", "prepare-run-layout", "submit-run", "run-requests", "run-request", "update-run", "cancel-run", "execute-run", "task-create", "task-list", "task-update", "agenda", "capsule-create", "capsule-list", "capsule-update", "workflow-create", "workflow-list", "workflow-update", "initiative-create", "handoff-create", "review-create", "decision-create", "artifact-create", "feedback-record", "feedback-list", "feedback-summary", "cron-check", "emit-run-event", "watch-run", "run-results", "run-heartbeat", "run-meta", "plan-export", "export", "compact-ledger", "remote-config-get", "remote-config-save", "remote-list", "remote-save-device", "remote-delete-device", "remote-default-device", "remote-probe", "remote-profile", "remote-run", "remote-logs", "remote-find-logs", "remote-pg", "remote-redis"];
+
 test("host commands expose only low-risk allowlisted actions", () => {
   const commands = listHostCommands();
-  assert.deepEqual(commands.map((entry) => entry.name), ["status", "usage", "expenses", "events", "timeline", "policy", "doctor", "plan-run", "preflight", "prepare-run-layout", "submit-run", "run-requests", "run-request", "update-run", "cancel-run", "execute-run", "task-create", "task-list", "task-update", "agenda", "capsule-create", "capsule-list", "capsule-update", "workflow-create", "workflow-list", "workflow-update", "initiative-create", "handoff-create", "review-create", "decision-create", "artifact-create", "feedback-record", "feedback-list", "feedback-summary", "cron-check", "emit-run-event", "watch-run", "run-results", "run-heartbeat", "run-meta", "plan-export", "export", "compact-ledger"]);
+  assert.deepEqual(commands.map((entry) => entry.name), EXPECTED_HOST_COMMANDS);
   assert.equal(commands.filter((entry) => entry.destructive).map((entry) => entry.name).join(","), "prepare-run-layout,export,compact-ledger");
   assert.equal(normalizeHostCommandName("STATUS"), "status");
   assert.equal(normalizeHostCommandName("restart"), null);

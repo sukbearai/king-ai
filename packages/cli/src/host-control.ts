@@ -34,8 +34,10 @@ import type { RunningEvent, RunningState } from "./service.js";
 import { formatUsageExpenses, formatUsageSummary, listUsageExpenses, summarizeAgentUsage, tokenBudgetFromEnv, usagePricingFromEnv } from "./usage.js";
 import type { UsagePricingRule } from "./usage.js";
 import { buildUsageRuntimeData } from "./runtime-data.js";
+import { deleteRemoteDevice, findRemoteDevice, listRemoteDeviceSummaries, loadRemoteDevicesConfig, normalizeRemoteDevicesConfig, saveRemoteDevicesConfig, setDefaultRemoteDevice, summarizeRemoteDevice, upsertRemoteDevice } from "./remote-devices.js";
+import { formatRemoteDevices, formatRemoteResult, remoteFindLogs, remoteLogs, remotePg, remoteProbe, remoteProfile, remoteRedis, remoteRun } from "./remote-diagnostics.js";
 
-export type HostCommandName = "status" | "usage" | "expenses" | "events" | "timeline" | "policy" | "doctor" | "plan-run" | "preflight" | "prepare-run-layout" | "submit-run" | "run-requests" | "run-request" | "update-run" | "cancel-run" | "execute-run" | "task-create" | "task-list" | "task-update" | "agenda" | "capsule-create" | "capsule-list" | "capsule-update" | "workflow-create" | "workflow-list" | "workflow-update" | "initiative-create" | "handoff-create" | "review-create" | "decision-create" | "artifact-create" | "feedback-record" | "feedback-list" | "feedback-summary" | "cron-check" | "emit-run-event" | "watch-run" | "run-results" | "run-heartbeat" | "run-meta" | "plan-export" | "export" | "compact-ledger";
+export type HostCommandName = "status" | "usage" | "expenses" | "events" | "timeline" | "policy" | "doctor" | "plan-run" | "preflight" | "prepare-run-layout" | "submit-run" | "run-requests" | "run-request" | "update-run" | "cancel-run" | "execute-run" | "task-create" | "task-list" | "task-update" | "agenda" | "capsule-create" | "capsule-list" | "capsule-update" | "workflow-create" | "workflow-list" | "workflow-update" | "initiative-create" | "handoff-create" | "review-create" | "decision-create" | "artifact-create" | "feedback-record" | "feedback-list" | "feedback-summary" | "cron-check" | "emit-run-event" | "watch-run" | "run-results" | "run-heartbeat" | "run-meta" | "plan-export" | "export" | "compact-ledger" | "remote-config-get" | "remote-config-save" | "remote-list" | "remote-save-device" | "remote-delete-device" | "remote-default-device" | "remote-probe" | "remote-profile" | "remote-run" | "remote-logs" | "remote-find-logs" | "remote-pg" | "remote-redis";
 export type HostCommandFormat = "text" | "json";
 
 export interface HostCommandDefinition {
@@ -118,7 +120,20 @@ const COMMANDS: HostCommandDefinition[] = [
   { name: "run-meta", description: "Read prepared host run metadata from a run output.", destructive: false },
   { name: "plan-export", description: "Preview host artifact and repo patch export outputs.", destructive: false },
   { name: "export", description: "Write host artifact and repo patch exports to the output directory.", destructive: true },
-  { name: "compact-ledger", description: "Rewrite the append-only task/capsule/workflow ledgers into merged snapshots.", destructive: true }
+  { name: "compact-ledger", description: "Rewrite the append-only task/capsule/workflow ledgers into merged snapshots.", destructive: true },
+  { name: "remote-config-get", description: "Return the full remote test device JSON config.", destructive: false },
+  { name: "remote-config-save", description: "Replace the full remote test device JSON config.", destructive: false },
+  { name: "remote-list", description: "List configured remote test devices without secrets.", destructive: false },
+  { name: "remote-save-device", description: "Create or update a remote test device in the local config.", destructive: false },
+  { name: "remote-delete-device", description: "Delete a remote test device from the local config.", destructive: false },
+  { name: "remote-default-device", description: "Set the default remote test device.", destructive: false },
+  { name: "remote-probe", description: "Probe SSH connectivity and basic identity on a remote test device.", destructive: false },
+  { name: "remote-profile", description: "Collect a remote test device environment profile.", destructive: false },
+  { name: "remote-run", description: "Run a shell command on a remote test device.", destructive: false },
+  { name: "remote-logs", description: "Tail logs from a remote test device.", destructive: false },
+  { name: "remote-find-logs", description: "Search logs on a remote test device.", destructive: false },
+  { name: "remote-pg", description: "Run a PostgreSQL command on a remote test device.", destructive: false },
+  { name: "remote-redis", description: "Run a Redis command on a remote test device.", destructive: false }
 ];
 
 export function listHostCommands(): HostCommandDefinition[] {
@@ -273,6 +288,93 @@ async function executeHostCommand(request: HostCommandRequest, deps: HostCommand
       exitCode: 0,
       text: formatHostTimeline(events),
       json: { events }
+    };
+  }
+
+  if (command.startsWith("remote-")) {
+    const config = await loadRemoteDevicesConfig();
+    if (command === "remote-config-get") {
+      const input = normalizeRemoteConfigGetInput(request.input);
+      const safeConfig = input.revealSecrets
+        ? config
+        : { ...config, devices: listRemoteDeviceSummaries(config) };
+      return {
+        ok: true,
+        command,
+        exitCode: 0,
+        text: input.revealSecrets ? "remote devices config loaded" : formatRemoteDevices(config),
+        json: { config: safeConfig, defaultDevice: config.defaultDevice, devices: listRemoteDeviceSummaries(config) }
+      };
+    }
+    if (command === "remote-config-save") {
+      const next = await saveRemoteDevicesConfig(normalizeRemoteDevicesConfig(request.input));
+      return {
+        ok: true,
+        command,
+        exitCode: 0,
+        text: `remote devices config saved: ${next.devices.length} device${next.devices.length === 1 ? "" : "s"}`,
+        json: { config: next, defaultDevice: next.defaultDevice, devices: listRemoteDeviceSummaries(next) }
+      };
+    }
+    if (command === "remote-list") {
+      return {
+        ok: true,
+        command,
+        exitCode: 0,
+        text: formatRemoteDevices(config),
+        json: { defaultDevice: config.defaultDevice, devices: listRemoteDeviceSummaries(config) }
+      };
+    }
+    if (command === "remote-save-device") {
+      const input = normalizeRemoteSaveDeviceInput(request.input);
+      const next = await saveRemoteDevicesConfig(upsertRemoteDevice(config, input));
+      const device = findRemoteDevice(next, input.id);
+      return {
+        ok: true,
+        command,
+        exitCode: 0,
+        text: `remote device saved: ${device.id}`,
+        json: { defaultDevice: next.defaultDevice, device: summarizeRemoteDevice(device), devices: listRemoteDeviceSummaries(next) }
+      };
+    }
+    if (command === "remote-delete-device") {
+      const input = normalizeRemoteDeviceIdInput(request.input);
+      const next = await saveRemoteDevicesConfig(deleteRemoteDevice(config, input.id));
+      return {
+        ok: true,
+        command,
+        exitCode: 0,
+        text: `remote device deleted: ${input.id}`,
+        json: { defaultDevice: next.defaultDevice, devices: listRemoteDeviceSummaries(next) }
+      };
+    }
+    if (command === "remote-default-device") {
+      const input = normalizeRemoteDeviceIdInput(request.input);
+      const next = await saveRemoteDevicesConfig(setDefaultRemoteDevice(config, input.id));
+      return {
+        ok: true,
+        command,
+        exitCode: 0,
+        text: `default remote device: ${input.id}`,
+        json: { defaultDevice: next.defaultDevice, devices: listRemoteDeviceSummaries(next) }
+      };
+    }
+    const remoteDeps = { config };
+    const result =
+      command === "remote-probe" ? await remoteProbe(request.input, remoteDeps)
+        : command === "remote-profile" ? await remoteProfile(request.input, remoteDeps)
+          : command === "remote-run" ? await remoteRun(request.input, remoteDeps)
+            : command === "remote-logs" ? await remoteLogs(request.input, remoteDeps)
+              : command === "remote-find-logs" ? await remoteFindLogs(request.input, remoteDeps)
+                : command === "remote-pg" ? await remotePg(request.input, remoteDeps)
+                  : await remoteRedis(request.input, remoteDeps);
+    return {
+      ok: result.ok,
+      command,
+      exitCode: result.exitCode ?? (result.ok ? 0 : 1),
+      text: formatRemoteResult(result),
+      json: result,
+      error: result.error
     };
   }
 
@@ -723,6 +825,26 @@ function normalizeTimelineInput(value: unknown): { limit?: number } {
   const limit = typeof raw === "number" ? raw : Number.parseInt(String(raw), 10);
   if (!Number.isFinite(limit) || limit < 1) throw new Error("timeline limit must be a positive integer");
   return { limit };
+}
+
+function normalizeRemoteSaveDeviceInput(value: unknown): Record<string, unknown> & { id: string } {
+  if (!value || typeof value !== "object") throw new Error("remote-save-device input must include a device object");
+  const input = value as Record<string, unknown>;
+  if (typeof input.id !== "string" || !input.id.trim()) throw new Error("remote device id is required");
+  return { ...input, id: input.id.trim() };
+}
+
+function normalizeRemoteConfigGetInput(value: unknown): { revealSecrets: boolean } {
+  if (!value) return { revealSecrets: false };
+  if (typeof value !== "object") throw new Error("remote-config-get input must be an object");
+  return { revealSecrets: (value as { revealSecrets?: unknown }).revealSecrets === true };
+}
+
+function normalizeRemoteDeviceIdInput(value: unknown): { id: string } {
+  if (!value || typeof value !== "object") throw new Error("remote device input must include an id");
+  const id = (value as { id?: unknown }).id;
+  if (typeof id !== "string" || !id.trim()) throw new Error("remote device id is required");
+  return { id: id.trim() };
 }
 
 function normalizeRunInput(value: unknown): HostRunSpecInput {
