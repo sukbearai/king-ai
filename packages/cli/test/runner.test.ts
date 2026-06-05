@@ -14,7 +14,6 @@ import {
   isPoisonedTranscript,
   isWakeStreamAuthFailure,
   mustResetSession,
-  parseCorrectionResult,
   parseWakeEventInfo,
   selectSteerMessage,
   Semaphore,
@@ -36,32 +35,22 @@ test("parseWakeEventInfo extracts conversation and delivery latency", () => {
   assert.deepEqual(parseWakeEventInfo(undefined, 2000), {
     conversationId: null,
     agentId: null,
-    correctionRequestId: null,
     sentAt: null,
     deliveryLatencyMs: null
   });
-  assert.deepEqual(parseWakeEventInfo(JSON.stringify({ conversationId: "demo-convo", agentId: "dev", correctionRequestId: "correction-1", at: 1500 }), 2000), {
+  assert.deepEqual(parseWakeEventInfo(JSON.stringify({ conversationId: "demo-convo", agentId: "dev", at: 1500 }), 2000), {
     conversationId: "demo-convo",
     agentId: "dev",
-    correctionRequestId: "correction-1",
     sentAt: 1500,
     deliveryLatencyMs: 500
   });
   assert.deepEqual(parseWakeEventInfo("not json", 2000), {
     conversationId: null,
     agentId: null,
-    correctionRequestId: null,
     sentAt: null,
     deliveryLatencyMs: null
   });
   assert.equal(parseWakeEventInfo(JSON.stringify({ at: 2500 }), 2000).deliveryLatencyMs, 0);
-});
-
-test("parseCorrectionResult accepts strict or fenced JSON and falls back safely", () => {
-  assert.equal(parseCorrectionResult('{"corrected":"hello world"}', "helo wrld"), "hello world");
-  assert.equal(parseCorrectionResult('```json\n{"corrected":"fixed"}\n```', "raw"), "fixed");
-  assert.equal(parseCorrectionResult("not json", "keep this"), "keep this");
-  assert.equal(parseCorrectionResult('{"corrected":""}', "keep this"), "keep this");
 });
 
 test("shouldHandleWakeEvent keeps targeted wake events on the owning agent", () => {
