@@ -15,6 +15,30 @@ export function renderPage(styles: string, clientScript: string): string {
       font-size: 11px;
       font-weight: 800;
     }
+    .assist-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+    }
+    .assist-link {
+      min-height: 34px;
+      border: 1px solid var(--line);
+      background: #080808;
+      color: #a7d66d;
+      padding: 8px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+    }
+    .assist-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }
     .computer-glyph {
       position: relative;
       width: 17px;
@@ -802,11 +826,17 @@ export function renderPage(styles: string, clientScript: string): string {
     body.mobile-layout .computer-flow {
       padding: 16px;
     }
+    body.mobile-layout .assist-row {
+      grid-template-columns: 1fr;
+    }
   `;
   const enhancementScript = `
 function shellQuote(value) {
   return "'" + String(value).replace(/'/g, "'\\''") + "'";
 }
+const ASSIST_PARAMS = new URLSearchParams(location.search);
+const assistToken = ASSIST_PARAMS.get('assist') || '';
+const assistTenant = ASSIST_PARAMS.get('tenant') || '';
 const LANG_KEY = 'king:lang';
 let currentLang = localStorage.getItem(LANG_KEY) || 'zh';
 const TRANSLATIONS = {
@@ -828,6 +858,13 @@ const TRANSLATIONS = {
     saving: '保存中...',
     saved: '已保存',
     addComputer: '添加电脑',
+    remoteAssist: '远程协助',
+    remoteAssistDesc: '生成一个可多人使用的远程协助链接，同事打开后可以在这个窗口里发消息、看任务和处理决策；链接长期有效，直到你撤销。',
+    createAssistLink: '生成链接',
+    revokeAssistLink: '撤销链接',
+    assistNoLink: '尚未生成远程协助链接',
+    assistActive: '链接已启用，可多人使用。',
+    assistCopyUnavailable: '完整链接只会在生成时显示；请重新生成链接后复制。',
     newWindow: '新窗口',
     windowName: '名称',
     windowMode: '协作方式',
@@ -934,6 +971,13 @@ const TRANSLATIONS = {
     saving: 'Saving...',
     saved: 'Saved',
     addComputer: 'Add computer',
+    remoteAssist: 'Remote Assist',
+    remoteAssistDesc: 'Create one reusable remote assist link so teammates can chat, view tasks, and resolve decisions in this workspace. The link stays valid until revoked.',
+    createAssistLink: 'Create link',
+    revokeAssistLink: 'Revoke link',
+    assistNoLink: 'No remote assist link yet',
+    assistActive: 'Link enabled; multiple people can use it.',
+    assistCopyUnavailable: 'The full link is only shown when created. Create a new link to copy it.',
     newWindow: 'New Window',
     windowName: 'Name',
     windowMode: 'Collaboration',
@@ -1030,6 +1074,15 @@ formatTime = function(value) {
 function t(key) {
   return (TRANSLATIONS[currentLang] && TRANSLATIONS[currentLang][key]) || TRANSLATIONS.en[key] || key;
 }
+const baseRequest = request;
+request = async function(path, options) {
+  const next = options ? { ...options } : {};
+  const headers = new Headers(next.headers || {});
+  if (assistToken) headers.set('X-King-Assist-Token', assistToken);
+  if (assistTenant) headers.set('X-King-Tenant', assistTenant);
+  next.headers = headers;
+  return baseRequest(path, next);
+};
 function applyLanguage() {
   document.documentElement.lang = currentLang === 'zh' ? 'zh-CN' : 'en';
   document.querySelectorAll('[data-i18n]').forEach(function(node) {
@@ -1127,6 +1180,72 @@ function copyText(value, button) {
   button.textContent = t('copied');
   setTimeout(function() { button.textContent = old || t('copy'); }, 900);
 }
+const REMOTE_ASSIST_URL_KEY = 'king:remoteAssistUrl';
+let remoteAssistUrl = localStorage.getItem(REMOTE_ASSIST_URL_KEY) || '';
+function setRemoteAssistUrl(value) {
+  remoteAssistUrl = value || '';
+  if (remoteAssistUrl) localStorage.setItem(REMOTE_ASSIST_URL_KEY, remoteAssistUrl);
+  else localStorage.removeItem(REMOTE_ASSIST_URL_KEY);
+}
+function remoteAssistUrlMatchesGrant(value, grant) {
+  if (!value || !grant || !grant.tokenPreview) return false;
+  try {
+    const token = new URL(value, location.origin).searchParams.get('assist') || '';
+    return token && grant.tokenPreview === token.slice(0, 8) + '...' + token.slice(-4);
+  } catch (error) {
+    return false;
+  }
+}
+function copyRemoteAssistLink(button) {
+  if (!remoteAssistUrl) {
+    const statusEl = document.getElementById('assistStatus');
+    if (statusEl) statusEl.textContent = t('assistCopyUnavailable');
+    return;
+  }
+  copyText(remoteAssistUrl, button);
+}
+async function createRemoteAssistLink() {
+  const button = document.getElementById('createAssistButton');
+  if (button) {
+    button.disabled = true;
+    button.textContent = t('saving');
+  }
+  try {
+    const result = await request('/gui/remote-assist/share', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    setRemoteAssistUrl(result.url || '');
+    await navigator.clipboard.writeText(remoteAssistUrl).catch(function() {});
+    await refresh();
+    renderRemoteAssist(window.__lastSummary || {});
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = t('createAssistLink');
+    }
+  }
+}
+async function revokeRemoteAssistLink() {
+  await request('/gui/remote-assist/revoke', { method: 'POST' });
+  setRemoteAssistUrl('');
+  await refresh();
+  renderRemoteAssist(window.__lastSummary || {});
+}
+function renderRemoteAssist(summary) {
+  const linkEl = document.getElementById('assistLink');
+  const statusEl = document.getElementById('assistStatus');
+  const revokeButton = document.getElementById('revokeAssistButton');
+  const copyButton = document.getElementById('copyAssistButton');
+  if (!linkEl || !statusEl || !revokeButton || !copyButton) return;
+  const grant = summary.remoteAssist || { active: false };
+  if (!grant.active) setRemoteAssistUrl('');
+  else if (remoteAssistUrl && !remoteAssistUrlMatchesGrant(remoteAssistUrl, grant)) setRemoteAssistUrl('');
+  linkEl.textContent = remoteAssistUrl || (grant.active ? '•••• ' + grant.tokenPreview : t('assistNoLink'));
+  statusEl.textContent = grant.active ? t('assistActive') : '';
+  revokeButton.disabled = !grant.active;
+  copyButton.disabled = !remoteAssistUrl;
+}
 renderComputerFlow = function() {
   const connected = Boolean(lastConnection.online);
   const paired = Boolean(lastConnection.paired);
@@ -1171,25 +1290,12 @@ activeConversationStatus = function(summary, active) {
   if (typing) return t('agentTyping');
   if (thinking) return t('agentThinking');
   if ((active.unread || 0) > 0) return t('waitingAgent');
-  return conversationTeamLabel(summary, active);
+  return '';
 };
 function agentDisplayName(summary, id) {
   const agents = summary.agents || [];
   const agent = agents.find(function(row) { return row.id === id; });
   return agent && (agent.name || agent.id) || id;
-}
-function conversationTeamLabel(summary, active) {
-  const snapshot = active.teamSnapshot || {};
-  const mode = snapshot.mode || active.teamMode || 'team';
-  const snapshotAgents = snapshot.agents || [];
-  const ids = snapshot.teamAgentIds && snapshot.teamAgentIds.length ? snapshot.teamAgentIds : active.teamAgentIds && active.teamAgentIds.length ? active.teamAgentIds : ['king-ceo', 'dev', 'reviewer', 'tester', 'ops', 'researcher', 'doc-writer'];
-  const names = ids.map(function(id) {
-    const agent = snapshotAgents.find(function(row) { return row.id === id; });
-    return agent && (agent.name || agent.id) || agentDisplayName(summary, id);
-  }).join(' + ');
-  if (mode === 'single') return currentLang === 'zh' ? '单 Agent：' + names + ' 负责回复' : 'Single agent: ' + names + ' replies';
-  if (mode === 'custom') return currentLang === 'zh' ? '自定义团队：' + names : 'Custom team: ' + names;
-  return currentLang === 'zh' ? '默认团队：' + names : 'Default team: ' + names;
 }
 let taskFilterMode = localStorage.getItem('king:taskFilter') || 'all';
 function setTaskFilter(mode) {
@@ -1639,6 +1745,7 @@ renderSummary = function(summary) {
   window.__lastSummary = summary;
   baseRenderSummary(summary);
   renderTeamStrip(summary);
+  renderRemoteAssist(summary);
   if (summary.pairingLocator) {
     pairCommandPrimary = 'king agent computer --pair ' + shellQuote(summary.pairingLocator);
     pairCommandStart = 'king agent computer';
@@ -1789,7 +1896,7 @@ refresh();
                 <div class="hash">#</div>
                 <div>
                   <div class="channel-name">all</div>
-                  <div class="channel-desc" id="routeSummary" data-i18n="channelDesc">General channel for all members</div>
+                  <div class="channel-desc" id="routeSummary"></div>
                 </div>
               </div>
               <div class="top-actions">
@@ -1857,6 +1964,19 @@ refresh();
               <div class="apply-row">
                 <span id="applyStatus" class="apply-status"></span>
                 <button id="applyAgentButton" onclick="saveAgentConfig()" data-i18n="apply">Apply</button>
+              </div>
+            </section>
+            <section class="side-card">
+              <h2 data-i18n="remoteAssist">Remote Assist</h2>
+              <p class="muted" data-i18n="remoteAssistDesc">Create one reusable remote assist link so teammates can chat, view tasks, and resolve decisions in this workspace. The link stays valid until revoked.</p>
+              <div class="assist-row">
+                <div id="assistLink" class="assist-link">No remote assist link yet</div>
+                <button id="copyAssistButton" class="button-shadow" onclick="copyRemoteAssistLink(this)" data-i18n="copy">Copy</button>
+              </div>
+              <div id="assistStatus" class="apply-status"></div>
+              <div class="assist-actions">
+                <button id="revokeAssistButton" class="button-shadow" onclick="revokeRemoteAssistLink()" data-i18n="revokeAssistLink">Revoke link</button>
+                <button id="createAssistButton" class="primary-pink button-shadow" onclick="createRemoteAssistLink()" data-i18n="createAssistLink">Create link</button>
               </div>
             </section>
             <div class="settings-actions">

@@ -8,6 +8,7 @@
     "test": "node --test dist/test/*.test.js",
     "verify": "pnpm build && pnpm test",
     "dev": "wrangler dev --config wrangler.toml",
+    "dev:lan": "wrangler dev --config wrangler.toml --ip 0.0.0.0 --port 8787",
     "deploy": "wrangler deploy --config wrangler.toml"
   },
   "dependencies": {

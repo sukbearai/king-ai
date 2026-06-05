@@ -10,6 +10,7 @@
     "verify": "pnpm build && pnpm test",
     "dev": "pnpm --filter @suwujs/king dev",
     "gui:dev": "pnpm --filter @king/gui-worker dev",
+    "gui:dev:lan": "pnpm --filter @king/gui-worker dev:lan",
     "gui:deploy": "pnpm --filter @king/gui-worker deploy"
   },
   "packageManager": "pnpm@9.15.0",

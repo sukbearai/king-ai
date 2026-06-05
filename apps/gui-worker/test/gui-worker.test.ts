@@ -168,6 +168,89 @@ test("gui uses Better Auth user identity as tenant", async () => {
   assert.deepEqual(summary.currentUser, { id: "github-1", email: "octo@example.com", name: "Octo" });
 });
 
+test("gui remote assist link grants reusable tenant access without GitHub login", async () => {
+  const bindings = env(undefined, {
+    AUTH_DB: {} as D1Database,
+    BETTER_AUTH_SECRET: "test-secret-test-secret-test-secret",
+    GITHUB_CLIENT_ID: "github-client",
+    GITHUB_CLIENT_SECRET: "github-secret",
+    KING_TEST_AUTH_USER: "1"
+  });
+  const ownerHeaders = {
+    "X-King-Test-User": JSON.stringify({ id: "github-1", email: "octo@example.com", name: "Octo" })
+  };
+
+  const blocked = await worker.fetch(new Request("https://gui/gui/state"), bindings);
+  assert.equal(blocked.status, 401);
+
+  const shared = await json<{ url: string; remoteAssist: { active: boolean; tokenPreview: string; createdAt: number; uses: number } }>(
+    await worker.fetch(new Request("https://gui/gui/remote-assist/share", {
+      method: "POST",
+      headers: ownerHeaders
+    }), bindings)
+  );
+  assert.match(shared.url, /^https:\/\/gui\/\?/);
+  assert.match(shared.url, /tenant=user-octo-example.com/);
+  assert.match(shared.url, /assist=/);
+  assert.equal(shared.remoteAssist.active, true);
+  assert.ok(shared.remoteAssist.createdAt <= Date.now());
+
+  const page = await worker.fetch(new Request(shared.url), bindings);
+  assert.equal(page.status, 200);
+  assert.match(await page.text(), /Remote Assist/);
+
+  const assistSummary = await json<{ tenantId: string; pairingCode?: string; pairingLocator?: string; access?: { remoteAssist?: boolean }; remoteAssist?: { active?: boolean } }>(
+    await worker.fetch(new Request(shared.url.replace("https://gui/", "https://gui/gui/summary")), bindings)
+  );
+  assert.equal(assistSummary.tenantId, "user-octo-example.com");
+  assert.equal(assistSummary.access?.remoteAssist, true);
+  assert.equal(assistSummary.remoteAssist?.active, true);
+  assert.equal(assistSummary.pairingCode, undefined);
+  assert.equal(assistSummary.pairingLocator, undefined);
+
+  const assistState = await json<Record<string, unknown>>(
+    await worker.fetch(new Request(shared.url.replace("https://gui/", "https://gui/gui/state")), bindings)
+  );
+  assert.equal("deviceToken" in assistState, false);
+  assert.equal("runtimeToken" in assistState, false);
+  assert.equal("runtimeTokens" in assistState, false);
+  assert.equal("pairingCode" in assistState, false);
+
+  await json<{ ok: true }>(await worker.fetch(new Request(shared.url.replace("https://gui/", "https://gui/gui/message"), {
+    method: "POST",
+    body: JSON.stringify({ body: "from teammate one" })
+  }), bindings));
+  await json<{ ok: true }>(await worker.fetch(new Request(shared.url.replace("https://gui/", "https://gui/gui/message"), {
+    method: "POST",
+    body: JSON.stringify({ body: "from teammate two" })
+  }), bindings));
+  const ownerState = await json<{ messages: { body: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state", { headers: ownerHeaders }), bindings)
+  );
+  assert.equal(ownerState.messages.some((message) => message.body === "from teammate one"), true);
+  assert.equal(ownerState.messages.some((message) => message.body === "from teammate two"), true);
+
+  const cannotShare = await worker.fetch(new Request(shared.url.replace("https://gui/", "https://gui/gui/remote-assist/share"), {
+    method: "POST",
+    body: JSON.stringify({})
+  }), bindings);
+  assert.equal(cannotShare.status, 403);
+  const cannotExport = await worker.fetch(new Request(shared.url.replace("https://gui/", "https://gui/gui/export-state")), bindings);
+  assert.equal(cannotExport.status, 403);
+  const cannotConfig = await worker.fetch(new Request(shared.url.replace("https://gui/", "https://gui/gui/agent-config"), {
+    method: "POST",
+    body: JSON.stringify({ engine: "codex" })
+  }), bindings);
+  assert.equal(cannotConfig.status, 403);
+
+  await json<{ ok: true }>(await worker.fetch(new Request("https://gui/gui/remote-assist/revoke", {
+    method: "POST",
+    headers: ownerHeaders
+  }), bindings));
+  const revoked = await worker.fetch(new Request(shared.url.replace("https://gui/", "https://gui/gui/state")), bindings);
+  assert.equal(revoked.status, 401);
+});
+
 test("gui messages use the authenticated user display name", async () => {
   const bindings = env(undefined, { KING_TEST_AUTH_USER: "1" });
   const headers = {
@@ -1390,6 +1473,16 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /Waiting for computer to connect/);
   assert.match(html, /Waiting for it to come online/);
   assert.match(html, /Apply/);
+  assert.match(html, /Remote Assist/);
+  assert.match(html, /const REMOTE_ASSIST_URL_KEY = 'king:remoteAssistUrl'/);
+  assert.match(html, /function copyRemoteAssistLink/);
+  assert.match(html, /function remoteAssistUrlMatchesGrant/);
+  assert.match(html, /token\.slice\(0, 8\) \+ '\.\.\.' \+ token\.slice\(-4\)/);
+  assert.match(html, /remoteAssistUrlMatchesGrant\(remoteAssistUrl, grant\)/);
+  assert.match(html, /copyButton\.disabled = !remoteAssistUrl/);
+  assert.match(html, /setRemoteAssistUrl\(result\.url \|\| ''\)/);
+  assert.match(html, /id="copyAssistButton"/);
+  assert.doesNotMatch(html, /onclick="copyText\(remoteAssistUrl, this\)"/);
   assert.match(html, /Add computer/);
   assert.match(html, /\/gui\/summary/);
   assert.match(html, /showPanel\((?:'|&#39;)tasks(?:'|&#39;)\)/);
@@ -1437,14 +1530,14 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /body\.mobile-layout \.composer-tools[\s\S]*bottom:\s*calc\(100% \+ 8px\)/);
   assert.doesNotMatch(html, /body\.mobile-layout \.composer-tools[\s\S]*position:\s*static/);
   assert.doesNotMatch(html, /let shouldStickToBottom = true;[\s\S]*let shouldStickToBottom = true;/);
-  assert.match(html, /function conversationTeamLabel/);
+  assert.match(html, /activeConversationStatus = function/);
   assert.match(html, /defaultTeamDesc: '7 个 agent'/);
   assert.match(html, /defaultTeamDesc: '7 agents'/);
-  assert.match(html, /单 Agent：/);
-  assert.match(html, /默认团队：/);
-  assert.match(html, /自定义团队：/);
-  assert.match(html, /active\.teamMode/);
-  assert.match(html, /active\.teamAgentIds/);
+  assert.doesNotMatch(html, /单 Agent：/);
+  assert.doesNotMatch(html, /默认团队：/);
+  assert.doesNotMatch(html, /自定义团队：/);
+  assert.doesNotMatch(html, /Default team:/);
+  assert.doesNotMatch(html, /data-i18n="channelDesc"/);
   assert.match(html, /summary\.agents/);
   assert.match(html, /summary\.activeAgents/);
   assert.doesNotMatch(html, /onclick="editActiveConversationTeam\(\)"/);
