@@ -1,6 +1,7 @@
 /// <reference types="@cloudflare/workers-types" />
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import worker, { GuiState } from "../src/index.js";
 
@@ -255,6 +256,11 @@ test("gui remote assist link grants reusable tenant access without GitHub login"
   assert.equal(cannotShare.status, 403);
   const cannotExport = await worker.fetch(new Request(shared.url.replace("https://gui/", "https://gui/gui/export-state")), bindings);
   assert.equal(cannotExport.status, 403);
+  const cannotReset = await worker.fetch(new Request(shared.url.replace("https://gui/", "https://gui/gui/reset-state"), {
+    method: "POST",
+    body: JSON.stringify({})
+  }), bindings);
+  assert.equal(cannotReset.status, 403);
   const cannotConfig = await worker.fetch(new Request(shared.url.replace("https://gui/", "https://gui/gui/agent-config"), {
     method: "POST",
     body: JSON.stringify({ engine: "codex" })
@@ -1445,6 +1451,22 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /function isLowSignalTaskText\(value, task\)/);
   assert.match(html, /\^Handle the human request in/);
   assert.match(html, /function taskCardHtml\(task\)/);
+  assert.match(html, /id="taskChatDialog"/);
+  assert.match(html, /class="task-chat-dialog"/);
+  assert.match(html, /function openTaskChat\(taskId\)/);
+  assert.match(html, /function closeTaskChat\(\)/);
+  assert.match(html, /function taskChatRows\(task\)/);
+  assert.match(html, /shouldRenderChatMessage\(message\)/);
+  assert.match(html, /function taskChatMessageHtml\(message\)/);
+  assert.match(html, /function taskChatAuthorName\(message\)/);
+  assert.match(html, /function taskChatInitial\(message, author\)/);
+  assert.match(html, /task-chat-body \.message-list/);
+  assert.match(html, /'<article class="post"><div class="avatar">'/);
+  assert.doesNotMatch(html, /task-chat-message/);
+  assert.doesNotMatch(html, /task-chat-content/);
+  assert.match(html, /onclick="openTaskChat\(&quot;'/);
+  assert.match(html, /taskOpenChat: '查看聊天'/);
+  assert.match(html, /taskOpenChat: 'View chat'/);
   assert.match(html, /function latestTaskEvent\(task\)/);
   assert.match(html, /message\.payload && message\.payload\.taskEventType/);
   assert.match(html, /renderTasks = function\(state\)/);
@@ -1496,6 +1518,13 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /Connect Computer/);
   assert.match(html, /First-time pairing/);
   assert.match(html, /Already paired/);
+  assert.match(html, /Claude Code or Codex CLI/);
+  assert.match(html, /Claude Code 或 Codex CLI/);
+  assert.doesNotMatch(html, /Kimi CLI/);
+  assert.doesNotMatch(html, /Copilot CLI/);
+  assert.doesNotMatch(html, /Cursor CLI/);
+  assert.doesNotMatch(html, /Gemini CLI/);
+  assert.doesNotMatch(html, /OpenCode/);
   assert.match(html, /Waiting for computer to connect/);
   assert.match(html, /Waiting for it to come online/);
   assert.match(html, /Apply/);
@@ -1509,6 +1538,15 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /setRemoteAssistUrl\(result\.url \|\| ''\)/);
   assert.match(html, /id="copyAssistButton"/);
   assert.doesNotMatch(html, /onclick="copyText\(remoteAssistUrl, this\)"/);
+  assert.match(html, /id="resetAccountButton"/);
+  assert.match(html, /class="side-card danger-card"/);
+  assert.match(html, /function resetCurrentAccountData\(\)/);
+  assert.match(html, /await request\('\/gui\/reset-state', \{ method: 'POST' \}\)/);
+  assert.match(html, /dataResetTitle: '重新开始'/);
+  assert.match(html, /dataResetButton: '清除当前账号数据'/);
+  assert.match(html, /dataResetConfirm: '再次点击确认清除'/);
+  assert.match(html, /dataResetTitle: 'Start over'/);
+  assert.match(html, /localStorage\.removeItem\('king:addComputerDismissed'\)/);
   assert.match(html, /Add computer/);
   assert.match(html, /\/gui\/summary/);
   assert.match(html, /showPanel\((?:'|&#39;)tasks(?:'|&#39;)\)/);
@@ -3094,4 +3132,59 @@ test("gui bridges host workflow decisions when a host url is configured", async 
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+test("gui auto uses the local host bridge for localhost development only", async () => {
+  const calls: { url: string; command?: string }[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url === "http://127.0.0.1:8799/commands/run") {
+      const body = init && typeof init.body === "string" ? JSON.parse(init.body) as { command?: string } : {};
+      calls.push({ url, command: body.command });
+      return new Response(JSON.stringify({ ok: true, command: body.command, exitCode: 0, text: "", json: { devices: [] } }), {
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+    return new Response("not found", { status: 404 });
+  }) as typeof fetch;
+
+  try {
+    const local = await json<{ configured: boolean }>(
+      await worker.fetch(new Request("http://localhost:8787/gui/remote-devices"), env())
+    );
+    assert.equal(local.configured, true);
+    assert.deepEqual(calls.map((call) => call.command), ["remote-list"]);
+
+    const remote = await worker.fetch(new Request("https://gui/gui/remote-devices"), env());
+    assert.equal(remote.status, 404);
+    const remoteBody = await remote.json() as { configured?: boolean; error?: string };
+    assert.equal(remoteBody.configured, false);
+    assert.equal(remoteBody.error, "host bridge not configured");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("gui dev helper strips package-manager argument separators", () => {
+  const result = spawnSync(process.execPath, ["scripts/dev-with-host.mjs", "--", "--port", "8787"], {
+    cwd: process.cwd(),
+    env: { ...process.env, KING_GUI_DEV_DRY_RUN: "1" },
+    encoding: "utf8"
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout) as { hostArgs: string[]; wranglerArgs: string[] };
+  assert.deepEqual(payload.hostArgs, ["--filter", "@suwujs/king", "dev", "host", "serve"]);
+  assert.deepEqual(payload.wranglerArgs, ["exec", "wrangler", "dev", "--config", "wrangler.toml", "--port", "8787"]);
+});
+
+test("root dev helper strips package-manager argument separators", () => {
+  const result = spawnSync(process.execPath, ["../../scripts/dev-cli.mjs", "--", "host", "status", "--json"], {
+    cwd: process.cwd(),
+    env: { ...process.env, KING_CLI_DEV_DRY_RUN: "1" },
+    encoding: "utf8"
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout) as { cliArgs: string[] };
+  assert.deepEqual(payload.cliArgs, ["--filter", "@suwujs/king", "dev", "host", "status", "--json"]);
 });

@@ -8,7 +8,7 @@
     "build": "pnpm --filter @suwujs/king build && pnpm --filter @king/gui-worker build",
     "test": "pnpm --filter @suwujs/king test && pnpm --filter @king/gui-worker test",
     "verify": "pnpm build && pnpm test",
-    "dev": "pnpm --filter @suwujs/king dev",
+    "dev": "node scripts/dev-cli.mjs",
     "gui:dev": "pnpm --filter @king/gui-worker dev",
     "gui:dev:lan": "pnpm --filter @king/gui-worker dev:lan",
     "gui:deploy": "pnpm --filter @king/gui-worker deploy"

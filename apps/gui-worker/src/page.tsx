@@ -39,6 +39,37 @@ export function renderPage(styles: string, clientScript: string): string {
       justify-content: flex-end;
       flex-wrap: wrap;
     }
+    .danger-card {
+      border-color: #d65252;
+      background: #fff8f8;
+    }
+    .danger-card h2 {
+      color: #b32929;
+    }
+    .danger-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }
+    .danger-button {
+      background: #d65252;
+      color: #fff;
+      border-color: #8f1f1f;
+    }
+    .danger-button:hover {
+      background: #b32929;
+    }
+    .danger-button:disabled {
+      opacity: 0.68;
+      cursor: wait;
+    }
+    .danger-status {
+      min-height: 18px;
+      color: #b32929;
+      font-size: 11px;
+      font-weight: 900;
+    }
     .remote-device-list {
       display: grid;
       gap: 6px;
@@ -724,6 +755,25 @@ export function renderPage(styles: string, clientScript: string): string {
       background: #fff8df;
       padding: 12px;
     }
+    .task-card-action {
+      width: 100%;
+      min-height: 0;
+      display: grid;
+      gap: 8px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+    .task-card-action:hover {
+      background: transparent;
+    }
+    .task-card-action:focus-visible {
+      outline: 2px solid var(--line);
+      outline-offset: 3px;
+    }
     .task-card.done {
       background: var(--canvas);
     }
@@ -786,6 +836,61 @@ export function renderPage(styles: string, clientScript: string): string {
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 11px;
       font-weight: 800;
+    }
+    .task-card-footer {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 8px;
+      margin-top: 2px;
+    }
+    .task-chat-open {
+      min-height: 24px;
+      padding: 3px 8px;
+      border-color: var(--soft-line);
+      background: #fff;
+      color: var(--ink);
+      font-size: 11px;
+      font-weight: 900;
+    }
+    .task-chat-dialog {
+      width: min(820px, calc(100vw - 24px));
+    }
+    .task-chat-title {
+      display: grid;
+      gap: 3px;
+      min-width: 0;
+    }
+    .task-chat-title h2 {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .task-chat-subtitle {
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 10px;
+      font-weight: 800;
+    }
+    .task-chat-body {
+      display: block;
+      padding: 14px 18px 18px;
+      max-height: min(620px, calc(100vh - 118px));
+      background: var(--canvas);
+    }
+    .task-chat-body .message-list {
+      display: grid;
+      gap: 11px;
+      width: 100%;
+      padding: 0;
+    }
+    .task-chat-body .post {
+      padding: 8px;
+      border: 1px solid transparent;
+    }
+    .task-chat-body .system-line {
+      text-align: center;
+      padding: 4px 0;
     }
     .task-empty {
       display: grid;
@@ -875,6 +980,9 @@ export function renderPage(styles: string, clientScript: string): string {
       gap: 7px;
       padding: 10px;
     }
+    body.mobile-layout .task-card-action {
+      gap: 7px;
+    }
     body.mobile-layout .task-card-top {
       align-items: flex-start;
     }
@@ -894,6 +1002,12 @@ export function renderPage(styles: string, clientScript: string): string {
     body.mobile-layout .task-card-meta {
       gap: 5px;
       font-size: 10px;
+    }
+    body.mobile-layout .task-chat-dialog {
+      width: calc(100vw - 12px);
+    }
+    body.mobile-layout .task-chat-body {
+      max-height: calc(100vh - 92px);
     }
     body.mobile-layout dialog {
       width: calc(100vw - 22px);
@@ -952,6 +1066,13 @@ const TRANSLATIONS = {
     assistNoLink: '尚未生成远程协助链接',
     assistActive: '链接已启用，可多人使用。',
     assistCopyUnavailable: '完整链接只会在生成时显示；请重新生成链接后复制。',
+    dataResetTitle: '重新开始',
+    dataResetDesc: '清除当前账号下的所有窗口、消息、任务、文件、决策、配对信息和运行记录。操作后会生成新的配对码。',
+    dataResetButton: '清除当前账号数据',
+    dataResetConfirm: '再次点击确认清除',
+    dataResetting: '正在清除...',
+    dataResetDone: '已清除，可以重新开始。',
+    dataResetFailed: '清除失败，请稍后重试。',
     newWindow: '新窗口',
     windowName: '名称',
     windowMode: '协作方式',
@@ -992,6 +1113,11 @@ const TRANSLATIONS = {
     taskFilterActive: '进行中',
     taskFilterDone: '已完成',
     taskEmpty: '暂无任务',
+    taskOpenChat: '查看聊天',
+    taskChatTitle: '任务聊天记录',
+    taskChatEmpty: '这个任务暂无聊天记录',
+    taskChatNoConversation: '这个任务没有绑定聊天窗口',
+    taskChatClose: '关闭',
     taskAssigneeFallback: '未分配',
     noDescription: '暂无描述',
     fileEmpty: '暂无文件',
@@ -1029,7 +1155,7 @@ const TRANSLATIONS = {
     meetKing: '认识 King',
     addComputerTitle: '添加电脑',
     addComputerLead: '你的 agents 需要一台电脑来运行。连接这台电脑后，它们会在这里上线。',
-    addComputerRuntime: '需要先安装一种 agent runtime：Claude Code、Codex CLI、Kimi CLI、Copilot CLI、Cursor CLI、Gemini CLI、OpenCode 或 Pi。',
+    addComputerRuntime: '需要先安装一种 agent runtime：Claude Code 或 Codex CLI。',
     doNotRemind: '不再提醒我',
     skip: '跳过',
     next: '下一步',
@@ -1075,6 +1201,13 @@ const TRANSLATIONS = {
     assistNoLink: 'No remote assist link yet',
     assistActive: 'Link enabled; multiple people can use it.',
     assistCopyUnavailable: 'The full link is only shown when created. Create a new link to copy it.',
+    dataResetTitle: 'Start over',
+    dataResetDesc: 'Clear all windows, messages, tasks, files, decisions, pairing info, and run history for the current account. A new pairing code will be generated.',
+    dataResetButton: 'Clear current account data',
+    dataResetConfirm: 'Click again to confirm',
+    dataResetting: 'Clearing...',
+    dataResetDone: 'Cleared. You can start over.',
+    dataResetFailed: 'Clear failed. Try again.',
     newWindow: 'New Window',
     windowName: 'Name',
     windowMode: 'Collaboration',
@@ -1115,6 +1248,11 @@ const TRANSLATIONS = {
     taskFilterActive: 'Active',
     taskFilterDone: 'Done',
     taskEmpty: 'No tasks yet',
+    taskOpenChat: 'View chat',
+    taskChatTitle: 'Task chat history',
+    taskChatEmpty: 'No chat history for this task',
+    taskChatNoConversation: 'This task is not linked to a chat window',
+    taskChatClose: 'Close',
     taskAssigneeFallback: 'Unassigned',
     noDescription: 'No description',
     fileEmpty: 'No files yet',
@@ -1152,7 +1290,7 @@ const TRANSLATIONS = {
     meetKing: 'Meet King',
     addComputerTitle: 'Add a Computer',
     addComputerLead: 'Your agents need somewhere to run. Connect a computer and they will come online there.',
-    addComputerRuntime: 'Need an agent runtime installed: Claude Code, Codex CLI, Kimi CLI, Copilot CLI, Cursor CLI, Gemini CLI, OpenCode, or Pi.',
+    addComputerRuntime: 'Need an agent runtime installed: Claude Code or Codex CLI.',
     doNotRemind: 'Do not remind me again',
     skip: 'Skip',
     next: 'Next',
@@ -1342,6 +1480,53 @@ function renderRemoteAssist(summary) {
   statusEl.textContent = grant.active ? t('assistActive') : '';
   revokeButton.disabled = !grant.active;
   copyButton.disabled = !remoteAssistUrl;
+}
+let resetAccountConfirming = false;
+let resetAccountTimer = 0;
+function resetResetAccountButton() {
+  resetAccountConfirming = false;
+  const button = document.getElementById('resetAccountButton');
+  if (button && !button.disabled) button.textContent = t('dataResetButton');
+}
+async function resetCurrentAccountData() {
+  const button = document.getElementById('resetAccountButton');
+  const status = document.getElementById('resetAccountStatus');
+  if (!button) return;
+  if (!resetAccountConfirming) {
+    resetAccountConfirming = true;
+    button.textContent = t('dataResetConfirm');
+    if (status) status.textContent = '';
+    if (resetAccountTimer) clearTimeout(resetAccountTimer);
+    resetAccountTimer = window.setTimeout(resetResetAccountButton, 5000);
+    return;
+  }
+  if (resetAccountTimer) {
+    clearTimeout(resetAccountTimer);
+    resetAccountTimer = 0;
+  }
+  button.disabled = true;
+  button.textContent = t('dataResetting');
+  if (status) status.textContent = t('dataResetting');
+  try {
+    await request('/gui/reset-state', { method: 'POST' });
+    activeConversationId = 'king-convo';
+    localStorage.setItem('king:activeConversationId', activeConversationId);
+    localStorage.removeItem('king:taskFilter');
+    localStorage.removeItem('king:addComputerDismissed');
+    setRemoteAssistUrl('');
+    resetAccountConfirming = false;
+    visibleMessageCount = 20;
+    lastMessageTotal = 0;
+    shouldStickToBottom = true;
+    await refresh();
+    if (status) status.textContent = t('dataResetDone');
+  } catch (error) {
+    if (status) status.textContent = t('dataResetFailed');
+    throw error;
+  } finally {
+    button.disabled = false;
+    button.textContent = t('dataResetButton');
+  }
 }
 const REMOTE_CONFIG_EXAMPLE = {
   _help: {
@@ -1671,12 +1856,76 @@ function taskMetaHtml(task) {
 }
 function taskCardHtml(task) {
   const stateClass = taskStateClass(task.status);
+  const taskId = String(task.id || '');
   return '<article class="task-card ' + stateClass + '">' +
+    '<button type="button" class="task-card-action" onclick="openTaskChat(&quot;' + escapeHtml(taskId) + '&quot;)">' +
     '<div class="task-card-top"><span class="task-chip">' + escapeHtml(taskOwnerLabel(task)) + '</span><span class="task-state"><span class="task-state-dot ' + stateClass + '"></span>' + escapeHtml(taskStatusText(task.status)) + '</span></div>' +
     '<h3>' + escapeHtml(task.title || task.id || t('taskBoardTitle')) + '</h3>' +
     '<p>' + escapeHtml(taskText(task)) + '</p>' +
     taskMetaHtml(task) +
+    '</button>' +
+    '<div class="task-card-footer"><button type="button" class="task-chat-open" onclick="openTaskChat(&quot;' + escapeHtml(taskId) + '&quot;)">' + t('taskOpenChat') + '</button></div>' +
     '</article>';
+}
+function taskConversationTitle(conversationId) {
+  const summary = window.__lastSummary || {};
+  const conversations = summary.conversations || [];
+  const conversation = conversations.find(function(row) { return row.id === conversationId; });
+  return conversation ? displayConversationTitle(conversation) : conversationId;
+}
+function taskChatRows(task) {
+  if (!task || !task.conversationId) return [];
+  const state = window.__lastState || {};
+  return (state.messages || []).filter(function(message) {
+    if (message.conversation_id !== task.conversationId) return false;
+    return shouldRenderChatMessage(message);
+  });
+}
+function taskChatAuthorName(message) {
+  if (message.author_kind === 'agent') return message.author_name || 'AI';
+  if (message.author_kind === 'human') {
+    const user = (window.__lastSummary || {}).currentUser || {};
+    return message.author_name || user.name || user.email || user.id || 'you';
+  }
+  return message.author_name || message.author_kind || 'system';
+}
+function taskChatInitial(message, author) {
+  const clean = String(author || '').trim();
+  const match = clean.match(/[A-Za-z0-9]/);
+  const fallback = message.author_kind === 'agent' ? 'A' : 'U';
+  return (match ? match[0] : clean.slice(0, 1) || fallback).toUpperCase();
+}
+function taskChatMessageHtml(message) {
+  if (message.author_kind === 'system') {
+    return '<div class="system-line">' + escapeHtml(message.body) + '</div>';
+  }
+  const author = taskChatAuthorName(message);
+  const engine = message.author_kind === 'agent' && message.author_engine ? '<span class="engine-chip">' + escapeHtml(message.author_engine) + '</span>' : '';
+  const initial = taskChatInitial(message, author);
+  const renderedBody = message.body_html || '';
+  const bodyClass = renderedBody ? 'post-body markdown-body' : 'post-body plain';
+  const bodyHtml = renderedBody || escapeHtml(message.body);
+  return '<article class="post"><div class="avatar">' + escapeHtml(initial) + '</div><div><div class="post-top"><span class="author">' + escapeHtml(author) + engine + '</span><span class="time">' + formatTime(message.created_at) + '</span></div><div class="' + bodyClass + '">' + bodyHtml + '</div></div></article>';
+}
+function openTaskChat(taskId) {
+  const state = window.__lastState || {};
+  const task = (state.tasks || []).find(function(row) { return row.id === taskId; });
+  if (!task) return;
+  const dialog = document.getElementById('taskChatDialog');
+  const title = document.getElementById('taskChatTitle');
+  const subtitle = document.getElementById('taskChatSubtitle');
+  const body = document.getElementById('taskChatBody');
+  title.textContent = task.title || task.id || t('taskChatTitle');
+  subtitle.textContent = task.conversationId ? '#' + taskConversationTitle(task.conversationId) + ' · ' + task.id : task.id || '';
+  const rows = taskChatRows(task);
+  const empty = task.conversationId ? t('taskChatEmpty') : t('taskChatNoConversation');
+  body.innerHTML = rows.length
+    ? '<div class="message-list">' + rows.map(taskChatMessageHtml).join('') + '</div>'
+    : '<div class="task-empty">' + empty + '</div>';
+  if (!dialog.open) dialog.showModal();
+}
+function closeTaskChat() {
+  document.getElementById('taskChatDialog').close();
 }
 function taskFilterButton(mode, label) {
   return '<button class="' + (taskFilterMode === mode ? 'active' : '') + '" onclick="setTaskFilter(&quot;' + mode + '&quot;)">' + label + '</button>';
@@ -2271,6 +2520,17 @@ refresh();
           </section>
         </main>
 
+        <dialog id="taskChatDialog" class="task-chat-dialog">
+          <div class="modal-head">
+            <div class="task-chat-title">
+              <h2 id="taskChatTitle" data-i18n="taskChatTitle">Task chat history</h2>
+              <div id="taskChatSubtitle" class="task-chat-subtitle"></div>
+            </div>
+            <button class="icon" onclick="closeTaskChat()" aria-label="Close task chat">x</button>
+          </div>
+          <div id="taskChatBody" class="modal-body task-chat-body"></div>
+        </dialog>
+
         <dialog id="settingsDialog">
           <div class="modal-head">
             <h2 data-i18n="settingsTitle">Settings</h2>
@@ -2329,6 +2589,14 @@ refresh();
               <div class="assist-actions">
                 <button id="revokeAssistButton" class="button-shadow" onclick="revokeRemoteAssistLink()" data-i18n="revokeAssistLink">Revoke link</button>
                 <button id="createAssistButton" class="primary-pink button-shadow" onclick="createRemoteAssistLink()" data-i18n="createAssistLink">Create link</button>
+              </div>
+            </section>
+            <section class="side-card danger-card">
+              <h2 data-i18n="dataResetTitle">Start over</h2>
+              <p class="muted" data-i18n="dataResetDesc">Clear all windows, messages, tasks, files, decisions, pairing info, and run history for the current account. A new pairing code will be generated.</p>
+              <div id="resetAccountStatus" class="danger-status"></div>
+              <div class="danger-actions">
+                <button id="resetAccountButton" class="danger-button button-shadow" onclick="resetCurrentAccountData()" data-i18n="dataResetButton">Clear current account data</button>
               </div>
             </section>
             <div class="settings-actions">
