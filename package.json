@@ -6,7 +6,7 @@
   "description": "Monorepo for King AI CLI and app integrations.",
   "scripts": {
     "build": "pnpm --filter @suwujs/king-ai build && pnpm --filter @king-ai/gui-worker build",
-    "test": "pnpm --filter @suwujs/king-ai test && pnpm --filter @king-ai/gui-worker test",
+    "test": "pnpm --filter @suwujs/king-ai test && pnpm --filter @king-ai/gui-worker test && pnpm --filter @king-ai/skills validate",
     "verify": "pnpm build && pnpm test",
     "dev": "node scripts/dev-cli.mjs",
     "gui:dev": "pnpm --filter @king-ai/gui-worker dev",

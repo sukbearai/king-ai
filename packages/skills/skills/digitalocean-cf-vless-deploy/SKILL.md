@@ -1,6 +1,6 @@
 ---
 name: digitalocean-cf-vless-deploy
-description: Use when provisioning a fresh DigitalOcean Ubuntu VPS behind Cloudflare to redeploy the same stack used here: Nginx with Let's Encrypt, an existing web app behind a proxied domain, 3x-ui/Xray VLESS over WebSocket/TLS through Cloudflare orange cloud, public 3x-ui panel via Nginx reverse proxy, and working Shadowrocket subscription links.
+description: "Use when provisioning a fresh DigitalOcean Ubuntu VPS behind Cloudflare to redeploy the same stack used here: Nginx with Let's Encrypt, an existing web app behind a proxied domain, 3x-ui/Xray VLESS over WebSocket/TLS through Cloudflare orange cloud, public 3x-ui panel via Nginx reverse proxy, and working Shadowrocket subscription links."
 ---
 
 # DigitalOcean Cloudflare VLESS Deploy

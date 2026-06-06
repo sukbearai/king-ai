@@ -31,11 +31,23 @@ function parseFrontmatter(markdown, skillName) {
   for (const line of match[1].split("\n")) {
     const field = line.match(/^([a-zA-Z0-9_-]+):\s*(.*)$/);
     if (field) {
-      fields.set(field[1], field[2].trim());
+      const rawValue = field[2].trim();
+      if (!isQuotedYamlScalar(rawValue) && /:\s/.test(rawValue)) {
+        throw new Error(`${skillName}: frontmatter field ${field[1]} must quote values containing colon-space`);
+      }
+      fields.set(field[1], unquoteYamlScalar(rawValue));
     }
   }
 
   return fields;
+}
+
+function isQuotedYamlScalar(value) {
+  return (value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'"));
+}
+
+function unquoteYamlScalar(value) {
+  return isQuotedYamlScalar(value) ? value.slice(1, -1) : value;
 }
 
 async function validateSkill(skillName) {
