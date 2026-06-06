@@ -11,7 +11,7 @@
     "dev": "node scripts/dev-cli.mjs",
     "gui:dev": "pnpm --filter @king-ai/gui-worker dev",
     "gui:dev:lan": "pnpm --filter @king-ai/gui-worker dev:lan",
-    "gui:deploy": "pnpm --filter @king-ai/gui-worker deploy",
+    "gui:deploy": "pnpm --filter @king-ai/gui-worker run deploy",
     "release": "node scripts/release.mjs",
     "release:patch": "node scripts/release.mjs patch",
     "release:minor": "node scripts/release.mjs minor",
