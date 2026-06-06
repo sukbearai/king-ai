@@ -391,7 +391,7 @@ test("gui state renders IELTS learning annotations", async () => {
       argv: [
         "reply",
         room.conversation.id,
-        "Natural English: [core: I have been working overtime] [phrase: for almost two weeks]. Vocabulary: [word overtime|extra work hours|/ˈoʊvərtaɪm/|o-ver-time]"
+        "Natural English: [core: I have been working overtime] [phrase: for almost two weeks]. Vocabulary: [word overtime|加班时间|/ˈoʊvərtaɪm/|o-ver-time]"
       ]
     })
   }), bindings);
@@ -402,7 +402,41 @@ test("gui state renders IELTS learning annotations", async () => {
   const agent = state.messages.find((message) => message.author_kind === "agent");
   assert.match(agent?.body_html ?? "", /class="ielts-core">I have been working overtime<\/span>/);
   assert.match(agent?.body_html ?? "", /class="ielts-phrase">for almost two weeks<\/span>/);
-  assert.match(agent?.body_html ?? "", /class="ielts-word" data-word="overtime" data-meaning="extra work hours" data-phonetic="\/ˈoʊvərtaɪm\/" data-syllables="o-ver-time">overtime<\/span>/);
+  assert.match(agent?.body_html ?? "", /class="ielts-word" data-word="overtime" data-meaning="加班时间" data-phonetic="\/ˈoʊvərtaɪm\/" data-syllables="o-ver-time">overtime<\/span>/);
+});
+
+test("gui state preserves inline IELTS spans for nested sentence highlights", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const room = await json<{ conversation: { id: string } }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({ title: "IELTS Inline", workflowId: "ielts-study", teamMode: "single" })
+    }), bindings)
+  );
+  const tokenRes = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/ielts-tutor/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${tokenRes.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      argv: [
+        "reply",
+        room.conversation.id,
+        "<span class=\"ielts-core\">I <span class=\"ielts-word\" data-word=\"want\" data-meaning=\"想要\" data-phonetic=\"/wɑːnt/\" data-syllables=\"want\">want</span> <span class=\"ielts-phrase\">to eat</span></span>."
+      ]
+    })
+  }), bindings);
+
+  const state = await json<{ messages: { author_kind: string; body_html?: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  const agent = state.messages.find((message) => message.author_kind === "agent");
+  assert.match(agent?.body_html ?? "", /<span class="ielts-core">I <span class="ielts-word" data-word="want" data-meaning="想要" data-phonetic="\/wɑːnt\/" data-syllables="want">want<\/span> <span class="ielts-phrase">to eat<\/span><\/span>\./);
 });
 
 test("gui messages preserve attachment metadata for runtime prompts", async () => {
@@ -817,11 +851,15 @@ test("gui windows choose agents from the selected workflow", async () => {
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Keep the conversation in English/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /expression gap/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not give generic acknowledgements/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /noun clauses, relative clauses, adverbial clauses/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /For every sentence, mark the sentence core and useful phrases inline/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /safe HTML spans/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /class ielts-word with data-word, data-meaning, data-phonetic, and data-syllables/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /phonetic/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /\[core: \.\.\.\]/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /\[phrase: \.\.\.\]/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /\[word word\|meaning\|phonetic\|syllables\]/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /\[word word\|中文词义\|phonetic\|syllables\]/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /meaning field must be concise Chinese/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not default to separate Sentence Core, Clauses\/Phrases, or Vocabulary lists/);
 
   const single = await json<{
     conversation: { workflowId?: string; coordinatorAgentId?: string; teamAgentIds?: string[]; teamSnapshot?: { workflowId: string; agents: { id: string }[] } };
