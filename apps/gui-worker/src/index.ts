@@ -687,7 +687,18 @@ const IELTS_WORKFLOW_AGENTS: Agent[] = [
   {
     id: "ielts-tutor",
     name: "IELTS Reading & Writing Coach",
-    role: "IELTS reading and writing coach. Always converse in English by default. Annotate sentence cores, including subject-verb-object and subject-linking verb-complement patterns; identify clauses, phrases, and grammar structures. For vocabulary, provide clickable word metadata with meaning, phonetic transcription, and syllable breakdown for memorization. When the learner writes Chinese, treat it as an expression gap: give the natural English expression and explain the related grammar.",
+    role: [
+      "IELTS reading and writing coach for improving reading and writing. Keep the conversation in English by default.",
+      "When the learner writes Chinese, treat it as an expression gap: first give the natural English expression, then explain the useful grammar in simple English.",
+      "Do not give generic acknowledgements. Every reply should either improve the learner's sentence, analyze a text they provided, or ask one focused follow-up question.",
+      "Use this renderable annotation format whenever you provide an English sentence:",
+      "- Mark the sentence core with [core: ...]. Use it for SVO, SVC, and other main-clause skeletons.",
+      "- Mark useful phrases with [phrase: ...].",
+      "- Mark clauses explicitly in text, especially noun clauses, relative clauses, adverbial clauses, and non-finite clauses.",
+      "- Mark important vocabulary as [word word|meaning|phonetic|syllables], for example [word overtime|extra work hours|/ˈoʊvərtaɪm/|o-ver-time].",
+      "The GUI turns these markers into visual highlights and clickable vocabulary popups, so keep marker fields short and accurate.",
+      "Prefer compact, high-signal replies: Natural English, Sentence Core, Clauses/Phrases, Vocabulary, and one small writing tip."
+    ].join(" "),
     engine: "codex",
     lifecycle: "on-demand"
   }
@@ -4166,6 +4177,7 @@ const SAFE_MARKDOWN_TAGS = new Set([
   "ol",
   "p",
   "pre",
+  "span",
   "strong",
   "table",
   "tbody",
@@ -4176,6 +4188,7 @@ const SAFE_MARKDOWN_TAGS = new Set([
   "ul"
 ]);
 
+const SAFE_MARK_CLASS_PATTERN = /^(ielts-core|ielts-phrase|ielts-word)$/;
 const SAFE_URI_PATTERN = /^(https?:|mailto:|\/(?!\/)|#)/i;
 
 function sanitizeMarkdownHtml(html: string): string {
@@ -4186,7 +4199,7 @@ function sanitizeMarkdownHtml(html: string): string {
       const name = rawName.toLowerCase();
       if (!SAFE_MARKDOWN_TAGS.has(name)) return "";
       if (tag.startsWith("</")) return `</${name}>`;
-      const attrs = name === "a" ? sanitizeLinkAttributes(rawAttrs) : "";
+      const attrs = name === "a" ? sanitizeLinkAttributes(rawAttrs) : name === "span" ? sanitizeSpanAttributes(rawAttrs) : "";
       const selfClosing = tag.endsWith("/>") || name === "br" || name === "hr";
       return `<${name}${attrs}${selfClosing ? " />" : ">"}`;
     });
@@ -4199,6 +4212,20 @@ function sanitizeLinkAttributes(rawAttrs: string): string {
   return ` href="${escapeHtmlAttribute(href)}" target="_blank" rel="noreferrer noopener"`;
 }
 
+function sanitizeSpanAttributes(rawAttrs: string): string {
+  const attrs: string[] = [];
+  const classMatch = rawAttrs.match(/\sclass\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+  const className = decodeHtmlAttribute(classMatch?.[1] ?? classMatch?.[2] ?? classMatch?.[3] ?? "").trim();
+  if (SAFE_MARK_CLASS_PATTERN.test(className)) attrs.push(` class="${className}"`);
+  for (const key of ["data-word", "data-meaning", "data-phonetic", "data-syllables"]) {
+    const pattern = new RegExp(`\\s${key}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i");
+    const match = rawAttrs.match(pattern);
+    const value = decodeHtmlAttribute(match?.[1] ?? match?.[2] ?? match?.[3] ?? "").trim();
+    if (value) attrs.push(` ${key}="${escapeHtmlAttribute(value)}"`);
+  }
+  return attrs.join("");
+}
+
 function decodeHtmlAttribute(value: string): string {
   return value
     .replace(/&amp;/g, "&")
@@ -4208,14 +4235,27 @@ function decodeHtmlAttribute(value: string): string {
     .replace(/&#39;/g, "'");
 }
 
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[ch] ?? ch);
+}
+
 function escapeHtmlAttribute(value: string): string {
   return value.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[ch] ?? ch);
+}
+
+function renderIeltsAnnotations(markdown: string): string {
+  return markdown
+    .replace(/\[word\s+([^\]\n|]+)\|([^\]\n|]+)\|([^\]\n|]+)\|([^\]\n|]+)\]/g, (_match, word: string, meaning: string, phonetic: string, syllables: string) =>
+      `<span class="ielts-word" data-word="${escapeHtmlAttribute(word.trim())}" data-meaning="${escapeHtmlAttribute(meaning.trim())}" data-phonetic="${escapeHtmlAttribute(phonetic.trim())}" data-syllables="${escapeHtmlAttribute(syllables.trim())}">${escapeHtml(word.trim())}</span>`
+    )
+    .replace(/\[core:\s*([^\]\n]+)\]/g, (_match, core: string) => `<span class="ielts-core">${escapeHtml(core.trim())}</span>`)
+    .replace(/\[phrase:\s*([^\]\n]+)\]/g, (_match, phrase: string) => `<span class="ielts-phrase">${escapeHtml(phrase.trim())}</span>`);
 }
 
 async function renderMessageMarkdown(message: Message): Promise<Message> {
   if (message.status === "pending" || message.kind === "system") return { ...message };
   try {
-    const rendered = await renderMarkdownHtml(message.body || "");
+    const rendered = await renderMarkdownHtml(renderIeltsAnnotations(message.body || ""));
     return { ...message, body_html: sanitizeMarkdownHtml(rendered) };
   } catch {
     return { ...message };

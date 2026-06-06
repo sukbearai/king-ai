@@ -369,6 +369,42 @@ test("gui state renders message markdown with sanitized Comark html", async () =
   assert.equal(exported.state.messages.some((message) => message.body_html), false);
 });
 
+test("gui state renders IELTS learning annotations", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const room = await json<{ conversation: { id: string } }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({ title: "IELTS Markup", workflowId: "ielts-study", teamMode: "single" })
+    }), bindings)
+  );
+  const tokenRes = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/ielts-tutor/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${tokenRes.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      argv: [
+        "reply",
+        room.conversation.id,
+        "Natural English: [core: I have been working overtime] [phrase: for almost two weeks]. Vocabulary: [word overtime|extra work hours|/ˈoʊvərtaɪm/|o-ver-time]"
+      ]
+    })
+  }), bindings);
+
+  const state = await json<{ messages: { author_kind: string; body_html?: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  const agent = state.messages.find((message) => message.author_kind === "agent");
+  assert.match(agent?.body_html ?? "", /class="ielts-core">I have been working overtime<\/span>/);
+  assert.match(agent?.body_html ?? "", /class="ielts-phrase">for almost two weeks<\/span>/);
+  assert.match(agent?.body_html ?? "", /class="ielts-word" data-word="overtime" data-meaning="extra work hours" data-phonetic="\/ˈoʊvərtaɪm\/" data-syllables="o-ver-time">overtime<\/span>/);
+});
+
 test("gui messages preserve attachment metadata for runtime prompts", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
@@ -778,11 +814,14 @@ test("gui windows choose agents from the selected workflow", async () => {
   assert.deepEqual(ieltsWorkflow?.agentIds, ["ielts-tutor"]);
   assert.equal(ieltsWorkflow?.agentIds.includes("king-ai-ceo"), false);
   assert.equal(ieltsWorkflow?.agents[0]?.name, "IELTS Reading & Writing Coach");
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Always converse in English/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /subject-verb-object/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /clauses, phrases/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /phonetic transcription/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /When the learner writes Chinese/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Keep the conversation in English/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /expression gap/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not give generic acknowledgements/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /noun clauses, relative clauses, adverbial clauses/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /phonetic/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /\[core: \.\.\.\]/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /\[phrase: \.\.\.\]/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /\[word word\|meaning\|phonetic\|syllables\]/);
 
   const single = await json<{
     conversation: { workflowId?: string; coordinatorAgentId?: string; teamAgentIds?: string[]; teamSnapshot?: { workflowId: string; agents: { id: string }[] } };
@@ -1722,6 +1761,13 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /const renderedBody = message\.body_html \|\| ''/);
   assert.match(html, /renderedBody \|\| escapeHtml\(message\.body\)/);
   assert.match(html, /'post-body markdown-body'/);
+  assert.match(html, /\.ielts-core/);
+  assert.match(html, /\.ielts-phrase/);
+  assert.match(html, /\.ielts-word/);
+  assert.match(html, /id="vocabDialog"/);
+  assert.match(html, /function openVocabDialog/);
+  assert.match(html, /target\.closest\('\.ielts-word'\)/);
+  assert.match(html, /data-i18n="vocabMeaning"|vocabMeaning:/);
   assert.match(html, /\.message-list\.empty-state\s*\{[\s\S]*position:\s*sticky/);
   assert.match(html, /function pendingDisplayDelayMs/);
   assert.match(html, /return 3000 \+ hash/);

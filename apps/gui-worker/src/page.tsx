@@ -297,6 +297,74 @@ export function renderPage(styles: string, clientScript: string): string {
       color: #0b6bcb;
       font-weight: 800;
     }
+    .ielts-core {
+      display: inline;
+      background: #dff3ee;
+      border-bottom: 2px solid #2f7d69;
+      padding: 0 3px;
+      font-weight: 900;
+    }
+    .ielts-phrase {
+      display: inline;
+      background: #fff0a8;
+      border-bottom: 2px solid #b28b00;
+      padding: 0 3px;
+      font-weight: 800;
+    }
+    .ielts-word {
+      display: inline;
+      border: 1px solid #6c57b8;
+      background: #efe9ff;
+      color: #2f1f69;
+      padding: 0 4px;
+      font-weight: 900;
+      cursor: pointer;
+    }
+    .ielts-word:hover {
+      background: #d8ccff;
+    }
+    .vocab-dialog {
+      width: min(360px, calc(100vw - 28px));
+      border: 2px solid var(--line);
+      border-radius: 0;
+      padding: 0;
+      box-shadow: 8px 8px 0 var(--line), var(--shadow);
+    }
+    .vocab-card {
+      display: grid;
+      gap: 10px;
+      padding: 14px;
+      background: var(--canvas);
+    }
+    .vocab-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      border-bottom: 2px solid var(--line);
+      padding-bottom: 8px;
+    }
+    .vocab-title {
+      font-size: 18px;
+      font-weight: 900;
+    }
+    .vocab-row {
+      display: grid;
+      grid-template-columns: 74px minmax(0, 1fr);
+      gap: 8px;
+      align-items: baseline;
+    }
+    .vocab-label {
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+    .vocab-value {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      font-weight: 800;
+    }
     .post.pending .post-body {
       display: inline-flex;
       align-items: center;
@@ -1343,6 +1411,9 @@ const TRANSLATIONS = {
     taskEventReview: '提交评审',
     taskEventCompleted: '已完成',
     taskEventChanges: '需修改',
+    vocabMeaning: '词义',
+    vocabPhonetic: '音标',
+    vocabSyllables: '音节',
     agentStatusRunning: '运行中',
     agentStatusThinking: '思考中',
     agentStatusUnread: '未读',
@@ -1484,6 +1555,9 @@ const TRANSLATIONS = {
     taskEventReview: 'Review',
     taskEventCompleted: 'Completed',
     taskEventChanges: 'Changes',
+    vocabMeaning: 'Meaning',
+    vocabPhonetic: 'Phonetic',
+    vocabSyllables: 'Syllables',
     agentStatusRunning: 'Running',
     agentStatusThinking: 'Thinking',
     agentStatusUnread: 'Unread',
@@ -2259,6 +2333,28 @@ function openTaskChat(taskId) {
 function closeTaskChat() {
   document.getElementById('taskChatDialog').close();
 }
+function openVocabDialog(node) {
+  const dialog = document.getElementById('vocabDialog');
+  if (!dialog || !node) return;
+  document.getElementById('vocabWord').textContent = node.getAttribute('data-word') || node.textContent || '';
+  document.getElementById('vocabMeaningLabel').textContent = t('vocabMeaning');
+  document.getElementById('vocabMeaning').textContent = node.getAttribute('data-meaning') || '';
+  document.getElementById('vocabPhoneticLabel').textContent = t('vocabPhonetic');
+  document.getElementById('vocabPhonetic').textContent = node.getAttribute('data-phonetic') || '';
+  document.getElementById('vocabSyllablesLabel').textContent = t('vocabSyllables');
+  document.getElementById('vocabSyllables').textContent = node.getAttribute('data-syllables') || '';
+  if (!dialog.open) dialog.showModal();
+}
+function closeVocabDialog() {
+  const dialog = document.getElementById('vocabDialog');
+  if (dialog && dialog.open) dialog.close();
+}
+document.addEventListener('click', function(event) {
+  const target = event.target && event.target.closest ? event.target.closest('.ielts-word') : null;
+  if (!target) return;
+  event.preventDefault();
+  openVocabDialog(target);
+});
 function taskFilterButton(mode, label) {
   return '<button class="' + (taskFilterMode === mode ? 'active' : '') + '" onclick="setTaskFilter(&quot;' + mode + '&quot;)">' + label + '</button>';
 }
@@ -3026,6 +3122,27 @@ refresh();
             <button class="icon" onclick="closeTaskChat()" aria-label="Close task chat">x</button>
           </div>
           <div id="taskChatBody" class="modal-body task-chat-body"></div>
+        </dialog>
+
+        <dialog id="vocabDialog" class="vocab-dialog">
+          <div class="vocab-card">
+            <div class="vocab-head">
+              <div id="vocabWord" class="vocab-title"></div>
+              <button class="icon" onclick="closeVocabDialog()" aria-label="Close vocabulary">x</button>
+            </div>
+            <div class="vocab-row">
+              <span id="vocabMeaningLabel" class="vocab-label">Meaning</span>
+              <span id="vocabMeaning" class="vocab-value"></span>
+            </div>
+            <div class="vocab-row">
+              <span id="vocabPhoneticLabel" class="vocab-label">Phonetic</span>
+              <span id="vocabPhonetic" class="vocab-value"></span>
+            </div>
+            <div class="vocab-row">
+              <span id="vocabSyllablesLabel" class="vocab-label">Syllables</span>
+              <span id="vocabSyllables" class="vocab-value"></span>
+            </div>
+          </div>
         </dialog>
 
         <dialog id="settingsDialog">
