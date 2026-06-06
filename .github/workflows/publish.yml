@@ -62,7 +62,14 @@ jobs:
             echo "$PACKAGE_NAME@$PACKAGE_VERSION is already published; skipping npm publish."
             exit 0
           fi
-          pnpm --filter @suwujs/king-ai publish --no-git-checks --provenance
+          if pnpm --filter @suwujs/king-ai publish --no-git-checks --provenance; then
+            exit 0
+          fi
+          if npm view "$PACKAGE_NAME@$PACKAGE_VERSION" version >/dev/null 2>&1; then
+            echo "$PACKAGE_NAME@$PACKAGE_VERSION became available after publish; continuing release."
+            exit 0
+          fi
+          exit 1
 
       - name: Validate deployment secrets
         shell: bash
