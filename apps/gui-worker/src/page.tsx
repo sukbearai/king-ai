@@ -504,6 +504,15 @@ export function renderPage(styles: string, clientScript: string): string {
       background: var(--accent);
       box-shadow: 3px 3px 0 var(--line);
     }
+    .mode-option.unavailable {
+      opacity: 0.52;
+      cursor: not-allowed;
+      background: #f7f7f7;
+    }
+    .mode-option.unavailable:has(input:checked) {
+      background: #f7f7f7;
+      box-shadow: none;
+    }
     .mode-title {
       font-size: 12px;
       line-height: 1.2;
@@ -1273,7 +1282,7 @@ const TRANSLATIONS = {
     singleAgent: '单 Agent',
     singleAgentDesc: '只让负责人回复',
     defaultTeam: '默认团队',
-    defaultTeamDesc: '7 个 agent',
+    defaultTeamDesc: '按工作流角色协作',
     customTeam: '自定义',
     customTeamDesc: '选择参与角色',
     windowTeam: '参与角色',
@@ -1414,7 +1423,7 @@ const TRANSLATIONS = {
     singleAgent: 'Single agent',
     singleAgentDesc: 'Only the owner replies',
     defaultTeam: 'Default team',
-    defaultTeamDesc: '7 agents',
+    defaultTeamDesc: 'Use workflow agents',
     customTeam: 'Custom',
     customTeamDesc: 'Choose roles',
     windowTeam: 'Roles',
@@ -1536,6 +1545,7 @@ function applyLanguage() {
   const clearButton = document.getElementById('clearButton');
   if (clearButton && !clearButton.disabled) clearButton.textContent = t('clearScreen');
   if (typeof renderConversations === 'function' && window.__lastSummary) renderConversations({ ...window.__lastSummary, state: window.__lastState || {} });
+  if (document.getElementById('newWindowDialog').open) syncNewWindowMode();
   if (document.getElementById('computerDialog').open) renderComputerFlow();
 }
 function setLanguage(lang) {
@@ -2577,6 +2587,9 @@ function workflowAgents() {
   const workflow = selectedWorkflow();
   return workflow && workflow.agents && workflow.agents.length ? workflow.agents : currentAgents();
 }
+function agentCountLabel(count) {
+  return count + (currentLang === 'zh' ? ' 个 Agent' : (count === 1 ? ' agent' : ' agents'));
+}
 function workflowCoordinatorId() {
   const workflow = selectedWorkflow();
   return workflow && workflow.defaultCoordinatorAgentId ? workflow.defaultCoordinatorAgentId : (workflowAgents()[0] || {}).id || 'king-ai-ceo';
@@ -2616,7 +2629,27 @@ function renderAgentOptions() {
     }).join('');
   }
 }
+function syncNewWindowModeOptions() {
+  const agents = workflowAgents();
+  const teamAvailable = agents.length > 1;
+  const teamOption = document.querySelector('[data-window-mode-option="team"]');
+  const customOption = document.querySelector('[data-window-mode-option="custom"]');
+  const teamInput = document.querySelector('input[name="newWindowMode"][value="team"]');
+  const customInput = document.querySelector('input[name="newWindowMode"][value="custom"]');
+  const teamDesc = document.getElementById('newWindowTeamModeDesc');
+  const customDesc = document.getElementById('newWindowCustomModeDesc');
+  if (teamOption) teamOption.classList.toggle('unavailable', !teamAvailable);
+  if (customOption) customOption.classList.toggle('unavailable', !teamAvailable);
+  if (teamOption) teamOption.classList.toggle('hidden', !teamAvailable);
+  if (customOption) customOption.classList.toggle('hidden', !teamAvailable);
+  if (teamInput) teamInput.disabled = !teamAvailable;
+  if (customInput) customInput.disabled = !teamAvailable;
+  if (teamDesc) teamDesc.textContent = agentCountLabel(agents.length);
+  if (customDesc) customDesc.textContent = teamAvailable ? t('customTeamDesc') : agentCountLabel(agents.length);
+  if (!teamAvailable && selectedWindowMode() !== 'single') setWindowMode('single');
+}
 function syncNewWindowMode() {
+  syncNewWindowModeOptions();
   const mode = selectedWindowMode();
   const custom = document.getElementById('newWindowCustomTeam');
   if (custom) custom.classList.toggle('hidden', mode !== 'custom');
@@ -2627,7 +2660,7 @@ function syncNewWindowWorkflow() {
 }
 function setWindowMode(mode) {
   const option = document.querySelector('input[name="newWindowMode"][value="' + mode + '"]');
-  if (option) option.checked = true;
+  if (option && !option.disabled) option.checked = true;
   syncNewWindowMode();
 }
 function setTeamAgentChecks(ids) {
@@ -3089,20 +3122,20 @@ refresh();
               <div class="field">
                 <label data-i18n="windowMode">Collaboration</label>
                 <div class="mode-grid">
-                  <label class="mode-option">
+                  <label class="mode-option" data-window-mode-option="single">
                     <input type="radio" name="newWindowMode" value="single" onchange="syncNewWindowMode()" />
                     <span class="mode-title" data-i18n="singleAgent">Single agent</span>
                     <span class="mode-desc" data-i18n="singleAgentDesc">Only the owner replies</span>
                   </label>
-                  <label class="mode-option">
+                  <label class="mode-option" data-window-mode-option="team">
                     <input type="radio" name="newWindowMode" value="team" checked onchange="syncNewWindowMode()" />
                     <span class="mode-title" data-i18n="defaultTeam">Default team</span>
-                    <span class="mode-desc" data-i18n="defaultTeamDesc">7 agents</span>
+                    <span id="newWindowTeamModeDesc" class="mode-desc" data-i18n="defaultTeamDesc">Use workflow agents</span>
                   </label>
-                  <label class="mode-option">
+                  <label class="mode-option" data-window-mode-option="custom">
                     <input type="radio" name="newWindowMode" value="custom" onchange="syncNewWindowMode()" />
                     <span class="mode-title" data-i18n="customTeam">Custom</span>
-                    <span class="mode-desc" data-i18n="customTeamDesc">Choose roles</span>
+                    <span id="newWindowCustomModeDesc" class="mode-desc" data-i18n="customTeamDesc">Choose roles</span>
                   </label>
                 </div>
               </div>
