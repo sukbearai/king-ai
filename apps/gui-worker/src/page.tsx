@@ -918,6 +918,89 @@ export function renderPage(styles: string, clientScript: string): string {
       font-size: 11px;
       font-weight: 900;
     }
+    .file-card {
+      min-height: 0;
+      background: #fff;
+      padding: 10px;
+    }
+    .file-card .task-card-action {
+      display: grid;
+      grid-template-columns: 38px minmax(0, 1fr);
+      gap: 10px;
+      cursor: default;
+    }
+    .file-card-icon {
+      position: relative;
+      width: 34px;
+      height: 42px;
+      border: 2px solid var(--line);
+      background: #fff;
+      box-shadow: 2px 2px 0 var(--accent);
+    }
+    .file-card-icon::before {
+      content: "";
+      position: absolute;
+      top: -2px;
+      right: -2px;
+      width: 12px;
+      height: 12px;
+      border-left: 2px solid var(--line);
+      border-bottom: 2px solid var(--line);
+      background: var(--canvas);
+    }
+    .file-card-icon::after {
+      content: "";
+      position: absolute;
+      left: 7px;
+      right: 7px;
+      bottom: 9px;
+      height: 2px;
+      background: var(--soft-line);
+      box-shadow: 0 -7px 0 var(--soft-line);
+    }
+    .file-card-main {
+      display: grid;
+      gap: 7px;
+      min-width: 0;
+    }
+    .file-card h3 {
+      font-size: 14px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+    .file-card h3 a {
+      color: var(--ink);
+      text-decoration-thickness: 1px;
+      text-underline-offset: 2px;
+    }
+    .file-card h3 a:hover {
+      color: #2f6f68;
+    }
+    .file-card-meta {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 5px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 900;
+    }
+    .file-card-meta span + span::before {
+      content: "/";
+      padding-right: 5px;
+      color: var(--soft-line);
+    }
+    .file-card .task-card-top {
+      align-items: flex-start;
+      gap: 8px;
+    }
+    .file-card .task-chip {
+      max-width: calc(100% - 62px);
+      padding: 3px 7px;
+    }
+    .file-card .task-card-footer {
+      padding-left: 48px;
+    }
     .task-chat-dialog {
       width: min(820px, calc(100vw - 24px));
     }
@@ -1072,6 +1155,20 @@ export function renderPage(styles: string, clientScript: string): string {
     body.mobile-layout .task-card-meta {
       gap: 5px;
       font-size: 10px;
+    }
+    body.mobile-layout .file-card {
+      padding: 9px;
+    }
+    body.mobile-layout .file-card .task-card-action {
+      grid-template-columns: 34px minmax(0, 1fr);
+      gap: 9px;
+    }
+    body.mobile-layout .file-card-icon {
+      width: 30px;
+      height: 38px;
+    }
+    body.mobile-layout .file-card .task-card-footer {
+      padding-left: 43px;
     }
     body.mobile-layout .task-chat-dialog {
       width: calc(100vw - 12px);
@@ -2236,12 +2333,16 @@ function fileCardHtml(file) {
   const title = escapeHtml(file.path || file.name || 'artifact');
   const href = file.url ? ' href="' + escapeHtml(file.url) + '" target="_blank" rel="noreferrer noopener"' : '';
   const open = file.url ? '<a class="task-chat-open" href="' + escapeHtml(file.url) + '" target="_blank" rel="noreferrer noopener">' + t('files') + '</a>' : '';
-  const size = file.size ? ' · ' + escapeHtml(formatBytes(file.size)) : '';
-  return '<article class="task-card done">' +
+  const size = file.size ? '<span>' + escapeHtml(formatBytes(file.size)) + '</span>' : '';
+  const source = file.source || file.confidence || t('noDescription');
+  return '<article class="task-card done file-card">' +
     '<div class="task-card-action">' +
+    '<div class="file-card-icon" aria-hidden="true"></div>' +
+    '<div class="file-card-main">' +
     '<div class="task-card-top"><span class="task-chip">' + escapeHtml(file.kind || 'file') + '</span><span class="task-state"><span class="task-state-dot done"></span>' + t('files') + '</span></div>' +
     '<h3>' + (href ? '<a' + href + '>' + title + '</a>' : title) + '</h3>' +
-    '<p>' + escapeHtml((file.source || file.confidence || t('noDescription')) + size) + '</p>' +
+    '<div class="file-card-meta"><span>' + escapeHtml(source) + '</span>' + size + '</div>' +
+    '</div>' +
     '</div>' +
     (open ? '<div class="task-card-footer">' + open + '</div>' : '') +
     '</article>';
