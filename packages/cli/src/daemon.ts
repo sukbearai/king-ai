@@ -1,5 +1,5 @@
 import { hostname } from "node:os";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -7,7 +7,7 @@ import { execFile } from "node:child_process";
 import { api, tenantHeader } from "./api.js";
 import { loadConfig, saveConfig } from "./config.js";
 import { detectEngines, getAdapter } from "./engine.js";
-import { CURRENT_VERSION, HEARTBEAT_PATH } from "./paths.js";
+import { AGENTS_ROOT, CURRENT_VERSION, HEARTBEAT_PATH, RUNNING_STATE_PATH, SESSIONS_DIR, TRIAGE_DIR } from "./paths.js";
 import { checkForUpdate, recordRunningState, rotateLogsIfNeeded, writeRunningState } from "./service.js";
 import type { RunningAgentState } from "./service.js";
 import { AgentRunner } from "./runner.js";
@@ -204,7 +204,24 @@ export async function doPair(code: string, serverUrl: string, preferredEngine?: 
   });
   const savedTenantId = paired.tenantId ?? resolvedTenantId;
   await saveConfig({ serverUrl: resolvedServerUrl, computerId: paired.computerId, deviceToken: paired.deviceToken, ...(savedTenantId ? { tenantId: savedTenantId } : {}) });
+  await clearLocalRuntimeState();
   console.log(`paired as ${paired.computerId}${savedTenantId ? ` tenant=${savedTenantId}` : ""}; default engine: ${engines[0] ?? "none"}; available engines: ${engines.join(", ") || "none"}`);
+}
+
+export async function clearLocalRuntimeState(paths = {
+  agentsRoot: AGENTS_ROOT,
+  sessionsDir: SESSIONS_DIR,
+  triageDir: TRIAGE_DIR,
+  runningStatePath: RUNNING_STATE_PATH,
+  heartbeatPath: HEARTBEAT_PATH
+}): Promise<void> {
+  await Promise.all([
+    rm(paths.agentsRoot, { recursive: true, force: true }),
+    rm(paths.sessionsDir, { recursive: true, force: true }),
+    rm(paths.triageDir, { recursive: true, force: true }),
+    rm(paths.runningStatePath, { force: true }),
+    rm(paths.heartbeatPath, { force: true })
+  ]);
 }
 
 export async function runDoctor(): Promise<void> {

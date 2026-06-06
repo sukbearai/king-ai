@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
-import { anyRunnerBusy, doctorExitCode, formatDoctorReport, missingEngineMessage, parsePairLocator, resolveHostName, shouldExitForUpdate } from "../src/daemon.js";
+import { anyRunnerBusy, clearLocalRuntimeState, doctorExitCode, formatDoctorReport, missingEngineMessage, parsePairLocator, resolveHostName, shouldExitForUpdate } from "../src/daemon.js";
 
 test("anyRunnerBusy reports whether any runner is active", () => {
   assert.equal(anyRunnerBusy([]), false);
@@ -30,6 +34,34 @@ test("parsePairLocator supports GUI-provided server and tenant", () => {
     tenantId: "user-octo"
   });
   assert.deepEqual(parsePairLocator("legacy-code"), { code: "legacy-code" });
+});
+
+test("clearLocalRuntimeState removes generated runtime state but keeps pairing config", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-reset-"));
+  for (const subdir of ["agents/dev/workspace", "sessions", "triage"]) {
+    await mkdir(join(dir, subdir), { recursive: true });
+  }
+  await writeFile(join(dir, "computer.json"), '{"deviceToken":"keep"}', "utf8");
+  await writeFile(join(dir, "agents/dev/workspace/file.txt"), "drop", "utf8");
+  await writeFile(join(dir, "sessions/dev.codex.session"), "drop", "utf8");
+  await writeFile(join(dir, "triage/tmp.txt"), "drop", "utf8");
+  await writeFile(join(dir, "running.json"), "drop", "utf8");
+  await writeFile(join(dir, "heartbeat.json"), "drop", "utf8");
+
+  await clearLocalRuntimeState({
+    agentsRoot: join(dir, "agents"),
+    sessionsDir: join(dir, "sessions"),
+    triageDir: join(dir, "triage"),
+    runningStatePath: join(dir, "running.json"),
+    heartbeatPath: join(dir, "heartbeat.json")
+  });
+
+  assert.equal(existsSync(join(dir, "agents")), false);
+  assert.equal(existsSync(join(dir, "sessions")), false);
+  assert.equal(existsSync(join(dir, "triage")), false);
+  assert.equal(existsSync(join(dir, "running.json")), false);
+  assert.equal(existsSync(join(dir, "heartbeat.json")), false);
+  assert.equal(await readFile(join(dir, "computer.json"), "utf8"), '{"deviceToken":"keep"}');
 });
 
 test("missingEngineMessage gives actionable install guidance", () => {
