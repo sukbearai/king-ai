@@ -43,9 +43,11 @@
     "dev": "tsx src/cli.ts"
   },
   "files": [
-    "dist/src",
-    "../../README.md"
+    "dist/src"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=20"
   },
