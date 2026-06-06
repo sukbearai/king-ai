@@ -110,6 +110,7 @@ function localhostCorsOrigin(req: IncomingMessage): string | undefined {
     const url = new URL(origin);
     if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
     if (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1" || url.hostname === "[::1]") return origin;
+    if (url.protocol === "https:" && url.hostname === "king-ai.congrongtech.cn") return origin;
   } catch {
     return undefined;
   }
@@ -122,7 +123,7 @@ function hostResponseHeaders(req?: IncomingMessage, headers: Record<string, stri
     ...headers,
     ...(origin ? {
       "Access-Control-Allow-Origin": origin,
-      "Access-Control-Allow-Methods": "GET,HEAD,POST,PATCH,DELETE,OPTIONS",
+      "Access-Control-Allow-Methods": "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type,Accept",
       "Access-Control-Max-Age": "600"
     } : {})

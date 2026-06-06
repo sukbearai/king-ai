@@ -1797,8 +1797,9 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.doesNotMatch(html, /onclick="editActiveConversationTeam\(\)"/);
   assert.match(html, /\/gui\/summary\?conversationId=/);
   assert.doesNotMatch(html, /request\('\/gui\/summary'\)/);
-  assert.match(html, /king-ai agent computer --pair/);
-  assert.match(html, /pairCommandStart = 'king-ai agent computer'/);
+  assert.match(html, /npx -y @suwujs\/king-ai@latest/);
+  assert.match(html, /agent computer --pair/);
+  assert.match(html, /pairCommandStart = npxKingAiCommand\('agent computer'\)/);
   assert.doesNotMatch(html, /Computer pairing/);
   assert.doesNotMatch(html, /--pair gui/);
   assert.doesNotMatch(html, /id="state"/);

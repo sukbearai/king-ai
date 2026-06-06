@@ -1775,6 +1775,26 @@ function showRemoteOutput(text) {
   out.textContent = text || '';
   out.hidden = !text;
 }
+const localHostBridgeBase = 'http://127.0.0.1:8799';
+function localHostBridgePath(path) {
+  return ({
+    '/remote-config': '/remote/config',
+    '/remote-devices': '/remote/devices'
+  })[path] || path.replace(/^\/remote-devices\//, '/remote/devices/');
+}
+async function hostBridgeRequest(path, options) {
+  try {
+    return await request('/gui' + path, options);
+  } catch (error) {
+    const message = error && error.message ? String(error.message) : String(error);
+    if (!/host bridge not configured|404/.test(message)) throw error;
+    const res = await fetch(localHostBridgeBase + localHostBridgePath(path), options);
+    if (!res.ok) throw new Error(await res.text());
+    const contentType = res.headers.get('Content-Type') || '';
+    const result = contentType.includes('application/json') ? await res.json() : await res.text();
+    return { configured: true, result: result && result.ok !== undefined ? result : { ok: true, json: result } };
+  }
+}
 async function loadRemoteConfig() {
   const listEl = document.getElementById('remoteDeviceList');
   const statusEl = document.getElementById('remoteDeviceStatus');
@@ -1782,7 +1802,7 @@ async function loadRemoteConfig() {
   if (!listEl || !statusEl) return;
   showRemoteOutput('');
   try {
-    const response = await request('/gui/remote-config');
+    const response = await hostBridgeRequest('/remote-config');
     const result = response.result || {};
     const config = (result.json && result.json.config) || { devices: [] };
     if (configEl) configEl.value = formatRemoteConfig(config.devices && config.devices.length ? config : REMOTE_CONFIG_EXAMPLE);
@@ -1800,7 +1820,7 @@ async function loadRemoteDevices() {
   if (!listEl || !statusEl) return;
   showRemoteOutput('');
   try {
-    const response = await request('/gui/remote-devices');
+    const response = await hostBridgeRequest('/remote-devices');
     const result = response.result || {};
     renderRemoteDeviceList((result.json && result.json.devices) || [], result.json && result.json.defaultDevice);
     statusEl.textContent = result.error || response.error || '';
@@ -1832,7 +1852,7 @@ async function saveRemoteConfig() {
   showRemoteOutput('');
   try {
     const body = stripRemoteConfigHelp(JSON.parse(configEl?.value || '{"devices":[]}'));
-    const response = await request('/gui/remote-config', {
+    const response = await hostBridgeRequest('/remote-config', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
@@ -1856,12 +1876,12 @@ async function copyRemoteConfig() {
 }
 async function probeRemoteDevice(id) {
   showRemoteOutput(t('saving'));
-  const response = await request('/gui/remote-devices/' + encodeURIComponent(id) + '/probe', { method: 'POST' });
+  const response = await hostBridgeRequest('/remote-devices/' + encodeURIComponent(id) + '/probe', { method: 'POST' });
   showRemoteOutput(response.result?.text || response.error || '');
 }
 async function profileRemoteDevice(id) {
   showRemoteOutput(t('saving'));
-  const response = await request('/gui/remote-devices/' + encodeURIComponent(id) + '/profile', { method: 'POST' });
+  const response = await hostBridgeRequest('/remote-devices/' + encodeURIComponent(id) + '/profile', { method: 'POST' });
   showRemoteOutput(response.result?.text || response.error || '');
 }
 const previousOpenSettings = typeof openSettings === 'function' ? openSettings : null;
@@ -1915,6 +1935,19 @@ activeConversationStatus = function(summary, active) {
   if (thinking) return t('agentThinking');
   if ((active.unread || 0) > 0) return t('waitingAgent');
   return '';
+};
+function npxKingAiCommand(args) {
+  return 'npx -y @suwujs/king-ai@latest ' + args;
+}
+const previousLoadPairCommand = typeof loadPairCommand === 'function' ? loadPairCommand : null;
+loadPairCommand = async function() {
+  const summary = await request('/gui/summary?conversationId=' + encodeURIComponent(activeConversationId));
+  if (!summary.pairingCode) return;
+  pairCommandPrimary = npxKingAiCommand('agent computer --pair ' + summary.pairingCode + ' --server ' + base + (summary.pairCommandTenantArg || ''));
+  pairCommandStart = npxKingAiCommand('agent computer --server ' + base + (summary.pairCommandTenantArg || ''));
+  pairCommand = pairCommandPrimary + '\n' + pairCommandStart;
+  lastConnection = summary.connection || lastConnection;
+  if (document.getElementById('computerDialog').open && computerStep === 'connect') renderComputerFlow();
 };
 function agentDisplayName(summary, id) {
   const agents = summary.agents || [];
@@ -2577,8 +2610,8 @@ renderSummary = function(summary) {
   renderTeamStrip(summary);
   renderRemoteAssist(summary);
   if (summary.pairingLocator) {
-    pairCommandPrimary = 'king-ai agent computer --pair ' + shellQuote(summary.pairingLocator);
-    pairCommandStart = 'king-ai agent computer';
+    pairCommandPrimary = npxKingAiCommand('agent computer --pair ' + shellQuote(summary.pairingLocator));
+    pairCommandStart = npxKingAiCommand('agent computer');
     pairCommand = pairCommandPrimary + '\\n' + pairCommandStart;
     if (document.getElementById('computerDialog').open) renderComputerFlow();
   }

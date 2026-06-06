@@ -197,6 +197,11 @@ test("createHostStatusServer serves read-only app endpoints", async (t) => {
   });
   assert.equal(corsHealth.headers.get("access-control-allow-origin"), "http://localhost:5173");
 
+  const productionGuiCorsHealth = await fetch(`http://127.0.0.1:${port}/health`, {
+    headers: { Origin: "https://king-ai.congrongtech.cn" }
+  });
+  assert.equal(productionGuiCorsHealth.headers.get("access-control-allow-origin"), "https://king-ai.congrongtech.cn");
+
   const corsPreflight = await fetch(`http://127.0.0.1:${port}/runs/preflight`, {
     method: "OPTIONS",
     headers: {
@@ -206,6 +211,7 @@ test("createHostStatusServer serves read-only app endpoints", async (t) => {
   });
   assert.equal(corsPreflight.status, 204);
   assert.equal(corsPreflight.headers.get("access-control-allow-origin"), "http://127.0.0.1:5173");
+  assert.match(corsPreflight.headers.get("access-control-allow-methods") ?? "", /PUT/);
   assert.match(corsPreflight.headers.get("access-control-allow-methods") ?? "", /PATCH/);
   assert.match(corsPreflight.headers.get("access-control-allow-methods") ?? "", /DELETE/);
 
