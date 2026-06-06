@@ -199,8 +199,8 @@ rl.on('line', (line) => {
     send({ method: 'turn/started', params: { turn: { id: 'turn-1' } } });
     send({ method: 'thread/tokenUsage/updated', params: { tokenUsage: { total: { inputTokens: 12, cachedInputTokens: 2, outputTokens: 3, reasoningOutputTokens: 4 } } } });
     send({ method: 'item/completed', params: { item: { type: 'agentMessage', text: 'ok' } } });
-    send({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
     require('node:fs').writeFileSync(process.env.SEEN_FILE, JSON.stringify(seen, null, 2));
+    send({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
   }
 });
 `,
