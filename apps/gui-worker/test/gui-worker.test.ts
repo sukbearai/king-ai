@@ -2487,6 +2487,39 @@ test("gui runtime records status, typing, thinking, events, and runs", async () 
   assert.equal(state.runLog.at(-1)?.card?.sections?.some((section) => section.kind === "tool"), true);
 });
 
+test("gui runtime triage does not act on monitor-only teammate chatter", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const ceoToken = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/king-ai-ceo/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  const devToken = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/dev/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+
+  await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${ceoToken.token}` },
+    body: JSON.stringify({ argv: ["reply", "king-ai-convo", "点名任务已完成，后续不用继续报数。"] })
+  }), bindings);
+
+  const devTriage = await json<{ verdict: { actionable: boolean; routeHint?: string; promptNote?: string }; routeSummary: string }>(
+    await worker.fetch(new Request("https://gui/runtime/inbox-triage/payload", {
+      headers: { Authorization: `Bearer ${devToken.token}` }
+    }), bindings)
+  );
+  assert.equal(devTriage.verdict.actionable, false);
+  assert.equal(devTriage.verdict.routeHint, "monitor");
+  assert.match(devTriage.verdict.promptNote ?? "", /Monitor-only/);
+  assert.match(devTriage.routeSummary, /monitor\/normal\/msg/);
+});
+
 test("gui runtime bounds append-only signal logs so persisted state cannot grow without limit", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["claude"] });

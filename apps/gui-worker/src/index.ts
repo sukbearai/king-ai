@@ -2032,14 +2032,17 @@ export class GuiState implements DurableObject {
     const unread = unreadMessagesFor(state, agentId);
     const routed = sortRuntimeMessages(unread, agentId);
     const top = routed[0];
+    const actionable = top ? (top.route === "respond" || top.route === "steer") : false;
     return json({
       instructions: "Return strict JSON: {\"actionable\": boolean, \"reason\": string, \"promptNote\": string, \"routeHint\": \"ignore|monitor|respond|steer\", \"priority\": \"normal|steer|urgent\"}. Mark human messages actionable and prioritize blocker, approval, decision, direct, and @mention messages.",
       input: routed.map((item) => `${messageRouteTag(item)} score=${item.score} ${item.row.author_name}: ${item.row.body}`).join("\n"),
       routeSummary: formatMessageRouteSummary(unread, agentId),
       verdict: unread.length ? {
-        actionable: top ? top.route !== "ignore" : true,
+        actionable,
         reason: top ? `gui unread message routed ${messageRouteTag(top)}` : "gui unread message",
-        promptNote: "Handle the highest-priority routed message first. Reply through king-ai reply king-ai-convo --file notes/reply.md or a short inline reply.",
+        promptNote: actionable
+          ? "Handle the highest-priority routed message first. Reply through king-ai reply king-ai-convo --file notes/reply.md or a short inline reply."
+          : "Monitor-only teammate chatter is already visible in the shared thread; mark it read without starting a reply.",
         routeHint: top?.route,
         priority: top?.priority
       } : { actionable: false, reason: "inbox empty", routeHint: "ignore", priority: "normal" }
