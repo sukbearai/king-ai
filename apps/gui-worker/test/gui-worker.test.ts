@@ -1878,7 +1878,9 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /id="sendButton"/);
   assert.match(html, /#sendButton[\s\S]*align-self:\s*end/);
   assert.match(html, /#sendButton[\s\S]*height:\s*54px/);
-  assert.match(html, /button\.textContent = 'Sending'/);
+  assert.doesNotMatch(html, /button\.textContent = t\('sending'\)/);
+  assert.match(html, /function refreshSoon/);
+  assert.match(html, /button\.textContent = t\('send'\);[\s\S]*refreshSoon\(\)/);
   assert.doesNotMatch(html, /<span class="author">AI<\/span><span class="time">soon<\/span>/);
   assert.doesNotMatch(html, /已唤醒，等待本地 Claude\/Codex 回复/);
   assert.match(html, /Add a Computer/);

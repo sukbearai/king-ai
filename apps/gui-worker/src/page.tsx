@@ -1701,6 +1701,9 @@ function updateBackToBottom() {
 	  button.textContent = t('copied');
 	  setTimeout(function() { button.textContent = old || t('copy'); }, 900);
 	}
+	function refreshSoon() {
+	  setTimeout(function() { refresh().catch(function() {}); }, 0);
+	}
 	let pendingAttachments = [];
 	function formatBytes(value) {
 	  const bytes = Number(value || 0);
@@ -2553,7 +2556,7 @@ sendMessage = async function() {
 	  input.value = '';
 	  input.blur();
 	  button.disabled = true;
-	  button.textContent = t('sending');
+	  button.textContent = t('send');
 	  try {
 	    const attachments = await uploadPendingAttachments();
 	    await request('/gui/message', {
@@ -2565,7 +2568,10 @@ sendMessage = async function() {
 	    renderAttachmentTray();
 	    visibleMessageCount = 20;
 	    shouldStickToBottom = true;
-	    await refresh();
+	    sendingMessage = false;
+	    button.disabled = false;
+	    button.textContent = t('send');
+	    refreshSoon();
 	  } catch (error) {
 	    input.value = body;
 	    pendingAttachments = attachmentsToSend;
