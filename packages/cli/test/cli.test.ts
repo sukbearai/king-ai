@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdtemp, readFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { promisify } from "node:util";
 import {
   commandNameFromArgv,
   computerHelpText,
@@ -15,7 +17,10 @@ import {
   versionText
 } from "../src/cli.js";
 import { listHostWorkflowCards } from "../src/host-ledger.js";
+import { CURRENT_VERSION } from "../src/paths.js";
 import { scenarioTemplate } from "../src/team-workflow.js";
+
+const execFileP = promisify(execFile);
 
 test("computerHelpText matches King AI command sections", () => {
   const text = computerHelpText("https://runtime.example");
@@ -57,6 +62,19 @@ test("hasExplicitServerArg detects only user supplied server flags", () => {
 
 test("versionText includes the command name", () => {
   assert.equal(versionText("king-ai", "1.2.3"), "king-ai 1.2.3");
+});
+
+test("CURRENT_VERSION matches the package metadata", async () => {
+  const pkg = JSON.parse(await readFile(new URL("package.json", `file://${process.cwd()}/`), "utf8")) as { version?: string };
+  assert.equal(CURRENT_VERSION, pkg.version);
+});
+
+test("cli runs when launched through a package-manager symlink", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-cli-bin-"));
+  const bin = join(dir, "king-ai");
+  await symlink(join(process.cwd(), "dist/src/cli.js"), bin);
+  const { stdout } = await execFileP(process.execPath, [bin, "agent", "computer", "--version"]);
+  assert.match(stdout, /^king-ai \d+\.\d+\.\d+\n$/);
 });
 
 test("pair continues into foreground daemon when no service is installed", () => {

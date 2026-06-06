@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { cli, command } from "cleye";
-import { pathToFileURL } from "node:url";
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { CURRENT_VERSION, DEFAULT_SERVER, normalizeCommandName } from "./paths.js";
 import { doPair, doRun, runDoctor } from "./daemon.js";
 import { cleanupWorktrees, installService, isServiceInstalled, prepareWorktrees, printStatus, readRunningState, reloadService, restartService, stopService, tailLogs, uninstallService, watchStatus } from "./service.js";
@@ -1674,7 +1675,7 @@ async function main(): Promise<void> {
   await cli(
     {
       name: commandNameFromArgv(process.argv[1]),
-      version: "0.1.0",
+      version: CURRENT_VERSION,
       strictFlags: true,
       commands: [agentCommand, skillCheckCommand, projectProfileCommand, usageCommand, teamCommand, hostCommand],
       help: {
@@ -1714,7 +1715,12 @@ async function main(): Promise<void> {
   );
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+function isDirectCliInvocation(argv1: string | undefined, moduleUrl: string): boolean {
+  if (!argv1) return false;
+  return realpathSync(argv1) === realpathSync(fileURLToPath(moduleUrl));
+}
+
+if (isDirectCliInvocation(process.argv[1], import.meta.url)) {
   void main().catch((err) => {
     process.stderr.write(`${commandNameFromArgv(process.argv[1])}: ${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(70);

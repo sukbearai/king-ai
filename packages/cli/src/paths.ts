@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -28,5 +29,21 @@ export const HEARTBEAT_PATH = join(CONFIG_DIR, "heartbeat.json");
 export const HOST_EVENTS_PATH = join(CONFIG_DIR, "host-events.ndjson");
 export const HOST_RUNS_PATH = join(CONFIG_DIR, "host-runs.ndjson");
 export const SERVICE_LABEL = "dev.king-ai";
-export const CURRENT_VERSION = "0.1.0";
+export const CURRENT_VERSION = readPackageVersion();
 export const DEFAULT_SERVER = process.env.KING_AI_SERVER_URL || "https://api.king-ai.ai";
+
+function readPackageVersion(): string {
+  const candidates = [
+    new URL("../../package.json", import.meta.url),
+    new URL("../package.json", import.meta.url)
+  ];
+  for (const candidate of candidates) {
+    try {
+      const pkg = JSON.parse(readFileSync(candidate, "utf8")) as { version?: unknown };
+      if (typeof pkg.version === "string" && pkg.version) return pkg.version;
+    } catch {
+      // Source and built files live at different depths; try the next candidate.
+    }
+  }
+  return "0.0.0";
+}
