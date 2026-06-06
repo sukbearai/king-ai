@@ -70,6 +70,27 @@ export function renderPage(styles: string, clientScript: string): string {
       font-size: 11px;
       font-weight: 900;
     }
+    dialog[open] {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    dialog[open] > .modal-body,
+    dialog[open] > .modal-form > .modal-body,
+    dialog[open] > .modal-form > .window-body,
+    dialog[open] > .computer-flow {
+      flex: 1 1 auto;
+      min-height: 0;
+      max-height: none;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+    dialog[open] > .modal-form {
+      min-height: 0;
+      display: flex;
+      flex: 1 1 auto;
+      flex-direction: column;
+    }
     .remote-device-list {
       display: grid;
       gap: 6px;

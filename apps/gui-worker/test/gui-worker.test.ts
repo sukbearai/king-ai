@@ -1699,6 +1699,9 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /second:\s*'2-digit'/);
   assert.match(html, /height:\s*100vh/);
   assert.match(html, /body\s*\{[\s\S]*overflow:\s*hidden/);
+  assert.match(html, /dialog\[open\]\s*\{[\s\S]*display:\s*flex[\s\S]*overflow:\s*hidden/);
+  assert.match(html, /dialog\[open\]\s*>\s*\.modal-body[\s\S]*overflow-y:\s*auto/);
+  assert.match(html, /dialog\[open\]\s*>\s*\.computer-flow[\s\S]*overflow-y:\s*auto/);
   assert.doesNotMatch(html, /aria-label="King"><span>K<\/span><\/div>/);
   assert.doesNotMatch(html, /<span>I<\/span><span>N<\/span><span>G<\/span>/);
   assert.match(html, /Model status/);
