@@ -1970,9 +1970,12 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /\.ielts-core/);
   assert.match(html, /\.ielts-phrase/);
   assert.match(html, /\.ielts-word/);
+  assert.doesNotMatch(html, /border-bottom:\s*1px dotted/);
   assert.match(html, /id="vocabDialog"/);
   assert.match(html, /function openVocabDialog/);
   assert.match(html, /target\.closest\('\.ielts-word'\)/);
+  assert.match(html, /vocabNoDetails/);
+  assert.match(html, /closest\('\.vocab-row'\)\.hidden = !hasDetails/);
   assert.match(html, /data-i18n="vocabMeaning"|vocabMeaning:/);
   assert.match(html, /\.message-list\.empty-state\s*\{[\s\S]*position:\s*sticky/);
   assert.match(html, /function pendingDisplayDelayMs/);

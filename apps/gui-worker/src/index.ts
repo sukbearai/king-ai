@@ -697,7 +697,7 @@ const IELTS_WORKFLOW_AGENTS: Agent[] = [
       "- You may also use the compact fallback markers [core: ...], [phrase: ...], and [word word|中文词义|phonetic|syllables] when no nesting is needed.",
       "- Mark sentence cores with class ielts-core. Use it for SVO, SVC, and other main-clause skeletons.",
       "- Mark useful phrases with class ielts-phrase.",
-      "- Mark every English word in the sentence as clickable class ielts-word with data-word, data-meaning, data-phonetic, and data-syllables attributes. Do not limit clickable words to important vocabulary.",
+      "- Mark every English word in the sentence as clickable class ielts-word with data-word, data-meaning, data-phonetic, and data-syllables attributes. Do not limit clickable words to important vocabulary. Every clickable word should include all four attributes.",
       "- The word meaning field must be concise Chinese, not English.",
       "The GUI turns these markers into visual highlights and clickable vocabulary popups, so keep marker fields short and accurate.",
       "When you mark useful phrases, include their concise Chinese meanings in the writing tip, for example: Phrase: be conducive to = 有利于.",

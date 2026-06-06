@@ -313,8 +313,7 @@ export function renderPage(styles: string, clientScript: string): string {
     }
     .ielts-word {
       display: inline;
-      border-bottom: 1px dotted var(--muted);
-      padding: 0 1px;
+      padding: 0;
       cursor: pointer;
     }
     .ielts-word:hover {
@@ -350,6 +349,9 @@ export function renderPage(styles: string, clientScript: string): string {
       grid-template-columns: 74px minmax(0, 1fr);
       gap: 8px;
       align-items: baseline;
+    }
+    .vocab-row[hidden] {
+      display: none;
     }
     .vocab-label {
       color: var(--muted);
@@ -1411,6 +1413,7 @@ const TRANSLATIONS = {
     vocabMeaning: '词义',
     vocabPhonetic: '音标',
     vocabSyllables: '音节',
+    vocabNoDetails: '暂无词义，试试让 IELTS coach 重新解释这个词。',
     agentStatusRunning: '运行中',
     agentStatusThinking: '思考中',
     agentStatusUnread: '未读',
@@ -1555,6 +1558,7 @@ const TRANSLATIONS = {
     vocabMeaning: 'Meaning',
     vocabPhonetic: 'Phonetic',
     vocabSyllables: 'Syllables',
+    vocabNoDetails: 'No word details yet. Ask the IELTS coach to explain this word again.',
     agentStatusRunning: 'Running',
     agentStatusThinking: 'Thinking',
     agentStatusUnread: 'Unread',
@@ -2336,13 +2340,19 @@ function closeTaskChat() {
 function openVocabDialog(node) {
   const dialog = document.getElementById('vocabDialog');
   if (!dialog || !node) return;
+  const meaning = node.getAttribute('data-meaning') || '';
+  const phonetic = node.getAttribute('data-phonetic') || '';
+  const syllables = node.getAttribute('data-syllables') || '';
+  const hasDetails = Boolean(meaning || phonetic || syllables);
   document.getElementById('vocabWord').textContent = node.getAttribute('data-word') || node.textContent || '';
   document.getElementById('vocabMeaningLabel').textContent = t('vocabMeaning');
-  document.getElementById('vocabMeaning').textContent = node.getAttribute('data-meaning') || '';
+  document.getElementById('vocabMeaning').textContent = meaning || t('vocabNoDetails');
   document.getElementById('vocabPhoneticLabel').textContent = t('vocabPhonetic');
-  document.getElementById('vocabPhonetic').textContent = node.getAttribute('data-phonetic') || '';
+  document.getElementById('vocabPhonetic').textContent = phonetic;
+  document.getElementById('vocabPhonetic').closest('.vocab-row').hidden = !hasDetails || !phonetic;
   document.getElementById('vocabSyllablesLabel').textContent = t('vocabSyllables');
-  document.getElementById('vocabSyllables').textContent = node.getAttribute('data-syllables') || '';
+  document.getElementById('vocabSyllables').textContent = syllables;
+  document.getElementById('vocabSyllables').closest('.vocab-row').hidden = !hasDetails || !syllables;
   if (!dialog.open) dialog.showModal();
 }
 function closeVocabDialog() {
