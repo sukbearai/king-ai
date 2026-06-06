@@ -1,0 +1,3 @@
+display_name: DO Cloudflare VLESS
+short_description: Rebuild a DigitalOcean Cloudflare 3x-ui/VLESS node.
+default_prompt: Use $digitalocean-cf-vless-deploy to provision a DigitalOcean VPS with Cloudflare, Nginx, 3x-ui, VLESS WebSocket TLS, and Shadowrocket subscription.

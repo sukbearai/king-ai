@@ -1,0 +1,13 @@
+{
+  "name": "@king-ai/skills",
+  "version": "0.2.4",
+  "private": true,
+  "type": "module",
+  "description": "Shared Codex skills for King AI operational workflows.",
+  "scripts": {
+    "validate": "node scripts/validate-skills.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
