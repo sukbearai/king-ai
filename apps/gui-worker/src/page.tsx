@@ -1093,7 +1093,9 @@ export function renderPage(styles: string, clientScript: string): string {
   `;
   const enhancementScript = `
 function shellQuote(value) {
-  return "'" + String(value).replace(/'/g, "'\\''") + "'";
+  const singleQuote = String.fromCharCode(39);
+  const doubleQuote = String.fromCharCode(34);
+  return singleQuote + String(value).split(singleQuote).join(singleQuote + doubleQuote + singleQuote + doubleQuote + singleQuote) + singleQuote;
 }
 const ASSIST_PARAMS = new URLSearchParams(location.search);
 const assistToken = ASSIST_PARAMS.get('assist') || '';
@@ -1777,10 +1779,13 @@ function showRemoteOutput(text) {
 }
 const localHostBridgeBase = 'http://127.0.0.1:8799';
 function localHostBridgePath(path) {
-  return ({
+  const mapped = ({
     '/remote-config': '/remote/config',
     '/remote-devices': '/remote/devices'
-  })[path] || path.replace(/^\/remote-devices\//, '/remote/devices/');
+  })[path];
+  if (mapped) return mapped;
+  const prefix = '/remote-devices/';
+  return path.startsWith(prefix) ? '/remote/devices/' + path.slice(prefix.length) : path;
 }
 async function hostBridgeRequest(path, options) {
   try {
@@ -1945,7 +1950,7 @@ loadPairCommand = async function() {
   if (!summary.pairingCode) return;
   pairCommandPrimary = npxKingAiCommand('agent computer --pair ' + summary.pairingCode + ' --server ' + base + (summary.pairCommandTenantArg || ''));
   pairCommandStart = npxKingAiCommand('agent computer --server ' + base + (summary.pairCommandTenantArg || ''));
-  pairCommand = pairCommandPrimary + '\n' + pairCommandStart;
+  pairCommand = pairCommandPrimary + '\\n' + pairCommandStart;
   lastConnection = summary.connection || lastConnection;
   if (document.getElementById('computerDialog').open && computerStep === 'connect') renderComputerFlow();
 };

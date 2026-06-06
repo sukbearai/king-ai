@@ -162,6 +162,19 @@ test("gui page exposes attachment controls in the composer", async () => {
   assert.match(body, /\[' \+ escapeHtml\(file\.name\) \+ '\]/);
 });
 
+test("gui page inline scripts are parseable", async () => {
+  const bindings = env();
+  const page = await worker.fetch(new Request("https://gui/"), bindings);
+  assert.equal(page.status, 200);
+  const body = await page.text();
+  const scripts = [...body.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].map((match) => match[1] ?? "");
+  assert.equal(scripts.length, 2);
+  for (const script of scripts) {
+    assert.doesNotThrow(() => new Function(script));
+  }
+  assert.doesNotMatch(body, /\^\/remote-devices\/\//);
+});
+
 test("gui still requires login on localhost when Better Auth is configured", async () => {
   const bindings = env(undefined, {
     AUTH_DB: {} as D1Database,
