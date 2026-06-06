@@ -25,6 +25,10 @@ The GUI worker can be run locally with:
 pnpm gui:dev
 ```
 
+## Release
+
+Release tags drive publishing. Run `pnpm release:patch`, `pnpm release:minor`, or `pnpm release:major` to verify, bump package versions, commit `Release v%s`, tag `v%s`, and push the commit and tag. The release script does not publish to npm or deploy the Worker locally; `.github/workflows/publish.yml` handles npm publish and Cloudflare Worker deployment after the tag push.
+
 ## Rename And Migration Notes
 
 This project was renamed to `king-ai`. New installs and generated commands should use only `king-ai`, `@suwujs/king-ai`, `@king-ai/gui-worker`, `KING_AI_*`, `king-ai://`, and `~/.king-ai`.
