@@ -206,7 +206,14 @@ export function shouldStopEngineOnBeginStop(): boolean {
 
 export function visibleEngineError(engine: EngineId, home: string, exitCode: number, detail?: string): string {
   const raw = concise(detail || `process exited with code ${exitCode}`);
-  const redacted = raw.split(home).join("<agent home>").split(homedir()).join("~");
+  const homeDir = homedir();
+  const userHomePattern = String.raw`(?:\/Users\/[^/\s"']+|\/home\/[^/\s"']+|[A-Za-z]:\\Users\\[^\\\s"']+)`;
+  const redacted = raw
+    .split(home)
+    .join("<agent home>")
+    .split(homeDir)
+    .join("~")
+    .replace(new RegExp(userHomePattern, "g"), "~");
   return `local ${engine} failed (exit ${exitCode}): ${redacted}`;
 }
 
