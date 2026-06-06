@@ -694,6 +694,7 @@ const IELTS_WORKFLOW_AGENTS: Agent[] = [
       "Use this renderable annotation format whenever you provide an English sentence:",
       "- For every sentence, mark only the minimal sentence core and useful phrases inline on the sentence itself.",
       "- Sentence core means only the main clause skeleton: subject + predicate, plus a required object or complement when the verb needs one. Do not include modifiers such as adjectives, adverbs, relative clauses, purpose phrases, prepositional phrases, time/place phrases, or optional details in ielts-core.",
+      "- Do include required complements for linking verbs and verbs such as be, become, feel, seem, look, sound, and appear. For example, mark 'It is Saturday', 'I feel exhausted', and 'the work seems never to end' as sentence cores, not just 'It is', 'I feel', or 'the work seems'.",
       "- Examples: in 'An AI-forward software engineer uses AI tools as a normal part of design', mark only 'engineer uses tools' as core; mark 'AI-forward software engineer', 'AI tools', and 'as a normal part of design' as phrases. In 'I want to eat', mark only 'I want' as core and 'to eat' as phrase.",
       "- Prefer safe HTML spans so highlights and clickable words can be nested: <span class=\"ielts-core\">I <span class=\"ielts-word\" data-word=\"want\" data-meaning=\"想要\" data-phonetic=\"/wɑːnt/\" data-syllables=\"want\">want</span></span> <span class=\"ielts-phrase\">to eat</span>.",
       "- You may also use the compact fallback markers [core: ...], [phrase: ...], and [word word|中文词义|phonetic|syllables] when no nesting is needed.",
@@ -702,7 +703,7 @@ const IELTS_WORKFLOW_AGENTS: Agent[] = [
       "- Mark every English word in the sentence as clickable class ielts-word with data-word, data-meaning, data-phonetic, and data-syllables attributes. Do not limit clickable words to important vocabulary. Every clickable word should include all four attributes.",
       "- The word meaning field must be concise Chinese, not English.",
       "The GUI turns these markers into visual highlights and clickable vocabulary popups, so keep marker fields short and accurate.",
-      "When you mark useful phrases, include their concise Chinese meanings in the writing tip, for example: Phrase: be conducive to = 有利于.",
+      "When you mark useful phrases, include every highlighted phrase in the writing tip with concise Chinese meanings, for example: Phrase: be conducive to = 有利于; all day = 一整天. Do not explain only one phrase when multiple ielts-phrase highlights appear.",
       "Do not default to separate Sentence Core, Clauses/Phrases, or Vocabulary lists. Prefer compact replies: one natural English line with inline highlights and one small writing tip when useful."
     ].join(" "),
     engine: "codex",
@@ -736,6 +737,13 @@ const LEGACY_DEFAULT_REVIEWER_ROLE = "Review completed work, identify gaps, and 
 const LEGACY_IELTS_ROLE_MARKERS = [
   "IELTS reading and writing coach",
   "Prefer compact, high-signal replies: Natural English, Sentence Core, Clauses/Phrases, Vocabulary"
+];
+const BUILT_IN_IELTS_ROLE_MARKERS = [
+  "IELTS reading and writing coach",
+  "For every sentence, mark only the minimal sentence core and useful phrases inline",
+  "Sentence core means only the main clause skeleton",
+  "When you mark useful phrases, include their concise Chinese meanings in the writing tip",
+  "Do not default to separate Sentence Core, Clauses/Phrases, or Vocabulary lists"
 ];
 
 const DEFAULT_CONVERSATION: Conversation = {
@@ -2032,17 +2040,14 @@ export class GuiState implements DurableObject {
     const unread = unreadMessagesFor(state, agentId);
     const routed = sortRuntimeMessages(unread, agentId);
     const top = routed[0];
-    const actionable = top ? (top.route === "respond" || top.route === "steer") : false;
     return json({
       instructions: "Return strict JSON: {\"actionable\": boolean, \"reason\": string, \"promptNote\": string, \"routeHint\": \"ignore|monitor|respond|steer\", \"priority\": \"normal|steer|urgent\"}. Mark human messages actionable and prioritize blocker, approval, decision, direct, and @mention messages.",
       input: routed.map((item) => `${messageRouteTag(item)} score=${item.score} ${item.row.author_name}: ${item.row.body}`).join("\n"),
       routeSummary: formatMessageRouteSummary(unread, agentId),
       verdict: unread.length ? {
-        actionable,
+        actionable: top ? top.route !== "ignore" : true,
         reason: top ? `gui unread message routed ${messageRouteTag(top)}` : "gui unread message",
-        promptNote: actionable
-          ? "Handle the highest-priority routed message first. Reply through king-ai reply king-ai-convo --file notes/reply.md or a short inline reply."
-          : "Monitor-only teammate chatter is already visible in the shared thread; mark it read without starting a reply.",
+        promptNote: "Handle the highest-priority routed message first. Reply through king-ai reply king-ai-convo --file notes/reply.md or a short inline reply.",
         routeHint: top?.route,
         priority: top?.priority
       } : { actionable: false, reason: "inbox empty", routeHint: "ignore", priority: "normal" }
@@ -4690,7 +4695,8 @@ function normalizeBuiltInAgent(agent: Agent): Agent {
 
 function isLegacyIeltsRole(role?: string): boolean {
   if (!role) return true;
-  return LEGACY_IELTS_ROLE_MARKERS.every((marker) => role.includes(marker));
+  return LEGACY_IELTS_ROLE_MARKERS.every((marker) => role.includes(marker))
+    || BUILT_IN_IELTS_ROLE_MARKERS.every((marker) => role.includes(marker));
 }
 
 function findAgent(state: State, agentId?: string | null): Agent | undefined {

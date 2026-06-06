@@ -890,6 +890,8 @@ test("gui windows choose agents from the selected workflow", async () => {
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /For every sentence, mark only the minimal sentence core and useful phrases inline/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Sentence core means only the main clause skeleton/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not include modifiers/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do include required complements for linking verbs/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /mark 'It is Saturday', 'I feel exhausted', and 'the work seems never to end' as sentence cores/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /mark only 'engineer uses tools' as core/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /mark only 'I want' as core/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /safe HTML spans/);
@@ -899,7 +901,8 @@ test("gui windows choose agents from the selected workflow", async () => {
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /\[phrase: \.\.\.\]/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /\[word word\|中文词义\|phonetic\|syllables\]/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /meaning field must be concise Chinese/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /include their concise Chinese meanings in the writing tip/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /include every highlighted phrase in the writing tip with concise Chinese meanings/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not explain only one phrase when multiple ielts-phrase highlights appear/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not default to separate Sentence Core, Clauses\/Phrases, or Vocabulary lists/);
 
   const single = await json<{
@@ -968,6 +971,62 @@ test("stored IELTS agents and snapshots migrate from legacy section-list roles",
   assert.match(agentRole, /Do not default to separate Sentence Core, Clauses\/Phrases, or Vocabulary lists/);
   assert.match(snapshotRole, /Do not default to separate Sentence Core, Clauses\/Phrases, or Vocabulary lists/);
   assert.doesNotMatch(snapshotRole, /Prefer compact, high-signal replies: Natural English, Sentence Core/);
+});
+
+test("stored IELTS agents and snapshots migrate from previous compact annotation roles", async () => {
+  const previousRole = [
+    "IELTS reading and writing coach for improving reading and writing. Keep the conversation in English by default.",
+    "When the learner writes Chinese, treat it as an expression gap: first give the natural English expression, then explain the useful grammar in simple English.",
+    "Do not give generic acknowledgements. Every reply should either improve the learner's sentence, analyze a text they provided, or ask one focused follow-up question.",
+    "Use this renderable annotation format whenever you provide an English sentence:",
+    "- For every sentence, mark only the minimal sentence core and useful phrases inline on the sentence itself.",
+    "- Sentence core means only the main clause skeleton: subject + predicate, plus a required object or complement when the verb needs one. Do not include modifiers such as adjectives, adverbs, relative clauses, purpose phrases, prepositional phrases, time/place phrases, or optional details in ielts-core.",
+    "- Examples: in 'An AI-forward software engineer uses AI tools as a normal part of design', mark only 'engineer uses tools' as core; mark 'AI-forward software engineer', 'AI tools', and 'as a normal part of design' as phrases. In 'I want to eat', mark only 'I want' as core and 'to eat' as phrase.",
+    "- Prefer safe HTML spans so highlights and clickable words can be nested: <span class=\"ielts-core\">I <span class=\"ielts-word\" data-word=\"want\" data-meaning=\"想要\" data-phonetic=\"/wɑːnt/\" data-syllables=\"want\">want</span></span> <span class=\"ielts-phrase\">to eat</span>.",
+    "- You may also use the compact fallback markers [core: ...], [phrase: ...], and [word word|中文词义|phonetic|syllables] when no nesting is needed.",
+    "- Mark sentence cores with class ielts-core. Use it for SVO, SVC, SV, and other main-clause skeletons only.",
+    "- Mark useful phrases with class ielts-phrase.",
+    "- Mark every English word in the sentence as clickable class ielts-word with data-word, data-meaning, data-phonetic, and data-syllables attributes. Do not limit clickable words to important vocabulary. Every clickable word should include all four attributes.",
+    "- The word meaning field must be concise Chinese, not English.",
+    "The GUI turns these markers into visual highlights and clickable vocabulary popups, so keep marker fields short and accurate.",
+    "When you mark useful phrases, include their concise Chinese meanings in the writing tip, for example: Phrase: be conducive to = 有利于.",
+    "Do not default to separate Sentence Core, Clauses/Phrases, or Vocabulary lists. Prefer compact replies: one natural English line with inline highlights and one small writing tip when useful."
+  ].join(" ");
+  const bindings = env({
+    agents: [{ id: "ielts-tutor", name: "IELTS Reading & Writing Coach", role: previousRole, engine: "codex", lifecycle: "on-demand" }],
+    workflowAgentIds: { "ielts-study": ["ielts-tutor"] },
+    conversations: [{
+      id: "english",
+      title: "English",
+      kind: "group",
+      created_at: Date.now(),
+      updated_at: Date.now(),
+      workflowId: "ielts-study",
+      teamMode: "single",
+      coordinatorAgentId: "ielts-tutor",
+      teamAgentIds: ["ielts-tutor"],
+      teamSnapshot: {
+        workflowId: "ielts-study",
+        mode: "single",
+        coordinatorAgentId: "ielts-tutor",
+        teamAgentIds: ["ielts-tutor"],
+        agents: [{ id: "ielts-tutor", name: "IELTS Reading & Writing Coach", role: previousRole, engine: "codex", lifecycle: "on-demand" }],
+        createdAt: Date.now()
+      }
+    }],
+    messages: []
+  });
+  const state = await json<{
+    agents: { id: string; role: string }[];
+    conversations: { id: string; teamSnapshot?: { agents: { id: string; role: string }[] } }[];
+  }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
+  const agentRole = state.agents.find((agent) => agent.id === "ielts-tutor")?.role ?? "";
+  const snapshotRole = state.conversations.find((conversation) => conversation.id === "english")?.teamSnapshot?.agents[0]?.role ?? "";
+  assert.match(agentRole, /Do include required complements for linking verbs/);
+  assert.match(agentRole, /include every highlighted phrase in the writing tip with concise Chinese meanings/);
+  assert.match(snapshotRole, /Do include required complements for linking verbs/);
+  assert.match(snapshotRole, /include every highlighted phrase in the writing tip with concise Chinese meanings/);
+  assert.doesNotMatch(snapshotRole, /include their concise Chinese meanings in the writing tip/);
 });
 
 test("custom IELTS room roles are not migrated", async () => {
@@ -2487,7 +2546,7 @@ test("gui runtime records status, typing, thinking, events, and runs", async () 
   assert.equal(state.runLog.at(-1)?.card?.sections?.some((section) => section.kind === "tool"), true);
 });
 
-test("gui runtime triage does not act on monitor-only teammate chatter", async () => {
+test("gui runtime triage keeps monitor-visible room chatter actionable", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
   const ceoToken = await json<{ token: string }>(
@@ -2514,9 +2573,9 @@ test("gui runtime triage does not act on monitor-only teammate chatter", async (
       headers: { Authorization: `Bearer ${devToken.token}` }
     }), bindings)
   );
-  assert.equal(devTriage.verdict.actionable, false);
+  assert.equal(devTriage.verdict.actionable, true);
   assert.equal(devTriage.verdict.routeHint, "monitor");
-  assert.match(devTriage.verdict.promptNote ?? "", /Monitor-only/);
+  assert.match(devTriage.verdict.promptNote ?? "", /Handle the highest-priority routed message first/);
   assert.match(devTriage.routeSummary, /monitor\/normal\/msg/);
 });
 
