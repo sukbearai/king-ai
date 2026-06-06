@@ -35,6 +35,10 @@ Run `pnpm build && pnpm test` or `pnpm verify` after changes.
 
 Recent commits use Conventional Commit prefixes such as `feat:` and `fix:`; continue that pattern with short, specific English summaries. Commit messages in this repository must be written in English. PRs should describe the behavior change, list verification commands run, and call out any runtime-server API assumptions. Include logs or terminal output when changing service installation, pairing, SSE, or engine invocation behavior.
 
+## Release & Deployment
+
+Publishing the CLI package and deploying the Cloudflare GUI Worker are handled by GitHub Actions from pushed release tags. Do not run local commands that publish to npm or deploy the Worker directly. For releases, prepare and verify the version/tag locally, push the commit and tag, then let `.github/workflows/publish.yml` perform npm publish and Worker deployment with repository secrets. After pushing the tag, verify the Actions run, npm `latest`, and the deployed Worker status instead of retrying local publish.
+
 ## Security & Configuration Tips
 
 This daemon bridges remote runtime events to local CLI processes and is not an OS sandbox. Treat `serverUrl`, `deviceToken`, runtime tokens, and per-agent homes under `~/.king-ai/` as sensitive. Do not log full tokens or persist secrets outside the existing config/token paths.
