@@ -697,9 +697,10 @@ const IELTS_WORKFLOW_AGENTS: Agent[] = [
       "- You may also use the compact fallback markers [core: ...], [phrase: ...], and [word word|中文词义|phonetic|syllables] when no nesting is needed.",
       "- Mark sentence cores with class ielts-core. Use it for SVO, SVC, and other main-clause skeletons.",
       "- Mark useful phrases with class ielts-phrase.",
-      "- Mark important vocabulary as clickable class ielts-word with data-word, data-meaning, data-phonetic, and data-syllables attributes.",
+      "- Mark every English word in the sentence as clickable class ielts-word with data-word, data-meaning, data-phonetic, and data-syllables attributes. Do not limit clickable words to important vocabulary.",
       "- The word meaning field must be concise Chinese, not English.",
       "The GUI turns these markers into visual highlights and clickable vocabulary popups, so keep marker fields short and accurate.",
+      "When you mark useful phrases, include their concise Chinese meanings in the writing tip, for example: Phrase: be conducive to = 有利于.",
       "Do not default to separate Sentence Core, Clauses/Phrases, or Vocabulary lists. Prefer compact replies: one natural English line with inline highlights and one small writing tip when useful."
     ].join(" "),
     engine: "codex",
@@ -4250,6 +4251,11 @@ function escapeHtmlAttribute(value: string): string {
   return value.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[ch] ?? ch);
 }
 
+function clickableWordSpan(word: string): string {
+  const escaped = escapeHtmlAttribute(word);
+  return `<span class="ielts-word" data-word="${escaped}">${escapeHtml(word)}</span>`;
+}
+
 function renderIeltsAnnotations(markdown: string): string {
   return markdown
     .replace(/\[word\s+([^\]\n|]+)\|([^\]\n|]+)\|([^\]\n|]+)\|([^\]\n|]+)\]/g, (_match, word: string, meaning: string, phonetic: string, syllables: string) =>
@@ -4259,11 +4265,46 @@ function renderIeltsAnnotations(markdown: string): string {
     .replace(/\[phrase:\s*([^\]\n]+)\]/g, (_match, phrase: string) => `<span class="ielts-phrase">${escapeHtml(phrase.trim())}</span>`);
 }
 
+function renderFallbackClickableWords(html: string): string {
+  const skipTags = new Set(["a", "code", "pre", "script", "style"]);
+  const stack: Array<{ name: string; className: string }> = [];
+  return html.split(/(<[^>]+>)/g).map((part) => {
+    if (!part) return part;
+    if (part.startsWith("<")) {
+      const close = part.match(/^<\/\s*([a-zA-Z][\w:-]*)/);
+      if (close) {
+        const name = close[1].toLowerCase();
+        for (let idx = stack.length - 1; idx >= 0; idx -= 1) {
+          const current = stack.pop();
+          if (current?.name === name) break;
+        }
+        return part;
+      }
+      const open = part.match(/^<\s*([a-zA-Z][\w:-]*)([^>]*)>/);
+      if (open && !part.endsWith("/>")) {
+        const name = open[1].toLowerCase();
+        const classMatch = open[2].match(/\sclass\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+        const className = decodeHtmlAttribute(classMatch?.[1] ?? classMatch?.[2] ?? classMatch?.[3] ?? "").trim();
+        stack.push({ name, className });
+      }
+      return part;
+    }
+    if (stack.some((entry) => skipTags.has(entry.name) || entry.className === "ielts-word")) return part;
+    return part.replace(/\b[A-Za-z]+(?:'[A-Za-z]+)?\b/g, (word) => clickableWordSpan(word));
+  }).join("");
+}
+
+function shouldRenderIeltsClickableWords(message: Message): boolean {
+  return message.author_kind === "agent" && message.author_name === "IELTS Reading & Writing Coach";
+}
+
 async function renderMessageMarkdown(message: Message): Promise<Message> {
   if (message.status === "pending" || message.kind === "system") return { ...message };
   try {
     const rendered = await renderMarkdownHtml(renderIeltsAnnotations(message.body || ""));
-    return { ...message, body_html: sanitizeMarkdownHtml(rendered) };
+    const sanitized = sanitizeMarkdownHtml(rendered);
+    const body_html = shouldRenderIeltsClickableWords(message) ? renderFallbackClickableWords(sanitized) : sanitized;
+    return { ...message, body_html };
   } catch {
     return { ...message };
   }

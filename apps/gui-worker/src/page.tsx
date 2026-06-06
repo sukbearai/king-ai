@@ -313,15 +313,12 @@ export function renderPage(styles: string, clientScript: string): string {
     }
     .ielts-word {
       display: inline;
-      border: 1px solid #6c57b8;
-      background: #efe9ff;
-      color: #2f1f69;
-      padding: 0 4px;
-      font-weight: 900;
+      border-bottom: 1px dotted var(--muted);
+      padding: 0 1px;
       cursor: pointer;
     }
     .ielts-word:hover {
-      background: #d8ccff;
+      background: var(--panel);
     }
     .vocab-dialog {
       width: min(360px, calc(100vw - 28px));
