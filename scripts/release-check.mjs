@@ -25,11 +25,13 @@ async function syncCliVersion() {
   }
 
   const source = await readFile(pathsSourcePath, "utf8");
-  const next = source.replace(/export const CURRENT_VERSION = "([^"]+)";/, `export const CURRENT_VERSION = "${pkg.version}";`);
-  if (next === source) {
+  const versionPattern = /export const CURRENT_VERSION = "([^"]+)";/;
+  if (!versionPattern.test(source)) {
     console.error(`Could not update CURRENT_VERSION in ${pathsSourcePath}`);
     process.exit(1);
   }
+  const next = source.replace(versionPattern, `export const CURRENT_VERSION = "${pkg.version}";`);
+  if (next === source) return;
   await writeFile(pathsSourcePath, next);
 }
 
@@ -47,12 +49,10 @@ try {
   await assertCliVersionSynced();
   run("pnpm", ["verify"]);
   await copyFile("README.md", packageReadmePath);
-  run("pnpm", [
-    "--filter",
-    "@suwujs/king-ai",
-    "publish",
-    "--dry-run",
-    "--no-git-checks"
+  run("npm", [
+    "pack",
+    "./packages/cli",
+    "--dry-run"
   ]);
 } finally {
   if (existsSync(packageReadmePath)) {
