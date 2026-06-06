@@ -21,6 +21,7 @@ const args = [
   "exec",
   "bumpp",
   "--recursive",
+  "--all",
   "--git-check",
   "--execute",
   "node scripts/release-check.mjs",
