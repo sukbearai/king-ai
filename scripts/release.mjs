@@ -30,9 +30,12 @@ function run(command, args) {
     shell: false
   });
 
-  if (result.status !== 0) {
-    process.exit(result.status ?? 1);
-  }
+  return result.status ?? 1;
+}
+
+function runOrExit(command, args) {
+  const status = run(command, args);
+  if (status !== 0) process.exit(status);
 }
 
 const args = [
@@ -46,7 +49,8 @@ const args = [
   "--commit",
   "Release v%s",
   "--tag",
-  "v%s"
+  "v%s",
+  "--no-push"
 ];
 
 if (release) {
@@ -55,19 +59,21 @@ if (release) {
 
 args.push(...publishArgs);
 
-run("pnpm", args);
+runOrExit("pnpm", args);
 
 if (!skipPublish) {
+  let publishStatus = 0;
   try {
     copyFileSync("README.md", packageReadmePath);
-    run("npm", ["publish", "--access", "public", "./packages/cli"]);
+    publishStatus = run("npm", ["publish", "--access", "public", "./packages/cli"]);
   } finally {
     if (existsSync(packageReadmePath)) {
       rmSync(packageReadmePath);
     }
   }
+  if (publishStatus !== 0) process.exit(publishStatus);
 }
 
 if (!skipPush) {
-  run("git", ["push", "--follow-tags"]);
+  runOrExit("git", ["push", "--follow-tags"]);
 }
