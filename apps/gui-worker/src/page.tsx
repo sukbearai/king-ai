@@ -1334,11 +1334,11 @@ const TRANSLATIONS = {
     assistActive: '链接已启用，可多人使用。',
     assistCopyUnavailable: '完整链接只会在生成时显示；请重新生成链接后复制。',
     dataResetTitle: '重新开始',
-    dataResetDesc: '清除当前账号下的所有窗口、消息、任务、文件、决策、配对信息和运行记录。操作后会生成新的配对码。',
-    dataResetButton: '清除当前账号数据',
+    dataResetDesc: '还原到系统最初状态：清除当前账号下的窗口、消息、任务、文件、决策、配对信息和运行记录，并通知本机清理所有 agent 上下文、会话和 workspace。操作后会生成新的配对码。',
+    dataResetButton: '还原初始状态',
     dataResetConfirm: '再次点击确认清除',
     dataResetting: '正在清除...',
-	    dataResetDone: '已清除，可以重新开始。',
+    dataResetDone: '已还原，可以重新开始。',
 	    dataResetFailed: '清除失败，请稍后重试。',
 	    attachFile: '添加附件',
 	    attachments: '附件',
@@ -1478,11 +1478,11 @@ const TRANSLATIONS = {
     assistActive: 'Link enabled; multiple people can use it.',
     assistCopyUnavailable: 'The full link is only shown when created. Create a new link to copy it.',
     dataResetTitle: 'Start over',
-    dataResetDesc: 'Clear all windows, messages, tasks, files, decisions, pairing info, and run history for the current account. A new pairing code will be generated.',
-    dataResetButton: 'Clear current account data',
+    dataResetDesc: 'Restore the initial system state: clear current account windows, messages, tasks, files, decisions, pairing info, and run history, then ask this computer to clear every agent context, session, and workspace. A new pairing code will be generated.',
+    dataResetButton: 'Restore initial state',
     dataResetConfirm: 'Click again to confirm',
     dataResetting: 'Clearing...',
-	    dataResetDone: 'Cleared. You can start over.',
+	    dataResetDone: 'Restored. You can start over.',
 	    dataResetFailed: 'Clear failed. Try again.',
 	    attachFile: 'Attach',
 	    attachments: 'Attachments',
@@ -3213,10 +3213,10 @@ refresh();
             </section>
             <section class="side-card danger-card">
               <h2 data-i18n="dataResetTitle">Start over</h2>
-              <p class="muted" data-i18n="dataResetDesc">Clear all windows, messages, tasks, files, decisions, pairing info, and run history for the current account. A new pairing code will be generated.</p>
+              <p class="muted" data-i18n="dataResetDesc">Restore the initial system state: clear current account windows, messages, tasks, files, decisions, pairing info, and run history, then ask this computer to clear every agent context, session, and workspace. A new pairing code will be generated.</p>
               <div id="resetAccountStatus" class="danger-status"></div>
               <div class="danger-actions">
-                <button id="resetAccountButton" class="danger-button button-shadow" onclick="resetCurrentAccountData()" data-i18n="dataResetButton">Clear current account data</button>
+                <button id="resetAccountButton" class="danger-button button-shadow" onclick="resetCurrentAccountData()" data-i18n="dataResetButton">Restore initial state</button>
               </div>
             </section>
             <div class="settings-actions">

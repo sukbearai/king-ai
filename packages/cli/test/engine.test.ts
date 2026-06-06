@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -339,4 +339,31 @@ test("personaHeader documents workspace, memory, and privacy boundaries", () => 
   assert.match(header, /memory\/MEMORY\.md/);
   assert.match(header, /Stay inside this home directory/);
   assert.match(header, /king-ai` command on PATH/);
+});
+
+test("codex seedHome refreshes generated persona files", async () => {
+  const home = await mkdtemp(join(tmpdir(), "king-ai-home-"));
+  try {
+    const adapter = getAdapter("codex");
+    await adapter.seedHome(home, { id: "ielts-tutor", name: "IELTS Reading & Writing Coach", role: "Old role" });
+    await adapter.seedHome(home, { id: "ielts-tutor", name: "IELTS Reading & Writing Coach", role: "New compact role" });
+    const text = await readFile(join(home, "AGENTS.md"), "utf8");
+    assert.match(text, /New compact role/);
+    assert.doesNotMatch(text, /Old role/);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("codex seedHome preserves non-generated persona files", async () => {
+  const home = await mkdtemp(join(tmpdir(), "king-ai-home-"));
+  try {
+    await writeFile(join(home, "AGENTS.md"), "# Custom\n\nDo not replace this file.\n", "utf8");
+    const adapter = getAdapter("codex");
+    await adapter.seedHome(home, { id: "demo", name: "Demo", role: "Generated role" });
+    const text = await readFile(join(home, "AGENTS.md"), "utf8");
+    assert.equal(text, "# Custom\n\nDo not replace this file.\n");
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
 });

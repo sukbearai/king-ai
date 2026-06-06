@@ -889,6 +889,79 @@ test("gui windows choose agents from the selected workflow", async () => {
   assert.equal(custom.conversation.teamSnapshot?.agents.some((agent) => agent.id === "ielts-writing-coach"), false);
 });
 
+test("stored IELTS agents and snapshots migrate from legacy section-list roles", async () => {
+  const legacyRole = [
+    "IELTS reading and writing coach for improving reading and writing. Keep the conversation in English by default.",
+    "Prefer compact, high-signal replies: Natural English, Sentence Core, Clauses/Phrases, Vocabulary, and one small writing tip."
+  ].join(" ");
+  const bindings = env({
+    agents: [{ id: "ielts-tutor", name: "IELTS Reading & Writing Coach", role: legacyRole, engine: "codex", lifecycle: "on-demand" }],
+    workflowAgentIds: { "ielts-study": ["ielts-tutor"] },
+    conversations: [{
+      id: "english",
+      title: "English",
+      kind: "group",
+      created_at: Date.now(),
+      updated_at: Date.now(),
+      workflowId: "ielts-study",
+      teamMode: "single",
+      coordinatorAgentId: "ielts-tutor",
+      teamAgentIds: ["ielts-tutor"],
+      teamSnapshot: {
+        workflowId: "ielts-study",
+        mode: "single",
+        coordinatorAgentId: "ielts-tutor",
+        teamAgentIds: ["ielts-tutor"],
+        agents: [{ id: "ielts-tutor", name: "IELTS Reading & Writing Coach", role: legacyRole, engine: "codex", lifecycle: "on-demand" }],
+        createdAt: Date.now()
+      }
+    }],
+    messages: []
+  });
+  const state = await json<{
+    agents: { id: string; role: string }[];
+    conversations: { id: string; teamSnapshot?: { agents: { id: string; role: string }[] } }[];
+  }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
+  const agentRole = state.agents.find((agent) => agent.id === "ielts-tutor")?.role ?? "";
+  const snapshotRole = state.conversations.find((conversation) => conversation.id === "english")?.teamSnapshot?.agents[0]?.role ?? "";
+  assert.match(agentRole, /Do not default to separate Sentence Core, Clauses\/Phrases, or Vocabulary lists/);
+  assert.match(snapshotRole, /Do not default to separate Sentence Core, Clauses\/Phrases, or Vocabulary lists/);
+  assert.doesNotMatch(snapshotRole, /Prefer compact, high-signal replies: Natural English, Sentence Core/);
+});
+
+test("custom IELTS room roles are not migrated", async () => {
+  const customRole = "IELTS reading and writing coach for a special room. Use only terse correction.";
+  const bindings = env({
+    agents: [{ id: "ielts-tutor", name: "IELTS Reading & Writing Coach", role: customRole, engine: "codex", lifecycle: "on-demand" }],
+    conversations: [{
+      id: "custom-english",
+      title: "Custom English",
+      kind: "group",
+      created_at: Date.now(),
+      updated_at: Date.now(),
+      workflowId: "ielts-study",
+      teamMode: "single",
+      coordinatorAgentId: "ielts-tutor",
+      teamAgentIds: ["ielts-tutor"],
+      teamSnapshot: {
+        workflowId: "ielts-study",
+        mode: "single",
+        coordinatorAgentId: "ielts-tutor",
+        teamAgentIds: ["ielts-tutor"],
+        agents: [{ id: "ielts-tutor", name: "IELTS Reading & Writing Coach", role: customRole, engine: "codex", lifecycle: "on-demand" }],
+        createdAt: Date.now()
+      }
+    }],
+    messages: []
+  });
+  const state = await json<{
+    agents: { id: string; role: string }[];
+    conversations: { id: string; teamSnapshot?: { agents: { id: string; role: string }[] } }[];
+  }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
+  assert.equal(state.agents.find((agent) => agent.id === "ielts-tutor")?.role, customRole);
+  assert.equal(state.conversations.find((conversation) => conversation.id === "custom-english")?.teamSnapshot?.agents[0]?.role, customRole);
+});
+
 test("new gui windows default to the IELTS workflow", async () => {
   const bindings = env();
   await pairComputer(bindings, { engines: ["codex"] });
@@ -1422,11 +1495,12 @@ test("gui runtime exports, imports, and resets durable state snapshots", async (
   assert.equal(exported.state.messages[0]?.body, "persist me");
 
   await json<{ ok: true }>(await worker.fetch(new Request("https://gui/gui/reset-state", { method: "POST" }), bindings));
-  const resetState = await json<{ availableEngines: string[]; messages: unknown[] }>(
+  const resetState = await json<{ availableEngines: string[]; messages: unknown[]; wakeLog?: { event: string; data: { resetState?: boolean } }[] }>(
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
   assert.deepEqual(resetState.availableEngines, []);
   assert.deepEqual(resetState.messages, []);
+  assert.equal(resetState.wakeLog?.some((row) => row.event === "wake" && row.data.resetState === true), true);
 
   await json<{ ok: true; messages: number }>(await worker.fetch(new Request("https://gui/gui/import-state", {
     method: "POST",
@@ -2008,9 +2082,12 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /function resetCurrentAccountData\(\)/);
   assert.match(html, /await request\('\/gui\/reset-state', \{ method: 'POST' \}\)/);
   assert.match(html, /dataResetTitle: '重新开始'/);
-  assert.match(html, /dataResetButton: '清除当前账号数据'/);
+  assert.match(html, /dataResetButton: '还原初始状态'/);
+  assert.match(html, /清理所有 agent 上下文、会话和 workspace/);
   assert.match(html, /dataResetConfirm: '再次点击确认清除'/);
   assert.match(html, /dataResetTitle: 'Start over'/);
+  assert.match(html, /Restore initial state/);
+  assert.match(html, /clear every agent context, session, and workspace/);
   assert.match(html, /localStorage\.removeItem\('king-ai:addComputerDismissed'\)/);
   assert.match(html, /Add computer/);
   assert.match(html, /\/gui\/summary/);

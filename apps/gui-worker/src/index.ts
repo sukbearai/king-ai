@@ -730,6 +730,10 @@ const LEGACY_DEFAULT_AGENT_ROLE = "Local BYOA agent";
 const LEGACY_DEFAULT_AGENT_ID = "king-ai-agent";
 const LEGACY_DEFAULT_DEV_ROLE = "Implement assigned work, report concrete changes, and move completed tasks to review.";
 const LEGACY_DEFAULT_REVIEWER_ROLE = "Review completed work, identify gaps, and ask for revisions before CEO summarizes.";
+const LEGACY_IELTS_ROLE_MARKERS = [
+  "IELTS reading and writing coach",
+  "Prefer compact, high-signal replies: Natural English, Sentence Core, Clauses/Phrases, Vocabulary"
+];
 
 const DEFAULT_CONVERSATION: Conversation = {
   id: "king-ai-convo",
@@ -4575,7 +4579,7 @@ function normalizeConversationTeamSnapshot(value: unknown): ConversationTeamSnap
     mode: normalizeTeamMode(row.mode),
     coordinatorAgentId,
     teamAgentIds,
-    agents: agents.map((agent) => ({ ...agent, id: normalizeAgentId(agent.id) ?? agent.id })),
+    agents: agents.map((agent) => normalizeBuiltInAgent({ ...agent, id: normalizeAgentId(agent.id) ?? agent.id })),
     createdAt: typeof row.createdAt === "number" ? row.createdAt : Date.now()
   };
 }
@@ -4627,9 +4631,20 @@ function normalizeAgents(agents: Agent[] | undefined): Agent[] {
   }
   for (const agent of IELTS_WORKFLOW_AGENTS) {
     const existing = byId.get(agent.id);
-    byId.set(agent.id, { ...agent, ...existing });
+    byId.set(agent.id, normalizeBuiltInAgent({ ...agent, ...existing }));
   }
   return [...byId.values()];
+}
+
+function normalizeBuiltInAgent(agent: Agent): Agent {
+  const ielts = IELTS_WORKFLOW_AGENTS.find((row) => row.id === agent.id);
+  if (ielts && isLegacyIeltsRole(agent.role)) return { ...agent, role: ielts.role };
+  return agent;
+}
+
+function isLegacyIeltsRole(role?: string): boolean {
+  if (!role) return true;
+  return LEGACY_IELTS_ROLE_MARKERS.every((marker) => role.includes(marker));
 }
 
 function findAgent(state: State, agentId?: string | null): Agent | undefined {

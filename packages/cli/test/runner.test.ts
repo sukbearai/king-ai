@@ -36,21 +36,25 @@ test("parseWakeEventInfo extracts conversation and delivery latency", () => {
     conversationId: null,
     agentId: null,
     sentAt: null,
-    deliveryLatencyMs: null
+    deliveryLatencyMs: null,
+    resetState: false
   });
   assert.deepEqual(parseWakeEventInfo(JSON.stringify({ conversationId: "demo-convo", agentId: "dev", at: 1500 }), 2000), {
     conversationId: "demo-convo",
     agentId: "dev",
     sentAt: 1500,
-    deliveryLatencyMs: 500
+    deliveryLatencyMs: 500,
+    resetState: false
   });
   assert.deepEqual(parseWakeEventInfo("not json", 2000), {
     conversationId: null,
     agentId: null,
     sentAt: null,
-    deliveryLatencyMs: null
+    deliveryLatencyMs: null,
+    resetState: false
   });
   assert.equal(parseWakeEventInfo(JSON.stringify({ at: 2500 }), 2000).deliveryLatencyMs, 0);
+  assert.equal(parseWakeEventInfo(JSON.stringify({ resetState: true }), 2000).resetState, true);
 });
 
 test("shouldHandleWakeEvent keeps targeted wake events on the owning agent", () => {

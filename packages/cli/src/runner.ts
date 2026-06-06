@@ -101,6 +101,7 @@ export interface WakeEventInfo {
   agentId: string | null;
   sentAt: number | null;
   deliveryLatencyMs: number | null;
+  resetState: boolean;
 }
 
 export class Semaphore {
@@ -317,9 +318,9 @@ export function agentSessionFile(agentId: string, engine: EngineId): string {
 }
 
 export function parseWakeEventInfo(rawData: string | undefined, now = Date.now()): WakeEventInfo {
-  if (!rawData) return { conversationId: null, agentId: null, sentAt: null, deliveryLatencyMs: null };
+  if (!rawData) return { conversationId: null, agentId: null, sentAt: null, deliveryLatencyMs: null, resetState: false };
   try {
-    const data = JSON.parse(rawData) as { conversationId?: unknown; agentId?: unknown; at?: unknown };
+    const data = JSON.parse(rawData) as { conversationId?: unknown; agentId?: unknown; at?: unknown; resetState?: unknown };
     const conversationId = typeof data.conversationId === "string" ? data.conversationId : null;
     const agentId = typeof data.agentId === "string" ? data.agentId : null;
     const sentAt = typeof data.at === "number" && Number.isFinite(data.at) ? data.at : null;
@@ -327,10 +328,11 @@ export function parseWakeEventInfo(rawData: string | undefined, now = Date.now()
       conversationId,
       agentId,
       sentAt,
-      deliveryLatencyMs: sentAt == null ? null : Math.max(0, now - sentAt)
+      deliveryLatencyMs: sentAt == null ? null : Math.max(0, now - sentAt),
+      resetState: data.resetState === true
     };
   } catch {
-    return { conversationId: null, agentId: null, sentAt: null, deliveryLatencyMs: null };
+    return { conversationId: null, agentId: null, sentAt: null, deliveryLatencyMs: null, resetState: false };
   }
 }
 
@@ -361,6 +363,7 @@ export class AgentRunner {
   private lastAgendaCheckAt = 0;
   private sideSteering = false;
   private lastSteeredMsgId: string | null = null;
+  private resetInProgress = false;
   private runStats: AgentRunStats = emptyAgentRunStats();
   private lastBudgetEventState: "warning" | "exceeded" | null = null;
   private sharedSkillSnapshot: SharedSkillSnapshot | undefined;
@@ -498,6 +501,38 @@ export class AgentRunner {
     this.beginStop();
     this.engineSession?.stop();
     this.engineSession = null;
+  }
+
+  private async resetLocalState(): Promise<void> {
+    this.engineSession?.stop();
+    this.engineSession = null;
+    this.sessionId = null;
+    this.token = "";
+    this.tokenExpiresAt = 0;
+    this.pendingRerun = false;
+    this.lastWakeConvo = null;
+    this.lastSteeredMsgId = null;
+    this.remediation = null;
+    await rm(this.sessionFile, { force: true });
+    await rm(this.home, { recursive: true, force: true });
+    this.stopped = false;
+    try {
+      await this.start();
+    } finally {
+      this.resetInProgress = false;
+    }
+  }
+
+  private handleResetLocalState(): void {
+    if (this.resetInProgress) return;
+    this.resetInProgress = true;
+    this.beginStop();
+    setTimeout(() => {
+      swallowTurnRejection(this.resetLocalState(), (message) => {
+        this.resetInProgress = false;
+        console.error(`[${this.agent.id}/${this.adapter.id}] resetLocalState rejected (swallowed): ${message}`);
+      });
+    }, 0);
   }
 
   scheduleWake(reason: string, conversationId?: string | null): void {
@@ -1168,6 +1203,11 @@ ${delta}`;
           if (evt.event !== "wake" && evt.event !== "steer") continue;
           const info = parseWakeEventInfo(evt.data);
           if (!shouldHandleWakeEvent(info, this.agent.id)) continue;
+          if (info.resetState) {
+            console.log(`[${this.agent.id}/${this.adapter.id}] reset-state wake received; clearing local agent home and engine session`);
+            this.handleResetLocalState();
+            break;
+          }
           const conversationId = info.conversationId;
           if (evt.event === "steer") {
             if (conversationId) void this.maybeSteer(conversationId);

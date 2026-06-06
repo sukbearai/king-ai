@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
-import { access, mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync, writeFileSync } from "node:fs";
 import { join, delimiter as PATH_DELIMITER } from "node:path";
 import type {
@@ -208,6 +208,17 @@ Privacy boundary:
 
 Use the \`king-ai\` command on PATH to interact with the remote runtime.
 `;
+}
+
+async function seedPersonaFile(path: string, persona: { id: string; name: string; role?: string }): Promise<void> {
+  const next = personaHeader(persona);
+  if (!(await exists(path))) {
+    await writeFile(path, next, "utf8");
+    return;
+  }
+  const current = await readFile(path, "utf8").catch(() => "");
+  if (!current.includes("You are ") || !current.includes("a teammate running from this local agent home.")) return;
+  await writeFile(path, next, "utf8");
 }
 
 function failurePreview(exitCode: number, signalName: NodeJS.Signals | null, stderr: string[], stdout: string[]): string {
@@ -848,8 +859,7 @@ class ClaudeAdapter implements EngineAdapter {
   async seedHome(home: string, persona: { id: string; name: string; role?: string }): Promise<void> {
     await ensureCommonHome(home);
     await mkdir(join(home, ".claude", "skills"), { recursive: true });
-    const claudeMd = join(home, "CLAUDE.md");
-    if (!(await exists(claudeMd))) await writeFile(claudeMd, personaHeader(persona), "utf8");
+    await seedPersonaFile(join(home, "CLAUDE.md"), persona);
   }
 
   async classify(args: EngineClassifyArgs): Promise<{ text: string; error?: string; usage?: EngineUsage }> {
@@ -947,8 +957,7 @@ class CodexAdapter implements EngineAdapter {
 
   async seedHome(home: string, persona: { id: string; name: string; role?: string }): Promise<void> {
     await ensureCommonHome(home);
-    const agentsMd = join(home, "AGENTS.md");
-    if (!(await exists(agentsMd))) await writeFile(agentsMd, personaHeader(persona), "utf8");
+    await seedPersonaFile(join(home, "AGENTS.md"), persona);
   }
 
   classify(args: EngineClassifyArgs): Promise<{ text: string; error?: string }> {
