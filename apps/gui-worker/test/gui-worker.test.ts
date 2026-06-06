@@ -689,7 +689,7 @@ test("new gui windows carry a collaboration team", async () => {
   }>(
     await worker.fetch(new Request("https://gui/gui/conversations", {
       method: "POST",
-      body: JSON.stringify({ title: "Feature Room" })
+      body: JSON.stringify({ title: "Feature Room", workflowId: "software-dev" })
     }), bindings)
   );
 
@@ -728,12 +728,12 @@ test("gui windows can choose single and custom collaboration teams", async () =>
   }>(
     await worker.fetch(new Request("https://gui/gui/conversations", {
       method: "POST",
-      body: JSON.stringify({ title: "Solo Room", teamMode: "single", coordinatorAgentId: "dev" })
+      body: JSON.stringify({ title: "Solo Room", workflowId: "software-dev", teamMode: "single", coordinatorAgentId: "dev" })
     }), bindings)
   );
   assert.equal(single.conversation.teamMode, "single");
-  assert.equal(single.conversation.coordinatorAgentId, "king-ai-ceo");
-  assert.deepEqual(single.conversation.teamAgentIds, ["king-ai-ceo"]);
+  assert.equal(single.conversation.coordinatorAgentId, "dev");
+  assert.deepEqual(single.conversation.teamAgentIds, ["dev"]);
 
   const custom = await json<{
     conversation: { id: string; teamMode?: string; coordinatorAgentId?: string; teamAgentIds?: string[]; teamSnapshot?: { agents: { id: string; role: string }[] } };
@@ -742,6 +742,7 @@ test("gui windows can choose single and custom collaboration teams", async () =>
       method: "POST",
       body: JSON.stringify({
         title: "Custom Room",
+        workflowId: "software-dev",
         teamMode: "custom",
         coordinatorAgentId: "dev",
         teamAgentIds: ["reviewer"],
@@ -750,8 +751,8 @@ test("gui windows can choose single and custom collaboration teams", async () =>
     }), bindings)
   );
   assert.equal(custom.conversation.teamMode, "custom");
-  assert.equal(custom.conversation.coordinatorAgentId, "king-ai-ceo");
-  assert.deepEqual(custom.conversation.teamAgentIds, ["king-ai-ceo", "reviewer"]);
+  assert.equal(custom.conversation.coordinatorAgentId, "dev");
+  assert.deepEqual(custom.conversation.teamAgentIds, ["dev", "reviewer"]);
   assert.equal(custom.conversation.teamSnapshot?.agents.find((agent) => agent.id === "reviewer")?.role, "Review only this room.");
 
   const updateResponse = await worker.fetch(new Request(`https://gui/gui/conversations/${custom.conversation.id}/team`, {
@@ -766,6 +767,109 @@ test("gui windows can choose single and custom collaboration teams", async () =>
   assert.notEqual(state.agents.find((agent) => agent.id === "reviewer")?.role, "Review the thing.");
 });
 
+test("gui windows choose agents from the selected workflow", async () => {
+  const bindings = env();
+  await pairComputer(bindings, { engines: ["codex"] });
+  const summary = await json<{ workflows: { id: string; defaultCoordinatorAgentId: string; agentIds: string[]; agents: { id: string; name: string; role: string }[] }[] }>(
+    await worker.fetch(new Request("https://gui/gui/summary"), bindings)
+  );
+  const ieltsWorkflow = summary.workflows.find((workflow) => workflow.id === "ielts-study");
+  assert.equal(ieltsWorkflow?.defaultCoordinatorAgentId, "ielts-tutor");
+  assert.deepEqual(ieltsWorkflow?.agentIds, ["ielts-tutor"]);
+  assert.equal(ieltsWorkflow?.agentIds.includes("king-ai-ceo"), false);
+  assert.equal(ieltsWorkflow?.agents[0]?.name, "IELTS Reading & Writing Coach");
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Always converse in English/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /subject-verb-object/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /clauses, phrases/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /phonetic transcription/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /When the learner writes Chinese/);
+
+  const single = await json<{
+    conversation: { workflowId?: string; coordinatorAgentId?: string; teamAgentIds?: string[]; teamSnapshot?: { workflowId: string; agents: { id: string }[] } };
+  }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({ title: "IELTS Speaking", workflowId: "ielts-study", teamMode: "single" })
+    }), bindings)
+  );
+  assert.equal(single.conversation.workflowId, "ielts-study");
+  assert.equal(single.conversation.coordinatorAgentId, "ielts-tutor");
+  assert.deepEqual(single.conversation.teamAgentIds, ["ielts-tutor"]);
+  assert.deepEqual(single.conversation.teamSnapshot?.agents.map((agent) => agent.id), ["ielts-tutor"]);
+
+  const custom = await json<{
+    conversation: { workflowId?: string; coordinatorAgentId?: string; teamAgentIds?: string[]; teamSnapshot?: { agents: { id: string }[] } };
+  }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({ title: "IELTS Writing", workflowId: "ielts-study", teamMode: "custom", teamAgentIds: ["ielts-writing-coach", "dev"] })
+    }), bindings)
+  );
+  assert.equal(custom.conversation.coordinatorAgentId, "ielts-tutor");
+  assert.deepEqual(custom.conversation.teamAgentIds, ["ielts-tutor"]);
+  assert.equal(custom.conversation.teamSnapshot?.agents.some((agent) => agent.id === "king-ai-ceo"), false);
+  assert.equal(custom.conversation.teamSnapshot?.agents.some((agent) => agent.id === "dev"), false);
+  assert.equal(custom.conversation.teamSnapshot?.agents.some((agent) => agent.id === "ielts-writing-coach"), false);
+});
+
+test("new gui windows default to the IELTS workflow", async () => {
+  const bindings = env();
+  await pairComputer(bindings, { engines: ["codex"] });
+  const room = await json<{
+    conversation: { workflowId?: string; coordinatorAgentId?: string; teamAgentIds?: string[]; teamSnapshot?: { agents: { id: string }[] } };
+  }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({ title: "Default Study Room", teamMode: "single" })
+    }), bindings)
+  );
+
+  assert.equal(room.conversation.workflowId, "ielts-study");
+  assert.equal(room.conversation.coordinatorAgentId, "ielts-tutor");
+  assert.deepEqual(room.conversation.teamAgentIds, ["ielts-tutor"]);
+  assert.deepEqual(room.conversation.teamSnapshot?.agents.map((agent) => agent.id), ["ielts-tutor"]);
+});
+
+test("workflow agent membership can be updated before creating rooms", async () => {
+  const bindings = env();
+  await pairComputer(bindings, { engines: ["codex"] });
+  const updated = await json<{ workflow: { id: string; agentIds: string[]; agents: { id: string; name: string }[] } }>(
+    await worker.fetch(new Request("https://gui/gui/workflows/ielts-study/agents", {
+      method: "POST",
+      body: JSON.stringify({
+        agents: [{ id: "ielts-vocab-coach", name: "IELTS Vocabulary Coach", role: "Teach vocabulary with pronunciation and memory hooks." }],
+        agentIds: ["ielts-tutor", "ielts-vocab-coach"]
+      })
+    }), bindings)
+  );
+  assert.deepEqual(updated.workflow.agentIds, ["ielts-tutor", "ielts-vocab-coach"]);
+  assert.equal(updated.workflow.agents.some((agent) => agent.id === "ielts-vocab-coach"), true);
+
+  const teamRoom = await json<{ conversation: { workflowId?: string; teamAgentIds?: string[]; teamSnapshot?: { agents: { id: string }[] } } }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({ title: "Vocabulary Room", workflowId: "ielts-study", teamMode: "team" })
+    }), bindings)
+  );
+  assert.equal(teamRoom.conversation.workflowId, "ielts-study");
+  assert.deepEqual(teamRoom.conversation.teamAgentIds, ["ielts-tutor", "ielts-vocab-coach"]);
+  assert.deepEqual(teamRoom.conversation.teamSnapshot?.agents.map((agent) => agent.id), ["ielts-tutor", "ielts-vocab-coach"]);
+
+  const removed = await json<{ workflow: { agentIds: string[] } }>(
+    await worker.fetch(new Request("https://gui/gui/workflows/ielts-study/agents", {
+      method: "POST",
+      body: JSON.stringify({ agentIds: ["ielts-tutor"] })
+    }), bindings)
+  );
+  assert.deepEqual(removed.workflow.agentIds, ["ielts-tutor"]);
+
+  const missing = await worker.fetch(new Request("https://gui/gui/workflows/missing-workflow/agents", {
+    method: "POST",
+    body: JSON.stringify({ agentIds: ["ielts-tutor"] })
+  }), bindings);
+  assert.equal(missing.status, 404);
+});
+
 test("single-agent gui windows keep requests with King AI CEO", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
@@ -775,10 +879,16 @@ test("single-agent gui windows keep requests with King AI CEO", async () => {
       headers: { Authorization: `Bearer ${paired.deviceToken}` }
     }), bindings)
   );
+  const reviewerToken = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/reviewer/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
   const room = await json<{ conversation: { id: string } }>(
     await worker.fetch(new Request("https://gui/gui/conversations", {
       method: "POST",
-      body: JSON.stringify({ title: "Solo Room", teamMode: "single" })
+      body: JSON.stringify({ title: "Solo Room", workflowId: "software-dev", teamMode: "single" })
     }), bindings)
   );
 
@@ -803,6 +913,12 @@ test("single-agent gui windows keep requests with King AI CEO", async () => {
     }), bindings)
   );
   assert.deepEqual(devInbox.rows, []);
+  const reviewerInbox = await json<{ rows: { body: string }[] }>(
+    await worker.fetch(new Request("https://gui/runtime/inbox", {
+      headers: { Authorization: `Bearer ${reviewerToken.token}` }
+    }), bindings)
+  );
+  assert.deepEqual(reviewerInbox.rows, []);
 });
 
 test("custom gui windows can include dev without reviewer", async () => {
@@ -817,7 +933,7 @@ test("custom gui windows can include dev without reviewer", async () => {
   const room = await json<{ conversation: { id: string; teamAgentIds?: string[] } }>(
     await worker.fetch(new Request("https://gui/gui/conversations", {
       method: "POST",
-      body: JSON.stringify({ title: "Dev Only Room", teamMode: "custom", teamAgentIds: ["dev"] })
+      body: JSON.stringify({ title: "Dev Only Room", workflowId: "software-dev", teamMode: "custom", teamAgentIds: ["dev"] })
     }), bindings)
   );
   assert.deepEqual(room.conversation.teamAgentIds, ["king-ai-ceo", "dev"]);
@@ -863,7 +979,7 @@ test("custom gui windows route work by role capability", async () => {
   const room = await json<{ conversation: { id: string; teamAgentIds?: string[] } }>(
     await worker.fetch(new Request("https://gui/gui/conversations", {
       method: "POST",
-      body: JSON.stringify({ title: "Research Room", teamMode: "custom", teamAgentIds: ["dev", "reviewer", "researcher", "tester", "ops"] })
+      body: JSON.stringify({ title: "Research Room", workflowId: "software-dev", teamMode: "custom", teamAgentIds: ["dev", "reviewer", "researcher", "tester", "ops"] })
     }), bindings)
   );
   assert.deepEqual(room.conversation.teamAgentIds, ["king-ai-ceo", "dev", "reviewer", "researcher", "tester", "ops"]);
@@ -916,7 +1032,7 @@ test("gui window requests close the loop through dev, reviewer, and coordinator"
   const room = await json<{ conversation: { id: string } }>(
     await worker.fetch(new Request("https://gui/gui/conversations", {
       method: "POST",
-      body: JSON.stringify({ title: "闭环房间" })
+      body: JSON.stringify({ title: "闭环房间", workflowId: "software-dev" })
     }), bindings)
   );
 
@@ -1562,6 +1678,7 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /id="computerDialog"/);
   assert.match(html, /id="newWindowDialog"/);
   assert.match(html, /id="newWindowTitle"/);
+  assert.match(html, /id="newWindowWorkflow"/);
   assert.match(html, /name="newWindowMode"/);
   assert.doesNotMatch(html, /id="newWindowOwner"/);
   assert.match(html, /id="newWindowTeam"/);
@@ -1570,7 +1687,7 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.doesNotMatch(html, /function rolePromptAgentsForMode/);
   assert.doesNotMatch(html, /data-agent-role-id/);
   assert.doesNotMatch(html, /onchange="renderRolePrompts\(\)"/);
-  assert.match(html, /const fixed = agent\.id === 'king-ai-ceo'/);
+  assert.match(html, /const fixed = agent\.id === coordinatorId/);
   assert.match(html, /const checked = fixed \? ' checked' : ''/);
   assert.doesNotMatch(html, /function defaultTeamAgentIdsForUi/);
   assert.match(html, /\.agent-check\s*\{[\s\S]*color:\s*var\(--ink\)/);

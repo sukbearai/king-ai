@@ -1268,6 +1268,7 @@ const TRANSLATIONS = {
 	    removeAttachment: '移除',
 	    newWindow: '新窗口',
     windowName: '名称',
+    windowWorkflow: '工作流',
     windowMode: '协作方式',
     singleAgent: '单 Agent',
     singleAgentDesc: '只让负责人回复',
@@ -1345,6 +1346,8 @@ const TRANSLATIONS = {
     mainModelPlaceholder: '例如 opus / gpt-5，留空使用默认',
     fastModelPlaceholder: '留空使用默认小模型',
     windowPlaceholder: '例如 发布计划 / 客户 A',
+    workflowSoftwareDev: '软件开发',
+    workflowIeltsStudy: '雅思学习',
     meetKing: '认识 King AI',
     addComputerTitle: '添加电脑',
     addComputerLead: '你的 agents 需要一台电脑来运行。连接这台电脑后，它们会在这里上线。',
@@ -1406,6 +1409,7 @@ const TRANSLATIONS = {
 	    removeAttachment: 'Remove',
 	    newWindow: 'New Window',
     windowName: 'Name',
+    windowWorkflow: 'Workflow',
     windowMode: 'Collaboration',
     singleAgent: 'Single agent',
     singleAgentDesc: 'Only the owner replies',
@@ -1483,6 +1487,8 @@ const TRANSLATIONS = {
     mainModelPlaceholder: 'e.g. opus / gpt-5, blank means default',
     fastModelPlaceholder: 'Blank means default fast model',
     windowPlaceholder: 'e.g. Release plan / Client A',
+    workflowSoftwareDev: 'Software Development',
+    workflowIeltsStudy: 'IELTS Study',
     meetKing: 'Meet King AI',
     addComputerTitle: 'Add a Computer',
     addComputerLead: 'Your agents need somewhere to run. Connect a computer and they will come online there.',
@@ -2549,6 +2555,32 @@ function currentAgents() {
   const summary = window.__lastSummary || {};
   return summary.agents || summary.activeAgents || (summary.agent ? [summary.agent] : []);
 }
+function currentWorkflows() {
+  const summary = window.__lastSummary || {};
+  return summary.workflows || [];
+}
+function selectedWorkflowId() {
+  const select = document.getElementById('newWindowWorkflow');
+  return select && select.value ? select.value : 'ielts-study';
+}
+function selectedWorkflow() {
+  const workflowId = selectedWorkflowId();
+  return currentWorkflows().find(function(workflow) { return workflow.id === workflowId; }) || currentWorkflows()[0] || null;
+}
+function workflowLabel(workflow) {
+  if (!workflow) return '';
+  if (workflow.id === 'software-dev') return t('workflowSoftwareDev');
+  if (workflow.id === 'ielts-study') return t('workflowIeltsStudy');
+  return workflow.name || workflow.id;
+}
+function workflowAgents() {
+  const workflow = selectedWorkflow();
+  return workflow && workflow.agents && workflow.agents.length ? workflow.agents : currentAgents();
+}
+function workflowCoordinatorId() {
+  const workflow = selectedWorkflow();
+  return workflow && workflow.defaultCoordinatorAgentId ? workflow.defaultCoordinatorAgentId : (workflowAgents()[0] || {}).id || 'king-ai-ceo';
+}
 function selectedWindowMode() {
   const checked = document.querySelector('input[name="newWindowMode"]:checked');
   return checked ? checked.value : 'team';
@@ -2557,15 +2589,27 @@ function selectedTeamAgentIds() {
   const ids = Array.from(document.querySelectorAll('input[name="newWindowTeamAgent"]:checked')).map(function(input) {
     return input.value;
   });
-  if (!ids.includes('king-ai-ceo')) ids.unshift('king-ai-ceo');
+  const coordinatorId = workflowCoordinatorId();
+  if (coordinatorId && !ids.includes(coordinatorId)) ids.unshift(coordinatorId);
   return ids;
 }
+function renderWorkflowOptions() {
+  const select = document.getElementById('newWindowWorkflow');
+  if (!select) return;
+  const workflows = currentWorkflows();
+  select.innerHTML = workflows.map(function(workflow) {
+    return '<option value="' + escapeHtml(workflow.id) + '">' + escapeHtml(workflowLabel(workflow)) + '</option>';
+  }).join('');
+  const defaultWorkflow = workflows.find(function(workflow) { return workflow.id === 'ielts-study'; }) || workflows[0];
+  if (defaultWorkflow) select.value = defaultWorkflow.id;
+}
 function renderAgentOptions() {
-  const agents = currentAgents();
+  const agents = workflowAgents();
+  const coordinatorId = workflowCoordinatorId();
   const checks = document.getElementById('newWindowTeam');
   if (checks) {
     checks.innerHTML = agents.map(function(agent) {
-      const fixed = agent.id === 'king-ai-ceo';
+      const fixed = agent.id === coordinatorId;
       const checked = fixed ? ' checked' : '';
       const disabled = fixed ? ' disabled' : '';
       return '<label class="agent-check"><input type="checkbox" name="newWindowTeamAgent" value="' + escapeHtml(agent.id) + '"' + checked + disabled + ' /><span>' + escapeHtml(agent.name || agent.id) + '</span></label>';
@@ -2577,6 +2621,10 @@ function syncNewWindowMode() {
   const custom = document.getElementById('newWindowCustomTeam');
   if (custom) custom.classList.toggle('hidden', mode !== 'custom');
 }
+function syncNewWindowWorkflow() {
+  renderAgentOptions();
+  syncNewWindowMode();
+}
 function setWindowMode(mode) {
   const option = document.querySelector('input[name="newWindowMode"][value="' + mode + '"]');
   if (option) option.checked = true;
@@ -2584,8 +2632,9 @@ function setWindowMode(mode) {
 }
 function setTeamAgentChecks(ids) {
   const wanted = new Set(ids || []);
+  const coordinatorId = workflowCoordinatorId();
   document.querySelectorAll('input[name="newWindowTeamAgent"]').forEach(function(input) {
-    input.checked = input.value === 'king-ai-ceo' || wanted.has(input.value);
+    input.checked = input.value === coordinatorId || wanted.has(input.value);
   });
 }
 createConversation = function() {
@@ -2594,8 +2643,9 @@ createConversation = function() {
   const title = document.querySelector('#newWindowDialog h2');
   if (title) title.textContent = t('newWindow');
   input.value = '';
+  renderWorkflowOptions();
   renderAgentOptions();
-  setWindowMode('team');
+  setWindowMode('single');
   const submit = document.getElementById('newWindowSubmit');
   if (submit) submit.textContent = t('create');
   const dialog = document.getElementById('newWindowDialog');
@@ -2611,8 +2661,9 @@ submitConversation = async function(event) {
   event.preventDefault();
   const input = document.getElementById('newWindowTitle');
   const title = input.value.trim();
+  const workflowId = selectedWorkflowId();
   const mode = selectedWindowMode();
-  const coordinatorAgentId = 'king-ai-ceo';
+  const coordinatorAgentId = workflowCoordinatorId();
   const teamAgentIds = mode === 'custom' ? selectedTeamAgentIds() : undefined;
   const submit = document.getElementById('newWindowSubmit');
   submit.disabled = true;
@@ -2621,7 +2672,7 @@ submitConversation = async function(event) {
     const result = await request('/gui/conversations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, teamMode: mode, coordinatorAgentId, teamAgentIds })
+      body: JSON.stringify({ title, workflowId, teamMode: mode, coordinatorAgentId, teamAgentIds })
     });
     activeConversationId = result.conversation.id;
     localStorage.setItem('king-ai:activeConversationId', activeConversationId);
@@ -3030,6 +3081,10 @@ refresh();
               <div class="field">
                 <label for="newWindowTitle" data-i18n="windowName">Name</label>
                 <input id="newWindowTitle" placeholder="例如 发布计划 / 客户 A" data-i18n-placeholder="windowPlaceholder" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="newWindowWorkflow" data-i18n="windowWorkflow">Workflow</label>
+                <select id="newWindowWorkflow" onchange="syncNewWindowWorkflow()"></select>
               </div>
               <div class="field">
                 <label data-i18n="windowMode">Collaboration</label>

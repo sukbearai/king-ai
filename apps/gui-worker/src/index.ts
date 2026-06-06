@@ -102,6 +102,7 @@ type Conversation = {
   created_at: number;
   updated_at: number;
   order?: number;
+  workflowId?: string;
   teamMode?: "single" | "team" | "custom";
   coordinatorAgentId?: string;
   teamAgentIds?: string[];
@@ -111,6 +112,7 @@ type Conversation = {
 type ConversationAgentSnapshot = Agent;
 
 type ConversationTeamSnapshot = {
+  workflowId: string;
   mode: NonNullable<Conversation["teamMode"]>;
   coordinatorAgentId: string;
   teamAgentIds: string[];
@@ -507,6 +509,7 @@ type State = {
   lastHeartbeat?: { at: number; version?: string; capabilities?: { workspaces: string[]; agentWorkspaceRoot?: string } };
   agentConfigUpdatedAt?: number;
   agents: Agent[];
+  workflowAgentIds?: Record<string, string[]>;
   conversations: Conversation[];
   messages: Message[];
   cliLog: { at: number; agentId: string; argv: string[]; result: string }[];
@@ -595,10 +598,16 @@ type GuiTaskUpdatePayload = {
 
 type GuiConversationPayload = {
   title?: unknown;
+  workflowId?: unknown;
   teamMode?: unknown;
   coordinatorAgentId?: unknown;
   teamAgentIds?: unknown;
   agentRoles?: unknown;
+};
+
+type GuiWorkflowAgentsPayload = {
+  agentIds?: unknown;
+  agents?: unknown;
 };
 
 type GuiCardMovePayload = {
@@ -665,6 +674,42 @@ const DEFAULT_TEAM_AGENTS: Agent[] = [
     lifecycle: "on-demand"
   }
 ];
+
+type WorkflowTemplate = {
+  id: string;
+  name: string;
+  defaultCoordinatorAgentId: string;
+  agentIds: string[];
+  agents: Agent[];
+};
+
+const IELTS_WORKFLOW_AGENTS: Agent[] = [
+  {
+    id: "ielts-tutor",
+    name: "IELTS Reading & Writing Coach",
+    role: "IELTS reading and writing coach. Always converse in English by default. Annotate sentence cores, including subject-verb-object and subject-linking verb-complement patterns; identify clauses, phrases, and grammar structures. For vocabulary, provide clickable word metadata with meaning, phonetic transcription, and syllable breakdown for memorization. When the learner writes Chinese, treat it as an expression gap: give the natural English expression and explain the related grammar.",
+    engine: "codex",
+    lifecycle: "on-demand"
+  }
+];
+
+const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
+  {
+    id: "software-dev",
+    name: "Software Development",
+    defaultCoordinatorAgentId: DEFAULT_AGENT.id,
+    agentIds: DEFAULT_TEAM_AGENTS.map((agent) => agent.id),
+    agents: DEFAULT_TEAM_AGENTS
+  },
+  {
+    id: "ielts-study",
+    name: "IELTS Study",
+    defaultCoordinatorAgentId: "ielts-tutor",
+    agentIds: IELTS_WORKFLOW_AGENTS.map((agent) => agent.id),
+    agents: IELTS_WORKFLOW_AGENTS
+  }
+];
+const DEFAULT_NEW_CONVERSATION_WORKFLOW_ID = "ielts-study";
 
 const LEGACY_DEFAULT_AGENT_NAME = "King AI Agent";
 const LEGACY_DEFAULT_AGENT_ROLE = "Local BYOA agent";
@@ -1385,6 +1430,14 @@ app.post("/gui/conversations/:conversationId/team", async (c) => {
     body: JSON.stringify(await c.req.json().catch(() => ({})))
   });
 });
+app.post("/gui/workflows/:workflowId/agents", async (c) => {
+  const blocked = await requireOwnerGuiAuth(c);
+  if (blocked) return blocked;
+  return (await stateForRequest(c)).fetch(`https://state/gui-workflows/${c.req.param("workflowId")}/agents`, {
+    method: "POST",
+    body: JSON.stringify(await c.req.json().catch(() => ({})))
+  });
+});
 app.post("/gui/conversations/:conversationId/delete", async (c) => {
   const blocked = await requireGuiAuth(c);
   if (blocked) return blocked;
@@ -1543,7 +1596,7 @@ app.post("/gui/remote-devices/:id/profile", async (c) => {
 });
 
 export class GuiState implements DurableObject {
-  private waiters = new Set<WritableStreamDefaultWriter<Uint8Array>>();
+  private waiters = new Set<{ agentId: string; writer: WritableStreamDefaultWriter<Uint8Array> }>();
 
   constructor(private state: DurableObjectState) {}
 
@@ -1583,6 +1636,7 @@ export class GuiState implements DurableObject {
     if (path.startsWith("/gui-attachments/") && request.method === "GET") return this.guiAttachmentFile(new URL(request.url), decodeURIComponent(path.slice("/gui-attachments/".length)));
     if (path === "/gui-conversations") return this.guiConversation(await request.json().catch(() => ({})) as GuiConversationPayload);
     if (path.startsWith("/gui-conversations/") && path.endsWith("/team")) return this.guiUpdateConversationTeam(path.split("/")[2], await request.json().catch(() => ({})) as GuiConversationPayload);
+    if (path.startsWith("/gui-workflows/") && path.endsWith("/agents")) return this.guiUpdateWorkflowAgents(path.split("/")[2], await request.json().catch(() => ({})) as GuiWorkflowAgentsPayload);
     if (path.startsWith("/gui-conversations/") && path.endsWith("/delete")) return this.guiDeleteConversation(path.split("/")[2]);
     if (path === "/gui-clear-messages") return this.clearMessages(await request.json().catch(() => ({})) as { conversationId?: string });
     if (path === "/gui-agent-config") return this.agentConfig(await request.json() as AgentConfigPayload);
@@ -1619,10 +1673,11 @@ export class GuiState implements DurableObject {
       runtimeToken: crypto.randomUUID(),
       runtimeTokens: {},
       pairingCode: crypto.randomUUID(),
-      availableEngines: [],
-      capabilities: { workspaces: [] },
-      agents: defaultTeamAgents(),
-      conversations: [{ ...DEFAULT_CONVERSATION, created_at: Date.now(), updated_at: Date.now() }],
+	      availableEngines: [],
+	      capabilities: { workspaces: [] },
+	      agents: defaultTeamAgents(),
+	      workflowAgentIds: normalizeWorkflowAgentIds(undefined, defaultTeamAgents()),
+	      conversations: [{ ...DEFAULT_CONVERSATION, created_at: Date.now(), updated_at: Date.now() }],
       messages: [],
       cliLog: [],
       statusLog: [],
@@ -1693,6 +1748,7 @@ export class GuiState implements DurableObject {
 	    saved.runtimeTokens = normalizeRuntimeTokens(saved.runtimeTokens);
     saved.remoteAssist = normalizeRemoteAssistGrant(saved.remoteAssist, (saved as State & { remoteAssistGrants?: unknown }).remoteAssistGrants);
     saved.agents = normalizeAgents(saved.agents);
+    saved.workflowAgentIds = normalizeWorkflowAgentIds(saved.workflowAgentIds, saved.agents);
     saved.messages = normalizeMessages(saved.messages ?? []);
     saved.tasks = normalizeTasks(saved.tasks ?? []);
     saved.taskEvents = normalizeTaskEvents(saved.taskEvents ?? []);
@@ -1832,6 +1888,7 @@ export class GuiState implements DurableObject {
       rawPairingCode: isRemoteAssist ? undefined : state.pairingCode,
       pairCommandTenantArg: "",
       conversations: conversationSummaries(state),
+      workflows: workflowSummaries(state),
       availableEngines: state.availableEngines,
       capabilities: state.capabilities,
       agent: agentSummary,
@@ -1924,12 +1981,13 @@ export class GuiState implements DurableObject {
     return fn(agentId);
   }
 
-  private async wakeStream(_agentId: string): Promise<Response> {
+  private async wakeStream(agentId: string): Promise<Response> {
     const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
     const writer = writable.getWriter();
-    this.waiters.add(writer);
+    const waiter = { agentId, writer };
+    this.waiters.add(waiter);
     await writer.write(encode(": connected\n\n"));
-    requestKeepAlive(writer, () => this.waiters.delete(writer));
+    requestKeepAlive(writer, () => this.waiters.delete(waiter));
     return new Response(readable, {
       headers: {
         "Content-Type": "text/event-stream",
@@ -3462,7 +3520,7 @@ export class GuiState implements DurableObject {
     const title = typeof payload.title === "string" && payload.title.trim() ? payload.title.trim() : `事务 ${state.conversations.length + 1}`;
     const maxOrder = Math.max(0, ...state.conversations.map((conversation) => conversation.order ?? 0));
     const order = Math.max(maxOrder + 1, now * 1000);
-    const team = normalizeConversationTeam(state, payload);
+    const team = normalizeConversationTeam(state, { ...payload, workflowId: payload.workflowId ?? DEFAULT_NEW_CONVERSATION_WORKFLOW_ID });
     const roleOverrides = normalizeAgentRolePayload(payload.agentRoles);
     const teamSnapshot = buildConversationTeamSnapshot(state, team, roleOverrides, now);
     const conversation: Conversation = {
@@ -3472,6 +3530,7 @@ export class GuiState implements DurableObject {
       created_at: now,
       updated_at: now,
       order,
+      workflowId: team.workflowId,
       teamMode: team.teamMode,
       coordinatorAgentId: team.coordinatorAgentId,
       teamAgentIds: team.teamAgentIds,
@@ -3487,6 +3546,23 @@ export class GuiState implements DurableObject {
     const conversation = state.conversations.find((row) => row.id === conversationId);
     if (!conversation) return json({ error: `conversation not found: ${conversationId || ""}` }, { status: 404 });
     return json({ error: "conversation team is immutable after creation" }, { status: 409 });
+  }
+
+  private async guiUpdateWorkflowAgents(workflowIdValue: string | undefined, payload: GuiWorkflowAgentsPayload): Promise<Response> {
+    const state = await this.get();
+    const workflow = workflowTemplateByIdOrUndefined(workflowIdValue);
+    if (!workflow) return json({ error: `workflow not found: ${workflowIdValue || ""}` }, { status: 404 });
+    const incomingAgents = normalizeWorkflowAgentDefinitions(payload.agents);
+    if (incomingAgents.length) state.agents = upsertAgents(state.agents, incomingAgents);
+    state.workflowAgentIds = normalizeWorkflowAgentIds(state.workflowAgentIds, state.agents);
+    const requestedIds = normalizeStringList(payload.agentIds).map(normalizeAgentId).filter((id): id is string => Boolean(id));
+    const candidateIds = requestedIds.length ? requestedIds : state.workflowAgentIds[workflow.id] ?? workflow.agentIds;
+    const validIds = [...new Set(candidateIds)].filter((id) => Boolean(findAgent(state, id)));
+    if (!validIds.includes(workflow.defaultCoordinatorAgentId) && findAgent(state, workflow.defaultCoordinatorAgentId)) validIds.unshift(workflow.defaultCoordinatorAgentId);
+    state.workflowAgentIds[workflow.id] = validIds.length ? validIds : workflow.agentIds;
+    state.agentConfigUpdatedAt = Date.now();
+    await this.put(state);
+    return json({ ok: true, workflow: workflowSummary(state, workflow) });
   }
 
   private async guiDeleteConversation(conversationId?: string): Promise<Response> {
@@ -3983,17 +4059,18 @@ export class GuiState implements DurableObject {
       // Wake delivery must not depend on observability persistence.
     }
     const frame = encode(`event: ${evt.event}\ndata: ${JSON.stringify(evt.data)}\n\n`);
-    await Promise.all([...this.waiters].map(async (writer) => {
+    await Promise.all([...this.waiters].map(async (waiter) => {
+      if (!wakeEventVisibleToAgent(evt, waiter.agentId)) return;
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         await Promise.race([
-          writer.write(frame),
+          waiter.writer.write(frame),
           new Promise((_, reject) => {
             timer = setTimeout(() => reject(new Error("sse write timeout")), 1000);
           })
         ]);
       } catch {
-        this.waiters.delete(writer);
+        this.waiters.delete(waiter);
       } finally {
         if (timer) clearTimeout(timer);
       }
@@ -4238,6 +4315,7 @@ function normalizeConversations(input: unknown, messages: Message[]): Conversati
         created_at: typeof row.created_at === "number" ? row.created_at : now,
         updated_at: typeof row.updated_at === "number" ? row.updated_at : now,
         order: typeof row.order === "number" ? row.order : undefined,
+        workflowId: normalizeWorkflowId(row.workflowId),
         teamMode: normalizeTeamMode(row.teamMode),
         coordinatorAgentId: normalizeAgentId(row.coordinatorAgentId) ?? DEFAULT_AGENT.id,
         teamAgentIds: normalizeTeamAgentIds(row.teamAgentIds),
@@ -4252,6 +4330,7 @@ function normalizeConversations(input: unknown, messages: Message[]): Conversati
     created_at: byId.get(DEFAULT_CONVERSATION.id)?.created_at || now,
     updated_at: byId.get(DEFAULT_CONVERSATION.id)?.updated_at || now,
     teamMode: normalizeTeamMode(byId.get(DEFAULT_CONVERSATION.id)?.teamMode),
+    workflowId: normalizeWorkflowId(byId.get(DEFAULT_CONVERSATION.id)?.workflowId),
     coordinatorAgentId: normalizeAgentId(byId.get(DEFAULT_CONVERSATION.id)?.coordinatorAgentId) ?? DEFAULT_AGENT.id,
     teamAgentIds: normalizeTeamAgentIds(byId.get(DEFAULT_CONVERSATION.id)?.teamAgentIds),
     teamSnapshot: normalizeConversationTeamSnapshot(byId.get(DEFAULT_CONVERSATION.id)?.teamSnapshot)
@@ -4268,6 +4347,7 @@ function normalizeConversations(input: unknown, messages: Message[]): Conversati
       kind: message.conversation_kind || "group",
       created_at: message.created_at,
       updated_at: message.created_at,
+      workflowId: "software-dev",
       teamMode: "team",
       coordinatorAgentId: DEFAULT_AGENT.id,
       teamAgentIds: normalizeTeamAgentIds(undefined),
@@ -4288,6 +4368,7 @@ function ensureConversation(state: State, id: string): Conversation {
     kind: "group",
     created_at: now,
     updated_at: now,
+    workflowId: "software-dev",
     teamMode: "team",
     coordinatorAgentId: DEFAULT_AGENT.id,
     teamAgentIds: normalizeTeamAgentIds(undefined),
@@ -4298,11 +4379,86 @@ function ensureConversation(state: State, id: string): Conversation {
 }
 
 function defaultTeamAgents(): Agent[] {
-  return DEFAULT_TEAM_AGENTS.map((agent) => ({ ...agent }));
+  return defaultWorkflowAgents().map((agent) => ({ ...agent }));
 }
 
 function defaultTeamAgentIds(): string[] {
   return DEFAULT_TEAM_AGENTS.map((agent) => agent.id);
+}
+
+function defaultWorkflowAgents(): Agent[] {
+  const byId = new Map<string, Agent>();
+  for (const workflow of WORKFLOW_TEMPLATES) {
+    for (const agent of workflow.agents) byId.set(agent.id, agent);
+  }
+  return [...byId.values()];
+}
+
+function workflowAgentIdsFor(state: State, workflow: WorkflowTemplate): string[] {
+  return state.workflowAgentIds?.[workflow.id]?.length ? state.workflowAgentIds[workflow.id] : workflow.agentIds;
+}
+
+function normalizeWorkflowAgentIds(value: unknown, agents: Agent[]): Record<string, string[]> {
+  const availableIds = new Set(agents.map((agent) => agent.id));
+  const input = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  const normalized: Record<string, string[]> = {};
+  for (const workflow of WORKFLOW_TEMPLATES) {
+    const incomingIds = normalizeStringList(input[workflow.id]).map(normalizeAgentId).filter((id): id is string => Boolean(id));
+    const ids = [...new Set((incomingIds.length ? incomingIds : workflow.agentIds).filter((id) => availableIds.has(id)))];
+    if (!ids.includes(workflow.defaultCoordinatorAgentId) && availableIds.has(workflow.defaultCoordinatorAgentId)) ids.unshift(workflow.defaultCoordinatorAgentId);
+    normalized[workflow.id] = ids.length ? ids : workflow.agentIds;
+  }
+  return normalized;
+}
+
+function normalizeWorkflowAgentDefinitions(value: unknown): Agent[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((agent) => {
+    const normalized = normalizeWorkflowAgentDefinition(agent);
+    return normalized ? [normalized] : [];
+  });
+}
+
+function normalizeWorkflowAgentDefinition(value: unknown): Agent | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const row = value as Partial<Agent>;
+  const id = normalizeAgentId(row.id);
+  const name = typeof row.name === "string" && row.name.trim() ? row.name.trim() : id;
+  const role = typeof row.role === "string" && row.role.trim() ? row.role.trim() : "Workflow agent.";
+  if (!id || !name) return undefined;
+  return {
+    id,
+    name,
+    role,
+    engine: row.engine === "claude" || row.engine === "codex" ? row.engine : "codex",
+    lifecycle: isAgentLifecycle(row.lifecycle) ? row.lifecycle : "on-demand",
+    model: typeof row.model === "string" && row.model.trim() ? row.model.trim() : undefined,
+    fastModel: typeof row.fastModel === "string" && row.fastModel.trim() ? row.fastModel.trim() : undefined,
+    events: Array.isArray(row.events) ? row.events.filter((event): event is string => typeof event === "string" && Boolean(event.trim())) : undefined
+  };
+}
+
+function upsertAgents(current: Agent[], incoming: Agent[]): Agent[] {
+  const byId = new Map(normalizeAgents(current).map((agent) => [agent.id, agent]));
+  for (const agent of incoming) byId.set(agent.id, { ...byId.get(agent.id), ...agent });
+  return normalizeAgents([...byId.values()]);
+}
+
+function workflowTemplateById(value: unknown): WorkflowTemplate {
+  const id = normalizeWorkflowId(value);
+  return WORKFLOW_TEMPLATES.find((workflow) => workflow.id === id) ?? WORKFLOW_TEMPLATES[0];
+}
+
+function workflowTemplateByIdOrUndefined(value: unknown): WorkflowTemplate | undefined {
+  if (typeof value !== "string") return undefined;
+  const id = value.trim();
+  return WORKFLOW_TEMPLATES.find((workflow) => workflow.id === id);
+}
+
+function normalizeWorkflowId(value: unknown): string {
+  if (typeof value !== "string") return "software-dev";
+  const id = value.trim();
+  return WORKFLOW_TEMPLATES.some((workflow) => workflow.id === id) ? id : "software-dev";
 }
 
 function normalizeTeamMode(value: unknown): NonNullable<Conversation["teamMode"]> {
@@ -4314,18 +4470,26 @@ function normalizeTeamAgentIds(value: unknown): string[] {
   return [...new Set(ids.length ? ids : defaultTeamAgentIds())];
 }
 
-function normalizeConversationTeam(state: State, payload: GuiConversationPayload, previous?: Conversation): Required<Pick<Conversation, "teamMode" | "coordinatorAgentId" | "teamAgentIds">> {
+function normalizeConversationTeam(state: State, payload: GuiConversationPayload, previous?: Conversation): Required<Pick<Conversation, "workflowId" | "teamMode" | "coordinatorAgentId" | "teamAgentIds">> {
+  const workflow = workflowTemplateById(payload.workflowId ?? previous?.workflowId);
   const mode = normalizeTeamMode(payload.teamMode ?? previous?.teamMode);
-  const coordinator = defaultAgentFor(state);
+  const workflowAgentIds = workflowAgentIdsFor(state, workflow);
+  const workflowIds = new Set(workflowAgentIds);
+  const requestedCoordinatorId = normalizeAgentId(payload.coordinatorAgentId ?? previous?.coordinatorAgentId);
+  const coordinator = findAgent(state, requestedCoordinatorId && workflowIds.has(requestedCoordinatorId) ? requestedCoordinatorId : workflow.defaultCoordinatorAgentId)
+    ?? findAgent(state, workflowAgentIds[0])
+    ?? defaultAgentFor(state);
   if (mode === "single") {
-    return { teamMode: mode, coordinatorAgentId: coordinator.id, teamAgentIds: [coordinator.id] };
+    return { workflowId: workflow.id, teamMode: mode, coordinatorAgentId: coordinator.id, teamAgentIds: [coordinator.id] };
   }
   if (mode === "custom") {
     const requestedIds = normalizeStringList(payload.teamAgentIds).map(normalizeAgentId).filter((id): id is string => Boolean(id));
-    const ids = [...new Set([coordinator.id, ...requestedIds])].filter((id) => Boolean(findAgent(state, id)));
-    return { teamMode: mode, coordinatorAgentId: coordinator.id, teamAgentIds: ids.length ? ids : [coordinator.id] };
+    const ids = [...new Set([coordinator.id, ...requestedIds])]
+      .filter((id) => workflowIds.has(id) && Boolean(findAgent(state, id)));
+    return { workflowId: workflow.id, teamMode: mode, coordinatorAgentId: coordinator.id, teamAgentIds: ids.length ? ids : [coordinator.id] };
   }
-  return { teamMode: "team", coordinatorAgentId: DEFAULT_AGENT.id, teamAgentIds: defaultTeamAgentIds() };
+  const teamAgentIds = workflowAgentIds.filter((id) => Boolean(findAgent(state, id)));
+  return { workflowId: workflow.id, teamMode: "team", coordinatorAgentId: coordinator.id, teamAgentIds: teamAgentIds.length ? teamAgentIds : [coordinator.id] };
 }
 
 function normalizeAgentRolePayload(value: unknown): Record<string, string> {
@@ -4364,6 +4528,7 @@ function normalizeConversationTeamSnapshot(value: unknown): ConversationTeamSnap
   const coordinatorAgentId = normalizeAgentId(row.coordinatorAgentId) ?? DEFAULT_AGENT.id;
   if (agents.length === 0) return undefined;
   return {
+    workflowId: normalizeWorkflowId(row.workflowId),
     mode: normalizeTeamMode(row.mode),
     coordinatorAgentId,
     teamAgentIds,
@@ -4374,7 +4539,7 @@ function normalizeConversationTeamSnapshot(value: unknown): ConversationTeamSnap
 
 function buildConversationTeamSnapshot(
   state: State,
-  team: Required<Pick<Conversation, "teamMode" | "coordinatorAgentId" | "teamAgentIds">>,
+  team: Required<Pick<Conversation, "workflowId" | "teamMode" | "coordinatorAgentId" | "teamAgentIds">>,
   roleOverrides: Record<string, string> = {},
   createdAt = Date.now()
 ): ConversationTeamSnapshot {
@@ -4386,6 +4551,7 @@ function buildConversationTeamSnapshot(
     };
   });
   return {
+    workflowId: team.workflowId,
     mode: team.teamMode,
     coordinatorAgentId: team.coordinatorAgentId,
     teamAgentIds: team.teamAgentIds,
@@ -4415,6 +4581,10 @@ function normalizeAgents(agents: Agent[] | undefined): Agent[] {
       normalized.role = agent.role;
     }
     byId.set(agent.id, normalized);
+  }
+  for (const agent of IELTS_WORKFLOW_AGENTS) {
+    const existing = byId.get(agent.id);
+    byId.set(agent.id, { ...agent, ...existing });
   }
   return [...byId.values()];
 }
@@ -4764,6 +4934,21 @@ function conversationSummaries(state: State): Array<Conversation & { unread: num
   });
 }
 
+function workflowSummaries(state: State): Array<{ id: string; name: string; defaultCoordinatorAgentId: string; agentIds: string[]; agents: Agent[] }> {
+  return WORKFLOW_TEMPLATES.map((workflow) => workflowSummary(state, workflow));
+}
+
+function workflowSummary(state: State, workflow: WorkflowTemplate): { id: string; name: string; defaultCoordinatorAgentId: string; agentIds: string[]; agents: Agent[] } {
+  const agentIds = workflowAgentIdsFor(state, workflow);
+  return {
+    id: workflow.id,
+    name: workflow.name,
+    defaultCoordinatorAgentId: workflow.defaultCoordinatorAgentId,
+    agentIds,
+    agents: agentIds.map((id) => findAgent(state, id)).filter((agent): agent is Agent => Boolean(agent))
+  };
+}
+
 function isRuntimeVisibleMessage(message: Message): boolean {
   return message.status !== "pending";
 }
@@ -4771,9 +4956,23 @@ function isRuntimeVisibleMessage(message: Message): boolean {
 function unreadMessagesFor(state: State, agentId: string): Message[] {
   return state.messages.filter((message) =>
     isRuntimeVisibleMessage(message) &&
+    messageVisibleToAgentInConversation(state, message, agentId) &&
     (!message.to_agent_id || message.to_agent_id === agentId) &&
     !message.readBy.includes(agentId)
   );
+}
+
+function messageVisibleToAgentInConversation(state: State, message: Message, agentId: string): boolean {
+  if (message.to_agent_id) return true;
+  const conversation = state.conversations.find((row) => row.id === message.conversation_id);
+  if (!conversation) return true;
+  return teamAgentsFor(state, conversation).some((agent) => agent.id === agentId);
+}
+
+function wakeEventVisibleToAgent(evt: { data: unknown }, agentId: string): boolean {
+  if (!evt.data || typeof evt.data !== "object") return true;
+  const target = normalizeAgentId((evt.data as { agentId?: unknown }).agentId);
+  return !target || target === agentId;
 }
 
 function compareConversations(a: Conversation, b: Conversation): number {
