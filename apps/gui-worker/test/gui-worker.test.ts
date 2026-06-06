@@ -887,7 +887,11 @@ test("gui windows choose agents from the selected workflow", async () => {
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Keep the conversation in English/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /expression gap/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not give generic acknowledgements/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /For every sentence, mark the sentence core and useful phrases inline/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /For every sentence, mark only the minimal sentence core and useful phrases inline/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Sentence core means only the main clause skeleton/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not include modifiers/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /mark only 'engineer uses tools' as core/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /mark only 'I want' as core/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /safe HTML spans/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /class ielts-word with data-word, data-meaning, data-phonetic, and data-syllables/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /phonetic/);
