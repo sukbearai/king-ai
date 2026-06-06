@@ -12,10 +12,10 @@
     "gui:dev": "pnpm --filter @king-ai/gui-worker dev",
     "gui:dev:lan": "pnpm --filter @king-ai/gui-worker dev:lan",
     "gui:deploy": "pnpm --filter @king-ai/gui-worker deploy",
-    "release": "bumpp --recursive --git-check --execute \"pnpm verify && trap 'rm -f packages/cli/README.md' EXIT && cp README.md packages/cli/README.md && pnpm --filter @suwujs/king-ai publish --dry-run --no-git-checks\" --commit \"Release v%s\" --tag \"v%s\" --push",
-    "release:patch": "pnpm release -- --release patch --yes",
-    "release:minor": "pnpm release -- --release minor --yes",
-    "release:major": "pnpm release -- --release major --yes"
+    "release": "node scripts/release.mjs",
+    "release:patch": "node scripts/release.mjs patch",
+    "release:minor": "node scripts/release.mjs minor",
+    "release:major": "node scripts/release.mjs major"
   },
   "packageManager": "pnpm@9.15.0",
   "engines": {
