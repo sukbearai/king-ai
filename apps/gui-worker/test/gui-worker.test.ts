@@ -1012,6 +1012,63 @@ test("custom gui windows can include dev without reviewer", async () => {
   assert.equal(afterDone.messages.some((row) => row.conversation_id === room.conversation.id && row.to_agent_id === "reviewer"), false);
 });
 
+test("single-agent workflow completion does not prompt a duplicate chat summary", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const tutorToken = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/ielts-tutor/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  const room = await json<{ conversation: { id: string; teamAgentIds?: string[] } }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({ title: "IELTS Attendance", workflowId: "ielts-study", teamMode: "single" })
+    }), bindings)
+  );
+  assert.deepEqual(room.conversation.teamAgentIds, ["ielts-tutor"]);
+
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    body: JSON.stringify({ conversationId: room.conversation.id, body: "Everyone, reply with '1' if you're here." })
+  }), bindings);
+
+  const afterMessage = await json<{
+    tasks: { id: string; status: string; assignee?: string; conversationId?: string; coordinatorAgentId?: string; reviewerAgentId?: string; acceptance?: string[] }[];
+  }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
+  const task = afterMessage.tasks.find((row) => row.conversationId === room.conversation.id);
+  assert.equal(task?.status, "assigned");
+  assert.equal(task?.assignee, "ielts-tutor");
+  assert.equal(task?.coordinatorAgentId, "ielts-tutor");
+  assert.equal(task?.reviewerAgentId, undefined);
+  assert.equal(task?.acceptance?.some((row) => /completion summary/i.test(row)), false);
+
+  await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${tutorToken.token}` },
+    body: JSON.stringify({ argv: ["reply", room.conversation.id, "1"] })
+  }), bindings);
+  const done = await json<{ text: string }>(await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${tutorToken.token}` },
+    body: JSON.stringify({ argv: ["task", "done", task?.id ?? ""] })
+  }), bindings));
+  assert.match(done.text, /returned to ielts-tutor/);
+
+  const afterDone = await json<{
+    tasks: { id: string; status: string; assignee?: string }[];
+    messages: { conversation_id: string; author_name: string; to_agent_id?: string; body: string }[];
+    taskEvents: { taskId: string; type: string }[];
+  }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
+  const doneTask = afterDone.tasks.find((row) => row.id === task?.id);
+  assert.equal(doneTask?.status, "done");
+  assert.equal(doneTask?.assignee, "ielts-tutor");
+  assert.deepEqual(afterDone.messages.filter((row) => row.conversation_id === room.conversation.id && row.author_name === "IELTS Reading & Writing Coach").map((row) => row.body), ["1"]);
+  assert.equal(afterDone.messages.some((row) => row.conversation_id === room.conversation.id && row.to_agent_id === "ielts-tutor" && row.body.includes("Task completed")), false);
+  assert.equal(afterDone.taskEvents.some((row) => row.taskId === task?.id && row.type === "completed"), true);
+});
+
 test("custom gui windows route work by role capability", async () => {
   const bindings = env();
   await pairComputer(bindings, { engines: ["codex"] });

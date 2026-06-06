@@ -3927,11 +3927,11 @@ export class GuiState implements DurableObject {
           task.assignee = task.coordinatorAgentId ?? defaultAgentFor(state).id;
           task.updated_at = Date.now();
           pushTaskTransition(state, task, reviewStatus);
-          queueTaskCompletionMessage(state, task, defaultAgentFor(state).id);
+          queueTaskCompletionMessage(state, task, { fromName: defaultAgentFor(state).id, actorAgentId: defaultAgentFor(state).id });
         }
       } else if (task.status === "done") {
         task.assignee = task.coordinatorAgentId ?? defaultAgentFor(state).id;
-        queueTaskCompletionMessage(state, task, defaultAgentFor(state).id);
+        queueTaskCompletionMessage(state, task, { fromName: defaultAgentFor(state).id, actorAgentId: defaultAgentFor(state).id });
       } else if (task.assignee) {
         queueTaskAssignmentMessage(state, task, "King AI");
       }
@@ -4725,7 +4725,7 @@ function autoDelegateMessage(state: State, conversation: Conversation, message: 
     priority: message.priority === "steer" ? 8 : 5,
     acceptance: [
       "The assigned agent reports concrete output or files changed.",
-      reviewer ? "Reviewer approves or requests specific revisions before Planner summarizes." : "Planner receives a concrete completion summary."
+      reviewer ? "Reviewer approves or requests specific revisions before Planner summarizes." : "The task status and result are recorded without requiring a separate chat summary."
     ],
     conversationId: conversation.id,
     requestMessageId: message.id,
@@ -4760,7 +4760,7 @@ function advanceTaskDone(state: State, task: Task, actor: Agent, resultText?: st
     task.assignee = task.coordinatorAgentId ?? DEFAULT_AGENT.id;
     task.updated_at = Date.now();
     if (previousStatus !== task.status) pushTaskTransition(state, task, previousStatus);
-    queueTaskCompletionMessage(state, task, actor.name);
+    queueTaskCompletionMessage(state, task, { fromName: actor.name, actorAgentId: actor.id });
     return `Task ${task.id} marked done and returned to ${task.assignee}.`;
   }
   if (actor.id === task.reviewerAgentId || task.status === "review") {
@@ -4771,7 +4771,7 @@ function advanceTaskDone(state: State, task: Task, actor: Agent, resultText?: st
     task.reviewedAt = Date.now();
     task.updated_at = Date.now();
     if (previousStatus !== task.status) pushTaskTransition(state, task, previousStatus);
-    queueTaskCompletionMessage(state, task, actor.name);
+    queueTaskCompletionMessage(state, task, { fromName: actor.name, actorAgentId: actor.id });
     return `Task ${task.id} marked done and returned to ${task.assignee}.`;
   }
   const reviewer = findAgent(state, task.reviewerAgentId) ?? reviewerAgentFor(state);
@@ -4931,19 +4931,25 @@ function queueTaskChangesRequestedMessage(state: State, task: Task, targetAgentI
   conversation.updated_at = now;
 }
 
-function queueTaskCompletionMessage(state: State, task: Task, fromName = "Reviewer"): void {
+function queueTaskCompletionMessage(state: State, task: Task, options: { fromName?: string; actorAgentId?: string } = {}): void {
   const ceo = findAgent(state, task.coordinatorAgentId) ?? defaultAgentFor(state);
+  const fromName = options.fromName ?? "Reviewer";
+  const actorAgentId = options.actorAgentId ?? task.reviewedByAgentId ?? task.reviewerAgentId ?? task.assignee;
   const now = Date.now();
   const conversation = ensureConversation(state, task.conversationId || DEFAULT_CONVERSATION.id);
   const event = recordTaskEvent(state, task, {
     type: "completed",
-    actorAgentId: task.reviewedByAgentId ?? task.reviewerAgentId ?? task.assignee,
+    actorAgentId,
     targetAgentId: ceo.id,
     summary: task.result || `Completed by ${fromName}`,
     result: task.result,
     reviewResult: task.reviewResult,
     artifactIds: task.artifactIds
   });
+  if (actorAgentId === ceo.id) {
+    conversation.updated_at = now;
+    return;
+  }
   state.messages.push({
     id: `msg-${now}-${Math.random().toString(36).slice(2)}`,
     conversation_id: conversation.id,
