@@ -8,13 +8,19 @@ import worker, { GuiState } from "../src/index.js";
 type StorageMap = Map<string, unknown>;
 
 class FakeStorage {
-  constructor(private readonly map: StorageMap) {}
+  private readonly putCounts = new Map<string, number>();
+
+  constructor(private readonly map: StorageMap, private readonly failPutAfter = new Map<string, number>()) {}
 
   async get<T>(key: string): Promise<T | undefined> {
     return this.map.get(key) as T | undefined;
   }
 
   async put(key: string, value: unknown): Promise<void> {
+    const count = (this.putCounts.get(key) ?? 0) + 1;
+    this.putCounts.set(key, count);
+    const failAfter = this.failPutAfter.get(key);
+    if (failAfter !== undefined && count > failAfter) throw new Error(`put failed: ${key}`);
     this.map.set(key, value);
   }
 
@@ -25,10 +31,17 @@ class FakeStorage {
 
 function env(initialState?: unknown, extraBindings: Record<string, unknown> = {}): { GUI_STATE: DurableObjectNamespace } & Record<string, unknown> {
   const instances = new Map<string, DurableObjectStub>();
+  const failPutAfter = new Map<string, number>();
+  const rawFailPutAfter = extraBindings.KING_AI_TEST_FAIL_STORAGE_PUT_AFTER;
+  if (rawFailPutAfter && typeof rawFailPutAfter === "object") {
+    for (const [key, value] of Object.entries(rawFailPutAfter)) {
+      if (typeof key === "string" && typeof value === "number") failPutAfter.set(key, value);
+    }
+  }
   const createStub = (name: string) => {
     const storage: StorageMap = new Map();
     if (initialState && name === "global") storage.set("state", initialState);
-    const state = { storage: new FakeStorage(storage) } as unknown as DurableObjectState;
+    const state = { storage: new FakeStorage(storage, failPutAfter) } as unknown as DurableObjectState;
     const instance = new GuiState(state);
     return {
       fetch: (input: string | URL | Request, init?: RequestInit) => instance.fetch(new Request(input, init))
@@ -2100,6 +2113,31 @@ test("gui runtime requires the generated pairing code", async () => {
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
   assert.deepEqual(state.availableEngines, ["codex"]);
+});
+
+test("gui runtime pairing does not rewrite entity state", async () => {
+  const bindings = env(undefined, { KING_AI_TEST_FAIL_STORAGE_PUT_AFTER: { "state:messages": 1 } });
+  const summary = await json<{ pairingCode: string }>(
+    await worker.fetch(new Request("https://gui/gui/summary"), bindings)
+  );
+
+  const paired = await worker.fetch(new Request("https://gui/api/computers/pair", {
+    method: "POST",
+    body: JSON.stringify({
+      code: summary.pairingCode,
+      hostName: "test-host",
+      engines: ["codex"],
+      version: "0.2.18",
+      capabilities: { workspaces: ["/tmp/project"] }
+    })
+  }), bindings);
+
+  assert.equal(paired.status, 200);
+  const state = await json<{ availableEngines: string[]; capabilities: { workspaces: string[] } }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  assert.deepEqual(state.availableEngines, ["codex"]);
+  assert.deepEqual(state.capabilities.workspaces, ["/tmp/project"]);
 });
 
 test("gui runtime persists generated pairing code for older stored state", async () => {

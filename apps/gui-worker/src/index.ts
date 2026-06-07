@@ -1842,6 +1842,12 @@ export class GuiState implements DurableObject {
     await Promise.all(writes);
   }
 
+  private async putBaseState(state: State): Promise<void> {
+    const writes: Promise<unknown>[] = [this.state.storage.delete(GUI_LEGACY_STATE_KEY)];
+    this.queueStateWrite(writes, GUI_BASE_STATE_KEY, stripEntityState(state));
+    await Promise.all(writes);
+  }
+
   private async clearEntityState(): Promise<void> {
     await Promise.all([
       this.state.storage.delete(GUI_BASE_STATE_KEY),
@@ -2023,7 +2029,7 @@ export class GuiState implements DurableObject {
     state.availableEngines = Array.isArray(payload?.engines) ? payload.engines.filter((engine): engine is string => typeof engine === "string") : [];
     state.capabilities = normalizeCapabilities(payload?.capabilities);
     state.pairingCode = crypto.randomUUID();
-    await this.put(state);
+    await this.putBaseState(state);
     return json({ computerId: state.computerId, deviceToken: state.deviceToken, tenantId: tenantHeader(request) });
   }
 
