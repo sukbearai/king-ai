@@ -17,6 +17,7 @@ class FakeStorage {
   }
 
   async put(key: string, value: unknown): Promise<void> {
+    if (value === undefined) throw new TypeError("put() called with undefined value.");
     const count = (this.putCounts.get(key) ?? 0) + 1;
     this.putCounts.set(key, count);
     const failAfter = this.failPutAfter.get(key);
@@ -1608,11 +1609,19 @@ test("gui runtime exports, imports, and resets durable state snapshots", async (
   assert.equal(exported.state.messages[0]?.body, "persist me");
 
   await json<{ ok: true }>(await worker.fetch(new Request("https://gui/gui/reset-state", { method: "POST" }), bindings));
-  const resetState = await json<{ availableEngines: string[]; messages: unknown[]; wakeLog?: { event: string; data: { resetState?: boolean } }[] }>(
+  const resetState = await json<{
+    availableEngines: string[];
+    messages: unknown[];
+    runStreams: Record<string, unknown>;
+    activeRunContracts: Record<string, unknown>;
+    wakeLog?: { event: string; data: { resetState?: boolean } }[];
+  }>(
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
   assert.deepEqual(resetState.availableEngines, []);
   assert.deepEqual(resetState.messages, []);
+  assert.deepEqual(resetState.runStreams, {});
+  assert.deepEqual(resetState.activeRunContracts, {});
   assert.equal(resetState.wakeLog?.some((row) => row.event === "wake" && row.data.resetState === true), true);
 
   await json<{ ok: true; messages: number }>(await worker.fetch(new Request("https://gui/gui/import-state", {

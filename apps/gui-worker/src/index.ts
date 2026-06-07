@@ -1898,6 +1898,8 @@ export class GuiState implements DurableObject {
       noticeLog: [],
       triageLog: [],
       runLog: [],
+      runStreams: {},
+      activeRunContracts: {},
       runActions: {},
       initiatives: [],
       tasks: [],
@@ -1985,6 +1987,7 @@ export class GuiState implements DurableObject {
     saved.triageLog = (saved.triageLog ?? []).slice(-TRIAGE_LOG_CAPACITY);
     saved.runLog = (saved.runLog ?? []).slice(-RUN_LOG_CAPACITY);
     saved.runStreams = saved.runStreams ?? {};
+    saved.activeRunContracts = saved.activeRunContracts ?? {};
     saved.runActions ??= {};
     saved.capabilities ??= { workspaces: [] };
     saved.availableEngines ??= [];
