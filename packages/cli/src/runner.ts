@@ -1249,8 +1249,13 @@ ${delta}`;
   }
 
   private async streamLoop(): Promise<void> {
-    let backoff = 1000;
+    const INITIAL_BACKOFF_MS = 1000;
+    const MAX_BACKOFF_MS = 30_000;
+    const STABLE_CONNECTION_MS = 10_000;
+    let backoff = INITIAL_BACKOFF_MS;
     while (!this.stopped) {
+      let connectedAt = 0;
+      let lastError: string | null = null;
       try {
         const token = await this.ensureToken();
         this.wakeStreamController = replaceWakeStreamController(this.wakeStreamController);
@@ -1268,8 +1273,8 @@ ${delta}`;
         }
         if (!res.ok || !res.body) throw new Error(`wake-stream HTTP ${res.status}`);
         console.log(`[${this.agent.id}/${this.adapter.id}] wake-stream connected`);
+        connectedAt = Date.now();
         await this.publishEvent("wake.stream.connected", { backoffMs: backoff });
-        backoff = 1000;
         this.scheduleWake("reconnect-catchup");
         for await (const evt of parseSseStream(res.body)) {
           if (this.stopped) break;
@@ -1309,15 +1314,22 @@ ${delta}`;
         }
       } catch (err) {
         if (this.stopped) break;
-        const message = err instanceof Error ? err.message : String(err);
-        console.warn(`[${this.agent.id}/${this.adapter.id}] wake-stream error: ${message}; retry in ${backoff}ms`);
-        await this.publishEvent("wake.stream.error", { error: message, retryInMs: backoff }, "warn");
-        await new Promise((resolve) => setTimeout(resolve, backoff));
-        backoff = Math.min(backoff * 2, 30_000);
+        lastError = err instanceof Error ? err.message : String(err);
       } finally {
         abortWakeStream(this.wakeStreamController);
         this.wakeStreamController = null;
       }
+      if (this.stopped) break;
+      // Only reset the backoff after the connection stayed healthy long enough. A connect-then-
+      // immediately-drop flap then keeps the exponential backoff growing instead of reconnecting
+      // ~once per second, which previously stacked up and tripped Cloudflare's HTTP DDoS protection.
+      if (connectedAt > 0 && Date.now() - connectedAt >= STABLE_CONNECTION_MS) backoff = INITIAL_BACKOFF_MS;
+      if (lastError) {
+        console.warn(`[${this.agent.id}/${this.adapter.id}] wake-stream error: ${lastError}; retry in ${backoff}ms`);
+        await this.publishEvent("wake.stream.error", { error: lastError, retryInMs: backoff }, "warn");
+      }
+      await new Promise((resolve) => setTimeout(resolve, backoff));
+      backoff = Math.min(backoff * 2, MAX_BACKOFF_MS);
     }
   }
 }

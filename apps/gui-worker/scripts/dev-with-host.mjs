@@ -73,6 +73,21 @@ function shutdown(code = 0) {
 
 process.on("SIGINT", () => shutdown(0));
 process.on("SIGTERM", () => shutdown(0));
+process.on("SIGHUP", () => shutdown(0));
+
+// Orphan watchdog: if the process that launched us (a terminal, pnpm, or Codex) exits,
+// this process is reparented to PID 1. Detached children would otherwise keep polling the
+// server forever and could trip DDoS protection, so self-terminate — which tears down the
+// whole child tree — as soon as we detect we have been orphaned.
+const initialPpid = process.ppid;
+if (initialPpid !== 1) {
+  setInterval(() => {
+    if (process.ppid === 1) {
+      console.warn("[gui] launcher process exited; shutting down dev stack to avoid orphaned processes");
+      shutdown(0);
+    }
+  }, 5000).unref();
+}
 
 if (process.env.KING_AI_GUI_DEV_DRY_RUN === "1") {
   console.log(JSON.stringify({
