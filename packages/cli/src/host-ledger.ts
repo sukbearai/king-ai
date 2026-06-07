@@ -1,6 +1,7 @@
 import { join, resolve } from "node:path";
 import { appendJsonl, compactJsonl, readJsonl, type CompactJsonlResult } from "./jsonl.js";
 import type { KingHandoffPolicy, KingWorkflowObjectType } from "./team-workflow.js";
+import { workflowReadiness, type WorkflowCard } from "./workflow-core.js";
 
 export type HostTaskStatus = "pending" | "in_progress" | "blocked" | "done" | "cancelled";
 export type HostCapsuleStatus = "open" | "in_review" | "accepted" | "abandoned";
@@ -180,7 +181,7 @@ export interface HostWorkflowCardListInput extends HostLedgerPathInput {
   limit?: number;
 }
 
-export interface HostWorkflowCard {
+export interface HostWorkflowCard extends WorkflowCard {
   kind: KingWorkflowObjectType;
   id: string;
   title: string;
@@ -322,7 +323,7 @@ export async function buildHostAgenda(input: HostAgendaInput = {}): Promise<Host
   const agendaTasks = tasks
     .filter((task) => task.status !== "done" && task.status !== "cancelled")
     .map((task): HostAgendaTask => {
-      const blockedBy = task.dependsOn.filter((id) => !done.has(id));
+      const { blockedBy } = workflowReadiness({ ...task, kind: "task" }, done);
       return {
         ...task,
         blockedBy,
@@ -653,28 +654,14 @@ function validateWorkflowUpdate(existing: HostWorkflowCard, next: HostWorkflowCa
   const done = new Set(cards
     .filter((card) => card.id !== next.id && (card.status === "done" || card.status === "cancelled"))
     .map((card) => card.id));
-  const blockedBy = next.dependsOn.filter((id) => !done.has(id));
-  if (blockedBy.length > 0) {
-    throw new Error(`workflow card ${next.id} depends on unfinished workflow cards: ${blockedBy.join(", ")}`);
-  }
+  const readiness = workflowReadiness(next, done);
+  if (readiness.blockedBy.length > 0) throw new Error(`workflow card ${next.id} depends on unfinished workflow cards: ${readiness.blockedBy.join(", ")}`);
 
-  if (next.acceptance.length > 0 && !next.result && !next.artifactPath) {
-    throw new Error(`workflow card ${next.id} requires result or artifactPath before marking done`);
-  }
+  if (readiness.missingEvidence) throw new Error(`workflow card ${next.id} requires result or artifactPath before marking done`);
 
-  if (next.kind === "review" && !reviewVerdict(next.result)) {
-    throw new Error(`review card ${next.id} requires result=approved or result=changes_requested before marking done`);
-  }
+  if (readiness.missingReviewVerdict) throw new Error(`review card ${next.id} requires result=approved or result=changes_requested before marking done`);
 
   void existing;
-}
-
-function reviewVerdict(result?: string): "approved" | "changes_requested" | undefined {
-  const value = result?.trim().toLowerCase().replace(/[\s-]+/g, "_");
-  if (!value) return undefined;
-  if (value === "approved" || value === "approve" || value === "accepted" || value === "pass" || value === "passed") return "approved";
-  if (value === "changes_requested" || value === "change_requested" || value === "rejected" || value === "needs_work" || value === "fail" || value === "failed") return "changes_requested";
-  return undefined;
 }
 
 function applyCapsuleUpdate(capsule: HostCapsule, update: HostCapsuleUpdate): HostCapsule {

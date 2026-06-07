@@ -23,6 +23,10 @@
       "types": "./dist/src/team-routing.d.ts",
       "default": "./dist/src/team-routing.js"
     },
+    "./workflow-core": {
+      "types": "./dist/src/workflow-core.d.ts",
+      "default": "./dist/src/workflow-core.js"
+    },
     "./team-workflow": {
       "types": "./dist/src/team-workflow.d.ts",
       "default": "./dist/src/team-workflow.js"

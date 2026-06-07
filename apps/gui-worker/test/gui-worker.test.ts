@@ -1619,6 +1619,69 @@ test("gui runtime exports, imports, and resets durable state snapshots", async (
   assert.equal(bad.status, 400);
 });
 
+test("gui durable state migrates legacy monolith into entity keys", async () => {
+  const legacy = {
+    computerId: "king-computer",
+    deviceToken: "device-token",
+    runtimeToken: "runtime-token",
+    runtimeTokens: {},
+    pairingCode: "pair-code",
+    availableEngines: ["codex"],
+    capabilities: { workspaces: [] },
+    agents: [],
+    workflowAgentIds: {},
+    conversations: [{ id: "king-ai-convo", title: "all", kind: "group", created_at: 1, updated_at: 1 }],
+    messages: [{ id: "msg-1", conversation_id: "king-ai-convo", conversation_title: "all", conversation_kind: "group", author_name: "King AI Human", author_kind: "human", kind: "message", body: "legacy message", created_at: 2, readBy: [] }],
+    cliLog: [],
+    statusLog: [],
+    typingLog: [],
+    thinkingLog: [],
+    eventLog: [],
+    wakeLog: [],
+    eventRoutes: [],
+    loopRunId: "run-gui",
+    currentLoop: 0,
+    loopEvents: [],
+    noticeLog: [],
+    triageLog: [],
+    runLog: [],
+    initiatives: [],
+    tasks: [{ id: "task-1", title: "legacy task", status: "assigned", assignee: "dev", priority: 5, created_at: 2, updated_at: 2 }],
+    taskEvents: [],
+    capsules: [],
+    mergeQueue: [],
+    evaluations: [],
+    runFeedback: [],
+    reviews: [],
+    cards: [],
+    calendar: [],
+    claims: [],
+    docs: [],
+    artifacts: [],
+    context: [],
+    hypotheses: [],
+    reactions: [],
+    composing: [],
+    approvals: [],
+    uploads: {}
+  };
+  const bindings = env(legacy);
+  const state = await json<{ messages: { body: string }[]; tasks: { title: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  assert.equal(state.messages[0]?.body, "legacy message");
+  assert.equal(state.tasks[0]?.title, "legacy task");
+
+  const debug = await json<{ rows: { key: string; present: boolean }[] }>(
+    await worker.fetch(new Request("https://gui/gui/storage-debug"), bindings)
+  );
+  const present = Object.fromEntries(debug.rows.map((row) => [row.key, row.present]));
+  assert.equal(present["state"], false);
+  assert.equal(present["state:base"], true);
+  assert.equal(present["state:messages"], true);
+  assert.equal(present["state:tasks"], true);
+});
+
 test("gui king-ai state command exports, imports, and resets state snapshots", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });

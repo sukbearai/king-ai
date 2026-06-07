@@ -14,6 +14,7 @@ import type { RunStreamEvent, RunStreamState } from "@suwujs/king-ai/run-stream"
 import { formatMessageRouteSummary, messageRouteTag, sortRuntimeMessages } from "@suwujs/king-ai/message-routing";
 import { selectOwnerRole } from "@suwujs/king-ai/team-routing";
 import { defaultTeamSpec, requiredCapabilitiesForText, roleTemplateForAgent } from "@suwujs/king-ai/team-workflow";
+import { taskDoneTransition, workflowReadiness } from "@suwujs/king-ai/workflow-core";
 import { createHostSdk } from "@suwujs/king-ai/host-sdk";
 
 type Bindings = {
@@ -582,6 +583,9 @@ type StateSnapshot = {
   state: State;
 };
 
+type EntityStateKey = "messages" | "tasks" | "taskEvents" | "capsules" | "mergeQueue" | "artifacts" | "runActions";
+type EntityState = Pick<State, EntityStateKey>;
+
 type PairPayload = {
   code?: unknown;
   engines?: unknown;
@@ -841,6 +845,9 @@ const GUI_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
 const GUI_ATTACHMENT_STORE_CAPACITY = 50;
 const GUI_ATTACHMENT_CHUNK_CHARS = 256 * 1024;
 const RUNTIME_TOKEN_TTL_MS = 60 * 60 * 1000;
+const GUI_BASE_STATE_KEY = "state:base";
+const GUI_LEGACY_STATE_KEY = "state";
+const GUI_ENTITY_STATE_KEYS: EntityStateKey[] = ["messages", "tasks", "taskEvents", "capsules", "mergeQueue", "artifacts", "runActions"];
 
 const styles = "    :root {\n      --accent: #ffd633;\n      --rail: #ffd83d;\n      --sidebar: #fbf4e6;\n      --active: #f15b93;\n      --canvas: #ffffff;\n      --panel: #fffaf0;\n      --line: #111111;\n      --soft-line: #d7d1c5;\n      --ink: #171717;\n      --body: #303030;\n      --muted: #7d7a73;\n      --avatar: #c8b6ff;\n      --shadow: rgba(17,17,17,0.16) 0 14px 36px;\n    }\n    * { box-sizing: border-box; }\n    body {\n      margin: 0;\n      background: var(--canvas);\n      color: var(--ink);\n      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n      font-size: 12px;\n      line-height: 1.35;\n      overflow: hidden;\n    }\n    h1, h2, h3, p { margin: 0; }\n    h1 { font-size: 17px; line-height: 1.1; }\n    h2 { font-size: 15px; line-height: 1.2; }\n    h3 { font-size: 13px; line-height: 1.2; }\n    p { color: var(--body); }\n    button, textarea, select, input { font: inherit; }\n    * {\n      scrollbar-width: thin;\n      scrollbar-color: var(--line) var(--accent);\n    }\n    *::-webkit-scrollbar {\n      width: 13px;\n      height: 13px;\n    }\n    *::-webkit-scrollbar-track {\n      background: var(--accent);\n      border-left: 1px solid var(--line);\n    }\n    *::-webkit-scrollbar-thumb {\n      background: var(--line);\n      border: 3px solid var(--accent);\n    }\n    *::-webkit-scrollbar-corner { background: var(--accent); }\n    button {\n      min-height: 27px;\n      border: 1px solid var(--line);\n      border-radius: 0;\n      padding: 4px 9px;\n      background: var(--canvas);\n      color: var(--ink);\n      font-weight: 800;\n      cursor: pointer;\n    }\n    button:hover, button.primary { background: var(--accent); }\n    button.icon {\n      width: 27px;\n      min-width: 27px;\n      padding: 0;\n      display: grid;\n      place-items: center;\n    }\n    textarea, input, select {\n      width: 100%;\n      border: 1px solid var(--line);\n      border-radius: 0;\n      background: var(--canvas);\n      color: var(--ink);\n      padding: 8px;\n    }\n    textarea {\n      min-height: 54px;\n      resize: vertical;\n      line-height: 1.45;\n    }\n    label {\n      color: var(--muted);\n      font-size: 10px;\n      font-weight: 900;\n      text-transform: uppercase;\n    }\n    .app {\n      height: 100vh;\n      min-height: 100vh;\n      display: grid;\n      grid-template-columns: 42px 180px minmax(0, 1fr);\n      background: var(--canvas);\n    }\n    .rail {\n      display: grid;\n      grid-template-rows: auto 1fr;\n      gap: 12px;\n      border-right: 2px solid var(--line);\n      background: var(--rail);\n      padding: 8px 6px;\n    }\n    .logo {\n      width: 27px;\n      display: grid;\n      grid-template-columns: 1fr;\n      gap: 6px;\n    }\n    .logo span {\n      width: 27px;\n      height: 27px;\n      display: grid;\n      place-items: center;\n      background: var(--line);\n      color: var(--accent);\n      font-size: 10px;\n      font-weight: 900;\n    }\n    .rail .icon { background: transparent; border-color: transparent; }\n    .rail .icon.active { background: var(--canvas); border-color: var(--line); }\n    .windows {\n      min-width: 0;\n      border-right: 2px solid var(--line);\n      background: var(--sidebar);\n      padding: 8px 6px;\n      overflow: hidden;\n      display: grid;\n      grid-template-rows: auto minmax(0, 1fr);\n      gap: 8px;\n    }\n    .windows-head {\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 8px;\n      padding: 0 2px 8px;\n      border-bottom: 1px solid var(--soft-line);\n      font-weight: 900;\n    }\n    .window-list {\n      min-height: 0;\n      overflow: auto;\n      display: grid;\n      align-content: start;\n      gap: 5px;\n    }\n    .window-item {\n      display: grid;\n      grid-template-columns: minmax(0, 1fr) auto auto;\n      gap: 6px;\n      align-items: center;\n      min-height: 32px;\n      padding: 5px 6px;\n      border: 1px solid transparent;\n      background: transparent;\n      text-align: left;\n      font-weight: 800;\n    }\n    .window-select {\n      min-width: 0;\n      min-height: 0;\n      padding: 0;\n      border: 0;\n      background: transparent;\n      text-align: left;\n      font-weight: 900;\n    }\n    .window-item.active {\n      border-color: var(--line);\n      background: var(--active);\n    }\n    .window-delete {\n      width: 18px;\n      min-width: 18px;\n      min-height: 18px;\n      padding: 0;\n      border-color: var(--line);\n      background: var(--canvas);\n      color: var(--line);\n      line-height: 1;\n    }\n    .window-delete:hover { background: var(--accent); }\n    .window-name {\n      overflow: hidden;\n      text-overflow: ellipsis;\n      white-space: nowrap;\n    }\n    .window-meta {\n      color: var(--muted);\n      font-size: 10px;\n      font-weight: 900;\n    }\n    .sidebar {\n      display: none;\n      min-width: 0;\n      border-right: 2px solid var(--line);\n      background: var(--sidebar);\n      padding: 9px 5px;\n      overflow: hidden;\n    }\n    .side-title {\n      display: flex;\n      justify-content: space-between;\n      align-items: center;\n      padding: 0 4px 11px;\n      border-bottom: 1px solid var(--soft-line);\n      margin-bottom: 8px;\n    }\n    .side-section { display: grid; gap: 3px; margin: 12px 0; }\n    .side-label {\n      padding: 0 7px;\n      color: var(--muted);\n      font-size: 10px;\n      font-weight: 900;\n      letter-spacing: 0.03em;\n      text-transform: uppercase;\n    }\n    .side-link, .channel {\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 8px;\n      min-height: 25px;\n      padding: 4px 6px;\n      border: 1px solid transparent;\n      color: var(--body);\n      text-decoration: none;\n      white-space: nowrap;\n      overflow: hidden;\n    }\n    .channel.active {\n      background: var(--active);\n      border-color: var(--line);\n      color: var(--line);\n      font-weight: 900;\n    }\n    .badge { color: var(--muted); font-size: 10px; font-weight: 900; }\n    .main {\n      min-width: 0;\n      min-height: 0;\n      height: 100vh;\n      display: grid;\n      grid-template-rows: auto auto minmax(0, 1fr);\n    }\n    .topbar {\n      height: 38px;\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 14px;\n      border-bottom: 2px solid var(--line);\n      padding: 6px 12px;\n    }\n    .channel-head {\n      display: grid;\n      grid-template-columns: 21px minmax(0, auto);\n      gap: 8px;\n      align-items: center;\n      min-width: 0;\n    }\n    .hash {\n      width: 21px;\n      height: 21px;\n      display: grid;\n      place-items: center;\n      background: var(--accent);\n      border: 1px solid var(--line);\n      font-weight: 900;\n    }\n    .channel-name { font-weight: 900; line-height: 1; }\n    .channel-desc {\n      color: var(--muted);\n      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;\n      font-size: 10px;\n      overflow: hidden;\n      text-overflow: ellipsis;\n      white-space: nowrap;\n    }\n    .top-actions { display: flex; gap: 6px; }\n    .tabs {\n      height: 24px;\n      display: flex;\n      align-items: stretch;\n      border-bottom: 2px solid var(--line);\n    }\n    .tab {\n      min-height: 0;\n      padding: 3px 12px;\n      border-width: 0 1px 0 0;\n      background: var(--canvas);\n      font-size: 11px;\n    }\n    .tab.active { background: var(--accent); }\n    .workspace {\n      min-height: 0;\n      overflow: auto;\n      background: var(--canvas);\n    }\n    .panel { display: none; min-height: 100%; }\n    .panel.active { display: block; }\n    .chat-panel {\n      position: relative;\n      min-height: 100%;\n      padding: 14px 0 124px;\n    }\n    .message-list {\n      display: grid;\n      gap: 11px;\n      width: 100%;\n      padding: 0 18px;\n    }\n    .system-line {\n      color: #aaa49a;\n      font-size: 10px;\n      text-align: center;\n      padding: 4px 0;\n    }\n    .post {\n      display: grid;\n      grid-template-columns: 24px minmax(0, 1fr);\n      gap: 8px;\n      padding: 8px;\n      border: 1px solid transparent;\n    }\n    .post.highlight { border-color: var(--line); }\n    .avatar {\n      width: 22px;\n      height: 22px;\n      display: grid;\n      place-items: center;\n      border: 1px solid var(--line);\n      background: var(--avatar);\n      color: var(--line);\n      font-size: 12px;\n      font-weight: 900;\n    }\n    .post-top {\n      display: flex;\n      align-items: baseline;\n      gap: 6px;\n      min-width: 0;\n      margin-bottom: 3px;\n    }\n    .author { font-weight: 900; }\n    .time { color: var(--muted); font-size: 10px; white-space: nowrap; }\n    .post-body {\n      color: var(--body);\n      line-height: 1.45;\n      white-space: pre-wrap;\n      word-break: break-word;\n    }\n    .jump {\n      position: sticky;\n      bottom: 104px;\n      display: none;\n      width: max-content;\n      margin: 16px auto;\n      box-shadow: var(--shadow);\n    }\n    .jump.visible { display: block; }\n    .composer {\n      position: fixed;\n      right: 16px;\n      bottom: 14px;\n      left: 238px;\n      z-index: 5;\n      display: grid;\n      grid-template-columns: minmax(0, 1fr) auto;\n      gap: 8px;\n      width: auto;\n      max-width: none;\n      border: 2px solid var(--line);\n      background: var(--canvas);\n      padding: 8px;\n    }\n    .composer textarea {\n      min-height: 44px;\n      max-height: 110px;\n      border: 0;\n      padding: 6px;\n    }\n    .composer button:disabled {\n      opacity: 0.62;\n      cursor: wait;\n    }\n    .tab-panel {\n      max-width: 920px;\n      padding: 18px;\n      gap: 10px;\n    }\n    .tab-panel.active { display: grid; }\n    .task-row {\n      display: grid;\n      gap: 5px;\n      max-width: 720px;\n      border: 1px solid var(--line);\n      padding: 10px;\n    }\n    .task-top {\n      display: flex;\n      align-items: baseline;\n      justify-content: space-between;\n      gap: 10px;\n    }\n    .model-grid { display: grid; gap: 10px; }\n    .model-row {\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 12px;\n      border-top: 1px solid var(--soft-line);\n      padding-top: 8px;\n      color: var(--body);\n    }\n    .model-row:first-child { border-top: 0; padding-top: 0; }\n    .available { color: #cc2f68; font-weight: 900; }\n    .unavailable { color: var(--muted); }\n    .cmd {\n      border: 1px solid var(--line);\n      background: var(--panel);\n      padding: 10px;\n      color: var(--body);\n      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;\n      font-size: 11px;\n      line-height: 1.5;\n      overflow: auto;\n      white-space: pre-wrap;\n      word-break: break-word;\n    }\n    .side-card {\n      display: grid;\n      gap: 10px;\n      border: 1px solid var(--line);\n      padding: 10px;\n    }\n    .settings-actions {\n      display: flex;\n      justify-content: flex-end;\n      gap: 8px;\n    }\n    .field { display: grid; gap: 5px; }\n    .muted { color: var(--muted); font-size: 11px; }\n    dialog {\n      width: min(520px, calc(100vw - 24px));\n      max-height: min(760px, calc(100vh - 24px));\n      border: 2px solid var(--line);\n      border-radius: 0;\n      padding: 0;\n      box-shadow: var(--shadow);\n      overflow: hidden;\n    }\n    dialog::backdrop { background: rgba(0,0,0,0.48); }\n    .computer-dialog { width: min(680px, calc(100vw - 24px)); }\n    .window-dialog { width: min(440px, calc(100vw - 24px)); }\n    .modal-form { margin: 0; }\n    .modal-head {\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 16px;\n      padding: 12px;\n      border-bottom: 2px solid var(--line);\n    }\n    .modal-body {\n      display: grid;\n      gap: 12px;\n      padding: 12px;\n      overflow: auto;\n      max-height: calc(100vh - 120px);\n    }\n    .computer-flow {\n      display: grid;\n      gap: 20px;\n      padding: 32px;\n    }\n    .computer-kicker {\n      color: var(--muted);\n      font-size: 11px;\n      font-weight: 900;\n      letter-spacing: 0.14em;\n      text-transform: uppercase;\n    }\n    .computer-title {\n      font-size: 20px;\n      line-height: 1.15;\n      text-transform: uppercase;\n    }\n    .computer-lead {\n      display: grid;\n      grid-template-columns: 36px minmax(0, 1fr);\n      gap: 14px;\n      align-items: start;\n      color: var(--body);\n      font-size: 15px;\n      line-height: 1.5;\n    }\n    .computer-icon {\n      width: 32px;\n      height: 32px;\n      display: grid;\n      place-items: center;\n      border: 2px solid var(--line);\n      background: var(--accent);\n      font-weight: 900;\n    }\n    .computer-muted {\n      margin-top: 8px;\n      color: var(--muted);\n      font-size: 12px;\n      line-height: 1.45;\n    }\n    .computer-rule { border-top: 2px solid var(--soft-line); }\n    .computer-actions {\n      display: flex;\n      align-items: center;\n      justify-content: flex-end;\n      gap: 12px;\n      flex-wrap: wrap;\n    }\n    .computer-actions.between { justify-content: space-between; }\n    .check-row {\n      display: flex;\n      align-items: center;\n      gap: 8px;\n      font-weight: 800;\n      color: var(--body);\n    }\n    .check-row input {\n      width: 16px;\n      height: 16px;\n      padding: 0;\n      accent-color: var(--accent);\n    }\n    .choice-grid {\n      display: grid;\n      grid-template-columns: repeat(2, minmax(0, 1fr));\n      gap: 10px;\n    }\n    .computer-choice {\n      display: grid;\n      grid-template-columns: 28px minmax(0, 1fr);\n      gap: 10px;\n      min-height: 82px;\n      border: 2px solid var(--line);\n      padding: 14px;\n      background: var(--canvas);\n      text-align: left;\n    }\n    .computer-choice.active { background: var(--accent); }\n    .computer-choice.disabled {\n      border-style: dashed;\n      color: var(--muted);\n      opacity: 0.56;\n      cursor: default;\n    }\n    .computer-choice-title {\n      display: block;\n      font-size: 14px;\n      text-transform: uppercase;\n    }\n    .connect-row {\n      display: grid;\n      grid-template-columns: minmax(0, 1fr) auto;\n      gap: 10px;\n      align-items: center;\n    }\n    .connect-stack {\n      display: grid;\n      gap: 8px;\n      min-width: 0;\n    }\n    .connect-help {\n      color: var(--body);\n      font-size: 12px;\n      font-weight: 900;\n    }\n    .connect-command {\n      border: 2px solid var(--line);\n      background: #080808;\n      color: #a7d66d;\n      padding: 14px;\n      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;\n      font-size: 12px;\n      line-height: 1.5;\n      white-space: pre-wrap;\n      word-break: break-word;\n    }\n    .connect-status {\n      display: flex;\n      align-items: center;\n      gap: 10px;\n      border: 2px solid var(--line);\n      background: #fff3c4;\n      padding: 14px;\n      font-weight: 900;\n    }\n    .status-dot {\n      width: 10px;\n      height: 10px;\n      border: 2px solid var(--line);\n      border-radius: 50%;\n      background: #ffad7a;\n    }\n    .status-dot.online { background: #74d67b; }\n    .button-shadow { box-shadow: 4px 5px 0 var(--line); }\n    button.primary-pink {\n      background: var(--active);\n      min-height: 36px;\n      padding: 8px 14px;\n      font-size: 14px;\n    }\n    button.disabled-action {\n      background: #edf5df;\n      color: var(--muted);\n      cursor: default;\n    }\n    @media (max-width: 760px) {\n      .app { grid-template-columns: 36px 132px minmax(0, 1fr); }\n      .logo {\n        width: 24px;\n        grid-template-columns: 1fr;\n      }\n      .logo span {\n        width: 22px;\n        height: 16px;\n        font-size: 10px;\n      }\n      .message-list { padding: 0 10px; }\n      .composer { left: 178px; right: 10px; width: auto; }\n      .top-actions .hide-mobile { display: none; }\n      .post { max-width: 100%; }\n      .computer-flow { padding: 22px; }\n      .choice-grid, .connect-row { grid-template-columns: 1fr; }\n    }\n";
 
@@ -1434,6 +1441,11 @@ app.get("/gui/activity", async (c) => {
   if (blocked) return blocked;
   return (await stateForRequest(c)).fetch(`https://state/gui-activity?${new URL(c.req.url).searchParams.toString()}`);
 });
+app.get("/gui/storage-debug", async (c) => {
+  const blocked = await requireOwnerGuiAuth(c);
+  if (blocked) return blocked;
+  return (await stateForRequest(c)).fetch("https://state/gui-storage-debug");
+});
 app.get("/gui/export-state", async (c) => {
   const blocked = await requireOwnerGuiAuth(c);
   if (blocked) return blocked;
@@ -1690,6 +1702,7 @@ export class GuiState implements DurableObject {
     if (path === "/gui-state") return json(await stateForGui(await this.get(), url.searchParams.get("redact") === "1"));
     if (path === "/gui-summary") return this.guiSummary(request);
     if (path === "/gui-activity") return this.guiActivity(url.searchParams);
+    if (path === "/gui-storage-debug") return this.storageDebug();
     if (path === "/gui-export-state") return json(this.snapshot(await this.get()));
     if (path === "/gui-import-state") return this.importSnapshot(await request.json().catch(() => null));
     if (path === "/gui-reset-state") return this.resetState();
@@ -1716,16 +1729,56 @@ export class GuiState implements DurableObject {
   }
 
   private async get(): Promise<State> {
-    const saved = await this.state.storage.get<State>("state");
+    const saved = await this.state.storage.get<State>(GUI_BASE_STATE_KEY);
     if (saved) {
-      const shouldPersist = !saved.pairingCode;
-      const normalized = this.normalizeState(saved);
-      if (shouldPersist) await this.put(normalized);
+      const normalized = this.normalizeState(await this.hydrateEntityState(saved));
+      if (!saved.pairingCode) await this.put(normalized);
+      return normalized;
+    }
+    const legacy = await this.state.storage.get<State>(GUI_LEGACY_STATE_KEY);
+    if (legacy) {
+      const normalized = this.normalizeState(legacy);
+      await this.put(normalized);
+      await this.state.storage.delete(GUI_LEGACY_STATE_KEY);
       return normalized;
     }
     const initial = this.freshState();
     await this.put(initial);
     return initial;
+  }
+
+  private async hydrateEntityState(base: State): Promise<State> {
+    const entries = await Promise.all(GUI_ENTITY_STATE_KEYS.map(async (key) => [key, await this.state.storage.get<State[typeof key]>(entityStateStorageKey(key))] as const));
+    const state = { ...base };
+    for (const [key, value] of entries) {
+      if (value !== undefined) {
+        (state as unknown as EntityState)[key] = value as never;
+      }
+    }
+    return state;
+  }
+
+  private async put(state: State): Promise<void> {
+    const base = stripEntityState(state);
+    await Promise.all([
+      this.state.storage.put(GUI_BASE_STATE_KEY, base),
+      this.state.storage.delete(GUI_LEGACY_STATE_KEY),
+      ...GUI_ENTITY_STATE_KEYS.map((key) => this.state.storage.put(entityStateStorageKey(key), state[key]))
+    ]);
+  }
+
+  private async clearEntityState(): Promise<void> {
+    await Promise.all([
+      this.state.storage.delete(GUI_BASE_STATE_KEY),
+      this.state.storage.delete(GUI_LEGACY_STATE_KEY),
+      ...GUI_ENTITY_STATE_KEYS.map((key) => this.state.storage.delete(entityStateStorageKey(key)))
+    ]);
+  }
+
+  private async storageDebug(): Promise<Response> {
+    const keys = [GUI_BASE_STATE_KEY, GUI_LEGACY_STATE_KEY, ...GUI_ENTITY_STATE_KEYS.map(entityStateStorageKey)];
+    const rows = await Promise.all(keys.map(async (key) => ({ key, present: (await this.state.storage.get(key)) !== undefined })));
+    return json({ rows });
   }
 
   private freshState(): State {
@@ -1778,10 +1831,6 @@ export class GuiState implements DurableObject {
 	      remoteAssist: undefined
 	    };
     return initial;
-  }
-
-  private async put(state: State): Promise<void> {
-    await this.state.storage.put("state", state);
   }
 
   private normalizeState(saved: State): State {
@@ -3730,9 +3779,9 @@ export class GuiState implements DurableObject {
     state.messages.push(pendingReply);
     autoDelegateMessage(state, conversation, message, targetAgent);
     const delegated = state.tasks.find((task) => task.requestMessageId === message.id);
-    if (delegated?.assignee) updatePendingForTask(state, delegated, `已委派给 ${delegated.assignee} 处理...`);
+    if (delegated?.assignee && delegated.assignee !== targetAgent.id) updatePendingForTask(state, delegated, `已委派给 ${delegated.assignee} 处理...`);
     await this.put(state);
-    this.broadcast({ event: "wake", data: { conversationId: message.conversation_id, requestId: message.id, messageId: message.id, taskId: delegated?.id, agentId: targetAgent.id, at: now } });
+    await this.broadcast({ event: "wake", data: { conversationId: message.conversation_id, requestId: message.id, messageId: message.id, taskId: delegated?.id, agentId: targetAgent.id, at: now } });
     if (delegated?.assignee) {
       await this.broadcast({ event: "wake", data: { agenda: true, conversationId: conversation.id, requestId: message.id, messageId: message.id, taskId: delegated.id, agentId: delegated.assignee, at: Date.now() } });
 	    }
@@ -4219,6 +4268,18 @@ function normalizeRuntimeTokenMeta(value: Record<string, RuntimeTokenMeta> | und
     next[id] = { token: tokenValue, expiresAt };
   }
   return next;
+}
+
+function entityStateStorageKey(key: EntityStateKey): string {
+  return `state:${key}`;
+}
+
+function stripEntityState(state: State): State {
+  const base = { ...state };
+  for (const key of GUI_ENTITY_STATE_KEYS) {
+    delete (base as unknown as Partial<EntityState>)[key];
+  }
+  return base;
 }
 
 function normalizeRemoteAssistGrant(value: unknown, legacyList?: unknown): RemoteAssistGrant | undefined {
@@ -4914,39 +4975,39 @@ function autoDelegateMessage(state: State, conversation: Conversation, message: 
 function advanceTaskDone(state: State, task: Task, actor: Agent, resultText?: string): string {
   const previousStatus = task.status;
   if (resultText?.trim()) task.result = resultText.trim();
-  if (!task.reviewerAgentId && !task.conversationId) {
-    task.status = "done";
-    task.updated_at = Date.now();
-    if (previousStatus !== task.status) pushTaskTransition(state, task, previousStatus);
-    return `Task ${task.id} marked done.`;
-  }
-  if (!task.reviewerAgentId) {
-    task.status = "done";
-    task.assignee = task.coordinatorAgentId ?? DEFAULT_AGENT.id;
-    task.updated_at = Date.now();
-    if (previousStatus !== task.status) pushTaskTransition(state, task, previousStatus);
-    queueTaskCompletionMessage(state, task, { fromName: actor.name, actorAgentId: actor.id });
-    return `Task ${task.id} marked done and returned to ${task.assignee}.`;
-  }
-  if (actor.id === task.reviewerAgentId || task.status === "review") {
-    task.status = "done";
-    task.assignee = task.coordinatorAgentId ?? DEFAULT_AGENT.id;
-    task.reviewResult = "approved";
-    task.reviewedByAgentId = actor.id;
+  const reviewer = task.reviewerAgentId ? findAgent(state, task.reviewerAgentId) ?? reviewerAgentFor(state) : undefined;
+  const transition = taskDoneTransition({
+    id: task.id,
+    kind: "task",
+    status: task.status,
+    assignee: task.assignee,
+    ownerRole: task.ownerRole,
+    reviewerRole: task.reviewerRole,
+    result: task.result
+  }, actor.id, {
+    coordinatorId: task.coordinatorAgentId ?? DEFAULT_AGENT.id,
+    reviewerId: reviewer?.id,
+    hasConversation: Boolean(task.conversationId)
+  });
+  task.status = transition.status === "review" ? "review" : "done";
+  task.assignee = transition.assignee;
+  if (transition.reviewResult) {
+    task.reviewResult = transition.reviewResult;
+    task.reviewedByAgentId = transition.reviewedBy;
     task.reviewedAt = Date.now();
-    task.updated_at = Date.now();
-    if (previousStatus !== task.status) pushTaskTransition(state, task, previousStatus);
-    queueTaskCompletionMessage(state, task, { fromName: actor.name, actorAgentId: actor.id });
-    return `Task ${task.id} marked done and returned to ${task.assignee}.`;
   }
-  const reviewer = findAgent(state, task.reviewerAgentId) ?? reviewerAgentFor(state);
-  task.status = "review";
-  task.assignee = reviewer.id;
-  task.reviewerAgentId = reviewer.id;
+  if (task.status === "review" && reviewer) task.reviewerAgentId = reviewer.id;
   task.updated_at = Date.now();
   if (previousStatus !== task.status) pushTaskTransition(state, task, previousStatus);
-  queueTaskReviewMessage(state, task, actor.id);
-  return `Task ${task.id} submitted for review by ${reviewer.id}.`;
+  if (task.status === "review") {
+    queueTaskReviewMessage(state, task, actor.id);
+    return `Task ${task.id} submitted for review by ${task.assignee}.`;
+  }
+  if (task.conversationId) {
+    queueTaskCompletionMessage(state, task, { fromName: actor.name, actorAgentId: actor.id });
+    return `Task ${task.id} marked done and returned to ${task.assignee}.`;
+  }
+  return `Task ${task.id} marked done.`;
 }
 
 function pushTaskTransition(state: State, task: Task, previousStatus: TaskStatus): void {
@@ -5794,15 +5855,18 @@ function updatePendingForTask(state: State, task: Task, body: string): void {
   pending.readBy = [coordinator.id];
 }
 
-function taskIdsMatch(left: string, right: string): boolean {
-  return left === right || left.startsWith(right) || right.startsWith(left);
-}
-
 function taskVisibleStatus(state: State, task: Task): TaskStatus | "blocked" {
   if (task.status === "done") return "done";
   const doneIds = state.tasks.filter((row) => row.status === "done").map((row) => row.id);
-  const blocked = (task.dependsOn ?? []).some((id) => !doneIds.some((doneId) => taskIdsMatch(doneId, id)));
-  return blocked ? "blocked" : task.status;
+  const readiness = workflowReadiness({
+    id: task.id,
+    kind: "task",
+    status: task.status,
+    dependsOn: task.dependsOn,
+    acceptance: task.acceptance,
+    result: task.result
+  }, doneIds);
+  return readiness.blockedBy.length > 0 ? "blocked" : task.status;
 }
 
 function formatTaskLine(state: State, task: Task): string {

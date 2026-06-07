@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { defaultTeamSpec } from "../src/team-workflow.js";
 import { planHandoff, roleHandoffPolicy, selectOwnerRole, type RoutableCard } from "../src/team-routing.js";
+import { taskDoneTransition, workflowReadiness } from "../src/workflow-core.js";
 
 test("selectOwnerRole picks the best capability match under capability-first routing", () => {
   const team = defaultTeamSpec();
@@ -79,4 +80,48 @@ test("planHandoff is inert for non-done cards and for resolved decisions", () =>
   assert.deepEqual(planHandoff({ id: "d", kind: "decision", status: "done", ownerRole: "ops" }, team), []);
   assert.equal(roleHandoffPolicy(team, "builder")?.reviewerRole, "reviewer");
   assert.equal(roleHandoffPolicy(team, "nope"), undefined);
+});
+
+test("taskDoneTransition centralizes GUI and host task review transitions", () => {
+  assert.deepEqual(taskDoneTransition({ id: "task-1", kind: "task", status: "assigned", assignee: "dev" }, "dev", {
+    coordinatorId: "king-ai-ceo",
+    reviewerId: "reviewer",
+    hasConversation: true
+  }), { status: "review", assignee: "reviewer" });
+  assert.deepEqual(taskDoneTransition({ id: "task-1", kind: "task", status: "review", assignee: "reviewer" }, "reviewer", {
+    coordinatorId: "king-ai-ceo",
+    reviewerId: "reviewer",
+    hasConversation: true
+  }), { status: "done", assignee: "king-ai-ceo", reviewResult: "approved", reviewedBy: "reviewer" });
+  assert.deepEqual(taskDoneTransition({ id: "task-2", kind: "task", status: "assigned", assignee: "dev" }, "dev"), {
+    status: "done",
+    assignee: "dev"
+  });
+});
+
+test("workflowReadiness centralizes dependency evidence and review gates", () => {
+  assert.deepEqual(workflowReadiness({
+    id: "task-2",
+    kind: "task",
+    status: "assigned",
+    dependsOn: ["task-1"],
+    acceptance: ["evidence required"]
+  }, ["task-123456"]), {
+    ready: false,
+    blockedBy: ["task-1"],
+    missingEvidence: true,
+    missingReviewVerdict: false
+  });
+  assert.deepEqual(workflowReadiness({
+    id: "review-1",
+    kind: "review",
+    status: "done",
+    result: "changes requested"
+  }, []), {
+    ready: true,
+    blockedBy: [],
+    missingEvidence: false,
+    missingReviewVerdict: false
+  });
+  assert.equal(workflowReadiness({ id: "review-2", kind: "review", status: "done" }, []).missingReviewVerdict, true);
 });
