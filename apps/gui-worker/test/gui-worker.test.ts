@@ -1487,7 +1487,7 @@ test("gui can clear only the active conversation window", async () => {
   );
   assert.deepEqual(state.messages.filter((row) => !row.body.includes("Task assigned")).map((row) => [row.conversation_id, row.body, row.status]), [
     ["king-ai-convo", "default window", undefined],
-    ["king-ai-convo", "AI 正在处理...", "pending"]
+    ["king-ai-convo", "已委派给 dev 处理...", "pending"]
   ]);
 });
 
@@ -1518,7 +1518,7 @@ test("gui supports multiple conversation windows", async () => {
     state.messages.filter((row) => !row.body.includes("Task assigned")).map((row) => [row.conversation_id, row.body, row.status]),
     [
       ["king-ai-convo", "default window", undefined],
-      ["king-ai-convo", "AI 正在处理...", "pending"],
+      ["king-ai-convo", "已委派给 dev 处理...", "pending"],
       [created.conversation.id, "release window", undefined],
       [created.conversation.id, "AI 正在处理...", "pending"]
     ]
@@ -1747,6 +1747,31 @@ test("gui runtime lets the page choose agent engine and models", async () => {
   assert.notEqual(afterToken.token, beforeToken.token);
 });
 
+test("gui runtime rejects expired runtime tokens server-side", async () => {
+  const bindings = env({
+    deviceToken: "device-token",
+    runtimeTokens: { "king-ai-ceo": "expired-token" },
+    runtimeTokenMeta: { "king-ai-ceo": { token: "expired-token", expiresAt: Date.now() - 1000 } }
+  });
+  const expired = await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: "Bearer expired-token" },
+    body: JSON.stringify({ argv: ["whoami"] })
+  }), bindings);
+  assert.equal(expired.status, 401);
+
+  const fresh = await json<{ token: string }>(await worker.fetch(new Request("https://gui/api/agents/king-ai-ceo/runtime-token", {
+    method: "POST",
+    headers: { Authorization: "Bearer device-token" }
+  }), bindings));
+  const ok = await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${fresh.token}` },
+    body: JSON.stringify({ argv: ["whoami"] })
+  }), bindings);
+  assert.equal(ok.status, 200);
+});
+
 test("gui messages show a pending agent placeholder until runtime reply replaces it", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["claude", "codex"] });
@@ -1765,7 +1790,7 @@ test("gui messages show a pending agent placeholder until runtime reply replaces
   );
   assert.deepEqual(state.messages.filter((row) => row.author_kind !== "system").map((row) => [row.author_kind, row.author_engine, row.body, row.status]), [
     ["human", undefined, "hello", undefined],
-    ["agent", "codex", "AI 正在处理...", "pending"]
+    ["agent", "codex", "已委派给 dev 处理...", "pending"]
   ]);
 
   await json<{ text: string }>(await worker.fetch(new Request("https://gui/runtime/cli", {
@@ -1781,6 +1806,28 @@ test("gui messages show a pending agent placeholder until runtime reply replaces
     ["human", undefined, "hello", undefined],
     ["agent", "claude", "done", "done"]
   ]);
+});
+
+test("runtime reply rejects unknown conversations instead of creating ghost windows", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const token = await json<{ token: string }>(await worker.fetch(new Request("https://gui/api/agents/king-ai-ceo/runtime-token", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${paired.deviceToken}` }
+  }), bindings));
+  const rejected = await json<{ exitCode: number; text: string }>(await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token.token}` },
+    body: JSON.stringify({ argv: ["reply", "typo-convo", "hello"] })
+  }), bindings));
+
+  assert.equal(rejected.exitCode, 64);
+  assert.match(rejected.text, /conversation not found: typo-convo/);
+  const state = await json<{ conversations: { id: string }[]; messages: { body: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  assert.equal(state.conversations.some((conversation) => conversation.id === "typo-convo"), false);
+  assert.equal(state.messages.some((message) => message.body === "hello"), false);
 });
 
 test("runtime replies only replace pending placeholders for the executing agent", async () => {
@@ -1811,7 +1858,7 @@ test("runtime replies only replace pending placeholders for the executing agent"
   );
   assert.deepEqual(state.messages.filter((row) => row.author_kind !== "system").map((row) => [row.author_name, row.body, row.status, row.to_agent_id]), [
     ["King AI Human", "please coordinate", undefined, "king-ai-ceo"],
-    ["King AI CEO", "AI 正在处理...", "pending", "king-ai-ceo"],
+    ["King AI CEO", "已委派给 dev 处理...", "pending", "king-ai-ceo"],
     ["Dev", "dev status", "done", undefined]
   ]);
 
@@ -1853,6 +1900,33 @@ test("runtime replies use the executing agent display name", async () => {
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
   assert.deepEqual(state.messages.map((row) => [row.author_name, row.author_kind, row.author_engine, row.body]), [["Claude Runner", "agent", "codex", "hello"]]);
+});
+
+test("runtime CLI side effects default to the executing agent identity", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const devToken = await json<{ token: string }>(await worker.fetch(new Request("https://gui/api/agents/dev/runtime-token", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${paired.deviceToken}` }
+  }), bindings));
+  const callDev = async (argv: string[]) => json<{ text: string }>(await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${devToken.token}` },
+    body: JSON.stringify({ argv })
+  }), bindings));
+
+  assert.match((await callDev(["send", "reviewer", "please review"])).text, /queued -> reviewer/);
+  assert.match((await callDev(["claim", "dev-claim", "--in", "king-ai-convo"])).text, /claim created/);
+  assert.match((await callDev(["artifact", "put", "--kind", "market_data", "--path", "runtime/actor", "--source", "test", "--confidence", "0.9"])).text, /artifact stored/);
+
+  const state = await json<{
+    messages: { author_name: string; readBy: string[]; to_agent_id?: string; body: string }[];
+    claims: { owner: string; name: string }[];
+    artifacts: { agentId: string; path: string }[];
+  }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
+  assert.equal(state.messages.some((message) => message.to_agent_id === "reviewer" && message.author_name === "Dev" && message.readBy.includes("dev")), true);
+  assert.equal(state.claims.some((claim) => claim.name === "dev-claim" && claim.owner === "dev"), true);
+  assert.equal(state.artifacts.some((artifact) => artifact.path === "runtime/actor" && artifact.agentId === "dev"), true);
 });
 
 test("runtime reply engine prefers the active run engine over stale shim payloads", async () => {
@@ -1946,6 +2020,11 @@ test("gui runtime requires the generated pairing code", async () => {
   assert.equal(invalid.status, 401);
 
   await pairComputer(bindings, { engines: ["codex"] });
+  const reused = await worker.fetch(new Request("https://gui/api/computers/pair", {
+    method: "POST",
+    body: JSON.stringify({ code: summary.pairingCode, engines: ["claude"] })
+  }), bindings);
+  assert.equal(reused.status, 401);
   const state = await json<{ availableEngines: string[] }>(
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
@@ -2544,6 +2623,124 @@ test("gui runtime records status, typing, thinking, events, and runs", async () 
   assert.equal(state.runStreams?.[run.runId]?.tools?.[0]?.name, "shell");
   assert.equal(state.runLog.at(-1)?.card?.summary, "Completed");
   assert.equal(state.runLog.at(-1)?.card?.sections?.some((section) => section.kind === "tool"), true);
+});
+
+test("gui runtime run contract rejects replies to the wrong conversation", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const tokenRes = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/ielts-tutor/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  const auth = { Authorization: `Bearer ${tokenRes.token}`, "Content-Type": "application/json" };
+  const first = await json<{ conversation: { id: string } }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({ title: "First", workflowId: "ielts-study", teamMode: "single" })
+    }), bindings)
+  );
+  const second = await json<{ conversation: { id: string } }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({ title: "Second", workflowId: "ielts-study", teamMode: "single" })
+    }), bindings)
+  );
+  const run = await json<{ runId: string; contract?: { conversationId?: string } }>(
+    await worker.fetch(new Request("https://gui/runtime/runs", {
+      method: "POST",
+      headers: auth,
+      body: JSON.stringify({ trigger: { source: "test", engine: "codex" }, contract: { agentId: "ielts-tutor", conversationId: first.conversation.id, messageId: "msg-1", requestId: "msg-1" } })
+    }), bindings)
+  );
+
+  const rejected = await json<{ exitCode: number; text: string }>(
+    await worker.fetch(new Request("https://gui/runtime/cli", {
+      method: "POST",
+      headers: auth,
+      body: JSON.stringify({ runId: run.runId, argv: ["reply", second.conversation.id, "wrong room"] })
+    }), bindings)
+  );
+  const accepted = await json<{ exitCode: number; text: string }>(
+    await worker.fetch(new Request("https://gui/runtime/cli", {
+      method: "POST",
+      headers: auth,
+      body: JSON.stringify({ runId: run.runId, argv: ["reply", first.conversation.id, "right room"] })
+    }), bindings)
+  );
+
+  assert.equal(run.contract?.conversationId, first.conversation.id);
+  assert.equal(rejected.exitCode, 64);
+  assert.match(rejected.text, /does not match wake conversation/);
+  assert.equal(accepted.exitCode, 0);
+  assert.equal(accepted.text, "reply posted");
+  const actions = await json<{ actions: { kind: string; conversationId?: string; messageId?: string }[] }>(
+    await worker.fetch(new Request(`https://gui/runtime/runs/${run.runId}/actions`, {
+      headers: auth
+    }), bindings)
+  );
+  assert.deepEqual(actions.actions.map((action) => [action.kind, action.conversationId, action.messageId]), [["reply", first.conversation.id, "msg-1"]]);
+
+  const state = await json<{ messages: { conversation_id: string; body: string }[]; cliLog: { result: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  assert.equal(state.messages.some((message) => message.conversation_id === second.conversation.id && message.body === "wrong room"), false);
+  assert.equal(state.messages.some((message) => message.conversation_id === first.conversation.id && message.body === "right room"), true);
+  assert.equal(state.cliLog.some((row) => row.result.includes("run contract mismatch")), true);
+});
+
+test("gui runtime run contract rejects updates to the wrong task", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const tokenRes = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/dev/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  const auth = { Authorization: `Bearer ${tokenRes.token}`, "Content-Type": "application/json" };
+  const room = await json<{ conversation: { id: string } }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({ title: "Tasks", workflowId: "software-dev", teamMode: "team" })
+    }), bindings)
+  );
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    body: JSON.stringify({ conversationId: room.conversation.id, body: "Implement the first thing" })
+  }), bindings);
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    body: JSON.stringify({ conversationId: room.conversation.id, body: "Implement the second thing" })
+  }), bindings);
+  const before = await json<{ tasks: { id: string; status: string; result?: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  const [firstTask, secondTask] = before.tasks;
+  const run = await json<{ runId: string }>(
+    await worker.fetch(new Request("https://gui/runtime/runs", {
+      method: "POST",
+      headers: auth,
+      body: JSON.stringify({ trigger: { source: "test", engine: "codex" }, contract: { agentId: "dev", conversationId: room.conversation.id, taskId: firstTask.id } })
+    }), bindings)
+  );
+
+  const rejected = await json<{ exitCode: number; text: string }>(
+    await worker.fetch(new Request("https://gui/runtime/cli", {
+      method: "POST",
+      headers: auth,
+      body: JSON.stringify({ runId: run.runId, argv: ["task", "done", secondTask.id, "wrong task"] })
+    }), bindings)
+  );
+
+  assert.equal(rejected.exitCode, 64);
+  assert.match(rejected.text, /does not match wake task/);
+  const after = await json<{ tasks: { id: string; status: string; result?: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  assert.equal(after.tasks.find((task) => task.id === secondTask.id)?.status, "assigned");
+  assert.equal(after.tasks.find((task) => task.id === secondTask.id)?.result, undefined);
 });
 
 test("gui runtime triage keeps monitor-visible room chatter actionable", async () => {

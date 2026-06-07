@@ -8,6 +8,12 @@ Multi-role collaboration logic is part of the core product. `packages/cli/src/te
 
 CLI tests live in `packages/cli/test/` and compile into `packages/cli/dist/test/`. The optional Cloudflare GUI runtime app is under `apps/gui-worker/`, with tests in `apps/gui-worker/test/`. Generated output belongs in package-local `dist/` directories and should not be edited by hand.
 
+## Runtime Architecture Principles
+
+Preserve LLM autonomy when hardening the runtime. The model should decide strategy and content: whether to answer, delegate, ask the human, create or update a task, request review, or intentionally stay silent with a reason. Code should not force agents through a rigid, form-like workflow unless a product requirement explicitly calls for it.
+
+Use code-level constraints for the system ledger instead. Runtime changes should make identity, conversation boundaries, task ownership, idempotency, token lifetime, audit records, and recovery semantics explicit and verifiable. In short: LLMs own thinking and collaboration strategy; the system owns boundaries, state transitions, and durable accounting.
+
 ## Build, Test, and Development Commands
 
 - `pnpm install`: install package dependencies from `pnpm-lock.yaml`.

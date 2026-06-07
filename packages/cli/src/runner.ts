@@ -1,12 +1,12 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
-import { api, runtimeGet, runtimePost, tenantHeader } from "./api.js";
+import { api, runtimeGet, runtimeGetStrict, runtimePost, runtimePostStrict, tenantHeader } from "./api.js";
 import { AGENTS_ROOT, SESSIONS_DIR, TRIAGE_DIR } from "./paths.js";
 import { formatEngineLogLine, getAdapter, parseTriage } from "./engine.js";
 import { parseSseStream } from "./sse.js";
 import { writeShim } from "./shim.js";
-import type { AgentConfig, ComputerConfig, EngineAdapter, EngineId, EngineSession, RuntimeRun, TriageVerdict } from "./types.js";
+import type { AgentConfig, ComputerConfig, EngineAdapter, EngineId, EngineSession, RuntimeRun, RuntimeRunContract, TriageVerdict } from "./types.js";
 import { authFailureHint, concise, hashText, isRateLimited } from "./text.js";
 import { agentWorkspaceRoot, detectLocalCapabilities, formatWorkspacePolicy } from "./workspace.js";
 import { formatWorktreePlanForPrompt, formatWorktreePreparationResults, planAgentWorktrees, prepareWorktreePlans } from "./worktree.js";
@@ -48,6 +48,8 @@ const NESTED_ENV_BLOCKLIST = [
   "KING_AI_AGENT_RUNTIME_TOKEN",
   "KING_AI_AGENT_RUNTIME_TOKEN_FILE",
   "KING_AI_AGENT_RUNTIME_TENANT",
+  "KING_AI_AGENT_RUNTIME_RUN_ID",
+  "KING_AI_AGENT_RUNTIME_CONTRACT",
   "KING_AI_AGENT_ID",
   "KING_AI_AGENT_ENGINE",
   "KING_AI_AGENT_HOME",
@@ -80,6 +82,16 @@ interface InboxPayload {
   rows?: InboxRow[];
 }
 
+interface RunActionsPayload {
+  actions?: Array<{
+    kind?: string;
+    conversationId?: string;
+    messageId?: string;
+    requestId?: string;
+    taskId?: string;
+  }>;
+}
+
 interface TriagePayload {
   verdict?: TriageVerdict;
   instructions?: string;
@@ -98,6 +110,9 @@ interface RuntimePreamblePayload {
 
 export interface WakeEventInfo {
   conversationId: string | null;
+  requestId: string | null;
+  messageId: string | null;
+  taskId: string | null;
   agentId: string | null;
   sentAt: number | null;
   deliveryLatencyMs: number | null;
@@ -318,21 +333,27 @@ export function agentSessionFile(agentId: string, engine: EngineId): string {
 }
 
 export function parseWakeEventInfo(rawData: string | undefined, now = Date.now()): WakeEventInfo {
-  if (!rawData) return { conversationId: null, agentId: null, sentAt: null, deliveryLatencyMs: null, resetState: false };
+  if (!rawData) return { conversationId: null, requestId: null, messageId: null, taskId: null, agentId: null, sentAt: null, deliveryLatencyMs: null, resetState: false };
   try {
-    const data = JSON.parse(rawData) as { conversationId?: unknown; agentId?: unknown; at?: unknown; resetState?: unknown };
+    const data = JSON.parse(rawData) as { conversationId?: unknown; requestId?: unknown; messageId?: unknown; taskId?: unknown; agentId?: unknown; at?: unknown; resetState?: unknown };
     const conversationId = typeof data.conversationId === "string" ? data.conversationId : null;
+    const messageId = typeof data.messageId === "string" ? data.messageId : null;
+    const requestId = typeof data.requestId === "string" ? data.requestId : messageId;
+    const taskId = typeof data.taskId === "string" ? data.taskId : null;
     const agentId = typeof data.agentId === "string" ? data.agentId : null;
     const sentAt = typeof data.at === "number" && Number.isFinite(data.at) ? data.at : null;
     return {
       conversationId,
+      requestId,
+      messageId,
+      taskId,
       agentId,
       sentAt,
       deliveryLatencyMs: sentAt == null ? null : Math.max(0, now - sentAt),
       resetState: data.resetState === true
     };
   } catch {
-    return { conversationId: null, agentId: null, sentAt: null, deliveryLatencyMs: null, resetState: false };
+    return { conversationId: null, requestId: null, messageId: null, taskId: null, agentId: null, sentAt: null, deliveryLatencyMs: null, resetState: false };
   }
 }
 
@@ -358,7 +379,9 @@ export class AgentRunner {
   private engineBackoffUntil = 0;
   private triageBackoffUntil = 0;
   private triageTroubleStreak = 0;
-  private lastWakeConvo: string | null = null;
+  private lastWakeContract: RuntimeRunContract | null = null;
+  private activeRunId: string | null = null;
+  private activeRunContract: RuntimeRunContract | null = null;
   private lastTurnEndedAt = 0;
   private lastAgendaCheckAt = 0;
   private sideSteering = false;
@@ -510,7 +533,9 @@ export class AgentRunner {
     this.token = "";
     this.tokenExpiresAt = 0;
     this.pendingRerun = false;
-    this.lastWakeConvo = null;
+    this.lastWakeContract = null;
+    this.activeRunId = null;
+    this.activeRunContract = null;
     this.lastSteeredMsgId = null;
     this.remediation = null;
     await rm(this.sessionFile, { force: true });
@@ -535,9 +560,14 @@ export class AgentRunner {
     }, 0);
   }
 
-  scheduleWake(reason: string, conversationId?: string | null): void {
+  scheduleWake(reason: string, contract?: RuntimeRunContract | string | null): void {
     if (this.stopped) return;
-    if (conversationId) this.lastWakeConvo = conversationId;
+    const conversationId = typeof contract === "string" ? contract : contract?.conversationId;
+    if (typeof contract === "string") {
+      this.lastWakeContract = { conversationId: contract };
+    } else if (contract && Object.values(contract).some((value) => typeof value === "string" && value.length > 0)) {
+      this.lastWakeContract = contract;
+    }
     if (this.busy) {
       this.pendingRerun = true;
       this.kickTurn(reason);
@@ -609,6 +639,8 @@ export class AgentRunner {
       KING_AI_AGENT_RUNTIME_TOKEN: this.token,
       KING_AI_AGENT_RUNTIME_TOKEN_FILE: join(this.binDir, ".runtime-token"),
       KING_AI_AGENT_RUNTIME_TENANT: this.cfg.tenantId ?? "",
+      KING_AI_AGENT_RUNTIME_RUN_ID: this.activeRunId ?? "",
+      KING_AI_AGENT_RUNTIME_CONTRACT: this.activeRunContract ? JSON.stringify(this.activeRunContract) : "",
       KING_AI_AGENT_ID: this.agent.id,
       KING_AI_AGENT_ENGINE: this.adapter.id,
       KING_AI_AGENT_HOME: this.home,
@@ -814,8 +846,8 @@ export class AgentRunner {
   }
 
   private async snapshotUnread(token: string): Promise<{ seen: Map<string, string>; digest: string; hasReal: boolean; imagePaths: string[] }> {
-    const inbox = await runtimeGet<InboxPayload>(this.cfg.serverUrl, "/inbox", token, this.cfg.tenantId);
-    const rows = inbox?.rows ?? [];
+    const inbox = await runtimeGetStrict<InboxPayload>(this.cfg.serverUrl, "/inbox", token, this.cfg.tenantId);
+    const rows = inbox.rows ?? [];
     const seen = new Map<string, string>();
     const lines: string[] = [];
     const imagePaths: string[] = [];
@@ -856,9 +888,23 @@ export class AgentRunner {
   private async ackSeen(token: string, seen: Map<string, string>): Promise<void> {
     await Promise.all(
       [...seen].map(([conversationId, upToMessageId]) =>
-        runtimePost(this.cfg.serverUrl, "/conversation/mark-read", token, { conversationId, upToMessageId }, this.cfg.tenantId)
+        runtimePostStrict(this.cfg.serverUrl, "/conversation/mark-read", token, { conversationId, upToMessageId }, this.cfg.tenantId)
       )
     );
+  }
+
+  private async ackRunActions(token: string, runId: string | undefined, fallbackSeen: Map<string, string>): Promise<boolean> {
+    if (!runId) return false;
+    const payload = await runtimeGetStrict<RunActionsPayload>(this.cfg.serverUrl, `/runs/${runId}/actions`, token, this.cfg.tenantId);
+    const seen = new Map<string, string>();
+    for (const action of payload.actions ?? []) {
+      if (!action.conversationId) continue;
+      const messageId = action.messageId ?? action.requestId ?? fallbackSeen.get(action.conversationId);
+      if (messageId) seen.set(action.conversationId, messageId);
+    }
+    if (!seen.size) return false;
+    await this.ackSeen(token, seen);
+    return true;
   }
 
   private async rosterDigest(token: string): Promise<string> {
@@ -933,10 +979,21 @@ ${delta}`;
         if (Date.now() < this.triageBackoffUntil) break;
         if (Date.now() < this.engineBackoffUntil) break;
         const token = await this.ensureToken();
-        const activeConversationId = this.lastWakeConvo;
-        this.lastWakeConvo = null;
-        await this.publishEvent("turn.check", { reason, conversationId: activeConversationId });
-        const { seen, digest, hasReal, imagePaths } = await this.snapshotUnread(token);
+        const activeContract = this.lastWakeContract;
+        this.lastWakeContract = null;
+        const activeConversationId = activeContract?.conversationId ?? null;
+        await this.publishEvent("turn.check", { reason, ...activeContract });
+        let snapshot: { seen: Map<string, string>; digest: string; hasReal: boolean; imagePaths: string[] };
+        try {
+          snapshot = await this.snapshotUnread(token);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn(`[${this.agent.id}/${this.adapter.id}] runtime inbox unavailable: ${message}; backing off without acking unread`);
+          await this.publishEvent("runtime.inbox_unavailable", { reason, error: message }, "warn");
+          await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" }, this.cfg.tenantId);
+          break;
+        }
+        const { seen, digest, hasReal, imagePaths } = snapshot;
         if (!hasReal) {
           await this.ackSeen(token, seen);
           await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" }, this.cfg.tenantId);
@@ -976,8 +1033,14 @@ ${delta}`;
           typingTimer = setInterval(ping, 6000);
         }
         const run = await runtimePost<RuntimeRun>(this.cfg.serverUrl, "/runs", token, {
-          trigger: { source: reason, engine: this.adapter.id }
+          trigger: { source: reason, engine: this.adapter.id },
+          contract: {
+            ...activeContract,
+            agentId: this.agent.id
+          }
         }, this.cfg.tenantId);
+        this.activeRunId = run?.runId ?? null;
+        this.activeRunContract = run?.contract ?? (activeContract ? { ...activeContract, agentId: this.agent.id } : null);
         await this.publishEvent("turn.started", { reason, runId: run?.runId, conversationId: activeConversationId });
         const stopBeat = this.beatRun(token, run?.runId);
         let error: string | undefined;
@@ -1038,7 +1101,15 @@ ${delta}`;
             await this.publishEngineFailure({ token, runId: run?.runId, conversationId: typingConvo, error, exitCode });
           }
         } else {
-          await this.ackSeen(token, seen);
+          const acked = await this.ackRunActions(token, run?.runId, seen);
+          if (!acked) {
+            await this.publishEvent("turn.no_state_action", {
+              reason,
+              runId: run?.runId,
+              conversationId: typingConvo,
+              messageCount: seen.size
+            }, "warn");
+          }
         }
         await runtimePost(this.cfg.serverUrl, `/runs/${run?.runId}/finish`, token, {
           status: error ? "failed" : "completed",
@@ -1067,6 +1138,8 @@ ${delta}`;
           durationMs
         }, error ? "error" : "info");
         await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" }, this.cfg.tenantId);
+        this.activeRunId = null;
+        this.activeRunContract = null;
         this.lastTurnEndedAt = Date.now();
       } while (this.pendingRerun && !this.stopped);
     } finally {
@@ -1208,6 +1281,13 @@ ${delta}`;
             this.handleResetLocalState();
             break;
           }
+          const contract: RuntimeRunContract = {
+            agentId: this.agent.id,
+            conversationId: info.conversationId ?? undefined,
+            requestId: info.requestId ?? undefined,
+            messageId: info.messageId ?? undefined,
+            taskId: info.taskId ?? undefined
+          };
           const conversationId = info.conversationId;
           if (evt.event === "steer") {
             if (conversationId) void this.maybeSteer(conversationId);
@@ -1221,11 +1301,11 @@ ${delta}`;
           );
           await this.publishEvent("wake.received", {
             event: evt.event,
-            conversationId,
+            ...contract,
             sentAt: info.sentAt,
             deliveryLatencyMs: info.deliveryLatencyMs
           });
-          this.scheduleWake(`sse-${evt.event}`, conversationId);
+          this.scheduleWake(`sse-${evt.event}`, contract);
         }
       } catch (err) {
         if (this.stopped) break;

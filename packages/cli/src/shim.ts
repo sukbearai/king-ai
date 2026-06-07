@@ -36,10 +36,20 @@ const SHIM = `#!/usr/bin/env node
     try { body = fs.readFileSync(0, 'utf8') } catch {}
     argv.splice(stdinIdx, 1, body)
   }
+  let contract
+  if (process.env.KING_AI_AGENT_RUNTIME_CONTRACT) {
+    try { contract = JSON.parse(process.env.KING_AI_AGENT_RUNTIME_CONTRACT) } catch {}
+  }
   const res = await fetch(url + '/cli', {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', ...(tenant ? { 'X-King-AI-Tenant': tenant } : {}) },
-    body: JSON.stringify({ argv, agentId: process.env.KING_AI_AGENT_ID || undefined, engine: process.env.KING_AI_AGENT_ENGINE || undefined })
+    body: JSON.stringify({
+      argv,
+      agentId: process.env.KING_AI_AGENT_ID || undefined,
+      engine: process.env.KING_AI_AGENT_ENGINE || undefined,
+      runId: process.env.KING_AI_AGENT_RUNTIME_RUN_ID || undefined,
+      contract
+    })
   })
   if (!res.ok) {
     const text = await res.text().catch(() => '')

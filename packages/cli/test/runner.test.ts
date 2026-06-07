@@ -34,13 +34,19 @@ test("agentSessionFile scopes session ids by engine", () => {
 test("parseWakeEventInfo extracts conversation and delivery latency", () => {
   assert.deepEqual(parseWakeEventInfo(undefined, 2000), {
     conversationId: null,
+    requestId: null,
+    messageId: null,
+    taskId: null,
     agentId: null,
     sentAt: null,
     deliveryLatencyMs: null,
     resetState: false
   });
-  assert.deepEqual(parseWakeEventInfo(JSON.stringify({ conversationId: "demo-convo", agentId: "dev", at: 1500 }), 2000), {
+  assert.deepEqual(parseWakeEventInfo(JSON.stringify({ conversationId: "demo-convo", agentId: "dev", messageId: "msg-1", taskId: "task-1", at: 1500 }), 2000), {
     conversationId: "demo-convo",
+    requestId: "msg-1",
+    messageId: "msg-1",
+    taskId: "task-1",
     agentId: "dev",
     sentAt: 1500,
     deliveryLatencyMs: 500,
@@ -48,6 +54,9 @@ test("parseWakeEventInfo extracts conversation and delivery latency", () => {
   });
   assert.deepEqual(parseWakeEventInfo("not json", 2000), {
     conversationId: null,
+    requestId: null,
+    messageId: null,
+    taskId: null,
     agentId: null,
     sentAt: null,
     deliveryLatencyMs: null,

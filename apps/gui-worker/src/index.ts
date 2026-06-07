@@ -294,6 +294,31 @@ type RunFeedback = {
   createdAt: number;
 };
 
+type RunContract = {
+  agentId?: string;
+  conversationId?: string;
+  requestId?: string;
+  messageId?: string;
+  taskId?: string;
+};
+
+type RunAction = {
+  runId: string;
+  agentId: string;
+  kind: "reply" | "task" | "ignore";
+  conversationId?: string;
+  requestId?: string;
+  messageId?: string;
+  taskId?: string;
+  summary?: string;
+  at: number;
+};
+
+type RuntimeTokenMeta = {
+  token: string;
+  expiresAt: number;
+};
+
 type ReviewDecision = "approved" | "changes_requested";
 
 type ReviewRecord = {
@@ -503,6 +528,7 @@ type State = {
   deviceToken: string;
   runtimeToken: string;
   runtimeTokens?: Record<string, string>;
+  runtimeTokenMeta?: Record<string, RuntimeTokenMeta>;
   pairingCode: string;
   availableEngines: string[];
   capabilities: { workspaces: string[]; agentWorkspaceRoot?: string };
@@ -526,6 +552,8 @@ type State = {
   triageLog: { at: number; body: unknown }[];
   runLog: { at: number; runId: string; action: "start" | "heartbeat" | "finish" | "stream"; body?: unknown; card?: unknown }[];
   runStreams?: Record<string, RunStreamState>;
+  activeRunContracts?: Record<string, RunContract>;
+  runActions?: Record<string, RunAction[]>;
   initiatives: Initiative[];
   tasks: Task[];
   taskEvents: TaskEvent[];
@@ -812,6 +840,7 @@ const GUI_ATTACHMENT_MAX_COUNT = 10;
 const GUI_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
 const GUI_ATTACHMENT_STORE_CAPACITY = 50;
 const GUI_ATTACHMENT_CHUNK_CHARS = 256 * 1024;
+const RUNTIME_TOKEN_TTL_MS = 60 * 60 * 1000;
 
 const styles = "    :root {\n      --accent: #ffd633;\n      --rail: #ffd83d;\n      --sidebar: #fbf4e6;\n      --active: #f15b93;\n      --canvas: #ffffff;\n      --panel: #fffaf0;\n      --line: #111111;\n      --soft-line: #d7d1c5;\n      --ink: #171717;\n      --body: #303030;\n      --muted: #7d7a73;\n      --avatar: #c8b6ff;\n      --shadow: rgba(17,17,17,0.16) 0 14px 36px;\n    }\n    * { box-sizing: border-box; }\n    body {\n      margin: 0;\n      background: var(--canvas);\n      color: var(--ink);\n      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n      font-size: 12px;\n      line-height: 1.35;\n      overflow: hidden;\n    }\n    h1, h2, h3, p { margin: 0; }\n    h1 { font-size: 17px; line-height: 1.1; }\n    h2 { font-size: 15px; line-height: 1.2; }\n    h3 { font-size: 13px; line-height: 1.2; }\n    p { color: var(--body); }\n    button, textarea, select, input { font: inherit; }\n    * {\n      scrollbar-width: thin;\n      scrollbar-color: var(--line) var(--accent);\n    }\n    *::-webkit-scrollbar {\n      width: 13px;\n      height: 13px;\n    }\n    *::-webkit-scrollbar-track {\n      background: var(--accent);\n      border-left: 1px solid var(--line);\n    }\n    *::-webkit-scrollbar-thumb {\n      background: var(--line);\n      border: 3px solid var(--accent);\n    }\n    *::-webkit-scrollbar-corner { background: var(--accent); }\n    button {\n      min-height: 27px;\n      border: 1px solid var(--line);\n      border-radius: 0;\n      padding: 4px 9px;\n      background: var(--canvas);\n      color: var(--ink);\n      font-weight: 800;\n      cursor: pointer;\n    }\n    button:hover, button.primary { background: var(--accent); }\n    button.icon {\n      width: 27px;\n      min-width: 27px;\n      padding: 0;\n      display: grid;\n      place-items: center;\n    }\n    textarea, input, select {\n      width: 100%;\n      border: 1px solid var(--line);\n      border-radius: 0;\n      background: var(--canvas);\n      color: var(--ink);\n      padding: 8px;\n    }\n    textarea {\n      min-height: 54px;\n      resize: vertical;\n      line-height: 1.45;\n    }\n    label {\n      color: var(--muted);\n      font-size: 10px;\n      font-weight: 900;\n      text-transform: uppercase;\n    }\n    .app {\n      height: 100vh;\n      min-height: 100vh;\n      display: grid;\n      grid-template-columns: 42px 180px minmax(0, 1fr);\n      background: var(--canvas);\n    }\n    .rail {\n      display: grid;\n      grid-template-rows: auto 1fr;\n      gap: 12px;\n      border-right: 2px solid var(--line);\n      background: var(--rail);\n      padding: 8px 6px;\n    }\n    .logo {\n      width: 27px;\n      display: grid;\n      grid-template-columns: 1fr;\n      gap: 6px;\n    }\n    .logo span {\n      width: 27px;\n      height: 27px;\n      display: grid;\n      place-items: center;\n      background: var(--line);\n      color: var(--accent);\n      font-size: 10px;\n      font-weight: 900;\n    }\n    .rail .icon { background: transparent; border-color: transparent; }\n    .rail .icon.active { background: var(--canvas); border-color: var(--line); }\n    .windows {\n      min-width: 0;\n      border-right: 2px solid var(--line);\n      background: var(--sidebar);\n      padding: 8px 6px;\n      overflow: hidden;\n      display: grid;\n      grid-template-rows: auto minmax(0, 1fr);\n      gap: 8px;\n    }\n    .windows-head {\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 8px;\n      padding: 0 2px 8px;\n      border-bottom: 1px solid var(--soft-line);\n      font-weight: 900;\n    }\n    .window-list {\n      min-height: 0;\n      overflow: auto;\n      display: grid;\n      align-content: start;\n      gap: 5px;\n    }\n    .window-item {\n      display: grid;\n      grid-template-columns: minmax(0, 1fr) auto auto;\n      gap: 6px;\n      align-items: center;\n      min-height: 32px;\n      padding: 5px 6px;\n      border: 1px solid transparent;\n      background: transparent;\n      text-align: left;\n      font-weight: 800;\n    }\n    .window-select {\n      min-width: 0;\n      min-height: 0;\n      padding: 0;\n      border: 0;\n      background: transparent;\n      text-align: left;\n      font-weight: 900;\n    }\n    .window-item.active {\n      border-color: var(--line);\n      background: var(--active);\n    }\n    .window-delete {\n      width: 18px;\n      min-width: 18px;\n      min-height: 18px;\n      padding: 0;\n      border-color: var(--line);\n      background: var(--canvas);\n      color: var(--line);\n      line-height: 1;\n    }\n    .window-delete:hover { background: var(--accent); }\n    .window-name {\n      overflow: hidden;\n      text-overflow: ellipsis;\n      white-space: nowrap;\n    }\n    .window-meta {\n      color: var(--muted);\n      font-size: 10px;\n      font-weight: 900;\n    }\n    .sidebar {\n      display: none;\n      min-width: 0;\n      border-right: 2px solid var(--line);\n      background: var(--sidebar);\n      padding: 9px 5px;\n      overflow: hidden;\n    }\n    .side-title {\n      display: flex;\n      justify-content: space-between;\n      align-items: center;\n      padding: 0 4px 11px;\n      border-bottom: 1px solid var(--soft-line);\n      margin-bottom: 8px;\n    }\n    .side-section { display: grid; gap: 3px; margin: 12px 0; }\n    .side-label {\n      padding: 0 7px;\n      color: var(--muted);\n      font-size: 10px;\n      font-weight: 900;\n      letter-spacing: 0.03em;\n      text-transform: uppercase;\n    }\n    .side-link, .channel {\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 8px;\n      min-height: 25px;\n      padding: 4px 6px;\n      border: 1px solid transparent;\n      color: var(--body);\n      text-decoration: none;\n      white-space: nowrap;\n      overflow: hidden;\n    }\n    .channel.active {\n      background: var(--active);\n      border-color: var(--line);\n      color: var(--line);\n      font-weight: 900;\n    }\n    .badge { color: var(--muted); font-size: 10px; font-weight: 900; }\n    .main {\n      min-width: 0;\n      min-height: 0;\n      height: 100vh;\n      display: grid;\n      grid-template-rows: auto auto minmax(0, 1fr);\n    }\n    .topbar {\n      height: 38px;\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 14px;\n      border-bottom: 2px solid var(--line);\n      padding: 6px 12px;\n    }\n    .channel-head {\n      display: grid;\n      grid-template-columns: 21px minmax(0, auto);\n      gap: 8px;\n      align-items: center;\n      min-width: 0;\n    }\n    .hash {\n      width: 21px;\n      height: 21px;\n      display: grid;\n      place-items: center;\n      background: var(--accent);\n      border: 1px solid var(--line);\n      font-weight: 900;\n    }\n    .channel-name { font-weight: 900; line-height: 1; }\n    .channel-desc {\n      color: var(--muted);\n      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;\n      font-size: 10px;\n      overflow: hidden;\n      text-overflow: ellipsis;\n      white-space: nowrap;\n    }\n    .top-actions { display: flex; gap: 6px; }\n    .tabs {\n      height: 24px;\n      display: flex;\n      align-items: stretch;\n      border-bottom: 2px solid var(--line);\n    }\n    .tab {\n      min-height: 0;\n      padding: 3px 12px;\n      border-width: 0 1px 0 0;\n      background: var(--canvas);\n      font-size: 11px;\n    }\n    .tab.active { background: var(--accent); }\n    .workspace {\n      min-height: 0;\n      overflow: auto;\n      background: var(--canvas);\n    }\n    .panel { display: none; min-height: 100%; }\n    .panel.active { display: block; }\n    .chat-panel {\n      position: relative;\n      min-height: 100%;\n      padding: 14px 0 124px;\n    }\n    .message-list {\n      display: grid;\n      gap: 11px;\n      width: 100%;\n      padding: 0 18px;\n    }\n    .system-line {\n      color: #aaa49a;\n      font-size: 10px;\n      text-align: center;\n      padding: 4px 0;\n    }\n    .post {\n      display: grid;\n      grid-template-columns: 24px minmax(0, 1fr);\n      gap: 8px;\n      padding: 8px;\n      border: 1px solid transparent;\n    }\n    .post.highlight { border-color: var(--line); }\n    .avatar {\n      width: 22px;\n      height: 22px;\n      display: grid;\n      place-items: center;\n      border: 1px solid var(--line);\n      background: var(--avatar);\n      color: var(--line);\n      font-size: 12px;\n      font-weight: 900;\n    }\n    .post-top {\n      display: flex;\n      align-items: baseline;\n      gap: 6px;\n      min-width: 0;\n      margin-bottom: 3px;\n    }\n    .author { font-weight: 900; }\n    .time { color: var(--muted); font-size: 10px; white-space: nowrap; }\n    .post-body {\n      color: var(--body);\n      line-height: 1.45;\n      white-space: pre-wrap;\n      word-break: break-word;\n    }\n    .jump {\n      position: sticky;\n      bottom: 104px;\n      display: none;\n      width: max-content;\n      margin: 16px auto;\n      box-shadow: var(--shadow);\n    }\n    .jump.visible { display: block; }\n    .composer {\n      position: fixed;\n      right: 16px;\n      bottom: 14px;\n      left: 238px;\n      z-index: 5;\n      display: grid;\n      grid-template-columns: minmax(0, 1fr) auto;\n      gap: 8px;\n      width: auto;\n      max-width: none;\n      border: 2px solid var(--line);\n      background: var(--canvas);\n      padding: 8px;\n    }\n    .composer textarea {\n      min-height: 44px;\n      max-height: 110px;\n      border: 0;\n      padding: 6px;\n    }\n    .composer button:disabled {\n      opacity: 0.62;\n      cursor: wait;\n    }\n    .tab-panel {\n      max-width: 920px;\n      padding: 18px;\n      gap: 10px;\n    }\n    .tab-panel.active { display: grid; }\n    .task-row {\n      display: grid;\n      gap: 5px;\n      max-width: 720px;\n      border: 1px solid var(--line);\n      padding: 10px;\n    }\n    .task-top {\n      display: flex;\n      align-items: baseline;\n      justify-content: space-between;\n      gap: 10px;\n    }\n    .model-grid { display: grid; gap: 10px; }\n    .model-row {\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 12px;\n      border-top: 1px solid var(--soft-line);\n      padding-top: 8px;\n      color: var(--body);\n    }\n    .model-row:first-child { border-top: 0; padding-top: 0; }\n    .available { color: #cc2f68; font-weight: 900; }\n    .unavailable { color: var(--muted); }\n    .cmd {\n      border: 1px solid var(--line);\n      background: var(--panel);\n      padding: 10px;\n      color: var(--body);\n      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;\n      font-size: 11px;\n      line-height: 1.5;\n      overflow: auto;\n      white-space: pre-wrap;\n      word-break: break-word;\n    }\n    .side-card {\n      display: grid;\n      gap: 10px;\n      border: 1px solid var(--line);\n      padding: 10px;\n    }\n    .settings-actions {\n      display: flex;\n      justify-content: flex-end;\n      gap: 8px;\n    }\n    .field { display: grid; gap: 5px; }\n    .muted { color: var(--muted); font-size: 11px; }\n    dialog {\n      width: min(520px, calc(100vw - 24px));\n      max-height: min(760px, calc(100vh - 24px));\n      border: 2px solid var(--line);\n      border-radius: 0;\n      padding: 0;\n      box-shadow: var(--shadow);\n      overflow: hidden;\n    }\n    dialog::backdrop { background: rgba(0,0,0,0.48); }\n    .computer-dialog { width: min(680px, calc(100vw - 24px)); }\n    .window-dialog { width: min(440px, calc(100vw - 24px)); }\n    .modal-form { margin: 0; }\n    .modal-head {\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 16px;\n      padding: 12px;\n      border-bottom: 2px solid var(--line);\n    }\n    .modal-body {\n      display: grid;\n      gap: 12px;\n      padding: 12px;\n      overflow: auto;\n      max-height: calc(100vh - 120px);\n    }\n    .computer-flow {\n      display: grid;\n      gap: 20px;\n      padding: 32px;\n    }\n    .computer-kicker {\n      color: var(--muted);\n      font-size: 11px;\n      font-weight: 900;\n      letter-spacing: 0.14em;\n      text-transform: uppercase;\n    }\n    .computer-title {\n      font-size: 20px;\n      line-height: 1.15;\n      text-transform: uppercase;\n    }\n    .computer-lead {\n      display: grid;\n      grid-template-columns: 36px minmax(0, 1fr);\n      gap: 14px;\n      align-items: start;\n      color: var(--body);\n      font-size: 15px;\n      line-height: 1.5;\n    }\n    .computer-icon {\n      width: 32px;\n      height: 32px;\n      display: grid;\n      place-items: center;\n      border: 2px solid var(--line);\n      background: var(--accent);\n      font-weight: 900;\n    }\n    .computer-muted {\n      margin-top: 8px;\n      color: var(--muted);\n      font-size: 12px;\n      line-height: 1.45;\n    }\n    .computer-rule { border-top: 2px solid var(--soft-line); }\n    .computer-actions {\n      display: flex;\n      align-items: center;\n      justify-content: flex-end;\n      gap: 12px;\n      flex-wrap: wrap;\n    }\n    .computer-actions.between { justify-content: space-between; }\n    .check-row {\n      display: flex;\n      align-items: center;\n      gap: 8px;\n      font-weight: 800;\n      color: var(--body);\n    }\n    .check-row input {\n      width: 16px;\n      height: 16px;\n      padding: 0;\n      accent-color: var(--accent);\n    }\n    .choice-grid {\n      display: grid;\n      grid-template-columns: repeat(2, minmax(0, 1fr));\n      gap: 10px;\n    }\n    .computer-choice {\n      display: grid;\n      grid-template-columns: 28px minmax(0, 1fr);\n      gap: 10px;\n      min-height: 82px;\n      border: 2px solid var(--line);\n      padding: 14px;\n      background: var(--canvas);\n      text-align: left;\n    }\n    .computer-choice.active { background: var(--accent); }\n    .computer-choice.disabled {\n      border-style: dashed;\n      color: var(--muted);\n      opacity: 0.56;\n      cursor: default;\n    }\n    .computer-choice-title {\n      display: block;\n      font-size: 14px;\n      text-transform: uppercase;\n    }\n    .connect-row {\n      display: grid;\n      grid-template-columns: minmax(0, 1fr) auto;\n      gap: 10px;\n      align-items: center;\n    }\n    .connect-stack {\n      display: grid;\n      gap: 8px;\n      min-width: 0;\n    }\n    .connect-help {\n      color: var(--body);\n      font-size: 12px;\n      font-weight: 900;\n    }\n    .connect-command {\n      border: 2px solid var(--line);\n      background: #080808;\n      color: #a7d66d;\n      padding: 14px;\n      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;\n      font-size: 12px;\n      line-height: 1.5;\n      white-space: pre-wrap;\n      word-break: break-word;\n    }\n    .connect-status {\n      display: flex;\n      align-items: center;\n      gap: 10px;\n      border: 2px solid var(--line);\n      background: #fff3c4;\n      padding: 14px;\n      font-weight: 900;\n    }\n    .status-dot {\n      width: 10px;\n      height: 10px;\n      border: 2px solid var(--line);\n      border-radius: 50%;\n      background: #ffad7a;\n    }\n    .status-dot.online { background: #74d67b; }\n    .button-shadow { box-shadow: 4px 5px 0 var(--line); }\n    button.primary-pink {\n      background: var(--active);\n      min-height: 36px;\n      padding: 8px 14px;\n      font-size: 14px;\n    }\n    button.disabled-action {\n      background: #edf5df;\n      color: var(--muted);\n      cursor: default;\n    }\n    @media (max-width: 760px) {\n      .app { grid-template-columns: 36px 132px minmax(0, 1fr); }\n      .logo {\n        width: 24px;\n        grid-template-columns: 1fr;\n      }\n      .logo span {\n        width: 22px;\n        height: 16px;\n        font-size: 10px;\n      }\n      .message-list { padding: 0 10px; }\n      .composer { left: 178px; right: 10px; width: auto; }\n      .top-actions .hide-mobile { display: none; }\n      .post { max-width: 100%; }\n      .computer-flow { padding: 22px; }\n      .choice-grid, .connect-row { grid-template-columns: 1fr; }\n    }\n";
 
@@ -1379,6 +1408,9 @@ app.post("/runtime/runs/:runId/finish", async (c) => await (await stateForReques
   headers: await forwardHeaders(c, { "Content-Type": "application/json" }),
   body: JSON.stringify(await c.req.json().catch(() => ({})))
 }));
+app.get("/runtime/runs/:runId/actions", async (c) => await (await stateForRequest(c)).fetch(`https://state/runs/${c.req.param("runId")}/actions`, {
+  headers: await forwardHeaders(c)
+}));
 app.post("/runtime/conversation/mark-read", async (c) => await (await stateForRequest(c)).fetch("https://state/mark-read", {
   method: "POST",
   headers: await forwardHeaders(c, { "Content-Type": "application/json" }),
@@ -1654,6 +1686,7 @@ export class GuiState implements DurableObject {
     if (path === "/runs") return this.authRuntime(request, async () => this.startRun(await request.json().catch(() => null)));
     if (path.startsWith("/runs/") && path.endsWith("/heartbeat")) return this.authRuntime(request, async () => this.runAction(path.split("/")[2] || "run", "heartbeat", await request.json().catch(() => null)));
     if (path.startsWith("/runs/") && path.endsWith("/finish")) return this.authRuntime(request, async () => this.runAction(path.split("/")[2] || "run", "finish", await request.json().catch(() => null)));
+    if (path.startsWith("/runs/") && path.endsWith("/actions")) return this.authRuntime(request, async (agentId) => this.runActions(path.split("/")[2] || "run", agentId));
     if (path === "/gui-state") return json(await stateForGui(await this.get(), url.searchParams.get("redact") === "1"));
     if (path === "/gui-summary") return this.guiSummary(request);
     if (path === "/gui-activity") return this.guiActivity(url.searchParams);
@@ -1701,6 +1734,7 @@ export class GuiState implements DurableObject {
       deviceToken: crypto.randomUUID(),
       runtimeToken: crypto.randomUUID(),
       runtimeTokens: {},
+      runtimeTokenMeta: {},
       pairingCode: crypto.randomUUID(),
 	      availableEngines: [],
 	      capabilities: { workspaces: [] },
@@ -1721,6 +1755,7 @@ export class GuiState implements DurableObject {
       noticeLog: [],
       triageLog: [],
       runLog: [],
+      runActions: {},
       initiatives: [],
       tasks: [],
       taskEvents: [],
@@ -1754,6 +1789,7 @@ export class GuiState implements DurableObject {
     saved.pairingCode ??= crypto.randomUUID();
     saved.runtimeToken ??= crypto.randomUUID();
     saved.runtimeTokens ??= {};
+    saved.runtimeTokenMeta ??= {};
     saved.capsules ??= [];
     saved.approvals ??= [];
     saved.mergeQueue ??= [];
@@ -1775,6 +1811,7 @@ export class GuiState implements DurableObject {
 	    saved.composing ??= [];
 	    saved.uploads ??= {};
 	    saved.runtimeTokens = normalizeRuntimeTokens(saved.runtimeTokens);
+    saved.runtimeTokenMeta = normalizeRuntimeTokenMeta(saved.runtimeTokenMeta, saved.runtimeTokens);
     saved.remoteAssist = normalizeRemoteAssistGrant(saved.remoteAssist, (saved as State & { remoteAssistGrants?: unknown }).remoteAssistGrants);
     saved.agents = normalizeAgents(saved.agents);
     saved.workflowAgentIds = normalizeWorkflowAgentIds(saved.workflowAgentIds, saved.agents);
@@ -1809,6 +1846,7 @@ export class GuiState implements DurableObject {
     saved.triageLog = (saved.triageLog ?? []).slice(-TRIAGE_LOG_CAPACITY);
     saved.runLog = (saved.runLog ?? []).slice(-RUN_LOG_CAPACITY);
     saved.runStreams = saved.runStreams ?? {};
+    saved.runActions ??= {};
     saved.capabilities ??= { workspaces: [] };
     saved.availableEngines ??= [];
     return saved;
@@ -1851,6 +1889,7 @@ export class GuiState implements DurableObject {
     }
     state.availableEngines = Array.isArray(payload?.engines) ? payload.engines.filter((engine): engine is string => typeof engine === "string") : [];
     state.capabilities = normalizeCapabilities(payload?.capabilities);
+    state.pairingCode = crypto.randomUUID();
     await this.put(state);
     return json({ computerId: state.computerId, deviceToken: state.deviceToken, tenantId: tenantHeader(request) });
   }
@@ -1860,11 +1899,14 @@ export class GuiState implements DurableObject {
     const agentId = normalizeAgentId(decodeURIComponent(agentIdRaw || "")) ?? "";
     const agent = findAgent(state, agentId) ?? defaultAgentFor(state);
     state.runtimeTokens ??= {};
+    state.runtimeTokenMeta ??= {};
     const runtimeToken = crypto.randomUUID();
+    const expiresAt = Date.now() + RUNTIME_TOKEN_TTL_MS;
     state.runtimeTokens[agent.id] = runtimeToken;
+    state.runtimeTokenMeta[agent.id] = { token: runtimeToken, expiresAt };
     if (agent.id === DEFAULT_AGENT.id) state.runtimeToken = runtimeToken;
     await this.put(state);
-    return json({ token: runtimeToken, expiresInSeconds: 3600 });
+    return json({ token: runtimeToken, expiresInSeconds: Math.floor(RUNTIME_TOKEN_TTL_MS / 1000) });
   }
 
   private async heartbeat(payload?: unknown): Promise<Response> {
@@ -2098,14 +2140,19 @@ export class GuiState implements DurableObject {
     } satisfies AgendaPayload);
   }
 
-  private async cli(payload: { argv?: string[]; agentId?: string; tokenAgentId?: string; engine?: string; authUser?: AuthUser }): Promise<Response> {
+  private async cli(payload: { argv?: string[]; agentId?: string; tokenAgentId?: string; engine?: string; runId?: string; contract?: unknown; authUser?: AuthUser }): Promise<Response> {
     const argv = payload.argv ?? [];
     const state = await this.get();
     const actor = findAgent(state, payload.agentId) ?? findAgent(state, payload.tokenAgentId) ?? defaultAgentFor(state);
     const authorEngine = activeRunEngine(state) ?? normalizeEngineId(payload.engine) ?? actor.engine;
+    const runContract = resolveRunContract(state, payload.runId, payload.contract);
     let result = "";
     if (argv[0] === "reply") {
       const conversationId = argv[1] || "king-ai-convo";
+      const contractError = validateRunContractAction(state, runContract, actor, { command: "reply", conversationId });
+      if (contractError) return this.cliRejected(state, actor, argv, contractError);
+      const conversation = findConversation(state, conversationId);
+      if (!conversation) return this.cliRejected(state, actor, argv, `conversation not found: ${conversationId}`);
       const quoteIdx = argv.indexOf("--quote");
       const quoted = quoteIdx >= 0 ? argv[quoteIdx + 1] : undefined;
       const bodyArgs = argv.slice(2).filter((_, idx) => {
@@ -2113,7 +2160,6 @@ export class GuiState implements DurableObject {
         return absoluteIdx !== quoteIdx && absoluteIdx !== quoteIdx + 1;
       });
       const body = bodyArgs.join(" ").trim() || "(empty reply)";
-      const conversation = ensureConversation(state, conversationId);
       const now = Date.now();
       const pending = [...state.messages].reverse().find((message) =>
         message.conversation_id === conversation.id &&
@@ -2151,6 +2197,7 @@ export class GuiState implements DurableObject {
         state.messages.push(reply);
       }
       conversation.updated_at = now;
+      recordRunAction(state, payload.runId, runContract, actor, "reply", { conversationId: conversation.id, summary: body.slice(0, 160) });
       result = "reply posted";
     } else if (argv[0] === "state") {
       result = await this.stateCommand(state, argv.slice(1));
@@ -2158,12 +2205,14 @@ export class GuiState implements DurableObject {
       result = JSON.stringify(unreadMessagesFor(state, actor.id), null, 2);
     } else if (argv[0] === "messages") {
       const conversationId = argv[1] || "king-ai-convo";
+      if (!findConversation(state, conversationId)) return this.cliRejected(state, actor, argv, `conversation not found: ${conversationId}`);
       const tailIdx = argv.indexOf("--tail");
       const tail = tailIdx >= 0 ? Number(argv[tailIdx + 1]) : 0;
       const rows = state.messages.filter((m) => m.conversation_id === conversationId && isRuntimeVisibleMessage(m));
       result = JSON.stringify(tail > 0 ? rows.slice(-tail) : rows, null, 2);
     } else if (argv[0] === "glance") {
       const conversationId = argv[1] || "king-ai-convo";
+      if (!findConversation(state, conversationId)) return this.cliRejected(state, actor, argv, `conversation not found: ${conversationId}`);
       const rows = state.messages.filter((m) => m.conversation_id === conversationId && isRuntimeVisibleMessage(m)).slice(-10);
       const now = Date.now();
       state.composing = state.composing.filter((claim) => claim.expires_at > now);
@@ -2220,7 +2269,12 @@ export class GuiState implements DurableObject {
     } else if (argv[0] === "card") {
       result = this.cardCommand(state, argv.slice(1));
     } else if (argv[0] === "task") {
+      const contractError = validateRunContractAction(state, runContract, actor, { command: "task", taskId: argv[2] });
+      if (contractError) return this.cliRejected(state, actor, argv, contractError);
       result = this.taskCommand(state, argv.slice(1), actor);
+      if (isTaskMutationCommand(argv.slice(1)) && !isCliUsageOrError(result)) {
+        recordRunAction(state, payload.runId, runContract, actor, "task", { taskId: argv[2], summary: result.slice(0, 160) });
+      }
     } else if (argv[0] === "initiative") {
       result = this.initiativeCommand(state, argv.slice(1));
     } else if (argv[0] === "capsule") {
@@ -2238,31 +2292,31 @@ export class GuiState implements DurableObject {
     } else if (argv[0] === "calendar") {
       result = this.calendarCommand(state, argv.slice(1));
     } else if (argv[0] === "claim") {
-      result = this.claimCommand(state, argv.slice(1));
+      result = this.claimCommand(state, argv.slice(1), actor);
     } else if (argv[0] === "unclaim") {
       result = this.unclaimCommand(state, argv.slice(1));
     } else if (argv[0] === "dm") {
-      result = this.dmCommand(state, argv.slice(1));
+      result = this.dmCommand(state, argv.slice(1), actor);
     } else if (argv[0] === "react" || argv[0] === "reaction") {
-      result = this.reactCommand(state, argv.slice(1));
+      result = this.reactCommand(state, argv.slice(1), actor);
     } else if (argv[0] === "doc") {
       result = this.docCommand(state, argv.slice(1));
     } else if (argv[0] === "artifact") {
-      result = this.artifactCommand(state, argv.slice(1));
+      result = this.artifactCommand(state, argv.slice(1), actor);
     } else if (argv[0] === "context") {
-      result = this.contextCommand(state, argv.slice(1));
+      result = this.contextCommand(state, argv.slice(1), actor);
     } else if (argv[0] === "hypothesis") {
-      result = this.hypothesisCommand(state, argv.slice(1));
+      result = this.hypothesisCommand(state, argv.slice(1), actor);
     } else if (argv[0] === "plan") {
       result = this.planCommand(state, argv.slice(1));
     } else if (argv[0] === "safety" || argv[0] === "approval") {
       result = this.safetyCommand(state, argv.slice(1));
     } else if (argv[0] === "send") {
-      result = this.sendCommand(state, argv.slice(1));
+      result = this.sendCommand(state, argv.slice(1), actor);
     } else if (argv[0] === "recv") {
       result = this.recvCommand(state, argv.slice(1));
     } else if (argv[0] === "escalate") {
-      result = this.escalateCommand(state, argv.slice(1));
+      result = this.escalateCommand(state, argv.slice(1), actor);
     } else if (argv[0] === "agenda") {
       result = JSON.stringify((await this.agenda(actor.id).then((res) => res.json())) as AgendaPayload, null, 2);
     } else if (argv[0] === "help" || argv[0] === "--help") {
@@ -2312,6 +2366,12 @@ export class GuiState implements DurableObject {
     state.cliLog.push({ at: Date.now(), agentId: actor.id, argv, result });
     await this.put(state);
     return json({ exitCode: 0, text: result });
+  }
+
+  private async cliRejected(state: State, actor: Agent, argv: string[], result: string): Promise<Response> {
+    state.cliLog.push({ at: Date.now(), agentId: actor.id, argv, result });
+    await this.put(state);
+    return json({ exitCode: 64, text: result });
   }
 
   private cardCommand(state: State, args: string[]): string {
@@ -2995,11 +3055,11 @@ export class GuiState implements DurableObject {
     return "usage: king-ai calendar list|create <title> --at <iso> [--cron expr] [--assignee <id>] [--prompt <text>]";
   }
 
-  private claimCommand(state: State, args: string[]): string {
+  private claimCommand(state: State, args: string[], actor = defaultAgentFor(state)): string {
     const name = args[0] || "work";
     const inIdx = args.indexOf("--in");
     const conversationId = inIdx >= 0 ? args[inIdx + 1] : undefined;
-    const owner = readOption(args, "--owner") || DEFAULT_AGENT.id;
+    const owner = readOption(args, "--owner") || actor.id;
     const allowedPaths = parseAllowedPaths(args);
     const conflict = pathConflict(state, allowedPaths, owner);
     if (conflict) return `path conflict: ${conflict}`;
@@ -3025,25 +3085,25 @@ export class GuiState implements DurableObject {
     return state.claims.length < before ? "claim released" : `claim not found: ${id}`;
   }
 
-  private dmCommand(state: State, args: string[]): string {
+  private dmCommand(state: State, args: string[], actor = defaultAgentFor(state)): string {
     const target = args[0] || DEFAULT_AGENT.id;
     const body = args.slice(1).join(" ").trim() || "(empty dm)";
     const message = this.newAgentMessage({
       target,
-      fromId: DEFAULT_AGENT.id,
-      fromName: DEFAULT_AGENT.name,
+      fromId: actor.id,
+      fromName: actor.name,
       fromKind: "agent",
-      fromEngine: DEFAULT_AGENT.engine,
+      fromEngine: actor.engine,
       body,
       priority: "normal",
       messageType: "message"
     });
-    message.readBy.push(DEFAULT_AGENT.id);
+    message.readBy.push(actor.id);
     state.messages.push(message);
     return `dm posted ${message.conversation_id}`;
   }
 
-  private sendCommand(state: State, args: string[]): string {
+  private sendCommand(state: State, args: string[], actor = defaultAgentFor(state)): string {
     const target = args[0];
     const messageType = readOption(args, "--type") || "message";
     if (messageType !== "message" && messageType !== "decision" && messageType !== "blocker") {
@@ -3053,14 +3113,15 @@ export class GuiState implements DurableObject {
     if (!target || !body) return "usage: king-ai send <agentId> <message> [--steer] [--type message|decision|blocker]";
     const message = this.newAgentMessage({
       target,
-      fromId: DEFAULT_AGENT.id,
-      fromName: DEFAULT_AGENT.name,
+      fromId: actor.id,
+      fromName: actor.name,
       fromKind: "agent",
-      fromEngine: DEFAULT_AGENT.engine,
+      fromEngine: actor.engine,
       body,
       priority: args.includes("--steer") ? "steer" : "normal",
       messageType
     });
+    message.readBy.push(actor.id);
     state.messages.push(message);
     return `Message ${message.id} queued -> ${target} (${messageType}, ${message.priority})`;
   }
@@ -3080,16 +3141,16 @@ export class GuiState implements DurableObject {
     }).join("\n");
   }
 
-  private escalateCommand(state: State, args: string[]): string {
+  private escalateCommand(state: State, args: string[], actor = defaultAgentFor(state)): string {
     const body = args.join(" ").trim();
     if (!body) return "usage: king-ai escalate <message>";
     const target = state.agents.find((agent) => agent.id === "ceo" || agent.name.toLowerCase().includes("ceo"))?.id ?? DEFAULT_AGENT.id;
     const message = this.newAgentMessage({
       target,
-      fromId: DEFAULT_AGENT.id,
-      fromName: DEFAULT_AGENT.name,
+      fromId: actor.id,
+      fromName: actor.name,
       fromKind: "agent",
-      fromEngine: DEFAULT_AGENT.engine,
+      fromEngine: actor.engine,
       body,
       priority: "steer",
       messageType: "decision"
@@ -3098,11 +3159,11 @@ export class GuiState implements DurableObject {
     return `Escalated to ${target}: ${message.id} (queued)`;
   }
 
-  private reactCommand(state: State, args: string[]): string {
+  private reactCommand(state: State, args: string[], actor = defaultAgentFor(state)): string {
     const messageId = args[0];
     const emoji = args[1] || "(ok)";
     if (!messageId) return "usage: king-ai react <messageId> <emoji>";
-    state.reactions.push({ messageId, emoji, authorId: DEFAULT_AGENT.id, created_at: Date.now() });
+    state.reactions.push({ messageId, emoji, authorId: actor.id, created_at: Date.now() });
     return `reaction posted ${messageId} ${emoji}`;
   }
 
@@ -3144,7 +3205,7 @@ export class GuiState implements DurableObject {
     return "usage: king-ai doc list|create|show|append|update";
   }
 
-  private artifactCommand(state: State, args: string[]): string {
+  private artifactCommand(state: State, args: string[], actor = defaultAgentFor(state)): string {
     const cmd = args[0] || "list";
     if (cmd === "list") {
       const agent = readOption(args, "--agent");
@@ -3193,7 +3254,7 @@ export class GuiState implements DurableObject {
         path,
         source,
         confidence,
-        agentId: readOption(args, "--agent") || DEFAULT_AGENT.id,
+        agentId: readOption(args, "--agent") || actor.id,
         taskId: readOption(args, "--task"),
         content: readOption(args, "--content"),
         metadata,
@@ -3214,7 +3275,7 @@ export class GuiState implements DurableObject {
     return "usage: king-ai artifact put|list|get|check";
   }
 
-  private contextCommand(state: State, args: string[]): string {
+  private contextCommand(state: State, args: string[], actor = defaultAgentFor(state)): string {
     const cmd = args[0] || "list";
     if (cmd === "list") {
       if (state.context.length === 0) return "No context entries found.";
@@ -3234,7 +3295,7 @@ export class GuiState implements DurableObject {
       const key = args[1];
       const value = stripOptions(args.slice(2), ["--agent"]).join(" ").trim();
       if (!key || !value) return "usage: king-ai context set <key> <value>";
-      const updatedBy = readOption(args, "--agent") || DEFAULT_AGENT.id;
+      const updatedBy = readOption(args, "--agent") || actor.id;
       const existing = state.context.find((row) => row.key === key);
       if (existing) {
         existing.value = value;
@@ -3255,7 +3316,7 @@ export class GuiState implements DurableObject {
     return "usage: king-ai context get|set|list|delete <key> [value]";
   }
 
-  private hypothesisCommand(state: State, args: string[]): string {
+  private hypothesisCommand(state: State, args: string[], actor = defaultAgentFor(state)): string {
     const cmd = args[0] || "list";
     if (cmd === "list") {
       const status = readOption(args, "--status");
@@ -3275,7 +3336,7 @@ export class GuiState implements DurableObject {
         id: `hyp-${now}-${Math.random().toString(36).slice(2)}`,
         title,
         status: "proposed",
-        agentId: readOption(args, "--agent") || DEFAULT_AGENT.id,
+        agentId: readOption(args, "--agent") || actor.id,
         parentId: readOption(args, "--parent"),
         rationale: readOption(args, "--rationale"),
         expectedValue: readOption(args, "--expected-value"),
@@ -3497,12 +3558,14 @@ export class GuiState implements DurableObject {
 
   private async startRun(body: unknown): Promise<Response> {
     const state = await this.get();
-    const runId = `run-${Date.now()}`;
+    const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const contract = normalizeRunContract(body && typeof body === "object" ? (body as { contract?: unknown }).contract : undefined);
     state.loopRunId = runId;
     state.runStreams = { ...(state.runStreams ?? {}), [runId]: initialRunStreamState() };
+    if (contract) state.activeRunContracts = pruneActiveRunContracts({ ...(state.activeRunContracts ?? {}), [runId]: contract });
     state.runLog.push({ at: Date.now(), runId, action: "start", body });
     await this.put(state);
-    return json({ runId });
+    return json({ runId, contract });
   }
 
   private async runAction(runId: string, action: "heartbeat" | "finish", body?: unknown): Promise<Response> {
@@ -3519,12 +3582,22 @@ export class GuiState implements DurableObject {
         ? reduceRunStream(current, { type: "error", message: typeof (body as { error?: unknown }).error === "string" ? (body as { error: string }).error : "run failed" })
         : reduceRunStream(current, { type: "done" });
       state.runStreams = { ...(state.runStreams ?? {}), [runId]: terminal };
+      if (state.activeRunContracts?.[runId]) {
+        state.activeRunContracts = { ...state.activeRunContracts };
+        delete state.activeRunContracts[runId];
+      }
       state.runLog.push({ at: Date.now(), runId, action, body, card: renderRunStreamCard(terminal) });
     } else {
       state.runLog.push({ at: Date.now(), runId, action, body, card: state.runStreams?.[runId] ? renderRunStreamCard(state.runStreams[runId]) : undefined });
     }
     await this.put(state);
     return json({ ok: true, runId });
+  }
+
+  private async runActions(runId: string, agentId: string): Promise<Response> {
+    const state = await this.get();
+    const rows = (state.runActions?.[runId] ?? []).filter((row) => row.agentId === agentId);
+    return json({ runId, actions: rows });
   }
 
   private async markRead(payload: { conversationId?: string; upToMessageId?: string }, agentId = DEFAULT_AGENT.id): Promise<Response> {
@@ -3656,11 +3729,12 @@ export class GuiState implements DurableObject {
     state.messages.push(message);
     state.messages.push(pendingReply);
     autoDelegateMessage(state, conversation, message, targetAgent);
-    await this.put(state);
-    this.broadcast({ event: "wake", data: { conversationId: message.conversation_id, agentId: targetAgent.id, at: now } });
     const delegated = state.tasks.find((task) => task.requestMessageId === message.id);
+    if (delegated?.assignee) updatePendingForTask(state, delegated, `已委派给 ${delegated.assignee} 处理...`);
+    await this.put(state);
+    this.broadcast({ event: "wake", data: { conversationId: message.conversation_id, requestId: message.id, messageId: message.id, taskId: delegated?.id, agentId: targetAgent.id, at: now } });
     if (delegated?.assignee) {
-      await this.broadcast({ event: "wake", data: { agenda: true, conversationId: conversation.id, taskId: delegated.id, agentId: delegated.assignee, at: Date.now() } });
+      await this.broadcast({ event: "wake", data: { agenda: true, conversationId: conversation.id, requestId: message.id, messageId: message.id, taskId: delegated.id, agentId: delegated.assignee, at: Date.now() } });
 	    }
 	    return json({ ok: true, message });
 	  }
@@ -4071,7 +4145,9 @@ export class GuiState implements DurableObject {
     if (changed) {
       state.runtimeToken = crypto.randomUUID();
       state.runtimeTokens ??= {};
+      state.runtimeTokenMeta ??= {};
       delete state.runtimeTokens[nextAgent.id];
+      delete state.runtimeTokenMeta[nextAgent.id];
     }
     await this.put(state);
     return json({ ok: true, agent: nextAgent });
@@ -4128,6 +4204,19 @@ function normalizeRuntimeTokens(value: Record<string, string> | undefined): Reco
   for (const [agentId, tokenValue] of Object.entries(value ?? {})) {
     const id = normalizeAgentId(agentId);
     if (id && typeof tokenValue === "string") next[id] = tokenValue;
+  }
+  return next;
+}
+
+function normalizeRuntimeTokenMeta(value: Record<string, RuntimeTokenMeta> | undefined, runtimeTokens: Record<string, string>): Record<string, RuntimeTokenMeta> {
+  const next: Record<string, RuntimeTokenMeta> = {};
+  const now = Date.now();
+  for (const [agentId, tokenValue] of Object.entries(runtimeTokens)) {
+    const id = normalizeAgentId(agentId);
+    if (!id || !tokenValue) continue;
+    const row = value?.[agentId] ?? value?.[id];
+    const expiresAt = row && row.token === tokenValue && Number.isFinite(row.expiresAt) ? row.expiresAt : now + RUNTIME_TOKEN_TTL_MS;
+    next[id] = { token: tokenValue, expiresAt };
   }
   return next;
 }
@@ -4457,7 +4546,7 @@ function normalizeConversations(input: unknown, messages: Message[]): Conversati
 
 function ensureConversation(state: State, id: string): Conversation {
   const conversationId = id.trim() || DEFAULT_CONVERSATION.id;
-  const found = state.conversations.find((row) => row.id === conversationId);
+  const found = findConversation(state, conversationId);
   if (found) return found;
   const now = Date.now();
   const conversation: Conversation = {
@@ -4474,6 +4563,11 @@ function ensureConversation(state: State, id: string): Conversation {
   };
   state.conversations.push(conversation);
   return conversation;
+}
+
+function findConversation(state: State, id: string | undefined): Conversation | undefined {
+  const conversationId = id?.trim() || DEFAULT_CONVERSATION.id;
+  return state.conversations.find((row) => row.id === conversationId);
 }
 
 function defaultTeamAgents(): Agent[] {
@@ -4772,10 +4866,11 @@ function reviewerAgentForConversation(state: State, conversation: Conversation):
 
 function agentIdForRuntimeToken(state: State, runtimeToken: string): string | null {
   if (!runtimeToken) return null;
-  for (const [agentId, tokenValue] of Object.entries(state.runtimeTokens ?? {})) {
-    if (tokenValue === runtimeToken) return agentId;
+  const now = Date.now();
+  for (const [agentId, row] of Object.entries(state.runtimeTokenMeta ?? {})) {
+    if (row.token === runtimeToken && row.expiresAt > now) return agentId;
   }
-  return runtimeToken === state.runtimeToken ? DEFAULT_AGENT.id : null;
+  return null;
 }
 
 function autoDelegateMessage(state: State, conversation: Conversation, message: Message, coordinator: Agent): Task | undefined {
@@ -4965,6 +5060,7 @@ function queueTaskReviewMessage(state: State, task: Task, fromAgentId: string): 
     created_at: now,
     readBy: []
   });
+  updatePendingForTask(state, task, `等待 ${target.id} 评审...`);
   conversation.updated_at = now;
 }
 
@@ -4998,6 +5094,7 @@ function queueTaskChangesRequestedMessage(state: State, task: Task, targetAgentI
     created_at: now,
     readBy: []
   });
+  updatePendingForTask(state, task, `${target.id} 正在根据评审意见修改...`);
   conversation.updated_at = now;
 }
 
@@ -5020,6 +5117,7 @@ function queueTaskCompletionMessage(state: State, task: Task, options: { fromNam
     conversation.updated_at = now;
     return;
   }
+  updatePendingForTask(state, task, `等待 ${ceo.id} 总结...`);
   state.messages.push({
     id: `msg-${now}-${Math.random().toString(36).slice(2)}`,
     conversation_id: conversation.id,
@@ -5124,6 +5222,76 @@ function normalizeStringList(input: unknown): string[] {
     .map((item) => item.trim())
     .filter(Boolean)
     .filter((item, idx, all) => all.indexOf(item) === idx);
+}
+
+function normalizeRunContract(input: unknown): RunContract | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const row = input as Record<string, unknown>;
+  const contract: RunContract = {
+    agentId: normalizeAgentId(row.agentId),
+    conversationId: typeof row.conversationId === "string" && row.conversationId.trim() ? row.conversationId.trim() : undefined,
+    requestId: typeof row.requestId === "string" && row.requestId.trim() ? row.requestId.trim() : undefined,
+    messageId: typeof row.messageId === "string" && row.messageId.trim() ? row.messageId.trim() : undefined,
+    taskId: typeof row.taskId === "string" && row.taskId.trim() ? row.taskId.trim() : undefined
+  };
+  return Object.values(contract).some(Boolean) ? contract : undefined;
+}
+
+function resolveRunContract(state: State, runId?: string, inlineContract?: unknown): RunContract | undefined {
+  const stored = runId ? state.activeRunContracts?.[runId] : undefined;
+  const inline = normalizeRunContract(inlineContract);
+  return stored ?? inline;
+}
+
+function pruneActiveRunContracts(contracts: Record<string, RunContract>): Record<string, RunContract> {
+  return Object.fromEntries(Object.entries(contracts).slice(-100));
+}
+
+function validateRunContractAction(state: State, contract: RunContract | undefined, actor: Agent, action: { command: "reply" | "task"; conversationId?: string; taskId?: string }): string | null {
+  if (!contract) return null;
+  if (contract.agentId && contract.agentId !== actor.id) return `run contract mismatch: actor ${actor.id} cannot act for ${contract.agentId}`;
+  if (action.command === "reply" && contract.conversationId && action.conversationId && action.conversationId !== contract.conversationId) {
+    return `run contract mismatch: reply conversation ${action.conversationId} does not match wake conversation ${contract.conversationId}`;
+  }
+  if (action.command === "task" && action.taskId) {
+    const lookup = lookupTask(state, action.taskId);
+    const task = lookup.task;
+    if (contract.taskId && (!task || task.id !== contract.taskId)) {
+      return `run contract mismatch: task ${action.taskId} does not match wake task ${contract.taskId}`;
+    }
+    if (task && contract.conversationId && task.conversationId && task.conversationId !== contract.conversationId) {
+      return `run contract mismatch: task conversation ${task.conversationId} does not match wake conversation ${contract.conversationId}`;
+    }
+  }
+  return null;
+}
+
+function recordRunAction(state: State, runId: string | undefined, contract: RunContract | undefined, actor: Agent, kind: RunAction["kind"], detail: { conversationId?: string; taskId?: string; summary?: string } = {}): void {
+  if (!runId) return;
+  const action: RunAction = {
+    runId,
+    agentId: actor.id,
+    kind,
+    conversationId: detail.conversationId ?? contract?.conversationId,
+    requestId: contract?.requestId,
+    messageId: contract?.messageId,
+    taskId: detail.taskId ?? contract?.taskId,
+    summary: detail.summary,
+    at: Date.now()
+  };
+  state.runActions = pruneRunActions({ ...(state.runActions ?? {}), [runId]: [...(state.runActions?.[runId] ?? []), action] });
+}
+
+function pruneRunActions(actions: Record<string, RunAction[]>): Record<string, RunAction[]> {
+  return Object.fromEntries(Object.entries(actions).slice(-100).map(([runId, rows]) => [runId, rows.slice(-50)]));
+}
+
+function isTaskMutationCommand(args: string[]): boolean {
+  return args[0] === "done" || args[0] === "update" || args[0] === "create";
+}
+
+function isCliUsageOrError(result: string): boolean {
+  return /^(usage:|invalid |task not found:|task id required|ambiguous task id:)/i.test(result);
 }
 
 function runtimeBodyStatus(body: unknown): string | undefined {
@@ -5609,6 +5777,21 @@ function findTask(state: State, id: string | undefined): Task | undefined {
 function pendingBelongsToAgent(message: Message, agent: Agent): boolean {
   if (message.to_agent_id) return message.to_agent_id === agent.id;
   return message.author_name === agent.name;
+}
+
+function updatePendingForTask(state: State, task: Task, body: string): void {
+  const conversationId = task.conversationId || DEFAULT_CONVERSATION.id;
+  const coordinator = findAgent(state, task.coordinatorAgentId) ?? defaultAgentFor(state);
+  const pending = [...state.messages].reverse().find((message) =>
+    message.conversation_id === conversationId &&
+    message.author_kind === "agent" &&
+    message.status === "pending" &&
+    pendingBelongsToAgent(message, coordinator)
+  );
+  if (!pending) return;
+  pending.body = body;
+  pending.created_at = Date.now();
+  pending.readBy = [coordinator.id];
 }
 
 function taskIdsMatch(left: string, right: string): boolean {

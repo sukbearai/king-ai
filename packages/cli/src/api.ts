@@ -47,3 +47,34 @@ export async function runtimeGet<T>(serverUrl: string, path: string, token: stri
     return null;
   }
 }
+
+export async function runtimePostStrict<T>(serverUrl: string, path: string, token: string, body: unknown, tenantId?: string): Promise<T> {
+  const res = await fetch(`${serverUrl}/runtime${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+      ...tenantHeader(tenantId)
+    },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`POST ${path} -> HTTP ${res.status} ${text.slice(0, 200)}`);
+  }
+  return (await res.json().catch(() => null)) as T;
+}
+
+export async function runtimeGetStrict<T>(serverUrl: string, path: string, token: string, tenantId?: string): Promise<T> {
+  const res = await fetch(`${serverUrl}/runtime${path}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...tenantHeader(tenantId)
+    }
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`GET ${path} -> HTTP ${res.status} ${text.slice(0, 200)}`);
+  }
+  return (await res.json().catch(() => null)) as T;
+}

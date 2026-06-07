@@ -20,6 +20,15 @@ export interface AgentConfig {
 
 export interface RuntimeRun {
   runId?: string;
+  contract?: RuntimeRunContract;
+}
+
+export interface RuntimeRunContract {
+  agentId?: string;
+  conversationId?: string;
+  requestId?: string;
+  messageId?: string;
+  taskId?: string;
 }
 
 export interface TriageVerdict {
