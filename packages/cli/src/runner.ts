@@ -150,7 +150,7 @@ function envConcurrency(name: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
 }
 
-const bigBrainSem = new Semaphore(envConcurrency("KING_AI_BYOA_MAX_CONCURRENT_BIG_BRAIN", 2));
+const bigBrainSem = new Semaphore(envConcurrency("KING_AI_BYOA_MAX_CONCURRENT_BIG_BRAIN", 4));
 const triageSem = new Semaphore(envConcurrency("KING_AI_BYOA_MAX_CONCURRENT_TRIAGE", 4));
 
 function usageForRuntime(usage: unknown): unknown {
