@@ -471,6 +471,47 @@ test("gui state makes every IELTS coach English word clickable without explicit 
   }
 });
 
+test("gui state makes long IELTS coach sample paragraphs clickable", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const room = await json<{ conversation: { id: string } }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({ title: "IELTS Sample", workflowId: "ielts-study", teamMode: "single" })
+    }), bindings)
+  );
+  const tokenRes = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/ielts-tutor/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${tokenRes.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      argv: [
+        "reply",
+        room.conversation.id,
+        [
+          "Dear Sir or Madam,",
+          "",
+          "My name is Li Ming, and I am writing to introduce myself.",
+          "I have developed a strong interest in English communication."
+        ].join("\n")
+      ]
+    })
+  }), bindings);
+
+  const state = await json<{ messages: { author_kind: string; body_html?: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  const agent = state.messages.find((message) => message.author_kind === "agent");
+  for (const word of ["Dear", "Madam", "name", "writing", "introduce", "developed", "strong", "interest", "communication"]) {
+    assert.match(agent?.body_html ?? "", new RegExp(`class="ielts-word" data-word="${word}">${word}<\\/span>`));
+  }
+});
+
 test("gui state preserves inline IELTS spans for nested sentence highlights", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
@@ -918,6 +959,9 @@ test("gui windows choose agents from the selected workflow", async () => {
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /expression gap/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not give generic acknowledgements/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /For every sentence, mark only the minimal sentence core and useful phrases inline/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Treat the whole coach reply as teaching material/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /model answer, sample letter, essay, paragraph, explanation, or example sentence/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /do not leave long English body paragraphs as plain unmarked text/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Sentence core means only the main clause skeleton/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not include modifiers/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do include required complements for linking verbs/);
@@ -999,7 +1043,9 @@ test("stored IELTS agents and snapshots migrate from legacy section-list roles",
   const agentRole = state.agents.find((agent) => agent.id === "ielts-tutor")?.role ?? "";
   const snapshotRole = state.conversations.find((conversation) => conversation.id === "english")?.teamSnapshot?.agents[0]?.role ?? "";
   assert.match(agentRole, /Do not default to separate Sentence Core, Clauses\/Phrases, or Vocabulary lists/);
+  assert.match(agentRole, /Treat the whole coach reply as teaching material/);
   assert.match(snapshotRole, /Do not default to separate Sentence Core, Clauses\/Phrases, or Vocabulary lists/);
+  assert.match(snapshotRole, /Treat the whole coach reply as teaching material/);
   assert.doesNotMatch(snapshotRole, /Prefer compact, high-signal replies: Natural English, Sentence Core/);
 });
 
@@ -1053,8 +1099,10 @@ test("stored IELTS agents and snapshots migrate from previous compact annotation
   const agentRole = state.agents.find((agent) => agent.id === "ielts-tutor")?.role ?? "";
   const snapshotRole = state.conversations.find((conversation) => conversation.id === "english")?.teamSnapshot?.agents[0]?.role ?? "";
   assert.match(agentRole, /Do include required complements for linking verbs/);
+  assert.match(agentRole, /Treat the whole coach reply as teaching material/);
   assert.match(agentRole, /include every highlighted phrase in the writing tip with concise Chinese meanings/);
   assert.match(snapshotRole, /Do include required complements for linking verbs/);
+  assert.match(snapshotRole, /Treat the whole coach reply as teaching material/);
   assert.match(snapshotRole, /include every highlighted phrase in the writing tip with concise Chinese meanings/);
   assert.doesNotMatch(snapshotRole, /include their concise Chinese meanings in the writing tip/);
 });
@@ -2265,7 +2313,7 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /\.ielts-core/);
   assert.match(html, /\.ielts-phrase/);
   assert.match(html, /\.ielts-word/);
-  assert.doesNotMatch(html, /border-bottom:\s*1px dotted/);
+  assert.match(html, /border-bottom:\s*1px dotted/);
   assert.match(html, /id="vocabDialog"/);
   assert.match(html, /function openVocabDialog/);
   assert.match(html, /target\.closest\('\.ielts-word'\)/);
