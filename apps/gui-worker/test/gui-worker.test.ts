@@ -3007,6 +3007,37 @@ test("gui runtime triage keeps monitor-visible room chatter actionable", async (
   assert.match(devTriage.routeSummary, /monitor\/normal\/msg/);
 });
 
+test("gui runtime triage reply hint uses the routed conversation id", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const devToken = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/dev/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  const room = await json<{ conversation: { id: string } }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({ title: "Project A", workflowId: "software-dev" })
+    }), bindings)
+  );
+
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    body: JSON.stringify({ conversationId: room.conversation.id, body: "请修复 Project A 的问题" })
+  }), bindings);
+
+  const devTriage = await json<{ verdict: { promptNote?: string } }>(
+    await worker.fetch(new Request("https://gui/runtime/inbox-triage/payload", {
+      headers: { Authorization: `Bearer ${devToken.token}` }
+    }), bindings)
+  );
+
+  assert.match(devTriage.verdict.promptNote ?? "", new RegExp(`king-ai reply ${room.conversation.id}\\b`));
+  assert.doesNotMatch(devTriage.verdict.promptNote ?? "", /king-ai reply king-ai-convo\b/);
+});
+
 test("gui runtime bounds append-only signal logs so persisted state cannot grow without limit", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["claude"] });
