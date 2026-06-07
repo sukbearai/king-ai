@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { defaultTeamSpec } from "../src/team-workflow.js";
 import { planHandoff, roleHandoffPolicy, selectOwnerRole, type RoutableCard } from "../src/team-routing.js";
-import { taskDoneTransition, workflowReadiness } from "../src/workflow-core.js";
+import { taskDoneTransition, workflowCardFromCapsule, workflowCardFromTask, workflowReadiness } from "../src/workflow-core.js";
 
 test("selectOwnerRole picks the best capability match under capability-first routing", () => {
   const team = defaultTeamSpec();
@@ -100,6 +100,22 @@ test("taskDoneTransition centralizes GUI and host task review transitions", () =
 });
 
 test("workflowReadiness centralizes dependency evidence and review gates", () => {
+  assert.deepEqual(workflowCardFromTask({
+    id: "task-1",
+    status: "assigned",
+    title: "Build",
+    assignee: "dev",
+    dependsOn: ["setup"],
+    acceptance: ["evidence"]
+  }), {
+    id: "task-1",
+    kind: "task",
+    status: "assigned",
+    title: "Build",
+    assignee: "dev",
+    dependsOn: ["setup"],
+    acceptance: ["evidence"]
+  });
   assert.deepEqual(workflowReadiness({
     id: "task-2",
     kind: "task",
@@ -124,4 +140,28 @@ test("workflowReadiness centralizes dependency evidence and review gates", () =>
     missingReviewVerdict: false
   });
   assert.equal(workflowReadiness({ id: "review-2", kind: "review", status: "done" }, []).missingReviewVerdict, true);
+});
+
+test("workflowCardFromCapsule normalizes capsule workflow state", () => {
+  assert.deepEqual(workflowCardFromCapsule({
+    id: "capsule-1",
+    status: "in_review",
+    goal: "Ship scoped change",
+    owner: "dev",
+    reviewer: "reviewer",
+    acceptance: "tests pass",
+    taskId: "task-1"
+  }), {
+    id: "capsule-1",
+    kind: "handoff",
+    status: "review",
+    title: "Ship scoped change",
+    ownerRole: "dev",
+    reviewerRole: "reviewer",
+    sourceId: "task-1",
+    acceptance: ["tests pass"]
+  });
+  assert.equal(workflowCardFromCapsule({ id: "capsule-2", status: "open" }).status, "assigned");
+  assert.equal(workflowCardFromCapsule({ id: "capsule-3", status: "accepted" }).status, "done");
+  assert.equal(workflowCardFromCapsule({ id: "capsule-4", status: "merged" }).status, "done");
 });

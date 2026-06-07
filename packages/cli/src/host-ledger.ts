@@ -1,7 +1,7 @@
 import { join, resolve } from "node:path";
 import { appendJsonl, compactJsonl, readJsonl, type CompactJsonlResult } from "./jsonl.js";
 import type { KingHandoffPolicy, KingWorkflowObjectType } from "./team-workflow.js";
-import { workflowReadiness, type WorkflowCard } from "./workflow-core.js";
+import { workflowCardFromCapsule, workflowCardFromTask, workflowReadiness, type WorkflowCard, type WorkflowCapsuleLike } from "./workflow-core.js";
 
 export type HostTaskStatus = "pending" | "in_progress" | "blocked" | "done" | "cancelled";
 export type HostCapsuleStatus = "open" | "in_review" | "accepted" | "abandoned";
@@ -117,7 +117,7 @@ export interface HostTaskUpdate {
   result?: string;
 }
 
-export interface HostCapsule {
+export interface HostCapsule extends WorkflowCapsuleLike {
   id: string;
   status: HostCapsuleStatus;
   createdAt: string;
@@ -284,7 +284,8 @@ export async function createHostTask(input: HostTaskCreateInput, now: () => Date
 
 export async function updateHostTask(input: HostTaskUpdateInput, now: () => Date = () => new Date()): Promise<HostTask> {
   const id = requiredId(input.id, "task id");
-  const existing = (await listHostTasks({ outputDir: input.outputDir, tasksFile: input.tasksFile })).find((task) => task.id === id);
+  const tasks = await listHostTasks({ outputDir: input.outputDir, tasksFile: input.tasksFile });
+  const existing = tasks.find((task) => task.id === id);
   if (!existing) throw new Error(`host task not found: ${id}`);
   const update: HostTaskUpdate = dropUndefined({
     id,
@@ -300,8 +301,10 @@ export async function updateHostTask(input: HostTaskUpdateInput, now: () => Date
     detail: cleanString(input.detail),
     result: cleanString(input.result)
   });
+  const next = applyTaskUpdate(existing, update);
+  validateTaskUpdate(existing, next, tasks);
   await appendJsonl(taskPath(input), update);
-  return applyTaskUpdate(existing, update);
+  return next;
 }
 
 export async function listHostTasks(input: HostTaskListInput = {}): Promise<HostTask[]> {
@@ -323,7 +326,7 @@ export async function buildHostAgenda(input: HostAgendaInput = {}): Promise<Host
   const agendaTasks = tasks
     .filter((task) => task.status !== "done" && task.status !== "cancelled")
     .map((task): HostAgendaTask => {
-      const { blockedBy } = workflowReadiness({ ...task, kind: "task" }, done);
+      const { blockedBy } = workflowReadiness(workflowCardFromTask(task), done);
       return {
         ...task,
         blockedBy,
@@ -378,8 +381,10 @@ export async function updateHostCapsule(input: HostCapsuleUpdateInput, now: () =
     reviewer: cleanString(input.reviewer),
     verificationCommands: input.verificationCommands === undefined ? undefined : requiredStringArray(input.verificationCommands, "verificationCommands")
   });
+  const next = applyCapsuleUpdate(existing, update);
+  void workflowCardFromCapsule(next);
   await appendJsonl(capsulePath(input), update);
-  return applyCapsuleUpdate(existing, update);
+  return next;
 }
 
 export async function listHostCapsules(input: HostCapsuleListInput = {}): Promise<HostCapsule[]> {
@@ -646,6 +651,17 @@ function applyWorkflowUpdate(card: HostWorkflowCard, update: HostWorkflowCardUpd
     metadata: update.metadata ?? card.metadata,
     updatedAt: update.updatedAt
   };
+}
+
+function validateTaskUpdate(existing: HostTask, next: HostTask, tasks: HostTask[]): void {
+  if (next.status !== "done") return;
+  const done = new Set(tasks
+    .filter((task) => task.id !== next.id && (task.status === "done" || task.status === "cancelled"))
+    .map((task) => task.id));
+  const readiness = workflowReadiness(workflowCardFromTask(next), done);
+  if (readiness.blockedBy.length > 0) throw new Error(`host task ${next.id} depends on unfinished tasks: ${readiness.blockedBy.join(", ")}`);
+  if (readiness.missingEvidence) throw new Error(`host task ${next.id} requires result before marking done`);
+  void existing;
 }
 
 function validateWorkflowUpdate(existing: HostWorkflowCard, next: HostWorkflowCard, cards: HostWorkflowCard[]): void {

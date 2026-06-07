@@ -1672,14 +1672,22 @@ test("gui durable state migrates legacy monolith into entity keys", async () => 
   assert.equal(state.messages[0]?.body, "legacy message");
   assert.equal(state.tasks[0]?.title, "legacy task");
 
-  const debug = await json<{ rows: { key: string; present: boolean }[] }>(
+  const debug = await json<{ rows: { key: string; present: boolean }[]; baseKeys: string[] }>(
     await worker.fetch(new Request("https://gui/gui/storage-debug"), bindings)
   );
   const present = Object.fromEntries(debug.rows.map((row) => [row.key, row.present]));
   assert.equal(present["state"], false);
   assert.equal(present["state:base"], true);
+  assert.equal(present["state:conversations"], true);
   assert.equal(present["state:messages"], true);
   assert.equal(present["state:tasks"], true);
+  assert.equal(present["state:runLog"], true);
+  assert.equal(present["state:uploads"], true);
+  assert.equal(debug.baseKeys.includes("conversations"), false);
+  assert.equal(debug.baseKeys.includes("messages"), false);
+  assert.equal(debug.baseKeys.includes("tasks"), false);
+  assert.equal(debug.baseKeys.includes("runLog"), false);
+  assert.equal(debug.baseKeys.includes("uploads"), false);
 });
 
 test("gui king-ai state command exports, imports, and resets state snapshots", async () => {

@@ -107,6 +107,10 @@ test("runHostCommand maintains local task capsule agenda and feedback ledgers", 
   assert.equal((blockedAgenda.json as { readyCount?: number; blockedCount?: number }).readyCount, 1);
   assert.equal((blockedAgenda.json as { readyCount?: number; blockedCount?: number }).blockedCount, 1);
   assert.match(blockedAgenda.text, /blocked task-2/);
+  await assert.rejects(
+    runHostCommand({ command: "task-update", input: { outputDir, id: "task-2", status: "done", result: "too early" } }),
+    /depends on unfinished tasks: task-1/
+  );
 
   await runHostCommand({
     command: "task-update",
@@ -117,6 +121,15 @@ test("runHostCommand maintains local task capsule agenda and feedback ledgers", 
   const readyAgenda = await runHostCommand({ command: "agenda", input: { outputDir } });
   assert.equal((readyAgenda.json as { readyCount?: number; blockedCount?: number }).readyCount, 1);
   assert.equal((readyAgenda.json as { readyCount?: number; blockedCount?: number }).blockedCount, 0);
+
+  await runHostCommand({
+    command: "task-create",
+    input: { outputDir, id: "task-3", title: "Verify evidence", acceptance: ["command output recorded"] }
+  });
+  await assert.rejects(
+    runHostCommand({ command: "task-update", input: { outputDir, id: "task-3", status: "done" } }),
+    /requires result before marking done/
+  );
 
   const capsule = await runHostCommand({
     command: "capsule-create",

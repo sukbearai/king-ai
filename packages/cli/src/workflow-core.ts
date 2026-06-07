@@ -69,6 +69,30 @@ export interface WorkflowReadiness {
   missingReviewVerdict: boolean;
 }
 
+export interface WorkflowTaskLike {
+  id: string;
+  status: string;
+  title?: string;
+  ownerRole?: string;
+  reviewerRole?: string;
+  assignee?: string;
+  result?: string;
+  dependsOn?: string[];
+  acceptance?: string[];
+  artifactPath?: string;
+}
+
+export interface WorkflowCapsuleLike {
+  id: string;
+  status: string;
+  goal?: string;
+  owner?: string;
+  ownerAgent?: string;
+  reviewer?: string;
+  acceptance?: string[] | string;
+  taskId?: string;
+}
+
 export function roleHandoffPolicy(team: KingTeamSpec, roleId: string | undefined): KingHandoffPolicy | undefined {
   if (!roleId) return undefined;
   const role = team.roles.find((entry) => entry.id === roleId) ?? team.roles.find((entry) => entry.template === roleId);
@@ -220,4 +244,50 @@ export function workflowReadiness(card: WorkflowCard, doneIds: Iterable<string>)
     missingEvidence,
     missingReviewVerdict
   };
+}
+
+export function workflowCardFromTask(task: WorkflowTaskLike): WorkflowCard {
+  const card: WorkflowCard = {
+    id: task.id,
+    kind: "task",
+    status: task.status,
+    title: task.title,
+    ownerRole: task.ownerRole,
+    reviewerRole: task.reviewerRole,
+    assignee: task.assignee,
+    result: task.result,
+    dependsOn: task.dependsOn,
+    acceptance: task.acceptance,
+    artifactPath: task.artifactPath
+  };
+  return dropUndefined(card);
+}
+
+export function workflowCardFromCapsule(capsule: WorkflowCapsuleLike): WorkflowCard {
+  const card: WorkflowCard = {
+    id: capsule.id,
+    kind: "handoff",
+    status: normalizeCapsuleWorkflowStatus(capsule.status),
+    title: capsule.goal,
+    ownerRole: capsule.owner ?? capsule.ownerAgent,
+    reviewerRole: capsule.reviewer,
+    sourceId: capsule.taskId,
+    acceptance: Array.isArray(capsule.acceptance)
+      ? capsule.acceptance
+      : capsule.acceptance
+        ? [capsule.acceptance]
+        : undefined
+  };
+  return dropUndefined(card);
+}
+
+export function normalizeCapsuleWorkflowStatus(status: string): WorkflowStatus | string {
+  if (status === "open") return "assigned";
+  if (status === "in_review") return "review";
+  if (status === "accepted" || status === "merged") return "done";
+  return status;
+}
+
+function dropUndefined<T extends object>(value: T): T {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
 }
