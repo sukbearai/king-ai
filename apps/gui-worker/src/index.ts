@@ -872,6 +872,7 @@ const TYPING_LOG_CAPACITY = 200;
 const THINKING_LOG_CAPACITY = 200;
 const EVENT_LOG_CAPACITY = 500;
 const RUN_LOG_CAPACITY = 500;
+const RUN_STREAM_CAPACITY = 100;
 const CLI_LOG_CAPACITY = 500;
 const NOTICE_LOG_CAPACITY = 200;
 const TRIAGE_LOG_CAPACITY = 200;
@@ -1832,12 +1833,12 @@ export class GuiState implements DurableObject {
     return state;
   }
 
-  private async put(state: State): Promise<void> {
+  private async put(state: State, options: { force?: boolean } = {}): Promise<void> {
     const base = stripEntityState(state);
     const writes: Promise<unknown>[] = [this.state.storage.delete(GUI_LEGACY_STATE_KEY)];
-    this.queueStateWrite(writes, GUI_BASE_STATE_KEY, base);
+    this.queueStateWrite(writes, GUI_BASE_STATE_KEY, base, options.force === true);
     for (const key of GUI_ENTITY_STATE_KEYS) {
-      this.queueStateWrite(writes, entityStateStorageKey(key), state[key]);
+      this.queueStateWrite(writes, entityStateStorageKey(key), state[key], options.force === true);
     }
     await Promise.all(writes);
   }
@@ -1854,6 +1855,7 @@ export class GuiState implements DurableObject {
       this.state.storage.delete(GUI_LEGACY_STATE_KEY),
       ...GUI_ENTITY_STATE_KEYS.map((key) => this.state.storage.delete(entityStateStorageKey(key)))
     ]);
+    this.persistedStateFingerprint.clear();
   }
 
   private async storageDebug(): Promise<Response> {
@@ -1863,9 +1865,9 @@ export class GuiState implements DurableObject {
     return json({ rows, baseKeys: Object.keys(base ?? {}).sort() });
   }
 
-  private queueStateWrite(writes: Promise<unknown>[], key: string, value: unknown): void {
+  private queueStateWrite(writes: Promise<unknown>[], key: string, value: unknown, force = false): void {
     const fingerprint = stableStorageValue(value);
-    if (this.persistedStateFingerprint.get(key) === fingerprint) return;
+    if (!force && this.persistedStateFingerprint.get(key) === fingerprint) return;
     writes.push(this.state.storage.put(key, value).then(() => {
       this.persistedStateFingerprint.set(key, fingerprint);
     }));
@@ -1986,9 +1988,9 @@ export class GuiState implements DurableObject {
     saved.noticeLog = (saved.noticeLog ?? []).slice(-NOTICE_LOG_CAPACITY);
     saved.triageLog = (saved.triageLog ?? []).slice(-TRIAGE_LOG_CAPACITY);
     saved.runLog = (saved.runLog ?? []).slice(-RUN_LOG_CAPACITY);
-    saved.runStreams = saved.runStreams ?? {};
-    saved.activeRunContracts = saved.activeRunContracts ?? {};
-    saved.runActions ??= {};
+    saved.runStreams = pruneRunStreams(saved.runStreams ?? {});
+    saved.activeRunContracts = pruneActiveRunContracts(saved.activeRunContracts ?? {});
+    saved.runActions = pruneRunActions(saved.runActions ?? {});
     saved.capabilities ??= { workspaces: [] };
     saved.availableEngines ??= [];
     return saved;
@@ -2012,14 +2014,14 @@ export class GuiState implements DurableObject {
     if (!incoming.computerId || !incoming.deviceToken || !incoming.runtimeToken || !incoming.pairingCode) {
       return json({ error: "snapshot is missing pairing tokens" }, { status: 400 });
     }
-    await this.put(incoming);
+    await this.put(incoming, { force: true });
     await this.broadcast({ event: "wake", data: { importedState: true, at: Date.now() } });
     return json({ ok: true, messages: incoming.messages.length, agents: incoming.agents.length });
   }
 
   private async resetState(): Promise<Response> {
     const fresh = this.freshState();
-    await this.put(fresh);
+    await this.put(fresh, { force: true });
     await this.broadcast({ event: "wake", data: { resetState: true, at: Date.now() } });
     return json({ ok: true, computerId: fresh.computerId });
   }
@@ -3703,7 +3705,7 @@ export class GuiState implements DurableObject {
     const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const contract = normalizeRunContract(body && typeof body === "object" ? (body as { contract?: unknown }).contract : undefined);
     state.loopRunId = runId;
-    state.runStreams = { ...(state.runStreams ?? {}), [runId]: initialRunStreamState() };
+    state.runStreams = pruneRunStreams({ ...(state.runStreams ?? {}), [runId]: initialRunStreamState() });
     if (contract) state.activeRunContracts = pruneActiveRunContracts({ ...(state.activeRunContracts ?? {}), [runId]: contract });
     state.runLog.push({ at: Date.now(), runId, action: "start", body });
     await this.put(state);
@@ -3715,7 +3717,7 @@ export class GuiState implements DurableObject {
     const streamEvent = normalizeRunStreamEvent(body);
     if (streamEvent) {
       const current = state.runStreams?.[runId] ?? initialRunStreamState();
-      state.runStreams = { ...(state.runStreams ?? {}), [runId]: reduceRunStream(current, streamEvent) };
+      state.runStreams = pruneRunStreams({ ...(state.runStreams ?? {}), [runId]: reduceRunStream(current, streamEvent) });
       state.runLog.push({ at: Date.now(), runId, action: "stream", body: streamEvent, card: renderRunStreamCard(state.runStreams[runId]) });
     }
     if (action === "finish") {
@@ -3723,7 +3725,7 @@ export class GuiState implements DurableObject {
       const terminal = body && typeof body === "object" && (body as { status?: unknown }).status === "failed"
         ? reduceRunStream(current, { type: "error", message: typeof (body as { error?: unknown }).error === "string" ? (body as { error: string }).error : "run failed" })
         : reduceRunStream(current, { type: "done" });
-      state.runStreams = { ...(state.runStreams ?? {}), [runId]: terminal };
+      state.runStreams = pruneRunStreams({ ...(state.runStreams ?? {}), [runId]: terminal });
       if (state.activeRunContracts?.[runId]) {
         state.activeRunContracts = { ...state.activeRunContracts };
         delete state.activeRunContracts[runId];
@@ -4215,6 +4217,7 @@ export class GuiState implements DurableObject {
       state.thinkingLog = state.thinkingLog.filter((row) => !row.conversationIds.includes(conversationId));
       const conversation = state.conversations.find((row) => row.id === conversationId);
       if (conversation) conversation.updated_at = Date.now();
+      clearRunStateForConversation(state, conversationId);
       await this.put(state);
       await this.broadcast({ event: "wake", data: { clearedConversationId: conversationId, at: Date.now() } });
       return json({ ok: true, conversationId });
@@ -4232,6 +4235,9 @@ export class GuiState implements DurableObject {
     state.noticeLog = [];
     state.triageLog = [];
     state.runLog = [];
+    state.runStreams = {};
+    state.activeRunContracts = {};
+    state.runActions = {};
     state.initiatives = [];
     state.tasks = [];
     state.taskEvents = [];
@@ -4567,7 +4573,7 @@ async function renderMessageMarkdown(message: Message): Promise<Message> {
   }
 }
 
-type GuiStateResponse = State | Omit<State, "deviceToken" | "runtimeToken" | "runtimeTokens" | "pairingCode">;
+type GuiStateResponse = State | Omit<State, "deviceToken" | "runtimeToken" | "runtimeTokens" | "runtimeTokenMeta" | "pairingCode" | "remoteAssist">;
 
 async function stateForGui(state: State, redactSecrets = false): Promise<GuiStateResponse> {
   const visible = {
@@ -4575,7 +4581,15 @@ async function stateForGui(state: State, redactSecrets = false): Promise<GuiStat
     messages: await Promise.all(state.messages.map(renderMessageMarkdown))
   };
   if (!redactSecrets) return visible;
-  const { deviceToken: _deviceToken, runtimeToken: _runtimeToken, runtimeTokens: _runtimeTokens, pairingCode: _pairingCode, ...redacted } = visible;
+  const {
+    deviceToken: _deviceToken,
+    runtimeToken: _runtimeToken,
+    runtimeTokens: _runtimeTokens,
+    runtimeTokenMeta: _runtimeTokenMeta,
+    pairingCode: _pairingCode,
+    remoteAssist: _remoteAssist,
+    ...redacted
+  } = visible;
   return redacted;
 }
 
@@ -5397,6 +5411,10 @@ function pruneActiveRunContracts(contracts: Record<string, RunContract>): Record
   return Object.fromEntries(Object.entries(contracts).slice(-100));
 }
 
+function pruneRunStreams(streams: Record<string, RunStreamState>): Record<string, RunStreamState> {
+  return Object.fromEntries(Object.entries(streams).slice(-RUN_STREAM_CAPACITY));
+}
+
 function validateRunContractAction(state: State, contract: RunContract | undefined, actor: Agent, action: { command: "reply" | "task"; conversationId?: string; taskId?: string }): string | null {
   if (!contract) return null;
   if (contract.agentId && contract.agentId !== actor.id) return `run contract mismatch: actor ${actor.id} cannot act for ${contract.agentId}`;
@@ -5434,6 +5452,20 @@ function recordRunAction(state: State, runId: string | undefined, contract: RunC
 
 function pruneRunActions(actions: Record<string, RunAction[]>): Record<string, RunAction[]> {
   return Object.fromEntries(Object.entries(actions).slice(-100).map(([runId, rows]) => [runId, rows.slice(-50)]));
+}
+
+function clearRunStateForConversation(state: State, conversationId: string): void {
+  const runIds = new Set<string>();
+  for (const [runId, contract] of Object.entries(state.activeRunContracts ?? {})) {
+    if (contract.conversationId === conversationId) runIds.add(runId);
+  }
+  for (const [runId, actions] of Object.entries(state.runActions ?? {})) {
+    if (actions.some((action) => action.conversationId === conversationId)) runIds.add(runId);
+  }
+  if (!runIds.size) return;
+  state.activeRunContracts = Object.fromEntries(Object.entries(state.activeRunContracts ?? {}).filter(([runId]) => !runIds.has(runId)));
+  state.runActions = Object.fromEntries(Object.entries(state.runActions ?? {}).filter(([runId]) => !runIds.has(runId)));
+  state.runStreams = Object.fromEntries(Object.entries(state.runStreams ?? {}).filter(([runId]) => !runIds.has(runId)));
 }
 
 function isTaskMutationCommand(args: string[]): boolean {

@@ -256,6 +256,20 @@ test("gui remote assist link grants reusable tenant access without GitHub login"
   assert.match(shared.url, /assist=/);
   assert.equal(shared.remoteAssist.active, true);
   assert.ok(shared.remoteAssist.createdAt <= Date.now());
+  const ownerSummary = await json<{ pairingCode: string; tenantId: string }>(
+    await worker.fetch(new Request("https://gui/gui/summary", { headers: ownerHeaders }), bindings)
+  );
+  const paired = await json<{ deviceToken: string; tenantId: string }>(
+    await worker.fetch(new Request("https://gui/api/computers/pair", {
+      method: "POST",
+      body: JSON.stringify({ code: ownerSummary.pairingCode, engines: ["codex"] })
+    }), bindings)
+  );
+  assert.equal(paired.tenantId, ownerSummary.tenantId);
+  await json<{ token: string }>(await worker.fetch(new Request("https://gui/api/agents/king-ai-ceo/runtime-token", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${paired.deviceToken}`, "X-King-AI-Tenant": ownerSummary.tenantId }
+  }), bindings));
 
   const page = await worker.fetch(new Request(shared.url), bindings);
   assert.equal(page.status, 200);
@@ -276,7 +290,9 @@ test("gui remote assist link grants reusable tenant access without GitHub login"
   assert.equal("deviceToken" in assistState, false);
   assert.equal("runtimeToken" in assistState, false);
   assert.equal("runtimeTokens" in assistState, false);
+  assert.equal("runtimeTokenMeta" in assistState, false);
   assert.equal("pairingCode" in assistState, false);
+  assert.equal("remoteAssist" in assistState, false);
 
   await json<{ ok: true }>(await worker.fetch(new Request(shared.url.replace("https://gui/", "https://gui/gui/message"), {
     method: "POST",
@@ -1456,22 +1472,41 @@ test("reviewer can return a task with an explicit revision reason", async () => 
 
 test("gui runtime clears messages without clearing paired engines", async () => {
   const bindings = env();
-  await pairComputer(bindings, { engines: ["claude", "codex"] });
+  const paired = await pairComputer(bindings, { engines: ["claude", "codex"] });
   await worker.fetch(new Request("https://gui/gui/message", {
     method: "POST",
     body: JSON.stringify({ body: "queued" })
+  }), bindings);
+  const token = await json<{ token: string }>(await worker.fetch(new Request("https://gui/api/agents/king-ai-ceo/runtime-token", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${paired.deviceToken}` }
+  }), bindings));
+  const auth = { Authorization: `Bearer ${token.token}`, "Content-Type": "application/json" };
+  const run = await json<{ runId: string }>(await worker.fetch(new Request("https://gui/runtime/runs", {
+    method: "POST",
+    headers: auth,
+    body: JSON.stringify({ contract: { agentId: "king-ai-ceo", conversationId: "king-ai-convo", messageId: "msg-clear" } })
+  }), bindings));
+  await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: auth,
+    body: JSON.stringify({ runId: run.runId, argv: ["reply", "king-ai-convo", "done"] })
   }), bindings);
 
   await json<{ ok: true }>(await worker.fetch(new Request("https://gui/gui/clear-messages", {
     method: "POST"
   }), bindings));
 
-  const state = await json<{ availableEngines: string[]; messages: unknown[]; cliLog: unknown[] }>(
+  const state = await json<{ availableEngines: string[]; messages: unknown[]; cliLog: unknown[]; runLog: unknown[]; runStreams: Record<string, unknown>; activeRunContracts: Record<string, unknown>; runActions: Record<string, unknown> }>(
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
   assert.deepEqual(state.availableEngines, ["claude", "codex"]);
   assert.deepEqual(state.messages, []);
   assert.deepEqual(state.cliLog, []);
+  assert.deepEqual(state.runLog, []);
+  assert.deepEqual(state.runStreams, {});
+  assert.deepEqual(state.activeRunContracts, {});
+  assert.deepEqual(state.runActions, {});
 });
 
 test("gui can clear only the active conversation window", async () => {
@@ -2741,6 +2776,36 @@ test("gui runtime records status, typing, thinking, events, and runs", async () 
   assert.equal(state.runStreams?.[run.runId]?.tools?.[0]?.name, "shell");
   assert.equal(state.runLog.at(-1)?.card?.summary, "Completed");
   assert.equal(state.runLog.at(-1)?.card?.sections?.some((section) => section.kind === "tool"), true);
+});
+
+test("gui runtime bounds persisted run stream state", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const tokenRes = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/king-ai-ceo/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  const auth = { Authorization: `Bearer ${tokenRes.token}`, "Content-Type": "application/json" };
+  let firstRunId = "";
+  let lastRunId = "";
+  for (let index = 0; index < 105; index += 1) {
+    const run = await json<{ runId: string }>(await worker.fetch(new Request("https://gui/runtime/runs", {
+      method: "POST",
+      headers: auth,
+      body: JSON.stringify({ trigger: { index } })
+    }), bindings));
+    if (index === 0) firstRunId = run.runId;
+    lastRunId = run.runId;
+  }
+
+  const state = await json<{ runStreams?: Record<string, unknown> }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  assert.equal(Object.keys(state.runStreams ?? {}).length, 100);
+  assert.equal(firstRunId in (state.runStreams ?? {}), false);
+  assert.equal(lastRunId in (state.runStreams ?? {}), true);
 });
 
 test("gui runtime run contract rejects replies to the wrong conversation", async () => {
