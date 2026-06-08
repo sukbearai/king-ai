@@ -8,8 +8,9 @@ Packages:
 
 - CLI: `@suwujs/king-ai`, exposing the `king-ai` command.
 - GUI worker app: `@king-ai/gui-worker`.
+- Documentation app: `@king-ai/docs`, a VitePress site under `apps/docs`.
 
-The primary CLI command is `king-ai`. Local runtime state lives under `~/.king-ai`; existing `~/.king/computer.json` is read only as a one-time upgrade fallback when the new config has not been written yet.
+The primary CLI command is `king-ai`. Local runtime state lives under `~/.king-ai`.
 
 ## Install And Develop
 
@@ -17,6 +18,7 @@ The primary CLI command is `king-ai`. Local runtime state lives under `~/.king-a
 pnpm install
 pnpm verify
 pnpm dev -- agent computer --doctor
+pnpm docs:dev
 ```
 
 The GUI worker can be run locally with:
@@ -33,7 +35,7 @@ Release tags drive publishing. Run `pnpm release:patch`, `pnpm release:minor`, o
 
 This project was renamed to `king-ai`. New installs and generated commands should use only `king-ai`, `@suwujs/king-ai`, `@king-ai/gui-worker`, `KING_AI_*`, `king-ai://`, and `~/.king-ai`.
 
-The old `king` command is not exposed as a bin alias. The only retained legacy behavior is reading `~/.king/computer.json` when the new `~/.king-ai/computer.json` has not been written yet, so an already paired computer can migrate without losing its token.
+The old `king` command is not exposed as a bin alias. New user-facing documentation and setup flows should use the `~/.king-ai` home only.
 
 ## Architecture
 

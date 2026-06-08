@@ -6,9 +6,13 @@ This is the `sukbearai/king-ai` pnpm workspace for a local BYOA multi-agent coll
 
 Multi-role collaboration logic is part of the core product. `packages/cli/src/team-workflow.ts` defines role templates, team specs, permissions, and built-in workflow scenarios; `packages/cli/src/team-routing.ts` handles capability-first owner selection, reviews, handoffs, and human-decision routing; `packages/cli/src/host-control.ts` applies host command governance and workflow materialization. When changing agent/runtime behavior, preserve the distinction between the local execution boundary and the collaboration governance layer.
 
-CLI tests live in `packages/cli/test/` and compile into `packages/cli/dist/test/`. The optional Cloudflare GUI runtime app is under `apps/gui-worker/`, with tests in `apps/gui-worker/test/`. Generated output belongs in package-local `dist/` directories and should not be edited by hand.
+CLI tests live in `packages/cli/test/` and compile into `packages/cli/dist/test/`. The optional Cloudflare GUI runtime app is under `apps/gui-worker/`, with tests in `apps/gui-worker/test/`. The VitePress documentation site lives in `apps/docs/`. Generated output belongs in package-local `dist/` directories and should not be edited by hand.
 
 The GUI worker is split by runtime boundary. `apps/gui-worker/src/index.ts` is a small barrel that re-exports the Durable Object and test-facing helpers from `gui-state-do.ts`. `gui-state-do.ts` owns the `GuiState` Durable Object implementation. `gui-types.ts` owns shared GUI runtime types and constants; keep request auth HTML out of this file. `gui-auth.ts` owns Better Auth, tenant resolution, request context auth, and login HTML. `gui-http.ts` owns small HTTP/stream helpers. `gui-routes.ts` creates the Hono app and should receive its dependencies through `createGuiApp`. Workflow card/task ledger writes should go through `workflow-state.ts`, artifact validation/parsing through `artifact-helpers.ts`, runtime CLI dispatch through `runtime-cli-dispatch.ts`, and command-specific behavior through the `gui-cli-*.ts` modules. The GUI page shell is `page.tsx`; browser scripts and styles live in the `gui-client-*` and `gui-page-*` modules.
+
+## Documentation Maintenance
+
+When code changes affect user-facing behavior, CLI commands or flags, GUI workflows, configuration paths or environment variables, release/deployment steps, or runtime architecture, update the VitePress documentation in `apps/docs/` in the same change. Keep the English root pages and the Simplified Chinese `/zh/` pages aligned so new users do not receive stale instructions.
 
 ## Runtime Architecture Principles
 
