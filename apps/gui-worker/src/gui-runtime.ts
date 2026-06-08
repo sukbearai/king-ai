@@ -295,9 +295,190 @@ function escapeHtmlAttribute(value: string): string {
   return value.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[ch] ?? ch);
 }
 
+// Closed-class / very high-frequency words the coach model reliably skips when it
+// annotates a sentence. The fallback wrapper below fills these in with a concise card so
+// clicking a common word never lands on "暂无词义". Content words are almost always
+// annotated by the model itself, so this table intentionally stays to function words plus a
+// few ubiquitous ones. Keys are lowercase; syllables stay empty for monosyllabic words so the
+// card hides that row instead of echoing the word back.
+const COMMON_WORD_CARDS: Record<string, { meaning: string; phonetic: string; syllables: string }> = {
+  // articles
+  a: { meaning: "一个（不定冠词）", phonetic: "/ə/", syllables: "" },
+  an: { meaning: "一个（不定冠词）", phonetic: "/ən/", syllables: "" },
+  the: { meaning: "这；那（定冠词）", phonetic: "/ðə/", syllables: "" },
+  // subject pronouns
+  i: { meaning: "我", phonetic: "/aɪ/", syllables: "" },
+  you: { meaning: "你；你们", phonetic: "/juː/", syllables: "" },
+  he: { meaning: "他", phonetic: "/hiː/", syllables: "" },
+  she: { meaning: "她", phonetic: "/ʃiː/", syllables: "" },
+  it: { meaning: "它", phonetic: "/ɪt/", syllables: "" },
+  we: { meaning: "我们", phonetic: "/wiː/", syllables: "" },
+  they: { meaning: "他们", phonetic: "/ðeɪ/", syllables: "" },
+  // object pronouns
+  me: { meaning: "我（宾格）", phonetic: "/miː/", syllables: "" },
+  him: { meaning: "他（宾格）", phonetic: "/hɪm/", syllables: "" },
+  her: { meaning: "她；她的", phonetic: "/hɜːr/", syllables: "" },
+  us: { meaning: "我们（宾格）", phonetic: "/ʌs/", syllables: "" },
+  them: { meaning: "他们（宾格）", phonetic: "/ðem/", syllables: "" },
+  // possessives
+  my: { meaning: "我的", phonetic: "/maɪ/", syllables: "" },
+  your: { meaning: "你的", phonetic: "/jɔːr/", syllables: "" },
+  his: { meaning: "他的", phonetic: "/hɪz/", syllables: "" },
+  its: { meaning: "它的", phonetic: "/ɪts/", syllables: "" },
+  our: { meaning: "我们的", phonetic: "/ˈaʊər/", syllables: "" },
+  their: { meaning: "他们的", phonetic: "/ðer/", syllables: "" },
+  mine: { meaning: "我的（名词性）", phonetic: "/maɪn/", syllables: "" },
+  yours: { meaning: "你的（名词性）", phonetic: "/jɔːrz/", syllables: "" },
+  // demonstratives
+  this: { meaning: "这个", phonetic: "/ðɪs/", syllables: "" },
+  that: { meaning: "那个；那", phonetic: "/ðæt/", syllables: "" },
+  these: { meaning: "这些", phonetic: "/ðiːz/", syllables: "" },
+  those: { meaning: "那些", phonetic: "/ðoʊz/", syllables: "" },
+  // wh-words
+  who: { meaning: "谁", phonetic: "/huː/", syllables: "" },
+  whom: { meaning: "谁（宾格）", phonetic: "/huːm/", syllables: "" },
+  whose: { meaning: "谁的", phonetic: "/huːz/", syllables: "" },
+  which: { meaning: "哪一个", phonetic: "/wɪtʃ/", syllables: "" },
+  what: { meaning: "什么", phonetic: "/wʌt/", syllables: "" },
+  when: { meaning: "何时；当……时", phonetic: "/wen/", syllables: "" },
+  where: { meaning: "哪里", phonetic: "/wer/", syllables: "" },
+  why: { meaning: "为什么", phonetic: "/waɪ/", syllables: "" },
+  how: { meaning: "怎样；如何", phonetic: "/haʊ/", syllables: "" },
+  // prepositions
+  to: { meaning: "到；向（不定式标记）", phonetic: "/tuː/", syllables: "" },
+  of: { meaning: "……的", phonetic: "/ʌv/", syllables: "" },
+  in: { meaning: "在……里", phonetic: "/ɪn/", syllables: "" },
+  on: { meaning: "在……上", phonetic: "/ɑːn/", syllables: "" },
+  at: { meaning: "在（某处/某时）", phonetic: "/æt/", syllables: "" },
+  by: { meaning: "由；通过", phonetic: "/baɪ/", syllables: "" },
+  for: { meaning: "为了；给", phonetic: "/fɔːr/", syllables: "" },
+  with: { meaning: "和；用", phonetic: "/wɪð/", syllables: "" },
+  from: { meaning: "从", phonetic: "/frʌm/", syllables: "" },
+  about: { meaning: "关于；大约", phonetic: "/əˈbaʊt/", syllables: "a-bout" },
+  as: { meaning: "作为；像", phonetic: "/æz/", syllables: "" },
+  into: { meaning: "进入", phonetic: "/ˈɪntuː/", syllables: "in-to" },
+  like: { meaning: "像；喜欢", phonetic: "/laɪk/", syllables: "" },
+  through: { meaning: "穿过；经由", phonetic: "/θruː/", syllables: "" },
+  over: { meaning: "在……上方；超过", phonetic: "/ˈoʊvər/", syllables: "o-ver" },
+  under: { meaning: "在……下面", phonetic: "/ˈʌndər/", syllables: "un-der" },
+  between: { meaning: "在……之间", phonetic: "/bɪˈtwiːn/", syllables: "be-tween" },
+  during: { meaning: "在……期间", phonetic: "/ˈdʊrɪŋ/", syllables: "dur-ing" },
+  before: { meaning: "在……之前", phonetic: "/bɪˈfɔːr/", syllables: "be-fore" },
+  after: { meaning: "在……之后", phonetic: "/ˈæftər/", syllables: "af-ter" },
+  since: { meaning: "自从；既然", phonetic: "/sɪns/", syllables: "" },
+  until: { meaning: "直到", phonetic: "/ənˈtɪl/", syllables: "un-til" },
+  without: { meaning: "没有", phonetic: "/wɪˈðaʊt/", syllables: "with-out" },
+  within: { meaning: "在……之内", phonetic: "/wɪˈðɪn/", syllables: "with-in" },
+  around: { meaning: "围绕；大约", phonetic: "/əˈraʊnd/", syllables: "a-round" },
+  toward: { meaning: "朝向", phonetic: "/tɔːrd/", syllables: "" },
+  off: { meaning: "离开；关掉", phonetic: "/ɔːf/", syllables: "" },
+  out: { meaning: "出；在外", phonetic: "/aʊt/", syllables: "" },
+  up: { meaning: "向上", phonetic: "/ʌp/", syllables: "" },
+  down: { meaning: "向下", phonetic: "/daʊn/", syllables: "" },
+  near: { meaning: "靠近", phonetic: "/nɪr/", syllables: "" },
+  // conjunctions
+  and: { meaning: "和；并且", phonetic: "/ænd/", syllables: "" },
+  or: { meaning: "或者", phonetic: "/ɔːr/", syllables: "" },
+  but: { meaning: "但是", phonetic: "/bʌt/", syllables: "" },
+  so: { meaning: "所以；如此", phonetic: "/soʊ/", syllables: "" },
+  if: { meaning: "如果", phonetic: "/ɪf/", syllables: "" },
+  because: { meaning: "因为", phonetic: "/bɪˈkɔːz/", syllables: "be-cause" },
+  while: { meaning: "当……时；然而", phonetic: "/waɪl/", syllables: "" },
+  than: { meaning: "比", phonetic: "/ðæn/", syllables: "" },
+  though: { meaning: "虽然", phonetic: "/ðoʊ/", syllables: "" },
+  although: { meaning: "尽管", phonetic: "/ɔːlˈðoʊ/", syllables: "al-though" },
+  unless: { meaning: "除非", phonetic: "/ənˈles/", syllables: "un-less" },
+  whether: { meaning: "是否", phonetic: "/ˈweðər/", syllables: "wheth-er" },
+  nor: { meaning: "也不", phonetic: "/nɔːr/", syllables: "" },
+  yet: { meaning: "然而；还（没）", phonetic: "/jet/", syllables: "" },
+  once: { meaning: "一旦；曾经", phonetic: "/wʌns/", syllables: "" },
+  // be / have / do
+  am: { meaning: "是（与 I 连用）", phonetic: "/æm/", syllables: "" },
+  is: { meaning: "是（三单）", phonetic: "/ɪz/", syllables: "" },
+  are: { meaning: "是（复数）", phonetic: "/ɑːr/", syllables: "" },
+  was: { meaning: "是（过去）", phonetic: "/wʌz/", syllables: "" },
+  were: { meaning: "是（过去复数）", phonetic: "/wɜːr/", syllables: "" },
+  be: { meaning: "是；成为", phonetic: "/biː/", syllables: "" },
+  been: { meaning: "是（过去分词）", phonetic: "/bɪn/", syllables: "" },
+  being: { meaning: "是（现在分词）", phonetic: "/ˈbiːɪŋ/", syllables: "be-ing" },
+  have: { meaning: "有；已经", phonetic: "/hæv/", syllables: "" },
+  has: { meaning: "有；已经（三单）", phonetic: "/hæz/", syllables: "" },
+  had: { meaning: "有；已经（过去）", phonetic: "/hæd/", syllables: "" },
+  do: { meaning: "做；助动词", phonetic: "/duː/", syllables: "" },
+  does: { meaning: "做（三单）", phonetic: "/dʌz/", syllables: "" },
+  did: { meaning: "做（过去）", phonetic: "/dɪd/", syllables: "" },
+  // modals
+  will: { meaning: "将；会", phonetic: "/wɪl/", syllables: "" },
+  would: { meaning: "会；愿", phonetic: "/wʊd/", syllables: "" },
+  can: { meaning: "能；可以", phonetic: "/kæn/", syllables: "" },
+  could: { meaning: "能（过去/委婉）", phonetic: "/kʊd/", syllables: "" },
+  shall: { meaning: "将；应", phonetic: "/ʃæl/", syllables: "" },
+  should: { meaning: "应该", phonetic: "/ʃʊd/", syllables: "" },
+  may: { meaning: "可能；可以", phonetic: "/meɪ/", syllables: "" },
+  might: { meaning: "可能", phonetic: "/maɪt/", syllables: "" },
+  must: { meaning: "必须", phonetic: "/mʌst/", syllables: "" },
+  // negatives & common adverbs / quantifiers
+  not: { meaning: "不", phonetic: "/nɑːt/", syllables: "" },
+  no: { meaning: "不；没有", phonetic: "/noʊ/", syllables: "" },
+  never: { meaning: "从不", phonetic: "/ˈnevər/", syllables: "nev-er" },
+  very: { meaning: "非常", phonetic: "/ˈveri/", syllables: "ve-ry" },
+  too: { meaning: "太；也", phonetic: "/tuː/", syllables: "" },
+  also: { meaning: "也", phonetic: "/ˈɔːlsoʊ/", syllables: "al-so" },
+  just: { meaning: "只是；刚刚", phonetic: "/dʒʌst/", syllables: "" },
+  only: { meaning: "只；仅", phonetic: "/ˈoʊnli/", syllables: "on-ly" },
+  even: { meaning: "甚至", phonetic: "/ˈiːvən/", syllables: "e-ven" },
+  still: { meaning: "仍然", phonetic: "/stɪl/", syllables: "" },
+  again: { meaning: "再次", phonetic: "/əˈɡen/", syllables: "a-gain" },
+  then: { meaning: "然后；那时", phonetic: "/ðen/", syllables: "" },
+  there: { meaning: "那里", phonetic: "/ðer/", syllables: "" },
+  here: { meaning: "这里", phonetic: "/hɪr/", syllables: "" },
+  now: { meaning: "现在", phonetic: "/naʊ/", syllables: "" },
+  more: { meaning: "更多", phonetic: "/mɔːr/", syllables: "" },
+  most: { meaning: "最；大多数", phonetic: "/moʊst/", syllables: "" },
+  much: { meaning: "许多（不可数）", phonetic: "/mʌtʃ/", syllables: "" },
+  many: { meaning: "许多（可数）", phonetic: "/ˈmeni/", syllables: "ma-ny" },
+  some: { meaning: "一些", phonetic: "/sʌm/", syllables: "" },
+  any: { meaning: "任何", phonetic: "/ˈeni/", syllables: "a-ny" },
+  all: { meaning: "全部", phonetic: "/ɔːl/", syllables: "" },
+  both: { meaning: "两者", phonetic: "/boʊθ/", syllables: "" },
+  each: { meaning: "每个", phonetic: "/iːtʃ/", syllables: "" },
+  every: { meaning: "每个", phonetic: "/ˈevri/", syllables: "eve-ry" },
+  few: { meaning: "很少", phonetic: "/fjuː/", syllables: "" },
+  little: { meaning: "少；小", phonetic: "/ˈlɪtl/", syllables: "lit-tle" },
+  such: { meaning: "这样的", phonetic: "/sʌtʃ/", syllables: "" },
+  own: { meaning: "自己的", phonetic: "/oʊn/", syllables: "" },
+  same: { meaning: "相同的", phonetic: "/seɪm/", syllables: "" },
+  other: { meaning: "其他的", phonetic: "/ˈʌðər/", syllables: "oth-er" },
+  another: { meaning: "另一个", phonetic: "/əˈnʌðər/", syllables: "an-oth-er" },
+  however: { meaning: "然而", phonetic: "/haʊˈevər/", syllables: "how-ev-er" },
+  always: { meaning: "总是", phonetic: "/ˈɔːlweɪz/", syllables: "al-ways" },
+  often: { meaning: "经常", phonetic: "/ˈɔːfən/", syllables: "of-ten" },
+  really: { meaning: "真的", phonetic: "/ˈriːəli/", syllables: "real-ly" },
+  well: { meaning: "好；嗯", phonetic: "/wel/", syllables: "" },
+  yes: { meaning: "是的", phonetic: "/jes/", syllables: "" },
+  // common contractions
+  "i'm": { meaning: "我是（I am）", phonetic: "/aɪm/", syllables: "" },
+  "it's": { meaning: "它是（it is）", phonetic: "/ɪts/", syllables: "" },
+  "don't": { meaning: "不（do not）", phonetic: "/doʊnt/", syllables: "" },
+  "can't": { meaning: "不能（cannot）", phonetic: "/kænt/", syllables: "" },
+  "that's": { meaning: "那是（that is）", phonetic: "/ðæts/", syllables: "" },
+  "you're": { meaning: "你是（you are）", phonetic: "/jʊr/", syllables: "" },
+  "i've": { meaning: "我已（I have）", phonetic: "/aɪv/", syllables: "" }
+};
+
 function clickableWordSpan(word: string): string {
-  const escaped = escapeHtmlAttribute(word);
-  return `<span class="ielts-word" data-word="${escaped}">${escapeHtml(word)}</span>`;
+  const escapedWord = escapeHtmlAttribute(word);
+  const display = escapeHtml(word);
+  const card = COMMON_WORD_CARDS[word.toLowerCase()];
+  if (!card) {
+    return `<span class="ielts-word" data-word="${escapedWord}">${display}</span>`;
+  }
+  const attrs =
+    ` data-word="${escapedWord}"` +
+    ` data-meaning="${escapeHtmlAttribute(card.meaning)}"` +
+    (card.phonetic ? ` data-phonetic="${escapeHtmlAttribute(card.phonetic)}"` : "") +
+    (card.syllables ? ` data-syllables="${escapeHtmlAttribute(card.syllables)}"` : "");
+  return `<span class="ielts-word"${attrs}>${display}</span>`;
 }
 
 function renderIeltsAnnotations(markdown: string): string {
