@@ -93,6 +93,51 @@ export interface WorkflowCapsuleLike {
   taskId?: string;
 }
 
+export interface WorkflowKanbanLike {
+  id: string;
+  title?: string;
+  column: "todo" | "doing" | "done" | string;
+  assignee?: string;
+  claimedBy?: string;
+}
+
+export interface WorkflowHostRecordLike {
+  id: string;
+  kind?: string;
+  title?: string;
+  status?: string;
+  ownerRole?: string;
+  reviewerRole?: string;
+  assignee?: string;
+  decisionBy?: string;
+  detail?: string;
+  sourceId?: string;
+  dependsOn?: string[];
+  acceptance?: string[];
+  result?: string;
+}
+
+export interface WorkflowCalendarItemLike {
+  id: string;
+  title: string;
+  assignee?: string;
+  at?: string;
+  cron?: string;
+  prompt?: string;
+}
+
+export interface WorkflowAgendaLine {
+  id: string;
+  label: string;
+  kind?: "task" | "card" | "calendar";
+}
+
+export interface WorkflowAgendaBrief {
+  actionable: boolean;
+  focus?: string;
+  brief?: string;
+}
+
 export function roleHandoffPolicy(team: KingTeamSpec, roleId: string | undefined): KingHandoffPolicy | undefined {
   if (!roleId) return undefined;
   const role = team.roles.find((entry) => entry.id === roleId) ?? team.roles.find((entry) => entry.template === roleId);
@@ -263,6 +308,123 @@ export function workflowCardFromTask(task: WorkflowTaskLike): WorkflowCard {
   return dropUndefined(card);
 }
 
+export function normalizeKanbanWorkflowStatus(column: string): WorkflowStatus | string {
+  if (column === "todo") return "open";
+  if (column === "doing") return "in_progress";
+  if (column === "done") return "done";
+  return column;
+}
+
+export function kanbanColumnFromWorkflowStatus(status: string): "todo" | "doing" | "done" {
+  if (status === "done") return "done";
+  if (status === "in_progress" || status === "assigned" || status === "review" || status === "waiting_human") return "doing";
+  return "todo";
+}
+
+export function workflowCardFromKanban(card: WorkflowKanbanLike): WorkflowCard {
+  const mapped: WorkflowCard = {
+    id: card.id,
+    kind: "task",
+    status: normalizeKanbanWorkflowStatus(card.column),
+    title: card.title,
+    assignee: card.assignee ?? card.claimedBy
+  };
+  return dropUndefined(mapped);
+}
+
+export function workflowCardFromHostRecord(record: WorkflowHostRecordLike): WorkflowCard {
+  const kind = normalizeWorkflowObjectKind(record.kind, record.decisionBy);
+  const mapped: WorkflowCard = {
+    id: record.id,
+    kind,
+    status: record.status || (kind === "decision" ? "waiting_human" : "open"),
+    title: record.title ?? record.detail,
+    ownerRole: record.ownerRole,
+    reviewerRole: record.reviewerRole,
+    assignee: record.assignee,
+    sourceId: record.sourceId,
+    dependsOn: record.dependsOn,
+    acceptance: record.acceptance,
+    result: record.result
+  };
+  return dropUndefined(mapped);
+}
+
+export function mergeWorkflowCards(...groups: WorkflowCard[][]): WorkflowCard[] {
+  const byId = new Map<string, WorkflowCard>();
+  for (const group of groups) {
+    for (const card of group) {
+      const existing = byId.get(card.id);
+      byId.set(card.id, existing ? { ...existing, ...card } : card);
+    }
+  }
+  return [...byId.values()];
+}
+
+export function buildWorkflowAgendaBrief(lines: WorkflowAgendaLine[]): WorkflowAgendaBrief {
+  if (lines.length === 0) return { actionable: false };
+  // Focus priority is Task > Card > Calendar regardless of display order, matching the
+  // runtime agenda. Fall back to the first line for lines without an explicit kind.
+  const focusLine =
+    lines.find((line) => line.kind === "task") ??
+    lines.find((line) => line.kind === "card") ??
+    lines[0];
+  return {
+    actionable: true,
+    focus: focusLine.id,
+    brief: lines.map((line) => line.label).join("\n")
+  };
+}
+
+export function workflowAgendaLines(args: {
+  agentId: string;
+  tasks: WorkflowTaskLike[];
+  kanban: WorkflowKanbanLike[];
+  calendar: WorkflowCalendarItemLike[];
+  doneTaskIds: string[];
+  taskStatusFor: (task: WorkflowTaskLike) => string;
+  now?: Date;
+  cronMatches?: (cron: string, now: Date) => boolean;
+}): WorkflowAgendaBrief {
+  const now = args.now ?? new Date();
+  const lines: WorkflowAgendaLine[] = [];
+  for (const item of args.calendar) {
+    if (item.assignee !== args.agentId) continue;
+    const dueAt = item.at ? Date.parse(item.at) : Number.NaN;
+    const cronDue = item.cron && args.cronMatches ? args.cronMatches(item.cron, now) : false;
+    if (!Number.isFinite(dueAt) && !cronDue) continue;
+    if (Number.isFinite(dueAt) && dueAt > now.getTime() && !cronDue) continue;
+    lines.push({
+      id: item.id,
+      kind: "calendar",
+      label: `Calendar due: ${item.title}${item.cron ? ` [cron ${item.cron}]` : ""}${item.prompt ? ` — ${item.prompt}` : ""}`
+    });
+  }
+  for (const card of args.kanban) {
+    const workflow = workflowCardFromKanban(card);
+    if (workflow.status === "done") continue;
+    if (workflow.assignee && workflow.assignee !== args.agentId) continue;
+    lines.push({
+      id: card.id,
+      kind: "card",
+      label: `Board card: ${card.id} [${card.column}] ${card.title ?? ""}`.trim()
+    });
+  }
+  for (const task of args.tasks) {
+    const status = args.taskStatusFor(task);
+    if (status === "done" || status === "blocked") continue;
+    if (task.assignee && task.assignee !== args.agentId) continue;
+    const readiness = workflowReadiness(workflowCardFromTask(task), args.doneTaskIds);
+    if (readiness.blockedBy.length > 0) continue;
+    lines.push({
+      id: task.id,
+      kind: "task",
+      label: `Task: ${task.id} [${status}] ${task.title ?? ""}`.trim()
+    });
+  }
+  return buildWorkflowAgendaBrief(lines);
+}
+
 export function workflowCardFromCapsule(capsule: WorkflowCapsuleLike): WorkflowCard {
   const card: WorkflowCard = {
     id: capsule.id,
@@ -286,6 +448,14 @@ export function normalizeCapsuleWorkflowStatus(status: string): WorkflowStatus |
   if (status === "in_review") return "review";
   if (status === "accepted" || status === "merged") return "done";
   return status;
+}
+
+function normalizeWorkflowObjectKind(kind: string | undefined, decisionBy: string | undefined): KingWorkflowObjectType {
+  if (kind === "initiative" || kind === "task" || kind === "handoff" || kind === "review" || kind === "decision" || kind === "artifact") {
+    return kind;
+  }
+  if (decisionBy) return "decision";
+  return "task";
 }
 
 function dropUndefined<T extends object>(value: T): T {

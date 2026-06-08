@@ -2,7 +2,16 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { defaultTeamSpec } from "../src/team-workflow.js";
 import { planHandoff, roleHandoffPolicy, selectOwnerRole, type RoutableCard } from "../src/team-routing.js";
-import { taskDoneTransition, workflowCardFromCapsule, workflowCardFromTask, workflowReadiness } from "../src/workflow-core.js";
+import {
+  mergeWorkflowCards,
+  taskDoneTransition,
+  workflowAgendaLines,
+  workflowCardFromCapsule,
+  workflowCardFromHostRecord,
+  workflowCardFromKanban,
+  workflowCardFromTask,
+  workflowReadiness
+} from "../src/workflow-core.js";
 
 test("selectOwnerRole picks the best capability match under capability-first routing", () => {
   const team = defaultTeamSpec();
@@ -140,6 +149,59 @@ test("workflowReadiness centralizes dependency evidence and review gates", () =>
     missingReviewVerdict: false
   });
   assert.equal(workflowReadiness({ id: "review-2", kind: "review", status: "done" }, []).missingReviewVerdict, true);
+});
+
+test("workflowCardFromKanban and workflowCardFromHostRecord normalize alternate ledgers", () => {
+  assert.deepEqual(workflowCardFromKanban({
+    id: "card-1",
+    title: "Ship",
+    column: "doing",
+    assignee: "dev"
+  }), {
+    id: "card-1",
+    kind: "task",
+    status: "in_progress",
+    title: "Ship",
+    assignee: "dev"
+  });
+  assert.deepEqual(workflowCardFromHostRecord({
+    id: "decision-1",
+    kind: "decision",
+    status: "waiting_human",
+    title: "Release?",
+    decisionBy: "human"
+  }), {
+    id: "decision-1",
+    kind: "decision",
+    status: "waiting_human",
+    title: "Release?"
+  });
+  assert.deepEqual(mergeWorkflowCards(
+    [{ id: "task-1", kind: "task", status: "assigned", title: "GUI" }],
+    [{ id: "task-1", kind: "task", status: "review", assignee: "reviewer" }]
+  ), [{
+    id: "task-1",
+    kind: "task",
+    status: "review",
+    title: "GUI",
+    assignee: "reviewer"
+  }]);
+});
+
+test("workflowAgendaLines builds a canonical agenda brief", () => {
+  const brief = workflowAgendaLines({
+    agentId: "dev",
+    tasks: [{ id: "task-1", status: "assigned", title: "Build", assignee: "dev" }],
+    kanban: [{ id: "card-1", title: "Board", column: "todo", assignee: "dev" }],
+    calendar: [{ id: "cal-1", title: "Follow up", assignee: "dev", at: new Date(0).toISOString() }],
+    doneTaskIds: [],
+    taskStatusFor: (task) => task.status ?? "assigned",
+    now: new Date(10_000)
+  });
+  assert.equal(brief.actionable, true);
+  assert.match(brief.brief ?? "", /Calendar due: Follow up/);
+  assert.match(brief.brief ?? "", /Board card: card-1/);
+  assert.match(brief.brief ?? "", /Task: task-1/);
 });
 
 test("workflowCardFromCapsule normalizes capsule workflow state", () => {

@@ -36,6 +36,9 @@ const BIG_BRAIN_SPAWN_JITTER_MS = Number(process.env.KING_AI_BYOA_BIG_BRAIN_SPAW
 const TRIAGE_SPAWN_JITTER_MS = Number(process.env.KING_AI_BYOA_TRIAGE_SPAWN_JITTER_MS) || 500;
 const AGENDA_QUIET_MS = Number(process.env.KING_AI_AGENDA_QUIET_MS) || 180_000;
 const AGENDA_CHECK_MS = Number(process.env.KING_AI_AGENDA_CHECK_MS) || 120_000;
+export const FAIL_OPEN_STREAK_LIMIT = 3;
+export const NO_STATE_ACTION_ACK_STREAK = 2;
+const WAKE_STREAM_HEALTH_FACTOR = 3;
 const PREPARE_WORKTREES = process.env.KING_AI_PREPARE_WORKTREES === "1" || process.env.KING_AI_AGENT_PREPARE_WORKTREES === "1";
 const NESTED_ENV_BLOCKLIST = [
   "CODEX_CI",
@@ -361,6 +364,43 @@ export function shouldHandleWakeEvent(info: WakeEventInfo, agentId: string): boo
   return !info.agentId || info.agentId === agentId;
 }
 
+export function shouldSkipPollWake(args: { wakeStreamHealthy: boolean; busy: boolean; stopped: boolean }): boolean {
+  return args.busy || args.stopped || args.wakeStreamHealthy;
+}
+
+export function isWakeStreamHealthy(lastWakeStreamAt: number, now: number, pollMs: number, factor = WAKE_STREAM_HEALTH_FACTOR): boolean {
+  return lastWakeStreamAt > 0 && now - lastWakeStreamAt < pollMs * factor;
+}
+
+export function shouldFallbackAckSeen(acked: boolean, seenCount: number): boolean {
+  return !acked && seenCount > 0;
+}
+
+export function nextNoStateActionStreak(current: number, acked: boolean): number {
+  return acked ? 0 : current + 1;
+}
+
+export function unreadBatchKey(seen: Map<string, string>): string {
+  return [...seen].sort(([a], [b]) => a.localeCompare(b)).map(([conversationId, messageId]) => `${conversationId}\0${messageId}`).join("\0");
+}
+
+export function shouldFallbackAckAfterStreak(streak: number, limit = NO_STATE_ACTION_ACK_STREAK): boolean {
+  return streak >= limit;
+}
+
+export function nextFailOpenStreak(current: number, source?: string, handled = false): number {
+  if (handled) return 0;
+  return source === "fail-open" ? current + 1 : 0;
+}
+
+export function shouldDeferFailOpenTriage(streak: number, limit = FAIL_OPEN_STREAK_LIMIT): boolean {
+  return streak >= limit;
+}
+
+export function failOpenStreakAfterDeferral(streak: number): number {
+  return shouldDeferFailOpenTriage(streak) ? 0 : streak;
+}
+
 export class AgentRunner {
   private readonly home: string;
   private readonly binDir: string;
@@ -392,6 +432,12 @@ export class AgentRunner {
   private sharedSkillSnapshot: SharedSkillSnapshot | undefined;
   private hostHomeEntries: HostHomeEntry[] = [];
   private remediation: RemediationAdvice | null = null;
+  private lastWakeStreamAt = 0;
+  private failOpenStreak = 0;
+  private failOpenBackoffUntil = 0;
+  private failOpenBackoffTimer: NodeJS.Timeout | null = null;
+  private noStateActionStreak = 0;
+  private noStateActionUnreadKey = "";
 
   constructor(
     private readonly cfg: ComputerConfig,
@@ -506,7 +552,13 @@ export class AgentRunner {
     }, "info", `${this.agent.name} started${PREPARE_WORKTREES ? `; ${formatWorktreePreparationResults(worktreePreparation, true).split("\n")[0]}` : ""}`);
     void this.streamLoop();
     this.pollTimer = setInterval(() => {
-      if (!this.busy && !this.stopped) this.scheduleWake("poll");
+      const now = Date.now();
+      if (shouldSkipPollWake({
+        busy: this.busy,
+        stopped: this.stopped,
+        wakeStreamHealthy: isWakeStreamHealthy(this.lastWakeStreamAt, now, INBOX_POLL_MS)
+      })) return;
+      this.scheduleWake("poll");
     }, INBOX_POLL_MS);
   }
 
@@ -514,6 +566,7 @@ export class AgentRunner {
     this.stopped = true;
     if (this.pollTimer) clearInterval(this.pollTimer);
     if (this.wakeDebounceTimer) clearTimeout(this.wakeDebounceTimer);
+    this.clearFailOpenBackoff();
     abortWakeStream(this.wakeStreamController);
     this.wakeStreamController = null;
     this.pollTimer = null;
@@ -586,6 +639,22 @@ export class AgentRunner {
     swallowTurnRejection(this.runTurn(reason), (message) => {
       console.error(`[${this.agent.id}/${this.adapter.id}] runTurn rejected (swallowed): ${message}`);
     });
+  }
+
+  private scheduleFailOpenBackoffWake(delayMs: number): void {
+    if (this.failOpenBackoffTimer) clearTimeout(this.failOpenBackoffTimer);
+    this.failOpenBackoffTimer = setTimeout(() => {
+      this.failOpenBackoffTimer = null;
+      this.scheduleWake("fail-open-backoff");
+    }, delayMs);
+    this.failOpenBackoffTimer.unref?.();
+  }
+
+  private clearFailOpenBackoff(): void {
+    this.failOpenBackoffUntil = 0;
+    if (!this.failOpenBackoffTimer) return;
+    clearTimeout(this.failOpenBackoffTimer);
+    this.failOpenBackoffTimer = null;
   }
 
   private steerRunningTurn(text: string): void {
@@ -976,8 +1045,11 @@ ${delta}`;
     try {
       do {
         this.pendingRerun = false;
-        if (Date.now() < this.triageBackoffUntil) break;
-        if (Date.now() < this.engineBackoffUntil) break;
+        const now = Date.now();
+        if (now < this.triageBackoffUntil) break;
+        if (now < this.failOpenBackoffUntil) break;
+        if (this.failOpenBackoffUntil > 0) this.clearFailOpenBackoff();
+        if (now < this.engineBackoffUntil) break;
         const token = await this.ensureToken();
         const activeContract = this.lastWakeContract;
         this.lastWakeContract = null;
@@ -1002,6 +1074,21 @@ ${delta}`;
         }
 
         const triage = await this.inboxTriage(token);
+        this.failOpenStreak = nextFailOpenStreak(this.failOpenStreak, triage?.source);
+        if (triage?.source === "fail-open" && shouldDeferFailOpenTriage(this.failOpenStreak)) {
+          const backoff = Math.min(TRIAGE_BACKOFF_MAX_MS, 60_000);
+          const deferredStreak = this.failOpenStreak;
+          this.failOpenBackoffUntil = Date.now() + backoff;
+          this.failOpenStreak = failOpenStreakAfterDeferral(this.failOpenStreak);
+          this.scheduleFailOpenBackoffWake(backoff);
+          console.warn(`[${this.agent.id}/${this.adapter.id}] triage fail-open streak ${deferredStreak}; deferring inbox turn ${Math.round(backoff / 1000)}s`);
+          // Do NOT ack unread here: triage is degraded and the big brain has not read these
+          // messages, so acking would mark them read and silently drop human input. Back off one
+          // cycle without acking, then allow fail-open to reach the big brain again even if triage
+          // is still degraded.
+          await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" }, this.cfg.tenantId);
+          break;
+        }
         if (triage?.source === "rate-limited") {
           this.triageTroubleStreak += 1;
           const backoff = Math.min(TRIAGE_BACKOFF_MAX_MS, 30_000 * 2 ** (this.triageTroubleStreak - 1));
@@ -1013,6 +1100,8 @@ ${delta}`;
         if (triage?.source !== "fail-open") {
           this.triageTroubleStreak = 0;
           this.triageBackoffUntil = 0;
+          this.failOpenStreak = 0;
+          this.clearFailOpenBackoff();
         }
         if (triage?.actionable === false) {
           await this.ackSeen(token, seen);
@@ -1101,14 +1190,40 @@ ${delta}`;
             await this.publishEngineFailure({ token, runId: run?.runId, conversationId: typingConvo, error, exitCode });
           }
         } else {
+          if (triage?.source === "fail-open") {
+            this.failOpenStreak = nextFailOpenStreak(this.failOpenStreak, triage.source, true);
+            this.clearFailOpenBackoff();
+          }
           const acked = await this.ackRunActions(token, run?.runId, seen);
+          const unreadKey = unreadBatchKey(seen);
+          if (acked || unreadKey !== this.noStateActionUnreadKey) {
+            this.noStateActionUnreadKey = acked ? "" : unreadKey;
+            this.noStateActionStreak = 0;
+          }
+          this.noStateActionStreak = nextNoStateActionStreak(this.noStateActionStreak, acked);
           if (!acked) {
             await this.publishEvent("turn.no_state_action", {
               reason,
               runId: run?.runId,
               conversationId: typingConvo,
-              messageCount: seen.size
+              messageCount: seen.size,
+              streak: this.noStateActionStreak
             }, "warn");
+            // The big brain ran but recorded no state action. Give it one grace turn before
+            // acking (it may reply next turn); only fall back to acking unread once the same
+            // unread has produced no action across NO_STATE_ACTION_ACK_STREAK turns, which still
+            // breaks the no-action reprocessing loop without dropping a message on a single turn.
+            if (shouldFallbackAckSeen(acked, seen.size) && shouldFallbackAckAfterStreak(this.noStateActionStreak)) {
+              await this.ackSeen(token, seen);
+              this.noStateActionStreak = 0;
+              this.noStateActionUnreadKey = "";
+              await this.publishEvent("turn.fallback_ack", {
+                reason,
+                runId: run?.runId,
+                conversationId: typingConvo,
+                messageCount: seen.size
+              }, "warn");
+            }
           }
         }
         await runtimePost(this.cfg.serverUrl, `/runs/${run?.runId}/finish`, token, {
@@ -1274,11 +1389,15 @@ ${delta}`;
         if (!res.ok || !res.body) throw new Error(`wake-stream HTTP ${res.status}`);
         console.log(`[${this.agent.id}/${this.adapter.id}] wake-stream connected`);
         connectedAt = Date.now();
+        this.lastWakeStreamAt = connectedAt;
         await this.publishEvent("wake.stream.connected", { backoffMs: backoff });
         this.scheduleWake("reconnect-catchup");
         for await (const evt of parseSseStream(res.body)) {
           if (this.stopped) break;
           if (evt.event !== "wake" && evt.event !== "steer") continue;
+          // Only genuine wake/steer frames mark the stream healthy for poll suppression;
+          // heartbeats or other frame types must not keep the poll fallback disabled.
+          this.lastWakeStreamAt = Date.now();
           const info = parseWakeEventInfo(evt.data);
           if (!shouldHandleWakeEvent(info, this.agent.id)) continue;
           if (info.resetState) {
@@ -1318,6 +1437,7 @@ ${delta}`;
       } finally {
         abortWakeStream(this.wakeStreamController);
         this.wakeStreamController = null;
+        this.lastWakeStreamAt = 0;
       }
       if (this.stopped) break;
       // Only reset the backoff after the connection stayed healthy long enough. A connect-then-

@@ -8,21 +8,30 @@ import {
   appendRuntimePreamble,
   buildRuntimePreambleSection,
   agentSessionFile,
+  failOpenStreakAfterDeferral,
   formatTriageNote,
   formatSteerPrompt,
   isContextOverflow,
   isPoisonedTranscript,
+  isWakeStreamHealthy,
   isWakeStreamAuthFailure,
   mustResetSession,
+  nextFailOpenStreak,
+  nextNoStateActionStreak,
   parseWakeEventInfo,
   selectSteerMessage,
   Semaphore,
   sessionResetReason,
+  shouldDeferFailOpenTriage,
+  shouldFallbackAckSeen,
+  shouldFallbackAckAfterStreak,
   shouldHandleWakeEvent,
+  shouldSkipPollWake,
   shouldStopEngineOnBeginStop,
   replaceWakeStreamController,
   sanitizeNestedEngineEnv,
   swallowTurnRejection,
+  unreadBatchKey,
   visibleEngineError
 } from "../src/runner.js";
 
@@ -316,4 +325,71 @@ test("swallowTurnRejection catches fire-and-forget turn errors", async () => {
 
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(seen, ["boom"]);
+});
+
+test("shouldSkipPollWake defers inbox poll while wake-stream is healthy", () => {
+  const now = 100_000;
+  assert.equal(shouldSkipPollWake({ busy: false, stopped: false, wakeStreamHealthy: true }), true);
+  assert.equal(shouldSkipPollWake({ busy: false, stopped: false, wakeStreamHealthy: false }), false);
+  assert.equal(isWakeStreamHealthy(now - 10_000, now, 20_000), true);
+  assert.equal(isWakeStreamHealthy(now - 80_000, now, 20_000), false);
+});
+
+test("shouldFallbackAckSeen only applies when run actions are missing", () => {
+  assert.equal(shouldFallbackAckSeen(false, 2), true);
+  assert.equal(shouldFallbackAckSeen(true, 2), false);
+  assert.equal(shouldFallbackAckSeen(false, 0), false);
+});
+
+test("no-state-action streak grants a grace turn before fallback-acking unread", () => {
+  // A successful ack resets the streak; consecutive no-action turns accumulate it.
+  assert.equal(nextNoStateActionStreak(0, true), 0);
+  assert.equal(nextNoStateActionStreak(3, true), 0);
+  const first = nextNoStateActionStreak(0, false);
+  assert.equal(first, 1);
+  // First no-action turn is a grace turn (no fallback-ack yet).
+  assert.equal(shouldFallbackAckAfterStreak(first), false);
+  const second = nextNoStateActionStreak(first, false);
+  assert.equal(second, 2);
+  // Same unread still unhandled after a second turn: now the fallback-ack fires.
+  assert.equal(shouldFallbackAckAfterStreak(second), true);
+});
+
+test("unreadBatchKey changes when the unread batch changes", () => {
+  assert.equal(
+    unreadBatchKey(new Map([["b", "2"], ["a", "1"]])),
+    unreadBatchKey(new Map([["a", "1"], ["b", "2"]]))
+  );
+  assert.notEqual(
+    unreadBatchKey(new Map([["demo", "msg-1"]])),
+    unreadBatchKey(new Map([["demo", "msg-2"]]))
+  );
+});
+
+test("no-state-action streak resets when the unread batch changes", () => {
+  let streak = nextNoStateActionStreak(0, false);
+  let key = unreadBatchKey(new Map([["demo", "msg-1"]]));
+  assert.equal(streak, 1);
+
+  const nextKey = unreadBatchKey(new Map([["demo", "msg-2"]]));
+  if (nextKey !== key) {
+    key = nextKey;
+    streak = 0;
+  }
+  streak = nextNoStateActionStreak(streak, false);
+
+  assert.equal(key, nextKey);
+  assert.equal(streak, 1);
+  assert.equal(shouldFallbackAckAfterStreak(streak), false);
+});
+
+test("nextFailOpenStreak and shouldDeferFailOpenTriage cap repeated fail-open triage", () => {
+  assert.equal(nextFailOpenStreak(0, "local"), 0);
+  assert.equal(nextFailOpenStreak(1, "fail-open"), 2);
+  assert.equal(shouldDeferFailOpenTriage(2), false);
+  assert.equal(shouldDeferFailOpenTriage(3), true);
+  assert.equal(failOpenStreakAfterDeferral(3), 0);
+  assert.equal(shouldDeferFailOpenTriage(failOpenStreakAfterDeferral(3)), false);
+  assert.equal(nextFailOpenStreak(3, "local"), 0);
+  assert.equal(nextFailOpenStreak(2, "fail-open", true), 0);
 });

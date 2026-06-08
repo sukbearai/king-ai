@@ -8,6 +8,8 @@ Multi-role collaboration logic is part of the core product. `packages/cli/src/te
 
 CLI tests live in `packages/cli/test/` and compile into `packages/cli/dist/test/`. The optional Cloudflare GUI runtime app is under `apps/gui-worker/`, with tests in `apps/gui-worker/test/`. Generated output belongs in package-local `dist/` directories and should not be edited by hand.
 
+The GUI worker is split by runtime boundary. `apps/gui-worker/src/index.ts` is a small barrel that re-exports the Durable Object and test-facing helpers from `gui-state-do.ts`. `gui-state-do.ts` owns the `GuiState` Durable Object implementation. `gui-types.ts` owns shared GUI runtime types and constants; keep request auth HTML out of this file. `gui-auth.ts` owns Better Auth, tenant resolution, request context auth, and login HTML. `gui-http.ts` owns small HTTP/stream helpers. `gui-routes.ts` creates the Hono app and should receive its dependencies through `createGuiApp`. Workflow card/task ledger writes should go through `workflow-state.ts`, artifact validation/parsing through `artifact-helpers.ts`, runtime CLI dispatch through `runtime-cli-dispatch.ts`, and command-specific behavior through the `gui-cli-*.ts` modules. The GUI page shell is `page.tsx`; browser scripts and styles live in the `gui-client-*` and `gui-page-*` modules.
+
 ## Runtime Architecture Principles
 
 Preserve LLM autonomy when hardening the runtime. The model should decide strategy and content: whether to answer, delegate, ask the human, create or update a task, request review, or intentionally stay silent with a reason. Code should not force agents through a rigid, form-like workflow unless a product requirement explicitly calls for it.

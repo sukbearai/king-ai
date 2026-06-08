@@ -3,7 +3,15 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
-import worker, { GuiState } from "../src/index.js";
+import worker, {
+  GuiState,
+  resolveWakeEvent,
+  resolveWakeData,
+  shouldAutoDelegateMessage,
+  triageResponseMode,
+  wakeEventVisibleToAgent,
+  wakeResolveContextFromState
+} from "../src/index.js";
 
 type StorageMap = Map<string, unknown>;
 
@@ -855,6 +863,29 @@ test("gui wake events target the assigned collaborator", async () => {
   const wake = state.wakeLog?.find((row) => row.event === "wake" && row.data.taskId === created.task.id);
   assert.equal(wake?.data.agentId, "dev");
   assert.equal(wake?.data.agenda, true);
+});
+
+test("wake filtering resolves implicit card wake targets before checking visibility", () => {
+  const ctx = wakeResolveContextFromState({
+    agents: [{ id: "king-ai-ceo" }, { id: "dev" }, { id: "reviewer" }],
+    conversations: [{
+      id: "king-ai-convo",
+      coordinatorAgentId: "king-ai-ceo",
+      teamMode: "team",
+      kind: "group"
+    }],
+    cards: [{ id: "card-1", title: "Stream target", column: "todo", assignee: "dev" }],
+    tasks: [],
+    defaultConversationId: "king-ai-convo",
+    defaultCoordinatorAgentId: "king-ai-ceo"
+  });
+  const raw = { event: "wake", data: { agenda: true, cardId: "card-1" } };
+  assert.equal(wakeEventVisibleToAgent(raw, "dev"), false);
+
+  const resolved = resolveWakeEvent(ctx, raw);
+  assert.deepEqual((resolved.data as { agentId?: string }).agentId, "dev");
+  assert.equal(wakeEventVisibleToAgent(resolved, "dev"), true);
+  assert.equal(wakeEventVisibleToAgent(resolved, "reviewer"), false);
 });
 
 test("new gui windows carry a collaboration team", async () => {
@@ -2392,7 +2423,10 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /function approvalMatchesConversation\(approval, tasksById\)/);
   assert.match(html, /approvalConversationId\(approval\)/);
   assert.match(html, /approvalTaskId\(approval\)/);
-  assert.match(html, /const hostCards = isAllConversationView\(\) \? \(\(hostResult && hostResult\.cards\) \|\| \[\]\) : \[\]/);
+  assert.match(html, /function hostDecisionCardsFromResult\(hostResult\)/);
+  assert.match(html, /const hostCards = isAllConversationView\(\) \? hostDecisionCardsFromResult\(hostResult\) : \[\]/);
+  assert.match(html, /function workflowCardViewStatus\(status\)/);
+  assert.match(html, /Array\.isArray\(state\.workflowCards\)/);
   assert.match(html, /taskFilterActive: '进行中'/);
   assert.match(html, /taskStatusInProgress: 'In progress'/);
   assert.match(html, /class="task-filter"/);
@@ -4223,7 +4257,7 @@ test("gui bridges host workflow decisions when a host url is configured", async 
       const body = init && typeof init.body === "string" ? JSON.parse(init.body) as { command?: string; input?: Record<string, unknown> } : {};
       calls.push(body);
       if (body.command === "workflow-list") {
-        return new Response(JSON.stringify({ ok: true, command: "workflow-list", exitCode: 0, text: "", json: { cards: [{ id: "decision-7", kind: "decision", status: "waiting_human", title: "Approve deploy", ownerRole: "ops", decisionBy: "human" }] } }), { headers: { "Content-Type": "application/json" } });
+        return new Response(JSON.stringify({ ok: true, command: "workflow-list", exitCode: 0, text: "", json: { cards: [{ id: "decision-7", kind: "decision", status: "waiting_human", title: "Approve deploy", ownerRole: "ops", decisionBy: "human", detail: "Need approval before deploy" }] } }), { headers: { "Content-Type": "application/json" } });
       }
       if (body.command === "workflow-update") {
         return new Response(JSON.stringify({ ok: true, command: "workflow-update", exitCode: 0, text: "", json: { card: { id: body.input?.id, status: body.input?.status } } }), { headers: { "Content-Type": "application/json" } });
@@ -4243,11 +4277,16 @@ test("gui bridges host workflow decisions when a host url is configured", async 
     const bindings = env(undefined, { KING_AI_HOST_URL: "http://127.0.0.1:8799", KING_AI_HOST_OUTPUT_DIR: "deliverables" });
 
     // Configured: waiting_human host decision cards are surfaced.
-    const listed = await json<{ configured: boolean; cards: { id: string; status: string }[] }>(
+    const listed = await json<{ configured: boolean; cards: { id: string; status: string; decisionBy?: string; detail?: string }[]; workflowCards: { id: string; decisionBy?: string; detail?: string }[] }>(
       await worker.fetch(new Request("https://gui/gui/host-decisions"), bindings)
     );
     assert.equal(listed.configured, true);
     assert.equal(listed.cards[0]?.id, "decision-7");
+    assert.equal(listed.cards[0]?.decisionBy, "human");
+    assert.equal(listed.cards[0]?.detail, "Need approval before deploy");
+    const workflowDecision = listed.workflowCards.find((card) => card.id === "decision-7");
+    assert.equal(workflowDecision?.decisionBy, "human");
+    assert.equal(workflowDecision?.detail, "Need approval before deploy");
     const listCall = calls.find((c) => c.command === "workflow-list");
     assert.equal(listCall?.input?.kind, "decision");
     assert.equal(listCall?.input?.status, "waiting_human");
@@ -4342,4 +4381,57 @@ test("root dev helper strips package-manager argument separators", () => {
   assert.equal(result.status, 0, result.stderr);
   const payload = JSON.parse(result.stdout) as { cliArgs: string[] };
   assert.deepEqual(payload.cliArgs, ["--filter", "@suwujs/king-ai", "dev", "host", "status", "--json"]);
+});
+
+test("wakeEventVisibleToAgent only broadcasts undirected wakes for global reset/import", () => {
+  assert.equal(wakeEventVisibleToAgent({ data: { agentId: "dev" } }, "dev"), true);
+  assert.equal(wakeEventVisibleToAgent({ data: { agentId: "dev" } }, "reviewer"), false);
+  assert.equal(wakeEventVisibleToAgent({ data: { agenda: true } }, "dev"), false);
+  assert.equal(wakeEventVisibleToAgent({ data: { resetState: true } }, "dev"), true);
+  assert.equal(wakeEventVisibleToAgent({ data: { importedState: true } }, "reviewer"), true);
+});
+
+test("resolveWakeData fills missing agent targets for agenda and conversation wakes", () => {
+  const ctx = wakeResolveContextFromState({
+    agents: [{ id: "king-ai-ceo" }, { id: "dev" }],
+    conversations: [{
+      id: "demo",
+      coordinatorAgentId: "king-ai-ceo",
+      teamMode: "team",
+      kind: "group"
+    }],
+    cards: [{ id: "card-1", title: "t", column: "todo", assignee: "dev" }],
+    tasks: [],
+    defaultConversationId: "king-ai-convo",
+    defaultCoordinatorAgentId: "king-ai-ceo"
+  });
+  assert.equal(resolveWakeData(ctx, { agenda: true, cardId: "card-1" }).agentId, "dev");
+  assert.equal(resolveWakeData(ctx, { conversationId: "demo" }).agentId, "king-ai-ceo");
+});
+
+test("triageResponseMode maps team conversations to one-of-us", () => {
+  const conversation = {
+    id: "demo",
+    title: "demo",
+    kind: "group" as const,
+    teamMode: "team" as const,
+    created_at: 0,
+    updated_at: 0
+  };
+  assert.equal(triageResponseMode(conversation, undefined, "dev"), "one-of-us");
+  assert.equal(triageResponseMode({ ...conversation, teamMode: "single" }, undefined, "dev"), "me");
+  assert.equal(
+    triageResponseMode(conversation, { row: { to_agent_id: "dev" }, score: 1, priority: "normal", type: "message", route: "steer", reasons: [] }, "dev"),
+    "me"
+  );
+});
+
+test("shouldAutoDelegateMessage keeps single-mode tracking and gates casual team chatter", () => {
+  const single = { id: "x", title: "x", kind: "group" as const, teamMode: "single" as const, created_at: 0, updated_at: 0 };
+  const team = { ...single, teamMode: "team" as const };
+  assert.equal(shouldAutoDelegateMessage(single, "reply with 1"), true);
+  assert.equal(shouldAutoDelegateMessage(team, "hello"), false);
+  assert.equal(shouldAutoDelegateMessage(team, "大家好"), false);
+  assert.equal(shouldAutoDelegateMessage(team, "research competitors and source evidence"), true);
+  assert.equal(shouldAutoDelegateMessage(team, "请团队实现多角色协作"), true);
 });
