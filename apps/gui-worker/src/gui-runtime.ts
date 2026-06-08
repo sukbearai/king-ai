@@ -27,7 +27,6 @@ import {
   taskScopeConflicts
 } from "./gui-cli-options.js";
 import {
-  BUILT_IN_IELTS_ROLE_MARKERS,
   CLI_LOG_CAPACITY,
   DEFAULT_AGENT,
   DEFAULT_CONVERSATION,
@@ -38,14 +37,7 @@ import {
   GUI_ATTACHMENT_STORE_CAPACITY,
   GUI_BASE_STATE_KEY,
   GUI_ENTITY_STATE_KEYS,
-  GUI_LEGACY_STATE_KEY,
   IELTS_WORKFLOW_AGENTS,
-  LEGACY_DEFAULT_AGENT_ID,
-  LEGACY_DEFAULT_AGENT_NAME,
-  LEGACY_DEFAULT_AGENT_ROLE,
-  LEGACY_DEFAULT_DEV_ROLE,
-  LEGACY_DEFAULT_REVIEWER_ROLE,
-  LEGACY_IELTS_ROLE_MARKERS,
   LOOP_EVENT_BUFFER_CAPACITY,
   NOTICE_LOG_CAPACITY,
   REVIEW_COVERAGE_GATE,
@@ -138,7 +130,7 @@ function normalizeAgentId(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const id = value.trim();
   if (!id) return undefined;
-  return id === LEGACY_DEFAULT_AGENT_ID ? DEFAULT_AGENT.id : id;
+  return id;
 }
 
 function normalizeRuntimeTokens(value: Record<string, string> | undefined): Record<string, string> {
@@ -179,14 +171,9 @@ function stripEntityState(state: State): State {
   return base;
 }
 
-function normalizeRemoteAssistGrant(value: unknown, legacyList?: unknown): RemoteAssistGrant | undefined {
-  const source = value && typeof value === "object"
-    ? value
-    : Array.isArray(legacyList)
-      ? legacyList.find((item) => item && typeof item === "object" && !(item as Partial<RemoteAssistGrant>).revokedAt)
-      : undefined;
-  if (!source || typeof source !== "object") return undefined;
-  const row = source as Partial<RemoteAssistGrant>;
+function normalizeRemoteAssistGrant(value: unknown): RemoteAssistGrant | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const row = value as Partial<RemoteAssistGrant>;
   if (typeof row.tokenHash !== "string" || typeof row.createdAt !== "number") return undefined;
   return {
     tokenHash: row.tokenHash,
@@ -200,7 +187,7 @@ function normalizeRemoteAssistGrant(value: unknown, legacyList?: unknown): Remot
 }
 
 function activeRemoteAssistGrant(state: State): RemoteAssistGrant | undefined {
-  state.remoteAssist = normalizeRemoteAssistGrant(state.remoteAssist, (state as State & { remoteAssistGrants?: unknown }).remoteAssistGrants);
+  state.remoteAssist = normalizeRemoteAssistGrant(state.remoteAssist);
   if (!state.remoteAssist || state.remoteAssist.revokedAt) return undefined;
   return state.remoteAssist;
 }
@@ -433,7 +420,7 @@ function normalizeArtifacts(artifacts: Artifact[]): Artifact[] {
   return artifacts.map((artifact) => ({
     ...artifact,
     agentId: normalizeAgentId(artifact.agentId) ?? artifact.agentId,
-    source: artifact.source === LEGACY_DEFAULT_AGENT_ID ? DEFAULT_AGENT.id : artifact.source
+    source: artifact.source
   }));
 }
 
@@ -690,7 +677,7 @@ function normalizeConversationTeamSnapshot(value: unknown): ConversationTeamSnap
     mode: normalizeTeamMode(row.mode),
     coordinatorAgentId,
     teamAgentIds,
-    agents: agents.map((agent) => normalizeBuiltInAgent({ ...agent, id: normalizeAgentId(agent.id) ?? agent.id })),
+    agents: agents.map((agent) => ({ ...agent, id: normalizeAgentId(agent.id) ?? agent.id })),
     createdAt: typeof row.createdAt === "number" ? row.createdAt : Date.now()
   };
 }
@@ -727,36 +714,11 @@ function normalizeAgents(agents: Agent[] | undefined): Agent[] {
     if (!id) continue;
     byId.set(id, { ...agent, id });
   }
-  for (const agent of DEFAULT_TEAM_AGENTS) {
+  for (const agent of [...DEFAULT_TEAM_AGENTS, ...IELTS_WORKFLOW_AGENTS]) {
     const existing = byId.get(agent.id);
-    const normalized = { ...agent, ...existing };
-    if (agent.id === DEFAULT_AGENT.id) {
-      if (!existing?.name || existing.name === LEGACY_DEFAULT_AGENT_NAME) normalized.name = agent.name;
-      if (!existing?.role || existing.role === LEGACY_DEFAULT_AGENT_ROLE) normalized.role = agent.role;
-    } else if (agent.id === "dev" && (!existing?.role || existing.role === LEGACY_DEFAULT_DEV_ROLE)) {
-      normalized.role = agent.role;
-    } else if (agent.id === "reviewer" && (!existing?.role || existing.role === LEGACY_DEFAULT_REVIEWER_ROLE)) {
-      normalized.role = agent.role;
-    }
-    byId.set(agent.id, normalized);
-  }
-  for (const agent of IELTS_WORKFLOW_AGENTS) {
-    const existing = byId.get(agent.id);
-    byId.set(agent.id, normalizeBuiltInAgent({ ...agent, ...existing }));
+    byId.set(agent.id, { ...agent, ...existing });
   }
   return [...byId.values()];
-}
-
-function normalizeBuiltInAgent(agent: Agent): Agent {
-  const ielts = IELTS_WORKFLOW_AGENTS.find((row) => row.id === agent.id);
-  if (ielts && isLegacyIeltsRole(agent.role)) return { ...agent, role: ielts.role };
-  return agent;
-}
-
-function isLegacyIeltsRole(role?: string): boolean {
-  if (!role) return true;
-  return LEGACY_IELTS_ROLE_MARKERS.every((marker) => role.includes(marker))
-    || BUILT_IN_IELTS_ROLE_MARKERS.every((marker) => role.includes(marker));
 }
 
 function findAgent(state: State, agentId?: string | null): Agent | undefined {

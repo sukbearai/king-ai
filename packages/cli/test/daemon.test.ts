@@ -33,7 +33,7 @@ test("parsePairLocator supports GUI-provided server and tenant", () => {
     serverUrl: "https://gui.example.com",
     tenantId: "user-octo"
   });
-  assert.deepEqual(parsePairLocator("legacy-code"), { code: "legacy-code" });
+  assert.deepEqual(parsePairLocator("plain-code"), { code: "plain-code" });
 });
 
 test("clearLocalRuntimeState removes generated runtime state but keeps pairing config", async () => {

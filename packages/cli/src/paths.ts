@@ -17,9 +17,7 @@ export function resolveConfigDir(_commandName = commandNameFromProcess()): strin
 }
 
 export const CONFIG_DIR = resolveConfigDir();
-export const LEGACY_CONFIG_DIR = join(homedir(), ".king");
 export const CONFIG_PATH = join(CONFIG_DIR, "computer.json");
-export const LEGACY_CONFIG_PATH = join(LEGACY_CONFIG_DIR, "computer.json");
 export const AGENTS_ROOT = join(CONFIG_DIR, "agents");
 export const SESSIONS_DIR = join(CONFIG_DIR, "sessions");
 export const TRIAGE_DIR = join(CONFIG_DIR, "triage");

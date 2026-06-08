@@ -31,7 +31,7 @@ test("resolveHostHomeEntry accepts only single host-home dot entries", async () 
 
 test("linkHostHomeEntries symlinks explicit existing entries and records skips", async () => {
   const home = await mkdtemp(join(tmpdir(), "king-ai-host-home-"));
-  const agentHome = await mkdtemp(join(tmpdir(), "king-ai-agent-home-"));
+  const agentHome = await mkdtemp(join(tmpdir(), "king-ai-ceo-home-"));
   try {
     await writeFile(join(home, ".gitconfig"), "[user]\n", "utf8");
     await mkdir(join(home, ".ssh"));
@@ -58,7 +58,7 @@ test("linkHostHomeEntries symlinks explicit existing entries and records skips",
 
 test("linkHostHomeEntries does not link host credentials by default", async () => {
   const home = await mkdtemp(join(tmpdir(), "king-ai-host-home-"));
-  const agentHome = await mkdtemp(join(tmpdir(), "king-ai-agent-home-"));
+  const agentHome = await mkdtemp(join(tmpdir(), "king-ai-ceo-home-"));
   try {
     await writeFile(join(home, ".gitconfig"), "[user]\n", "utf8");
     await mkdir(join(home, ".ssh"));

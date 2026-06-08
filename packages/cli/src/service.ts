@@ -124,7 +124,7 @@ export function windowsTaskName(commandName: CommandName = "king-ai"): string {
 }
 
 export function windowsWrapperPath(commandName: CommandName = "king-ai"): string {
-  return join(windowsServiceDir(commandName), "king-ai-agent-computer.cmd");
+  return join(windowsServiceDir(commandName), "king-ai-computer.cmd");
 }
 
 export function buildWindowsServiceWrapper(args: string[], logPath = daemonLogPath()): string {

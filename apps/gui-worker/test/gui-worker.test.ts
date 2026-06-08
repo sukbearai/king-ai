@@ -49,7 +49,7 @@ function env(initialState?: unknown, extraBindings: Record<string, unknown> = {}
   }
   const createStub = (name: string) => {
     const storage: StorageMap = new Map();
-    if (initialState && name === "global") storage.set("state", initialState);
+    if (initialState && name === "global") storage.set("state:base", initialState);
     const state = { storage: new FakeStorage(storage, failPutAfter) } as unknown as DurableObjectState;
     const instance = new GuiState(state);
     return {
@@ -996,7 +996,10 @@ test("gui windows choose agents from the selected workflow", async () => {
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Sentence core means only the main clause skeleton/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not include modifiers/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do include required complements for linking verbs/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /mark 'It is Saturday', 'I feel exhausted', and 'the work seems never to end' as sentence cores/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /mark 'It is Saturday' and 'I feel exhausted' as cores/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /prefer the shortest possible spans/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Never wrap a whole clause, the sentence core, or most of a sentence in one ielts-phrase/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /never skip a word/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /mark only 'engineer uses tools' as core/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /mark only 'I want' as core/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /safe HTML spans/);
@@ -1036,139 +1039,6 @@ test("gui windows choose agents from the selected workflow", async () => {
   assert.equal(custom.conversation.teamSnapshot?.agents.some((agent) => agent.id === "king-ai-ceo"), false);
   assert.equal(custom.conversation.teamSnapshot?.agents.some((agent) => agent.id === "dev"), false);
   assert.equal(custom.conversation.teamSnapshot?.agents.some((agent) => agent.id === "ielts-writing-coach"), false);
-});
-
-test("stored IELTS agents and snapshots migrate from legacy section-list roles", async () => {
-  const legacyRole = [
-    "IELTS reading and writing coach for improving reading and writing. Keep the conversation in English by default.",
-    "Prefer compact, high-signal replies: Natural English, Sentence Core, Clauses/Phrases, Vocabulary, and one small writing tip."
-  ].join(" ");
-  const bindings = env({
-    agents: [{ id: "ielts-tutor", name: "IELTS Reading & Writing Coach", role: legacyRole, engine: "codex", lifecycle: "on-demand" }],
-    workflowAgentIds: { "ielts-study": ["ielts-tutor"] },
-    conversations: [{
-      id: "english",
-      title: "English",
-      kind: "group",
-      created_at: Date.now(),
-      updated_at: Date.now(),
-      workflowId: "ielts-study",
-      teamMode: "single",
-      coordinatorAgentId: "ielts-tutor",
-      teamAgentIds: ["ielts-tutor"],
-      teamSnapshot: {
-        workflowId: "ielts-study",
-        mode: "single",
-        coordinatorAgentId: "ielts-tutor",
-        teamAgentIds: ["ielts-tutor"],
-        agents: [{ id: "ielts-tutor", name: "IELTS Reading & Writing Coach", role: legacyRole, engine: "codex", lifecycle: "on-demand" }],
-        createdAt: Date.now()
-      }
-    }],
-    messages: []
-  });
-  const state = await json<{
-    agents: { id: string; role: string }[];
-    conversations: { id: string; teamSnapshot?: { agents: { id: string; role: string }[] } }[];
-  }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
-  const agentRole = state.agents.find((agent) => agent.id === "ielts-tutor")?.role ?? "";
-  const snapshotRole = state.conversations.find((conversation) => conversation.id === "english")?.teamSnapshot?.agents[0]?.role ?? "";
-  assert.match(agentRole, /Do not default to separate Sentence Core, Clauses\/Phrases, or Vocabulary lists/);
-  assert.match(agentRole, /Treat the whole coach reply as teaching material/);
-  assert.match(snapshotRole, /Do not default to separate Sentence Core, Clauses\/Phrases, or Vocabulary lists/);
-  assert.match(snapshotRole, /Treat the whole coach reply as teaching material/);
-  assert.doesNotMatch(snapshotRole, /Prefer compact, high-signal replies: Natural English, Sentence Core/);
-});
-
-test("stored IELTS agents and snapshots migrate from previous compact annotation roles", async () => {
-  const previousRole = [
-    "IELTS reading and writing coach for improving reading and writing. Keep the conversation in English by default.",
-    "When the learner writes Chinese, treat it as an expression gap: first give the natural English expression, then explain the useful grammar in simple English.",
-    "Do not give generic acknowledgements. Every reply should either improve the learner's sentence, analyze a text they provided, or ask one focused follow-up question.",
-    "Use this renderable annotation format whenever you provide an English sentence:",
-    "- For every sentence, mark only the minimal sentence core and useful phrases inline on the sentence itself.",
-    "- Sentence core means only the main clause skeleton: subject + predicate, plus a required object or complement when the verb needs one. Do not include modifiers such as adjectives, adverbs, relative clauses, purpose phrases, prepositional phrases, time/place phrases, or optional details in ielts-core.",
-    "- Examples: in 'An AI-forward software engineer uses AI tools as a normal part of design', mark only 'engineer uses tools' as core; mark 'AI-forward software engineer', 'AI tools', and 'as a normal part of design' as phrases. In 'I want to eat', mark only 'I want' as core and 'to eat' as phrase.",
-    "- Prefer safe HTML spans so highlights and clickable words can be nested: <span class=\"ielts-core\">I <span class=\"ielts-word\" data-word=\"want\" data-meaning=\"想要\" data-phonetic=\"/wɑːnt/\" data-syllables=\"want\">want</span></span> <span class=\"ielts-phrase\">to eat</span>.",
-    "- You may also use the compact fallback markers [core: ...], [phrase: ...], and [word word|中文词义|phonetic|syllables] when no nesting is needed.",
-    "- Mark sentence cores with class ielts-core. Use it for SVO, SVC, SV, and other main-clause skeletons only.",
-    "- Mark useful phrases with class ielts-phrase.",
-    "- Mark every English word in the sentence as clickable class ielts-word with data-word, data-meaning, data-phonetic, and data-syllables attributes. Do not limit clickable words to important vocabulary. Every clickable word should include all four attributes.",
-    "- The word meaning field must be concise Chinese, not English.",
-    "The GUI turns these markers into visual highlights and clickable vocabulary popups, so keep marker fields short and accurate.",
-    "When you mark useful phrases, include their concise Chinese meanings in the writing tip, for example: Phrase: be conducive to = 有利于.",
-    "Do not default to separate Sentence Core, Clauses/Phrases, or Vocabulary lists. Prefer compact replies: one natural English line with inline highlights and one small writing tip when useful."
-  ].join(" ");
-  const bindings = env({
-    agents: [{ id: "ielts-tutor", name: "IELTS Reading & Writing Coach", role: previousRole, engine: "codex", lifecycle: "on-demand" }],
-    workflowAgentIds: { "ielts-study": ["ielts-tutor"] },
-    conversations: [{
-      id: "english",
-      title: "English",
-      kind: "group",
-      created_at: Date.now(),
-      updated_at: Date.now(),
-      workflowId: "ielts-study",
-      teamMode: "single",
-      coordinatorAgentId: "ielts-tutor",
-      teamAgentIds: ["ielts-tutor"],
-      teamSnapshot: {
-        workflowId: "ielts-study",
-        mode: "single",
-        coordinatorAgentId: "ielts-tutor",
-        teamAgentIds: ["ielts-tutor"],
-        agents: [{ id: "ielts-tutor", name: "IELTS Reading & Writing Coach", role: previousRole, engine: "codex", lifecycle: "on-demand" }],
-        createdAt: Date.now()
-      }
-    }],
-    messages: []
-  });
-  const state = await json<{
-    agents: { id: string; role: string }[];
-    conversations: { id: string; teamSnapshot?: { agents: { id: string; role: string }[] } }[];
-  }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
-  const agentRole = state.agents.find((agent) => agent.id === "ielts-tutor")?.role ?? "";
-  const snapshotRole = state.conversations.find((conversation) => conversation.id === "english")?.teamSnapshot?.agents[0]?.role ?? "";
-  assert.match(agentRole, /Do include required complements for linking verbs/);
-  assert.match(agentRole, /Treat the whole coach reply as teaching material/);
-  assert.match(agentRole, /include every highlighted phrase in the writing tip with concise Chinese meanings/);
-  assert.match(snapshotRole, /Do include required complements for linking verbs/);
-  assert.match(snapshotRole, /Treat the whole coach reply as teaching material/);
-  assert.match(snapshotRole, /include every highlighted phrase in the writing tip with concise Chinese meanings/);
-  assert.doesNotMatch(snapshotRole, /include their concise Chinese meanings in the writing tip/);
-});
-
-test("custom IELTS room roles are not migrated", async () => {
-  const customRole = "IELTS reading and writing coach for a special room. Use only terse correction.";
-  const bindings = env({
-    agents: [{ id: "ielts-tutor", name: "IELTS Reading & Writing Coach", role: customRole, engine: "codex", lifecycle: "on-demand" }],
-    conversations: [{
-      id: "custom-english",
-      title: "Custom English",
-      kind: "group",
-      created_at: Date.now(),
-      updated_at: Date.now(),
-      workflowId: "ielts-study",
-      teamMode: "single",
-      coordinatorAgentId: "ielts-tutor",
-      teamAgentIds: ["ielts-tutor"],
-      teamSnapshot: {
-        workflowId: "ielts-study",
-        mode: "single",
-        coordinatorAgentId: "ielts-tutor",
-        teamAgentIds: ["ielts-tutor"],
-        agents: [{ id: "ielts-tutor", name: "IELTS Reading & Writing Coach", role: customRole, engine: "codex", lifecycle: "on-demand" }],
-        createdAt: Date.now()
-      }
-    }],
-    messages: []
-  });
-  const state = await json<{
-    agents: { id: string; role: string }[];
-    conversations: { id: string; teamSnapshot?: { agents: { id: string; role: string }[] } }[];
-  }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
-  assert.equal(state.agents.find((agent) => agent.id === "ielts-tutor")?.role, customRole);
-  assert.equal(state.conversations.find((conversation) => conversation.id === "custom-english")?.teamSnapshot?.agents[0]?.role, customRole);
 });
 
 test("new gui windows default to the IELTS workflow", async () => {
@@ -1755,77 +1625,6 @@ test("gui runtime exports, imports, and resets durable state snapshots", async (
   assert.equal(bad.status, 400);
 });
 
-test("gui durable state migrates legacy monolith into entity keys", async () => {
-  const legacy = {
-    computerId: "king-computer",
-    deviceToken: "device-token",
-    runtimeToken: "runtime-token",
-    runtimeTokens: {},
-    pairingCode: "pair-code",
-    availableEngines: ["codex"],
-    capabilities: { workspaces: [] },
-    agents: [],
-    workflowAgentIds: {},
-    conversations: [{ id: "king-ai-convo", title: "all", kind: "group", created_at: 1, updated_at: 1 }],
-    messages: [{ id: "msg-1", conversation_id: "king-ai-convo", conversation_title: "all", conversation_kind: "group", author_name: "King AI Human", author_kind: "human", kind: "message", body: "legacy message", created_at: 2, readBy: [] }],
-    cliLog: [],
-    statusLog: [],
-    typingLog: [],
-    thinkingLog: [],
-    eventLog: [],
-    wakeLog: [],
-    eventRoutes: [],
-    loopRunId: "run-gui",
-    currentLoop: 0,
-    loopEvents: [],
-    noticeLog: [],
-    triageLog: [],
-    runLog: [],
-    initiatives: [],
-    tasks: [{ id: "task-1", title: "legacy task", status: "assigned", assignee: "dev", priority: 5, created_at: 2, updated_at: 2 }],
-    taskEvents: [],
-    capsules: [],
-    mergeQueue: [],
-    evaluations: [],
-    runFeedback: [],
-    reviews: [],
-    cards: [],
-    calendar: [],
-    claims: [],
-    docs: [],
-    artifacts: [],
-    context: [],
-    hypotheses: [],
-    reactions: [],
-    composing: [],
-    approvals: [],
-    uploads: {}
-  };
-  const bindings = env(legacy);
-  const state = await json<{ messages: { body: string }[]; tasks: { title: string }[] }>(
-    await worker.fetch(new Request("https://gui/gui/state"), bindings)
-  );
-  assert.equal(state.messages[0]?.body, "legacy message");
-  assert.equal(state.tasks[0]?.title, "legacy task");
-
-  const debug = await json<{ rows: { key: string; present: boolean }[]; baseKeys: string[] }>(
-    await worker.fetch(new Request("https://gui/gui/storage-debug"), bindings)
-  );
-  const present = Object.fromEntries(debug.rows.map((row) => [row.key, row.present]));
-  assert.equal(present["state"], false);
-  assert.equal(present["state:base"], true);
-  assert.equal(present["state:conversations"], true);
-  assert.equal(present["state:messages"], true);
-  assert.equal(present["state:tasks"], true);
-  assert.equal(present["state:runLog"], true);
-  assert.equal(present["state:uploads"], true);
-  assert.equal(debug.baseKeys.includes("conversations"), false);
-  assert.equal(debug.baseKeys.includes("messages"), false);
-  assert.equal(debug.baseKeys.includes("tasks"), false);
-  assert.equal(debug.baseKeys.includes("runLog"), false);
-  assert.equal(debug.baseKeys.includes("uploads"), false);
-});
-
 test("gui king-ai state command exports, imports, and resets state snapshots", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
@@ -1854,60 +1653,6 @@ test("gui king-ai state command exports, imports, and resets state snapshots", a
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
   assert.equal(state.messages[0]?.body, "cli snapshot");
-});
-
-test("gui normalizes legacy default agent id and personas", async () => {
-  const bindings = env({
-    computerId: "king-ai-computer",
-    deviceToken: "device-token",
-    runtimeToken: "runtime-token",
-    runtimeTokens: { "king-ai-agent": "legacy-runtime-token" },
-    pairingCode: "pair-code",
-    availableEngines: ["codex"],
-    capabilities: { workspaces: [] },
-    agents: [
-      { id: "king-ai-agent", name: "King AI Agent", role: "Local BYOA agent", engine: "codex", lifecycle: "on-demand" },
-      { id: "dev", name: "Dev", role: "Implement assigned work, report concrete changes, and move completed tasks to review.", engine: "codex", lifecycle: "on-demand" },
-      { id: "reviewer", name: "Reviewer", role: "Review completed work, identify gaps, and ask for revisions before CEO summarizes.", engine: "codex", lifecycle: "on-demand" },
-      { id: "custom", name: "Custom", role: "Keep my custom role.", engine: "codex", lifecycle: "on-demand" }
-    ],
-    conversations: [{ id: "legacy-room", title: "legacy", kind: "group", created_at: 1, updated_at: 1, coordinatorAgentId: "king-ai-agent", teamAgentIds: ["king-ai-agent", "dev"] }],
-    messages: [],
-    cliLog: [],
-    statusLog: [],
-    typingLog: [],
-    thinkingLog: [],
-    eventLog: [],
-    eventRoutes: [],
-    loopRunId: "run-gui",
-    currentLoop: 0,
-    loopEvents: [],
-    calendar: [],
-    cards: [],
-    claims: [],
-    artifacts: [],
-    sharedContext: [],
-    tasks: [{ id: "legacy-task", title: "Legacy", status: "assigned", assignee: "king-ai-agent", priority: 1, coordinatorAgentId: "king-ai-agent", created_at: 1, updated_at: 1 }]
-  });
-
-  const state = await json<{ agents: { id: string; name: string; role: string }[]; conversations: { coordinatorAgentId?: string; teamAgentIds?: string[] }[]; tasks: { assignee?: string; coordinatorAgentId?: string }[]; runtimeTokens?: Record<string, string> }>(
-    await worker.fetch(new Request("https://gui/gui/state"), bindings)
-  );
-  assert.equal(state.agents.some((agent) => agent.id === "king-ai-agent"), false);
-  assert.equal(state.agents.find((agent) => agent.id === "king-ai-ceo")?.name, "King AI CEO");
-  assert.match(state.agents.find((agent) => agent.id === "king-ai-ceo")?.role ?? "", /Coordinate the conversation/);
-  assert.match(state.agents.find((agent) => agent.id === "dev")?.role ?? "", /Implement only assigned tasks/);
-  assert.match(state.agents.find((agent) => agent.id === "reviewer")?.role ?? "", /Review completed Dev work/);
-  assert.equal(state.agents.find((agent) => agent.id === "custom")?.role, "Keep my custom role.");
-  assert.equal(state.conversations.find((row) => row.coordinatorAgentId === "king-ai-ceo")?.teamAgentIds?.[0], "king-ai-ceo");
-  assert.equal(state.tasks[0]?.assignee, "king-ai-ceo");
-  assert.equal(state.runtimeTokens?.["king-ai-ceo"], "legacy-runtime-token");
-
-  const legacyToken = await json<{ token: string }>(await worker.fetch(new Request("https://gui/api/agents/king-ai-agent/runtime-token", {
-    method: "POST",
-    headers: { Authorization: "Bearer device-token" }
-  }), bindings));
-  assert.equal(typeof legacyToken.token, "string");
 });
 
 test("gui runtime lets the page choose agent engine and models", async () => {
@@ -2261,25 +2006,6 @@ test("gui runtime pairing does not rewrite entity state", async () => {
   );
   assert.deepEqual(state.availableEngines, ["codex"]);
   assert.deepEqual(state.capabilities.workspaces, ["/tmp/project"]);
-});
-
-test("gui runtime persists generated pairing code for older stored state", async () => {
-  const sourceBindings = env();
-  const oldState = await json<Record<string, unknown>>(
-    await worker.fetch(new Request("https://gui/gui/state"), sourceBindings)
-  );
-  delete oldState.pairingCode;
-
-  const bindings = env(oldState);
-  const first = await json<{ pairingCode: string }>(
-    await worker.fetch(new Request("https://gui/gui/summary"), bindings)
-  );
-  const second = await json<{ pairingCode: string }>(
-    await worker.fetch(new Request("https://gui/gui/summary"), bindings)
-  );
-
-  assert.match(first.pairingCode, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
-  assert.equal(second.pairingCode, first.pairingCode);
 });
 
 test("gui page exposes channel chat shell with settings modal", async () => {

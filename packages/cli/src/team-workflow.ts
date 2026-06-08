@@ -137,6 +137,9 @@ export const KING_AI_ROLE_TEMPLATES: KingRoleTemplate[] = [
     capabilityHints: ["documentation", "release-notes", "summary"]
   },
   {
+    // Loop-closing role. Concrete rosters may fold this into the planner/coordinator
+    // (e.g. the GUI king-ai-ceo) instead of staffing a standalone summarizer agent;
+    // the template still defines the loop-closing capabilities and permissions.
     id: "summarizer",
     name: "Summarizer",
     responsibility: "Close loops with concise status, residual risks, decisions, and artifact links.",

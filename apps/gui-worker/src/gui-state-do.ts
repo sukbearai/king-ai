@@ -22,7 +22,6 @@ import {
 import { encode, json, requestKeepAlive } from "./gui-http.js";
 import { createGuiApp } from "./gui-routes.js";
 import {
-  BUILT_IN_IELTS_ROLE_MARKERS,
   CLI_LOG_CAPACITY,
   DEFAULT_AGENT,
   DEFAULT_CONVERSATION,
@@ -35,14 +34,7 @@ import {
   GUI_ATTACHMENT_STORE_CAPACITY,
   GUI_BASE_STATE_KEY,
   GUI_ENTITY_STATE_KEYS,
-  GUI_LEGACY_STATE_KEY,
   IELTS_WORKFLOW_AGENTS,
-  LEGACY_DEFAULT_AGENT_ID,
-  LEGACY_DEFAULT_AGENT_NAME,
-  LEGACY_DEFAULT_AGENT_ROLE,
-  LEGACY_DEFAULT_DEV_ROLE,
-  LEGACY_DEFAULT_REVIEWER_ROLE,
-  LEGACY_IELTS_ROLE_MARKERS,
   LOOP_EVENT_BUFFER_CAPACITY,
   NOTICE_LOG_CAPACITY,
   REVIEW_COVERAGE_GATE,
@@ -273,14 +265,6 @@ export class GuiState implements DurableObject {
     const saved = await this.state.storage.get<State>(GUI_BASE_STATE_KEY);
     if (saved) {
       const normalized = this.normalizeState(await this.hydrateEntityState(saved));
-      if (!saved.pairingCode) await this.put(normalized);
-      return normalized;
-    }
-    const legacy = await this.state.storage.get<State>(GUI_LEGACY_STATE_KEY);
-    if (legacy) {
-      const normalized = this.normalizeState(legacy);
-      await this.put(normalized);
-      await this.state.storage.delete(GUI_LEGACY_STATE_KEY);
       return normalized;
     }
     const initial = this.freshState();
@@ -303,7 +287,7 @@ export class GuiState implements DurableObject {
 
   private async put(state: State, options: { force?: boolean } = {}): Promise<void> {
     const base = stripEntityState(state);
-    const writes: Promise<unknown>[] = [this.state.storage.delete(GUI_LEGACY_STATE_KEY)];
+    const writes: Promise<unknown>[] = [];
     this.queueStateWrite(writes, GUI_BASE_STATE_KEY, base, options.force === true);
     for (const key of GUI_ENTITY_STATE_KEYS) {
       this.queueStateWrite(writes, entityStateStorageKey(key), state[key], options.force === true);
@@ -312,7 +296,7 @@ export class GuiState implements DurableObject {
   }
 
   private async putBaseState(state: State): Promise<void> {
-    const writes: Promise<unknown>[] = [this.state.storage.delete(GUI_LEGACY_STATE_KEY)];
+    const writes: Promise<unknown>[] = [];
     this.queueStateWrite(writes, GUI_BASE_STATE_KEY, stripEntityState(state));
     await Promise.all(writes);
   }
@@ -320,14 +304,13 @@ export class GuiState implements DurableObject {
   private async clearEntityState(): Promise<void> {
     await Promise.all([
       this.state.storage.delete(GUI_BASE_STATE_KEY),
-      this.state.storage.delete(GUI_LEGACY_STATE_KEY),
       ...GUI_ENTITY_STATE_KEYS.map((key) => this.state.storage.delete(entityStateStorageKey(key)))
     ]);
     this.persistedStateFingerprint.clear();
   }
 
   private async storageDebug(): Promise<Response> {
-    const keys = [GUI_BASE_STATE_KEY, GUI_LEGACY_STATE_KEY, ...GUI_ENTITY_STATE_KEYS.map(entityStateStorageKey)];
+    const keys = [GUI_BASE_STATE_KEY, ...GUI_ENTITY_STATE_KEYS.map(entityStateStorageKey)];
     const rows = await Promise.all(keys.map(async (key) => ({ key, present: (await this.state.storage.get(key)) !== undefined })));
     const base = await this.state.storage.get<Record<string, unknown>>(GUI_BASE_STATE_KEY);
     return json({ rows, baseKeys: Object.keys(base ?? {}).sort() });
@@ -397,7 +380,6 @@ export class GuiState implements DurableObject {
 
   private normalizeState(saved: State): State {
     saved.initiatives ??= [];
-    saved.pairingCode ??= crypto.randomUUID();
     saved.runtimeToken ??= crypto.randomUUID();
     saved.runtimeTokens ??= {};
     saved.runtimeTokenMeta ??= {};
@@ -423,7 +405,7 @@ export class GuiState implements DurableObject {
 	    saved.uploads ??= {};
 	    saved.runtimeTokens = normalizeRuntimeTokens(saved.runtimeTokens);
     saved.runtimeTokenMeta = normalizeRuntimeTokenMeta(saved.runtimeTokenMeta, saved.runtimeTokens);
-    saved.remoteAssist = normalizeRemoteAssistGrant(saved.remoteAssist, (saved as State & { remoteAssistGrants?: unknown }).remoteAssistGrants);
+    saved.remoteAssist = normalizeRemoteAssistGrant(saved.remoteAssist);
     saved.agents = normalizeAgents(saved.agents);
     saved.workflowAgentIds = normalizeWorkflowAgentIds(saved.workflowAgentIds, saved.agents);
     saved.messages = normalizeMessages(saved.messages ?? []);

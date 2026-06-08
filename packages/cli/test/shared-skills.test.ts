@@ -32,7 +32,7 @@ test("listSharedSkills finds directories containing SKILL.md", async () => {
 
 test("installSharedSkills copies shared skills into Claude and Codex homes", async () => {
   const root = await mkdtemp(join(tmpdir(), "king-ai-shared-skills-"));
-  const home = await mkdtemp(join(tmpdir(), "king-ai-agent-home-"));
+  const home = await mkdtemp(join(tmpdir(), "king-ai-ceo-home-"));
   const snapshotsRoot = await mkdtemp(join(tmpdir(), "king-ai-skill-snapshots-"));
   try {
     await mkdir(join(root, "takeover-context"), { recursive: true });

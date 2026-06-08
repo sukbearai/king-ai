@@ -24,7 +24,7 @@ test("engineRemediationAdvice classifies auth, quota, rate, context, and unknown
   assert.equal(engineRemediationAdvice("codex", "process exited with code 2").category, "unknown");
 });
 
-test("formatRemediationAdvice keeps a compact legacy hint", () => {
+test("formatRemediationAdvice keeps a compact hint", () => {
   const text = formatRemediationAdvice(engineRemediationAdvice("codex", "usage limit reached"));
   assert.match(text, /Codex|codex/);
   assert.match(text, /quota|billing|credits/);

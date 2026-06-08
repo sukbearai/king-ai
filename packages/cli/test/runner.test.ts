@@ -36,8 +36,8 @@ import {
 } from "../src/runner.js";
 
 test("agentSessionFile scopes session ids by engine", () => {
-  assert.match(agentSessionFile("king-ai-agent", "claude"), /king-ai-agent\.claude\.session$/);
-  assert.match(agentSessionFile("king-ai-agent", "codex"), /king-ai-agent\.codex\.session$/);
+  assert.match(agentSessionFile("king-ai-ceo", "claude"), /king-ai-ceo\.claude\.session$/);
+  assert.match(agentSessionFile("king-ai-ceo", "codex"), /king-ai-ceo\.codex\.session$/);
 });
 
 test("parseWakeEventInfo extracts conversation and delivery latency", () => {

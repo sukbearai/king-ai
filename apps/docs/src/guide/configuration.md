@@ -14,7 +14,7 @@ You can override this path for tests or isolated development:
 KING_AI_CONFIG_DIR=/tmp/king-ai-dev king-ai agent computer --doctor
 ```
 
-Use `~/.king-ai` for user-facing setup and documentation. This is a new project path, so fresh installs should not create a separate legacy home.
+Use `~/.king-ai` for user-facing setup and documentation.
 
 ## Important Files
 

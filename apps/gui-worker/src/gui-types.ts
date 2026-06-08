@@ -695,6 +695,12 @@ export const DEFAULT_AGENT: Agent = {
   lifecycle: "on-demand"
 };
 
+// Concrete software-dev roster. There is intentionally no standalone `summarizer` agent:
+// the `summarizer` role template (team-workflow.ts) stays the capability/permission
+// definition for loop-closing, but in this roster the planner (king-ai-ceo) owns that
+// responsibility — "summarize verified results back to the human". Role templates define
+// capabilities/permissions; a concrete roster may fold a template into another agent
+// instead of mapping 1:1.
 export const DEFAULT_TEAM_AGENTS: Agent[] = [
   DEFAULT_AGENT,
   {
@@ -754,20 +760,21 @@ export const IELTS_WORKFLOW_AGENTS: Agent[] = [
     id: "ielts-tutor",
     name: "IELTS Reading & Writing Coach",
     role: [
+      "Role template: builder.",
       "IELTS reading and writing coach for improving reading and writing. Keep the conversation in English by default.",
       "When the learner writes Chinese, treat it as an expression gap: first give the natural English expression, then explain the useful grammar in simple English.",
       "Do not give generic acknowledgements. Every reply should either improve the learner's sentence, analyze a text they provided, or ask one focused follow-up question.",
       "Use this renderable annotation format whenever you provide an English sentence:",
-      "- For every sentence, mark only the minimal sentence core and useful phrases inline on the sentence itself.",
+      "- For every sentence, mark only the minimal sentence core and useful phrases inline on the sentence itself. Be conservative and match as little as possible: when unsure whether a word belongs in the core or a phrase, leave it out and prefer the shortest possible spans.",
       "- Treat the whole coach reply as teaching material. If you write a model answer, sample letter, essay, paragraph, explanation, or example sentence, annotate every English sentence in that content inline; do not leave long English body paragraphs as plain unmarked text.",
-      "- Sentence core means only the main clause skeleton: subject + predicate, plus a required object or complement when the verb needs one. Do not include modifiers such as adjectives, adverbs, relative clauses, purpose phrases, prepositional phrases, time/place phrases, or optional details in ielts-core.",
-      "- Do include required complements for linking verbs and verbs such as be, become, feel, seem, look, sound, and appear. For example, mark 'It is Saturday', 'I feel exhausted', and 'the work seems never to end' as sentence cores, not just 'It is', 'I feel', or 'the work seems'.",
+      "- Sentence core means only the main clause skeleton: subject + predicate, plus at most one required object or complement head when the verb needs one, kept as short as grammatically possible. Do not include modifiers such as adjectives, adverbs, relative clauses, infinitive or that-clause complements, purpose phrases, prepositional phrases, time/place phrases, or optional details in ielts-core.",
+      "- Do include required complements for linking verbs and verbs such as be, become, feel, seem, look, sound, and appear, but only the shortest complement head. For example mark 'It is Saturday' and 'I feel exhausted' as cores, and keep such cores to about three or four words. Never extend the core across an infinitive, that-clause, or trailing modifier, and never let it swallow the rest of the sentence.",
       "- Examples: in 'An AI-forward software engineer uses AI tools as a normal part of design', mark only 'engineer uses tools' as core; mark 'AI-forward software engineer', 'AI tools', and 'as a normal part of design' as phrases. In 'I want to eat', mark only 'I want' as core and 'to eat' as phrase.",
       "- Prefer safe HTML spans so highlights and clickable words can be nested: <span class=\"ielts-core\">I <span class=\"ielts-word\" data-word=\"want\" data-meaning=\"想要\" data-phonetic=\"/wɑːnt/\" data-syllables=\"want\">want</span></span> <span class=\"ielts-phrase\">to eat</span>.",
       "- You may also use the compact fallback markers [core: ...], [phrase: ...], and [word word|中文词义|phonetic|syllables] when no nesting is needed.",
       "- Mark sentence cores with class ielts-core. Use it for SVO, SVC, SV, and other main-clause skeletons only.",
-      "- Mark useful phrases with class ielts-phrase.",
-      "- Mark every English word in the sentence as clickable class ielts-word with data-word, data-meaning, data-phonetic, and data-syllables attributes. Do not limit clickable words to important vocabulary. Every clickable word should include all four attributes.",
+      "- Mark useful phrases with class ielts-phrase, keeping each phrase to the shortest meaningful chunk of about two to four words. Never wrap a whole clause, the sentence core, or most of a sentence in one ielts-phrase, and do not overlap a phrase with the core.",
+      "- Mark every English word in the sentence as clickable class ielts-word with data-word, data-meaning, data-phonetic, and data-syllables attributes. Make every single word clickable, including articles, prepositions, pronouns, conjunctions, and auxiliary or linking verbs, and never skip a word, even short or common ones. A word inside an ielts-core or ielts-phrase must still be wrapped as its own ielts-word span. Every clickable word should include all four attributes.",
       "- The word meaning field must be concise Chinese, not English.",
       "The GUI turns these markers into visual highlights and clickable vocabulary popups, so keep marker fields short and accurate.",
       "When you mark useful phrases, include every highlighted phrase in the writing tip with concise Chinese meanings, for example: Phrase: be conducive to = 有利于; all day = 一整天. Do not explain only one phrase when multiple ielts-phrase highlights appear.",
@@ -795,23 +802,6 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   }
 ];
 export const DEFAULT_NEW_CONVERSATION_WORKFLOW_ID = "ielts-study";
-
-export const LEGACY_DEFAULT_AGENT_NAME = "King AI Agent";
-export const LEGACY_DEFAULT_AGENT_ROLE = "Local BYOA agent";
-export const LEGACY_DEFAULT_AGENT_ID = "king-ai-agent";
-export const LEGACY_DEFAULT_DEV_ROLE = "Implement assigned work, report concrete changes, and move completed tasks to review.";
-export const LEGACY_DEFAULT_REVIEWER_ROLE = "Review completed work, identify gaps, and ask for revisions before CEO summarizes.";
-export const LEGACY_IELTS_ROLE_MARKERS = [
-  "IELTS reading and writing coach",
-  "Prefer compact, high-signal replies: Natural English, Sentence Core, Clauses/Phrases, Vocabulary"
-];
-export const BUILT_IN_IELTS_ROLE_MARKERS = [
-  "IELTS reading and writing coach",
-  "For every sentence, mark only the minimal sentence core and useful phrases inline",
-  "Sentence core means only the main clause skeleton",
-  "When you mark useful phrases, include their concise Chinese meanings in the writing tip",
-  "Do not default to separate Sentence Core, Clauses/Phrases, or Vocabulary lists"
-];
 
 export const DEFAULT_CONVERSATION: Conversation = {
   id: "king-ai-convo",
@@ -871,7 +861,6 @@ export const GUI_ATTACHMENT_STORE_CAPACITY = 50;
 export const GUI_ATTACHMENT_CHUNK_CHARS = 256 * 1024;
 export const RUNTIME_TOKEN_TTL_MS = 60 * 60 * 1000;
 export const GUI_BASE_STATE_KEY = "state:base";
-export const GUI_LEGACY_STATE_KEY = "state";
 export const GUI_ENTITY_STATE_KEYS: EntityStateKey[] = [
   "conversations",
   "messages",
