@@ -41,6 +41,7 @@ The job runs these steps:
 9. Validate Cloudflare and auth deployment secrets.
 10. Sync Worker secrets into Cloudflare.
 11. Deploy the GUI Worker with `pnpm --filter @king-ai/gui-worker run deploy`.
+12. Deploy the documentation Worker with `pnpm --filter @king-ai/docs run deploy`.
 
 ## Required GitHub Secrets
 
@@ -58,6 +59,6 @@ GitHub Actions secrets cannot use the `GITHUB_` prefix for custom secret names. 
 
 ## Publishing And Deployment Boundaries
 
-GitHub Actions handles npm publish and Cloudflare Worker deployment from the pushed release tag. Do not run local npm publish or direct Worker deployment as part of a normal release.
+GitHub Actions handles npm publish, GUI Worker deployment, and documentation Worker deployment from the pushed release tag. Do not run local npm publish or direct Worker deployment as part of a normal release.
 
-The repository still has local Worker commands such as `pnpm gui:deploy` for targeted maintenance, but production releases should use the tag-driven workflow so package publishing, secret sync, and Worker deploy stay tied to the same verified version.
+The repository still has local Worker commands such as `pnpm gui:deploy` and `pnpm --filter @king-ai/docs run deploy` for targeted maintenance, but production releases should use the tag-driven workflow so package publishing, secret sync, and Worker deploy stay tied to the same verified version.

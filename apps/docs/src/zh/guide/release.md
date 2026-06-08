@@ -41,6 +41,7 @@ Job 会执行这些步骤：
 9. 校验 Cloudflare 和 auth 部署 secrets。
 10. 同步 Worker secrets 到 Cloudflare。
 11. 执行 `pnpm --filter @king-ai/gui-worker run deploy` 部署 GUI Worker。
+12. 执行 `pnpm --filter @king-ai/docs run deploy` 部署文档 Worker。
 
 ## 必需的 GitHub Secrets
 
@@ -58,6 +59,6 @@ GitHub Actions 自定义 secret 名称不能使用 `GITHUB_` 前缀。OAuth 凭�
 
 ## 发布与部署边界
 
-GitHub Actions 会基于 pushed release tag 完成 npm publish 和 Cloudflare Worker 部署。正常发布流程中不要在本地执行 npm publish 或直接部署 Worker。
+GitHub Actions 会基于 pushed release tag 完成 npm publish、GUI Worker 部署和文档 Worker 部署。正常发布流程中不要在本地执行 npm publish 或直接部署 Worker。
 
-仓库仍然保留了 `pnpm gui:deploy` 等本地 Worker 命令，用于有目标的维护操作；但生产发布应走 tag 驱动的 workflow，让 package 发布、secret 同步和 Worker 部署绑定到同一个已验证版本。
+仓库仍然保留了 `pnpm gui:deploy`、`pnpm --filter @king-ai/docs run deploy` 等本地 Worker 命令，用于有目标的维护操作；但生产发布应走 tag 驱动的 workflow，让 package 发布、secret 同步和 Worker 部署绑定到同一个已验证版本。

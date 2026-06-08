@@ -12,6 +12,7 @@
     "docs:dev": "pnpm --filter @king-ai/docs dev",
     "docs:build": "pnpm --filter @king-ai/docs build",
     "docs:preview": "pnpm --filter @king-ai/docs preview",
+    "docs:deploy": "pnpm --filter @king-ai/docs run deploy",
     "gui:dev": "pnpm --filter @king-ai/gui-worker dev",
     "gui:dev:lan": "pnpm --filter @king-ai/gui-worker dev:lan",
     "gui:deploy": "pnpm --filter @king-ai/gui-worker run deploy",
