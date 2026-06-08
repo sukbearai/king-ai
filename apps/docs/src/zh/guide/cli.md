@@ -14,16 +14,16 @@ king-ai agent computer --doctor
 
 ```sh
 king-ai agent computer --pair 'king-ai://pair?...'
-king-ai agent computer --pair <code> --server https://runtime.example
+king-ai agent computer --pair <code>
 ```
 
-把这台机器配对到 runtime server。GUI 通常会给出完整的 `king-ai://pair?...` locator。短 code 也可用，但需要配合 `--server`。
+把这台机器配对到 runtime server。GUI 通常会给出完整的 `king-ai://pair?...` locator。短 code 默认使用生产 server。
 
 选项：
 
 - `--engine claude|codex`：优先使用一个已安装引擎。
 - `--tenant <id>`：选择多租户 GUI server 上的 tenant。
-- `--server <url>`：覆盖默认 runtime server URL。
+- `--server <url>`：覆盖默认 runtime server URL。生产环境默认值是 `https://king-ai.congrongtech.cn`。
 
 ## 运行
 

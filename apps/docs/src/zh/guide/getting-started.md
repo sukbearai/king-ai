@@ -7,7 +7,7 @@ King AI 把远端 runtime server 连接到你本机的智能体引擎。完成�
 - Node.js 20 或更新版本。
 - 用 `pnpm` 执行开发命令和一次性 `dlx` 命令。
 - 至少安装并登录一个本地引擎：`claude` 或 `codex`。
-- 一个能显示配对命令的 King AI GUI 或 runtime server。
+- 可访问 `https://king-ai.congrongtech.cn` 上的 King AI GUI。
 
 ## 检查本地引擎
 
@@ -32,11 +32,13 @@ pnpm dev -- agent computer --doctor
 pnpm dlx @suwujs/king-ai@latest agent computer --pair 'king-ai://pair?...'
 ```
 
-如果 GUI 只给了短 code，需要同时提供 runtime server URL：
+如果 GUI 只给了短 code，直接使用生产默认 server：
 
 ```sh
-pnpm dlx @suwujs/king-ai@latest agent computer --pair <code> --server https://runtime.example
+pnpm dlx @suwujs/king-ai@latest agent computer --pair <code>
 ```
+
+只有本地开发或独立部署时才需要使用 `--server <url>`。
 
 CLI 会把配对配置写入 `~/.king-ai/computer.json`，并把带 token 的本地状态保存在这台机器的 King AI home 中。
 

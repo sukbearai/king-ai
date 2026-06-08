@@ -29,4 +29,4 @@ export const HOST_EVENTS_PATH = join(CONFIG_DIR, "host-events.ndjson");
 export const HOST_RUNS_PATH = join(CONFIG_DIR, "host-runs.ndjson");
 export const SERVICE_LABEL = "dev.king-ai";
 export const CURRENT_VERSION = "0.2.25";
-export const DEFAULT_SERVER = process.env.KING_AI_SERVER_URL || "https://api.king-ai.ai";
+export const DEFAULT_SERVER = process.env.KING_AI_SERVER_URL || "https://king-ai.congrongtech.cn";

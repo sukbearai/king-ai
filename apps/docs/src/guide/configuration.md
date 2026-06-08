@@ -40,7 +40,7 @@ Treat this directory as sensitive because it contains runtime tokens and local e
 ## Environment Variables
 
 - `KING_AI_CONFIG_DIR`: override the local home.
-- `KING_AI_SERVER_URL`: set the default runtime server URL.
+- `KING_AI_SERVER_URL`: override the default runtime server URL. The production default is `https://king-ai.congrongtech.cn`.
 - `KING_AI_TEAM_ROLE`: provide an actor role for host command governance.
 - `KING_AI_AGENT_WORKSPACE_ROOT`: constrain or point agent workspace preparation in development.
 

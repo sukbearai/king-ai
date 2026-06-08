@@ -40,7 +40,7 @@ KING_AI_CONFIG_DIR=/tmp/king-ai-dev king-ai agent computer --doctor
 ## 环境变量
 
 - `KING_AI_CONFIG_DIR`：覆盖本地 home。
-- `KING_AI_SERVER_URL`：设置默认 runtime server URL。
+- `KING_AI_SERVER_URL`：覆盖默认 runtime server URL。生产环境默认值是 `https://king-ai.congrongtech.cn`。
 - `KING_AI_TEAM_ROLE`：为 host command governance 提供 actor role。
 - `KING_AI_AGENT_WORKSPACE_ROOT`：在开发中限制或指定智能体 workspace 准备路径。
 

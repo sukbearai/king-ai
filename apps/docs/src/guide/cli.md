@@ -14,16 +14,16 @@ Checks installed engines, PATH, login or quota health, and whether at least one 
 
 ```sh
 king-ai agent computer --pair 'king-ai://pair?...'
-king-ai agent computer --pair <code> --server https://runtime.example
+king-ai agent computer --pair <code>
 ```
 
-Pair this machine with a runtime server. The GUI normally gives a full `king-ai://pair?...` locator. A short code also works when paired with `--server`.
+Pair this machine with a runtime server. The GUI normally gives a full `king-ai://pair?...` locator. A short code uses the production server by default.
 
 Options:
 
 - `--engine claude|codex`: prefer one installed engine.
 - `--tenant <id>`: select a tenant on multi-tenant GUI servers.
-- `--server <url>`: override the default runtime server URL.
+- `--server <url>`: override the default runtime server URL. The production default is `https://king-ai.congrongtech.cn`.
 
 ## Run
 

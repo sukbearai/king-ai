@@ -7,7 +7,7 @@ King AI connects a remote runtime server to local agent engines on your machine.
 - Node.js 20 or newer.
 - `pnpm` for development commands and one-off `dlx` runs.
 - At least one supported local engine installed and authenticated: `claude` or `codex`.
-- A King AI GUI or runtime server that can show a pairing command.
+- Access to the King AI GUI at `https://king-ai.congrongtech.cn`.
 
 ## Check Local Engines
 
@@ -32,11 +32,13 @@ Open the GUI, copy the first-time pairing command, and run it on the machine tha
 pnpm dlx @suwujs/king-ai@latest agent computer --pair 'king-ai://pair?...'
 ```
 
-If the GUI gives you only a short code, include the runtime server URL:
+If the GUI gives you only a short code, use the production default:
 
 ```sh
-pnpm dlx @suwujs/king-ai@latest agent computer --pair <code> --server https://runtime.example
+pnpm dlx @suwujs/king-ai@latest agent computer --pair <code>
 ```
+
+Use `--server <url>` only for local development or a separate deployment.
 
 The CLI writes the pairing config to `~/.king-ai/computer.json` and keeps token-bearing files in the King AI home on this machine.
 

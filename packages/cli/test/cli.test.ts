@@ -50,7 +50,7 @@ test("commandNameFromArgv resolves the primary command", () => {
 });
 
 test("defaultServerForCommand preserves the production default", () => {
-  assert.equal(defaultServerForCommand("king-ai"), "https://api.king-ai.ai");
+  assert.equal(defaultServerForCommand("king-ai"), "https://king-ai.congrongtech.cn");
 });
 
 test("hasExplicitServerArg detects only user supplied server flags", () => {
