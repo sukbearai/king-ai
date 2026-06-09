@@ -1215,7 +1215,12 @@ function normalizeAgents(agents: Agent[] | undefined): Agent[] {
   }
   for (const agent of [...DEFAULT_TEAM_AGENTS, ...IELTS_WORKFLOW_AGENTS]) {
     const existing = byId.get(agent.id);
-    byId.set(agent.id, { ...agent, ...existing });
+    // Built-in role templates are maintained in source, so refresh a built-in agent's role from
+    // the template on load instead of freezing whatever was first persisted. Other persisted
+    // fields (engine, lifecycle, model, fastModel, name) are kept. The default operator agent
+    // stays user-editable via agent-config, so it keeps its persisted role.
+    const role = agent.id === DEFAULT_AGENT.id ? existing?.role || agent.role : agent.role;
+    byId.set(agent.id, { ...agent, ...existing, role });
   }
   return [...byId.values()];
 }

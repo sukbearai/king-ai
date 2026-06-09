@@ -1427,11 +1427,11 @@ test("gui windows choose agents from the selected workflow", async () => {
   assert.equal(ieltsWorkflow?.agentIds.includes("king-ai-ceo"), false);
   assert.equal(ieltsWorkflow?.agents[0]?.name, "IELTS Reading & Writing Coach");
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Keep the conversation in English/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /expression gap/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Natural English for your Chinese request/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /summarize the request itself in natural English/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /always write that deliverable itself in English/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not give generic acknowledgements/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /chat partner, not a translator/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /never translate or echo their own sentence back/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Only write a direct translation or a standalone piece of text when the learner explicitly asks/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Write that deliverable itself in English/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Never give an empty acknowledgement/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Use the hidden WordCards JSON to annotate English/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /The app automatically makes every single word clickable/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /do NOT wrap individual words yourself in the visible text/);
@@ -1453,7 +1453,7 @@ test("gui windows choose agents from the selected workflow", async () => {
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Never wrap a whole clause, the sentence core, or most of a sentence in one phrase/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Every finite clause gets its own core/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Explain the highlighted phrases in the same visible Tip line/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /after any natural-English expression for the learner's Chinese request/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /after any natural-English expression for what the learner wrote/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not rely on phrase click cards/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /End your reply with one hidden WordCards JSON block/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /\"sentences\"/);
