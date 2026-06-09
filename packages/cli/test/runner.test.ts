@@ -193,6 +193,9 @@ test("buildStandingPrompt documents King AI command habits", () => {
   assert.match(prompt, /KING_AI_SHARED_SKILLS/);
   assert.match(prompt, /activation snapshot/);
   assert.match(prompt, /KING_AI_SKILL_SNAPSHOTS_DIR/);
+  assert.match(prompt, /Learned skills \(self-evolution\)/);
+  assert.match(prompt, /king-ai skill save <short-name> --file notes\/skill\.md/);
+  assert.match(prompt, /recall <query>/);
   assert.match(prompt, /Host home entries:/);
   assert.match(prompt, /KING_AI_HOST_HOME_ENTRIES/);
   assert.match(prompt, /raised hands ordered by who started first/);

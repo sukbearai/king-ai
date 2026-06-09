@@ -19,6 +19,12 @@ export function resolveConfigDir(_commandName = commandNameFromProcess()): strin
 export const CONFIG_DIR = resolveConfigDir();
 export const CONFIG_PATH = join(CONFIG_DIR, "computer.json");
 export const AGENTS_ROOT = join(CONFIG_DIR, "agents");
+// Durable, agent-writable skill store kept OUTSIDE the ephemeral agent homes so learned skills
+// survive home resets/reinstalls and get reinstalled into each home on the next start.
+export const LEARNED_SKILLS_ROOT = join(CONFIG_DIR, "learned-skills");
+export function learnedSkillsDir(agentId: string): string {
+  return join(LEARNED_SKILLS_ROOT, agentId);
+}
 export const SESSIONS_DIR = join(CONFIG_DIR, "sessions");
 export const TRIAGE_DIR = join(CONFIG_DIR, "triage");
 export const RUNNING_STATE_PATH = join(CONFIG_DIR, "running.json");

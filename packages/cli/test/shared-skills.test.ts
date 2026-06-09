@@ -57,3 +57,24 @@ test("installSharedSkills copies shared skills into Claude and Codex homes", asy
     await rm(snapshotsRoot, { recursive: true, force: true });
   }
 });
+
+test("learned skills install alongside shared skills, with shared roots winning on name collision", async () => {
+  const shared = await mkdtemp(join(tmpdir(), "king-ai-shared-"));
+  const learned = await mkdtemp(join(tmpdir(), "king-ai-learned-"));
+  try {
+    await mkdir(join(shared, "deploy"), { recursive: true });
+    await writeFile(join(shared, "deploy", "SKILL.md"), "# Shared deploy\n", "utf8");
+    await mkdir(join(learned, "deploy"), { recursive: true });
+    await writeFile(join(learned, "deploy", "SKILL.md"), "# Learned deploy\n", "utf8");
+    await mkdir(join(learned, "recall-tips"), { recursive: true });
+    await writeFile(join(learned, "recall-tips", "SKILL.md"), "# Recall tips\n", "utf8");
+
+    // The runner installs from [...sharedSkillRoots(), learnedSkillsDir(id)] — shared first.
+    const skills = await listSharedSkills([shared, learned]);
+    assert.deepEqual(skills.map((skill) => skill.name).sort(), ["deploy", "recall-tips"]);
+    assert.equal(skills.find((skill) => skill.name === "deploy")?.sourceDir, join(shared, "deploy"));
+  } finally {
+    await rm(shared, { recursive: true, force: true });
+    await rm(learned, { recursive: true, force: true });
+  }
+});

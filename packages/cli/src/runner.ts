@@ -2,7 +2,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { api, runtimeGet, runtimeGetStrict, runtimePost, runtimePostStrict, tenantHeader } from "./api.js";
-import { AGENTS_ROOT, SESSIONS_DIR, TRIAGE_DIR } from "./paths.js";
+import { AGENTS_ROOT, SESSIONS_DIR, TRIAGE_DIR, learnedSkillsDir } from "./paths.js";
 import { formatEngineLogLine, getAdapter, parseTriage } from "./engine.js";
 import { parseSseStream } from "./sse.js";
 import { writeShim } from "./shim.js";
@@ -14,7 +14,7 @@ import type { RunningAgentState } from "./service.js";
 import { checkTokenBudget, emptyAgentRunStats, recordAgentRunStats, tokenBudgetFromEnv } from "./usage.js";
 import type { AgentRunStats } from "./usage.js";
 import { normalizeAgentLifecycle, runtimeLifecycleNote } from "./lifecycle.js";
-import { installSharedSkills } from "./shared-skills.js";
+import { installSharedSkills, sharedSkillRoots } from "./shared-skills.js";
 import type { SharedSkillSnapshot } from "./shared-skills.js";
 import { linkHostHomeEntries } from "./host-home.js";
 import type { HostHomeEntry } from "./host-home.js";
@@ -61,7 +61,8 @@ const NESTED_ENV_BLOCKLIST = [
   "KING_AI_AGENT_WORKTREE_PLAN",
   "KING_AI_AGENT_SKILL_SNAPSHOT_ID",
   "KING_AI_AGENT_SKILL_SNAPSHOT_PATH",
-  "KING_AI_AGENT_SKILL_SNAPSHOT_MANIFEST"
+  "KING_AI_AGENT_SKILL_SNAPSHOT_MANIFEST",
+  "KING_AI_AGENT_LEARNED_SKILLS"
 ] as const;
 
 interface InboxRow {
@@ -195,6 +196,8 @@ ${worktreeNote}
 
 Shared skills: when KING_AI_SHARED_SKILLS is configured, the daemon copies every skill directory containing SKILL.md into .claude/skills and .codex/skills in this agent home before starting you.
 The daemon also writes an activation snapshot under .king-ai/skill-snapshots, or KING_AI_SKILL_SNAPSHOTS_DIR when configured, so a run can audit exactly which skill files were available.
+
+Learned skills (self-evolution): when you find a reusable procedure that worked, save it for future sessions with king-ai skill save <short-name> --file notes/skill.md, writing the SKILL.md draft in your home first. If an existing learned skill proved insufficient, improve it by saving the same name again; use king-ai skill list and king-ai skill show <name> to review, and king-ai skill remove <name> to retire one. Learned skills persist outside this home, so they survive restarts and the daemon reinstalls them into .claude/skills and .codex/skills on every start. Keep each skill focused, accurate, and safe; only save procedures you have actually validated.
 
 Host home entries: when KING_AI_HOST_HOME_ENTRIES is configured, the operator has explicitly linked selected host-home dotfiles or dot directories into this agent home. Treat them as sensitive credentials/configuration and use them only for the runtime task.
 
@@ -518,7 +521,8 @@ export class AgentRunner {
   async start(): Promise<void> {
     await this.adapter.seedHome(this.home, this.agent);
     this.hostHomeEntries = await linkHostHomeEntries(this.home);
-    const sharedSkills = await installSharedSkills(this.home);
+    await mkdir(learnedSkillsDir(this.agent.id), { recursive: true });
+    const sharedSkills = await installSharedSkills(this.home, [...sharedSkillRoots(), learnedSkillsDir(this.agent.id)]);
     this.sharedSkillSnapshot = sharedSkills.snapshot;
     await mkdir(this.workspaceRoot(), { recursive: true });
     const worktreePlans = this.worktreePlans();
@@ -718,7 +722,8 @@ export class AgentRunner {
       KING_AI_AGENT_WORKTREE_PLAN: JSON.stringify(this.worktreePlans()),
       KING_AI_AGENT_SKILL_SNAPSHOT_ID: this.sharedSkillSnapshot?.id ?? "",
       KING_AI_AGENT_SKILL_SNAPSHOT_PATH: this.sharedSkillSnapshot?.root ?? "",
-      KING_AI_AGENT_SKILL_SNAPSHOT_MANIFEST: this.sharedSkillSnapshot?.manifestPath ?? ""
+      KING_AI_AGENT_SKILL_SNAPSHOT_MANIFEST: this.sharedSkillSnapshot?.manifestPath ?? "",
+      KING_AI_AGENT_LEARNED_SKILLS: learnedSkillsDir(this.agent.id)
     };
   }
 
