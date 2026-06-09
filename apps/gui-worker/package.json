@@ -9,6 +9,7 @@
     "verify": "pnpm build && pnpm test",
     "dev": "node scripts/dev-with-host.mjs",
     "dev:lan": "node scripts/dev-with-host.mjs --ip 0.0.0.0 --port 8787",
+    "clear-do": "node scripts/clear-do-state.mjs",
     "wrangler:dev": "wrangler dev --config wrangler.toml",
     "wrangler:dev:lan": "wrangler dev --config wrangler.toml --ip 0.0.0.0 --port 8787",
     "deploy": "wrangler deploy --config wrangler.toml"

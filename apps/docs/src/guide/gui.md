@@ -12,6 +12,24 @@ pnpm gui:dev
 
 Wrangler prints the local URL. The default development server is usually `http://127.0.0.1:8787`.
 
+## Clear Local DO State
+
+Wrangler persists each tenant's `GuiState` Durable Object under `apps/gui-worker/.wrangler/state/v3/do/`. To wipe stale local GUI state (for example after built-in agent role changes), stop `pnpm gui:dev`, then run:
+
+```sh
+pnpm gui:clear-do -- --yes
+```
+
+Restart `pnpm gui:dev` afterward so Wrangler opens fresh DO sqlite files.
+
+To reset through the running worker instead (owner login required when auth is configured):
+
+```sh
+pnpm gui:clear-do -- --remote --yes
+```
+
+Pass `--tenant <id>` when you need a non-default tenant, or `--url https://your-gui.example --cookie "session=..."` for a deployed worker.
+
 ## Pairing Panel
 
 The GUI shows two commands:
