@@ -548,7 +548,7 @@ test("gui state fills word cards from the coach Glossary and hides the glossary 
       argv: [
         "reply",
         room.conversation.id,
-        "[core: I cherish] this quiet moment.\n\nGlossary: cherish = 珍惜; quiet = 安静的; moment = 时刻"
+        "[core: I cherish] this [phrase: quiet moment].\n\nGlossary: cherish = 珍惜 | /ˈtʃerɪʃ/ | cher-ish; quiet = 安静的 | /ˈkwaɪət/ | qui-et; moment = 时刻 | /ˈmoʊmənt/ | mo-ment; quiet moment = 安静的时刻"
       ]
     })
   }), bindings);
@@ -559,8 +559,10 @@ test("gui state fills word cards from the coach Glossary and hides the glossary 
   const agent = state.messages.find((message) => message.author_kind === "agent");
   const html = agent?.body_html ?? "";
   // Content words pick up their meaning from the Glossary even though the model did not wrap them.
-  assert.match(html, /data-word="cherish" data-meaning="珍惜"[^>]*>cherish<\/span>/);
-  assert.match(html, /data-word="moment" data-meaning="时刻"[^>]*>moment<\/span>/);
+  assert.match(html, /data-word="cherish" data-meaning="珍惜" data-phonetic="\/ˈtʃerɪʃ\/" data-syllables="cher-ish"[^>]*>cherish<\/span>/);
+  assert.match(html, /data-word="moment" data-meaning="时刻" data-phonetic="\/ˈmoʊmənt\/" data-syllables="mo-ment"[^>]*>moment<\/span>/);
+  // Highlighted phrases can carry their own Chinese meaning while inner words remain clickable.
+  assert.match(html, /class="ielts-phrase" data-word="quiet moment" data-meaning="安静的时刻"/);
   // Function words still come from the built-in dictionary.
   assert.match(html, /data-word="this" data-meaning="这个"[^>]*>this<\/span>/);
   // The core still renders, and the raw Glossary line is consumed rather than shown.
@@ -1147,24 +1149,32 @@ test("gui windows choose agents from the selected workflow", async () => {
   assert.equal(ieltsWorkflow?.agents[0]?.name, "IELTS Reading & Writing Coach");
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Keep the conversation in English/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /expression gap/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /one concise Chinese translation of that English expression/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /always write that deliverable itself in English/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not give generic acknowledgements/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /The app automatically makes every single word clickable/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /do NOT wrap individual words yourself and do NOT provide phonetics or syllables/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /mark exactly one sentence core with \[core: \.\.\.\]/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /mark useful phrases with \[phrase: \.\.\.\]/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /main-clause skeleton: subject \+ verb/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /the core is just 'engineer uses tools'/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /insert the marker inline by replacing the original words it marks/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /continuous substring that actually appears word-for-word in the sentence/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Never rewrite, compress, reorder, or skip across words to create a new core/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not restate the core in a separate green fragment/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /\[core: I have kept\] these feelings \[phrase: in my heart\]/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /not 'I have kept these feelings \[core: I have kept feelings\]'/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Your \[core: kindness makes\] ordinary moments special/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /not '\[core: kindness makes moments\]'/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /the core is 'I want' and 'to eat' is a phrase/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Each phrase is the shortest meaningful chunk/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Never wrap a whole clause, the sentence core, or most of a sentence in one phrase/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Every English sentence MUST have exactly one \[core: \.\.\.\]/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Never send a sentence that has phrases but no core/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /End your reply with one Glossary line/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /'word = 中文' pairs separated by ';'/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /word = 中文 \| \/phonetic\/ \| syl-la-bles/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /exact phrase = 中文/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /you may skip very common function words/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Meanings must be concise Chinese, not English/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /does not show it to the learner/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /fill word and phrase cards and does not show it to the learner/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Keep replies compact/);
 
   const single = await json<{
@@ -2223,6 +2233,7 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /'post-body markdown-body'/);
   assert.match(html, /\.ielts-core/);
   assert.match(html, /\.ielts-phrase/);
+  assert.match(html, /\.ielts-phrase\[data-meaning\]/);
   assert.match(html, /\.ielts-word/);
   assert.match(html, /border-bottom:\s*1px dotted/);
   assert.match(html, /id="vocabDialog"/);

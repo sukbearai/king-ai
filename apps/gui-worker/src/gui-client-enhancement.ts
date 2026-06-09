@@ -1073,7 +1073,9 @@ function closeVocabDialog() {
   if (dialog && dialog.open) dialog.close();
 }
 document.addEventListener('click', function(event) {
-  const target = event.target && event.target.closest ? event.target.closest('.ielts-word') : null;
+  const phraseTarget = event.target && event.target.closest ? event.target.closest('.ielts-phrase[data-meaning]') : null;
+  const wordTarget = event.target && event.target.closest ? event.target.closest('.ielts-word') : null;
+  const target = phraseTarget || wordTarget;
   if (!target) return;
   event.preventDefault();
   openVocabDialog(target);

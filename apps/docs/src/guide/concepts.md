@@ -78,6 +78,8 @@ King AI models work as a small team. **Role templates** are a small, domain-neut
 
 A template is not an agent. A concrete roster maps agents onto templates and may **fold one template into another** instead of staffing it one-to-one — for example the default team has no standalone summarizer; the planner (King AI CEO) owns that loop-closing responsibility. Domain agents work the same way: the IELTS coach is a single-agent workflow that reuses the generic `builder` template for coordination (it does the work directly), while its subject expertise lives in its free-text role, not in a new template. This keeps the template set generic and reusable across domains — *what* an agent knows belongs to its role and its **workflow template**, not to the coordination vocabulary.
 
+In the IELTS Study workflow, the coach annotates English inline: each sentence gets one `[core: ...]` mark for a short, word-for-word continuous subject/verb substring from the sentence, and `[phrase: ...]` marks only useful short phrases. The coach should highlight text that already appears in the sentence, not add a separate compressed restatement. Its hidden Glossary line supplies Chinese meanings, phonetics, syllable splits for content words, and Chinese meanings for highlighted phrases so word and phrase cards stay useful without cluttering the reply.
+
 The model still owns strategy and content. The system owns identity, ownership, idempotency, task state transitions, and durable audit records.
 
 ## GUI Cards

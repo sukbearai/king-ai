@@ -466,19 +466,35 @@ const COMMON_WORD_CARDS: Record<string, { meaning: string; phonetic: string; syl
   "i've": { meaning: "我已（I have）", phonetic: "/aɪv/", syllables: "" }
 };
 
-// Word cards draw their meaning from the coach's trailing Glossary first (context-specific
-// content words), then fall back to the built-in function-word dictionary. Phonetic/syllables
-// only come from the dictionary, so glossary-only words simply show a meaning and hide the
-// optional rows. A word with no meaning anywhere stays clickable but carries data-word only.
-function lookupWordCard(key: string, glossary?: Map<string, string>): { meaning: string; phonetic: string; syllables: string } | null {
+type IeltsCardDetails = { meaning: string; phonetic: string; syllables: string };
+type IeltsGlossary = { words: Map<string, IeltsCardDetails>; phrases: Map<string, string> };
+
+function emptyIeltsGlossary(): IeltsGlossary {
+  return { words: new Map(), phrases: new Map() };
+}
+
+function normalizeIeltsPhraseKey(phrase: string): string {
+  return phrase.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+// Word cards draw their details from the coach's trailing Glossary first (context-specific
+// content words), then fall back to the built-in function-word dictionary. A word with no
+// details anywhere stays clickable but carries data-word only.
+function lookupWordCard(key: string, glossary?: IeltsGlossary): IeltsCardDetails | null {
   const dict = COMMON_WORD_CARDS[key];
-  const glossMeaning = glossary?.get(key);
-  if (glossMeaning) return { meaning: glossMeaning, phonetic: dict?.phonetic ?? "", syllables: dict?.syllables ?? "" };
+  const glossCard = glossary?.words.get(key);
+  if (glossCard) {
+    return {
+      meaning: glossCard.meaning,
+      phonetic: glossCard.phonetic || dict?.phonetic || "",
+      syllables: glossCard.syllables || dict?.syllables || ""
+    };
+  }
   if (dict) return { meaning: dict.meaning, phonetic: dict.phonetic, syllables: dict.syllables };
   return null;
 }
 
-function clickableWordSpan(word: string, glossary?: Map<string, string>): string {
+function clickableWordSpan(word: string, glossary?: IeltsGlossary): string {
   const escapedWord = escapeHtmlAttribute(word);
   const display = escapeHtml(word);
   const key = word.toLowerCase();
@@ -498,35 +514,46 @@ function clickableWordSpan(word: string, glossary?: Map<string, string>): string
   return `<span class="ielts-word"${attrs}>${display}</span>`;
 }
 
-// The coach supplies content-word meanings in a trailing "Glossary:" line instead of wrapping
-// every word inline. Parse those `word = 中文` pairs (single words only; phrases are highlighted
-// separately) to fill the click cards, then strip the line so the learner sees only the
-// annotated sentence, not the raw word list.
-function extractIeltsGlossary(body: string): { text: string; glossary: Map<string, string> } {
-  const glossary = new Map<string, string>();
+// The coach supplies word and phrase details in a trailing "Glossary:" line instead of wrapping
+// every word inline. Parse `word = 中文 | /phonetic/ | syl-la-bles` and `phrase = 中文` pairs,
+// then strip the line so the learner sees only the annotated sentence, not the raw list.
+function extractIeltsGlossary(body: string): { text: string; glossary: IeltsGlossary } {
+  const glossary = emptyIeltsGlossary();
   const marker = body.search(/(^|\n)[^\S\n]*(?:Glossary|词表|词汇)[^\S\n]*[:：]/i);
   if (marker < 0) return { text: body, glossary };
   const tail = body.slice(marker);
-  const pairPattern = /([A-Za-z][A-Za-z'’-]*)\s*[=＝]\s*([^;；\n]+)/g;
+  const pairPattern = /([A-Za-z](?:[A-Za-z'’\-\s]*[A-Za-z])?)\s*[=＝]\s*([^;；\n]+)/g;
   let match: RegExpExecArray | null;
   while ((match = pairPattern.exec(tail))) {
-    const term = match[1].trim().toLowerCase();
-    const meaning = match[2].trim();
-    if (term && meaning && !glossary.has(term)) glossary.set(term, meaning);
+    const rawTerm = normalizeIeltsPhraseKey(match[1]);
+    const [meaning = "", phonetic = "", syllables = ""] = match[2].split("|").map((part) => part.trim());
+    if (!rawTerm || !meaning) continue;
+    if (rawTerm.includes(" ")) {
+      if (!glossary.phrases.has(rawTerm)) glossary.phrases.set(rawTerm, meaning);
+    } else if (!glossary.words.has(rawTerm)) {
+      glossary.words.set(rawTerm, { meaning, phonetic, syllables });
+    }
   }
   return { text: body.slice(0, marker).replace(/\s+$/, ""), glossary };
 }
 
-function renderIeltsAnnotations(markdown: string): string {
+function renderIeltsAnnotations(markdown: string, glossary = emptyIeltsGlossary()): string {
   return markdown
     .replace(/\[word\s+([^\]\n|]+)\|([^\]\n|]+)\|([^\]\n|]+)\|([^\]\n|]+)\]/g, (_match, word: string, meaning: string, phonetic: string, syllables: string) =>
       `<span class="ielts-word" data-word="${escapeHtmlAttribute(word.trim())}" data-meaning="${escapeHtmlAttribute(meaning.trim())}" data-phonetic="${escapeHtmlAttribute(phonetic.trim())}" data-syllables="${escapeHtmlAttribute(syllables.trim())}">${escapeHtml(word.trim())}</span>`
     )
     .replace(/\[core:\s*([^\]\n]+)\]/g, (_match, core: string) => `<span class="ielts-core">${escapeHtml(core.trim())}</span>`)
-    .replace(/\[phrase:\s*([^\]\n]+)\]/g, (_match, phrase: string) => `<span class="ielts-phrase">${escapeHtml(phrase.trim())}</span>`);
+    .replace(/\[phrase:\s*([^\]\n]+)\]/g, (_match, phrase: string) => {
+      const text = phrase.trim();
+      const meaning = glossary.phrases.get(normalizeIeltsPhraseKey(text));
+      const attrs = meaning
+        ? ` data-word="${escapeHtmlAttribute(text)}" data-meaning="${escapeHtmlAttribute(meaning)}"`
+        : "";
+      return `<span class="ielts-phrase"${attrs}>${escapeHtml(text)}</span>`;
+    });
 }
 
-function renderFallbackClickableWords(html: string, glossary?: Map<string, string>): string {
+function renderFallbackClickableWords(html: string, glossary?: IeltsGlossary): string {
   const skipTags = new Set(["a", "code", "pre", "script", "style"]);
   const stack: Array<{ name: string; className: string }> = [];
   return html.split(/(<[^>]+>)/g).map((part) => {
@@ -565,8 +592,8 @@ async function renderMessageMarkdown(message: Message): Promise<Message> {
     const isIelts = shouldRenderIeltsClickableWords(message);
     const { text, glossary } = isIelts
       ? extractIeltsGlossary(message.body || "")
-      : { text: message.body || "", glossary: new Map<string, string>() };
-    const rendered = await renderMarkdownHtml(renderIeltsAnnotations(text));
+      : { text: message.body || "", glossary: emptyIeltsGlossary() };
+    const rendered = await renderMarkdownHtml(renderIeltsAnnotations(text, glossary));
     const sanitized = sanitizeMarkdownHtml(rendered);
     const body_html = isIelts ? renderFallbackClickableWords(sanitized, glossary) : sanitized;
     return { ...message, body_html };
