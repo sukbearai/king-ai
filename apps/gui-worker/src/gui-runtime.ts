@@ -295,12 +295,9 @@ function escapeHtmlAttribute(value: string): string {
   return value.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[ch] ?? ch);
 }
 
-// Closed-class / very high-frequency words the coach model reliably skips when it
-// annotates a sentence. The fallback wrapper below fills these in with a concise card so
-// clicking a common word never lands on "暂无词义". Content words are almost always
-// annotated by the model itself, so this table intentionally stays to function words plus a
-// few ubiquitous ones. Keys are lowercase; syllables stay empty for monosyllabic words so the
-// card hides that row instead of echoing the word back.
+// Built-in fallback cards cover common grammar words plus high-frequency IELTS/job-writing
+// vocabulary. WordCards JSON remains the source for context-specific meanings, but this table
+// keeps imperfect replies usable when the model omitted a word.
 const COMMON_WORD_CARDS: Record<string, { meaning: string; phonetic: string; syllables: string }> = {
   // articles
   a: { meaning: "一个（不定冠词）", phonetic: "/ə/", syllables: "" },
@@ -456,6 +453,70 @@ const COMMON_WORD_CARDS: Record<string, { meaning: string; phonetic: string; syl
   really: { meaning: "真的", phonetic: "/ˈriːəli/", syllables: "real-ly" },
   well: { meaning: "好；嗯", phonetic: "/wel/", syllables: "" },
   yes: { meaning: "是的", phonetic: "/jes/", syllables: "" },
+  // IELTS / writing / job-application vocabulary
+  dear: { meaning: "亲爱的；敬启者", phonetic: "/dɪr/", syllables: "" },
+  hiring: { meaning: "招聘；雇用", phonetic: "/ˈhaɪərɪŋ/", syllables: "hir-ing" },
+  manager: { meaning: "经理；负责人", phonetic: "/ˈmænɪdʒər/", syllables: "man-ag-er" },
+  write: { meaning: "写", phonetic: "/raɪt/", syllables: "" },
+  writing: { meaning: "写作；正在写", phonetic: "/ˈraɪtɪŋ/", syllables: "writ-ing" },
+  written: { meaning: "写成的", phonetic: "/ˈrɪtn/", syllables: "writ-ten" },
+  apply: { meaning: "申请；应用", phonetic: "/əˈplaɪ/", syllables: "ap-ply" },
+  programmer: { meaning: "程序员", phonetic: "/ˈproʊɡræmər/", syllables: "pro-gram-mer" },
+  position: { meaning: "职位；位置", phonetic: "/pəˈzɪʃən/", syllables: "po-si-tion" },
+  company: { meaning: "公司", phonetic: "/ˈkʌmpəni/", syllables: "com-pa-ny" },
+  developed: { meaning: "培养了；发展了", phonetic: "/dɪˈveləpt/", syllables: "de-vel-oped" },
+  practical: { meaning: "实用的", phonetic: "/ˈpræktɪkl/", syllables: "prac-ti-cal" },
+  skill: { meaning: "技能", phonetic: "/skɪl/", syllables: "" },
+  skills: { meaning: "技能", phonetic: "/skɪlz/", syllables: "" },
+  java: { meaning: "Java 编程语言", phonetic: "/ˈdʒɑːvə/", syllables: "Ja-va" },
+  python: { meaning: "Python 编程语言", phonetic: "/ˈpaɪθɑːn/", syllables: "Py-thon" },
+  web: { meaning: "网络；网页", phonetic: "/web/", syllables: "" },
+  development: { meaning: "开发；发展", phonetic: "/dɪˈveləpmənt/", syllables: "de-vel-op-ment" },
+  university: { meaning: "大学", phonetic: "/ˌjuːnɪˈvɜːrsəti/", syllables: "u-ni-ver-si-ty" },
+  project: { meaning: "项目", phonetic: "/ˈprɑːdʒekt/", syllables: "proj-ect" },
+  projects: { meaning: "项目", phonetic: "/ˈprɑːdʒekts/", syllables: "proj-ects" },
+  personal: { meaning: "个人的", phonetic: "/ˈpɜːrsənl/", syllables: "per-son-al" },
+  practice: { meaning: "练习；实践", phonetic: "/ˈpræktɪs/", syllables: "prac-tice" },
+  solve: { meaning: "解决", phonetic: "/sɑːlv/", syllables: "" },
+  technical: { meaning: "技术的", phonetic: "/ˈteknɪkl/", syllables: "tech-ni-cal" },
+  problem: { meaning: "问题", phonetic: "/ˈprɑːbləm/", syllables: "prob-lem" },
+  problems: { meaning: "问题", phonetic: "/ˈprɑːbləmz/", syllables: "prob-lems" },
+  carefully: { meaning: "仔细地", phonetic: "/ˈkerfəli/", syllables: "care-ful-ly" },
+  work: { meaning: "工作；合作", phonetic: "/wɜːrk/", syllables: "" },
+  team: { meaning: "团队", phonetic: "/tiːm/", syllables: "" },
+  member: { meaning: "成员", phonetic: "/ˈmembər/", syllables: "mem-ber" },
+  members: { meaning: "成员", phonetic: "/ˈmembərz/", syllables: "mem-bers" },
+  enjoy: { meaning: "喜欢；享受", phonetic: "/ɪnˈdʒɔɪ/", syllables: "en-joy" },
+  learning: { meaning: "学习", phonetic: "/ˈlɜːrnɪŋ/", syllables: "learn-ing" },
+  new: { meaning: "新的", phonetic: "/nuː/", syllables: "" },
+  tool: { meaning: "工具", phonetic: "/tuːl/", syllables: "" },
+  tools: { meaning: "工具", phonetic: "/tuːlz/", syllables: "" },
+  improving: { meaning: "改进；提高", phonetic: "/ɪmˈpruːvɪŋ/", syllables: "im-prov-ing" },
+  code: { meaning: "代码", phonetic: "/koʊd/", syllables: "" },
+  quality: { meaning: "质量", phonetic: "/ˈkwɑːləti/", syllables: "qual-i-ty" },
+  pressure: { meaning: "压力", phonetic: "/ˈpreʃər/", syllables: "pres-sure" },
+  believe: { meaning: "相信；认为", phonetic: "/bɪˈliːv/", syllables: "be-lieve" },
+  enthusiasm: { meaning: "热情", phonetic: "/ɪnˈθuːziæzəm/", syllables: "en-thu-si-asm" },
+  basic: { meaning: "基础的", phonetic: "/ˈbeɪsɪk/", syllables: "ba-sic" },
+  experience: { meaning: "经验；经历", phonetic: "/ɪkˈspɪriəns/", syllables: "ex-pe-ri-ence" },
+  make: { meaning: "使；制作", phonetic: "/meɪk/", syllables: "" },
+  useful: { meaning: "有用的", phonetic: "/ˈjuːsfl/", syllables: "use-ful" },
+  hope: { meaning: "希望", phonetic: "/hoʊp/", syllables: "" },
+  opportunity: { meaning: "机会", phonetic: "/ˌɑːpərˈtuːnəti/", syllables: "op-por-tu-ni-ty" },
+  discuss: { meaning: "讨论", phonetic: "/dɪˈskʌs/", syllables: "dis-cuss" },
+  application: { meaning: "申请；应用", phonetic: "/ˌæplɪˈkeɪʃən/", syllables: "ap-pli-ca-tion" },
+  interview: { meaning: "面试；采访", phonetic: "/ˈɪntərvjuː/", syllables: "in-ter-view" },
+  faithfully: { meaning: "忠实地；谨启", phonetic: "/ˈfeɪθfəli/", syllables: "faith-ful-ly" },
+  tip: { meaning: "提示；建议", phonetic: "/tɪp/", syllables: "" },
+  natural: { meaning: "自然的", phonetic: "/ˈnætʃərəl/", syllables: "nat-u-ral" },
+  english: { meaning: "英语；英文的", phonetic: "/ˈɪŋɡlɪʃ/", syllables: "Eng-lish" },
+  chinese: { meaning: "中文；中国的", phonetic: "/ˌtʃaɪˈniːz/", syllables: "Chi-nese" },
+  request: { meaning: "请求；要求", phonetic: "/rɪˈkwest/", syllables: "re-quest" },
+  word: { meaning: "单词", phonetic: "/wɜːrd/", syllables: "" },
+  job: { meaning: "工作；职位", phonetic: "/dʒɑːb/", syllables: "" },
+  letter: { meaning: "信；字母", phonetic: "/ˈletər/", syllables: "let-ter" },
+  phrase: { meaning: "短语", phonetic: "/freɪz/", syllables: "" },
+  phrases: { meaning: "短语", phonetic: "/freɪzɪz/", syllables: "phras-es" },
   // common contractions
   "i'm": { meaning: "我是（I am）", phonetic: "/aɪm/", syllables: "" },
   "it's": { meaning: "它是（it is）", phonetic: "/ɪts/", syllables: "" },
@@ -467,30 +528,43 @@ const COMMON_WORD_CARDS: Record<string, { meaning: string; phonetic: string; syl
 };
 
 type IeltsCardDetails = { meaning: string; phonetic: string; syllables: string };
-type IeltsGlossary = { words: Map<string, IeltsCardDetails> };
+type IeltsCardIndex = { words: Map<string, IeltsCardDetails> };
 
-function emptyIeltsGlossary(): IeltsGlossary {
+function emptyIeltsCardIndex(): IeltsCardIndex {
   return { words: new Map() };
 }
 
-// Word cards draw their details from the coach's trailing Glossary first (context-specific
-// content words), then fall back to the built-in function-word dictionary. A word with no
-// details anywhere stays clickable but carries data-word only.
-function lookupWordCard(key: string, glossary?: IeltsGlossary): IeltsCardDetails | null {
+// Word cards draw their details from the coach's trailing structured WordCards JSON first,
+// then the built-in dictionary. Syllables are always filled for cards that have at least a
+// meaning, so the popover consistently shows all expected rows.
+function lookupWordCard(key: string, glossary?: IeltsCardIndex, displayWord = key): IeltsCardDetails | null {
   const dict = COMMON_WORD_CARDS[key];
   const glossCard = glossary?.words.get(key);
   if (glossCard) {
     return {
       meaning: glossCard.meaning,
       phonetic: glossCard.phonetic || dict?.phonetic || "",
-      syllables: glossCard.syllables || dict?.syllables || ""
+      syllables: glossCard.syllables || dict?.syllables || syllabifyEnglishWord(displayWord)
     };
   }
-  if (dict) return { meaning: dict.meaning, phonetic: dict.phonetic, syllables: dict.syllables };
+  if (dict) return { meaning: dict.meaning, phonetic: dict.phonetic, syllables: dict.syllables || syllabifyEnglishWord(displayWord) };
   return null;
 }
 
-function clickableWordSpan(word: string, glossary?: IeltsGlossary): string {
+function syllabifyEnglishWord(word: string): string {
+  const normalized = word.replace(/^[^A-Za-z]+|[^A-Za-z]+$/g, "");
+  if (!normalized) return word;
+  const known = COMMON_WORD_CARDS[normalized.toLowerCase()]?.syllables;
+  if (known) return known;
+  const lower = normalized.toLowerCase();
+  if (lower.length <= 3) return normalized;
+  const rawParts = lower.match(/[^aeiouy]*[aeiouy]+(?:[^aeiouy]*(?=[^aeiouy]*[aeiouy])|[^aeiouy]*)/g);
+  const parts = rawParts?.filter(Boolean) ?? [lower];
+  if (parts.length <= 1) return normalized;
+  return parts.join("-");
+}
+
+function clickableWordSpan(word: string, glossary?: IeltsCardIndex): string {
   const escapedWord = escapeHtmlAttribute(word);
   const display = escapeHtml(word);
   const key = word.toLowerCase();
@@ -498,7 +572,7 @@ function clickableWordSpan(word: string, glossary?: IeltsGlossary): string {
   // the card still shows a meaning. Contractions like don't keep their own dictionary entry,
   // which the direct lookup above resolves before any stripping.
   const baseKey = key.replace(/['’]s?$/i, "");
-  const card = lookupWordCard(key, glossary) ?? (baseKey !== key ? lookupWordCard(baseKey, glossary) : null);
+  const card = lookupWordCard(key, glossary, word) ?? (baseKey !== key ? lookupWordCard(baseKey, glossary, word) : null);
   if (!card) {
     return `<span class="ielts-word" data-word="${escapedWord}">${display}</span>`;
   }
@@ -510,22 +584,105 @@ function clickableWordSpan(word: string, glossary?: IeltsGlossary): string {
   return `<span class="ielts-word"${attrs}>${display}</span>`;
 }
 
-// The coach supplies word details in a trailing "Glossary:" line instead of wrapping every word
-// inline. Parse `word = 中文 | /phonetic/ | syl-la-bles` pairs, then strip the line so the
-// learner sees only the annotated sentence, not the raw list.
-function extractIeltsGlossary(body: string): { text: string; glossary: IeltsGlossary } {
-  const glossary = emptyIeltsGlossary();
-  const marker = body.search(/(^|\n)[^\S\n]*(?:Glossary|词表|词汇)[^\S\n]*[:：]/i);
-  if (marker < 0) return { text: body, glossary };
-  const tail = body.slice(marker);
-  const pairPattern = /([A-Za-z][A-Za-z'’-]*)\s*[=＝]\s*([^;；\n]+)/g;
-  let match: RegExpExecArray | null;
-  while ((match = pairPattern.exec(tail))) {
-    const term = match[1].trim().toLowerCase();
-    const [meaning = "", phonetic = "", syllables = ""] = match[2].split("|").map((part) => part.trim());
-    if (term && meaning && !glossary.words.has(term)) glossary.words.set(term, { meaning, phonetic, syllables });
+function setIeltsCard(glossary: IeltsCardIndex, term: string, card: IeltsCardDetails): void {
+  const key = term.trim().toLowerCase();
+  if (!key || !card.meaning || glossary.words.has(key)) return;
+  glossary.words.set(key, card);
+}
+
+function normalizeIeltsCardSyllables(value: unknown): string {
+  if (Array.isArray(value)) return value.map((part) => typeof part === "string" ? part.trim() : "").filter(Boolean).join("-");
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function firstJsonValueText(input: string): string | undefined {
+  const start = input.search(/[\[{]/);
+  if (start < 0) return undefined;
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+  for (let idx = start; idx < input.length; idx += 1) {
+    const ch = input[idx];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === "\"") {
+      inString = true;
+      continue;
+    }
+    if (ch === "{" || ch === "[") {
+      stack.push(ch === "{" ? "}" : "]");
+      continue;
+    }
+    if (ch === "}" || ch === "]") {
+      if (stack.pop() !== ch) return undefined;
+      if (stack.length === 0) return input.slice(start, idx + 1);
+    }
   }
-  return { text: body.slice(0, marker).replace(/\s+$/, ""), glossary };
+  return undefined;
+}
+
+function addIeltsWordCardsFromJson(glossary: IeltsCardIndex, raw: string): void {
+  const jsonText = firstJsonValueText(raw);
+  if (!jsonText) return;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch {
+    return;
+  }
+  const container = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  const cards = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray(container.cards)
+      ? container.cards
+      : Array.isArray(container.wordCards)
+        ? container.wordCards
+        : Array.isArray(container.words)
+          ? container.words
+          : [];
+  for (const item of cards) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const row = item as Record<string, unknown>;
+    const token = typeof row.token === "string" ? row.token : typeof row.word === "string" ? row.word : typeof row.lemma === "string" ? row.lemma : "";
+    const meaning = typeof row.meaningZh === "string"
+      ? row.meaningZh.trim()
+      : typeof row.meaning === "string"
+        ? row.meaning.trim()
+        : typeof row.zh === "string"
+          ? row.zh.trim()
+          : "";
+    const phonetic = typeof row.phonetic === "string"
+      ? row.phonetic.trim()
+      : typeof row.ipa === "string"
+        ? row.ipa.trim()
+        : typeof row.pronunciation === "string"
+          ? row.pronunciation.trim()
+          : "";
+    setIeltsCard(glossary, token, { meaning, phonetic, syllables: normalizeIeltsCardSyllables(row.syllables) });
+  }
+}
+
+// The coach supplies complete word details in a trailing "WordCards:" JSON block. Parse and
+// strip that block before markdown rendering so learners see only the annotated English.
+function extractIeltsWordCards(body: string, glossary: IeltsCardIndex): string {
+  const marker = /(^|\n)[^\S\n]*(?:WordCards|Word Cards|词卡)[^\S\n]*[:：]/i.exec(body);
+  if (!marker) return body;
+  const tailStart = marker.index + marker[0].length;
+  addIeltsWordCardsFromJson(glossary, body.slice(tailStart));
+  return body.slice(0, marker.index).replace(/\s+$/, "");
+}
+
+function extractIeltsCardData(body: string): { text: string; glossary: IeltsCardIndex } {
+  const glossary = emptyIeltsCardIndex();
+  return { text: extractIeltsWordCards(body, glossary), glossary };
 }
 
 function cleanupRepeatedIeltsCoreText(markdown: string): string {
@@ -557,7 +714,7 @@ function renderIeltsAnnotations(markdown: string): string {
     .replace(/\[phrase:\s*([^\]\n]+)\]/g, (_match, phrase: string) => `<span class="ielts-phrase">${escapeHtml(phrase.trim())}</span>`);
 }
 
-function renderFallbackClickableWords(html: string, glossary?: IeltsGlossary): string {
+function renderFallbackClickableWords(html: string, glossary?: IeltsCardIndex): string {
   const skipTags = new Set(["a", "code", "pre", "script", "style"]);
   const stack: Array<{ name: string; className: string }> = [];
   return html.split(/(<[^>]+>)/g).map((part) => {
@@ -595,8 +752,8 @@ async function renderMessageMarkdown(message: Message): Promise<Message> {
   try {
     const isIelts = shouldRenderIeltsClickableWords(message);
     const { text, glossary } = isIelts
-      ? extractIeltsGlossary(message.body || "")
-      : { text: message.body || "", glossary: emptyIeltsGlossary() };
+      ? extractIeltsCardData(message.body || "")
+      : { text: message.body || "", glossary: emptyIeltsCardIndex() };
     const rendered = await renderMarkdownHtml(renderIeltsAnnotations(cleanupRepeatedIeltsCoreText(text)));
     const sanitized = sanitizeMarkdownHtml(rendered);
     const body_html = isIelts ? renderFallbackClickableWords(sanitized, glossary) : sanitized;

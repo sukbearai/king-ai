@@ -95,6 +95,18 @@ async function pairComputer(
   );
 }
 
+function wordCards(tokens: string[]): string {
+  return `WordCards: ${JSON.stringify({
+    cards: tokens.map((token) => ({
+      token,
+      lemma: token,
+      meaningZh: `${token} 的中文义`,
+      phonetic: `/${token.toLowerCase()}/`,
+      syllables: [token]
+    }))
+  })}`;
+}
+
 test("gui runtime isolates state by tenant identity", async () => {
   const bindings = env();
   const aliceHeaders = { "Cf-Access-Authenticated-User-Email": "alice@example.com" };
@@ -431,7 +443,11 @@ test("gui state renders IELTS learning annotations", async () => {
       argv: [
         "reply",
         room.conversation.id,
-        "Natural English: [core: I have been working overtime] [phrase: for almost two weeks]. Vocabulary: [word overtime|加班时间|/ˈoʊvərtaɪm/|o-ver-time]"
+        [
+          "Natural English: [core: I have been working overtime] [phrase: for almost two weeks]. Vocabulary: [word overtime|加班时间|/ˈoʊvərtaɪm/|o-ver-time]",
+          "",
+          wordCards(["Natural", "English", "I", "have", "been", "working", "overtime", "for", "almost", "two", "weeks", "Vocabulary"])
+        ].join("\n")
       ]
     })
   }), bindings);
@@ -467,7 +483,11 @@ test("gui state makes every IELTS coach English word clickable without explicit 
       argv: [
         "reply",
         room.conversation.id,
-        "Yes, I am here, and I can help you improve your IELTS reading and writing."
+        [
+          "Yes, I am here, and I can help you improve your IELTS reading and writing.",
+          "",
+          wordCards(["Yes", "I", "am", "here", "and", "can", "help", "you", "improve", "your", "IELTS", "reading", "writing"])
+        ].join("\n")
       ]
     })
   }), bindings);
@@ -479,10 +499,8 @@ test("gui state makes every IELTS coach English word clickable without explicit 
   for (const word of ["Yes", "I", "am", "here", "and", "can", "help", "you", "improve", "your", "IELTS", "reading", "writing"]) {
     assert.match(agent?.body_html ?? "", new RegExp(`class="ielts-word" data-word="${word}"[^>]*>${word}<\\/span>`));
   }
-  // Common function words the coach model tends to skip still get a real card from the
-  // built-in fallback dictionary, so clicking them never shows "暂无词义".
-  assert.match(agent?.body_html ?? "", /class="ielts-word" data-word="I" data-meaning="我"[^>]*>I<\/span>/);
-  assert.match(agent?.body_html ?? "", /data-word="and" data-meaning="和；并且"[^>]*>and<\/span>/);
+  assert.match(agent?.body_html ?? "", /class="ielts-word" data-word="I" data-meaning="I 的中文义"[^>]*>I<\/span>/);
+  assert.match(agent?.body_html ?? "", /data-word="and" data-meaning="and 的中文义"[^>]*>and<\/span>/);
 });
 
 test("gui state makes long IELTS coach sample paragraphs clickable", async () => {
@@ -511,7 +529,9 @@ test("gui state makes long IELTS coach sample paragraphs clickable", async () =>
           "Dear Sir or Madam,",
           "",
           "My name is Li Ming, and I am writing to introduce myself.",
-          "I have developed a strong interest in English communication."
+          "I have developed a strong interest in English communication.",
+          "",
+          wordCards(["Dear", "Sir", "or", "Madam", "My", "name", "is", "Li", "Ming", "and", "I", "am", "writing", "to", "introduce", "myself", "have", "developed", "a", "strong", "interest", "in", "English", "communication"])
         ].join("\n")
       ]
     })
@@ -526,13 +546,13 @@ test("gui state makes long IELTS coach sample paragraphs clickable", async () =>
   }
 });
 
-test("gui state fills word cards from the coach Glossary and hides the glossary line", async () => {
+test("gui state gives fallback IELTS word cards meaning phonetic and syllables", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
   const room = await json<{ conversation: { id: string } }>(
     await worker.fetch(new Request("https://gui/gui/conversations", {
       method: "POST",
-      body: JSON.stringify({ title: "IELTS Glossary", workflowId: "ielts-study", teamMode: "single" })
+      body: JSON.stringify({ title: "IELTS Fallback Cards", workflowId: "ielts-study", teamMode: "single" })
     }), bindings)
   );
   const tokenRes = await json<{ token: string }>(
@@ -548,7 +568,14 @@ test("gui state fills word cards from the coach Glossary and hides the glossary 
       argv: [
         "reply",
         room.conversation.id,
-        "[core: I cherish] this [phrase: quiet moment].\n\nTip: Useful phrases: 'quiet moment' = 安静的时刻.\n\nGlossary: cherish = 珍惜 | /ˈtʃerɪʃ/ | cher-ish; quiet = 安静的 | /ˈkwaɪət/ | qui-et; moment = 时刻 | /ˈmoʊmənt/ | mo-ment"
+        [
+          "Dear Hiring Manager,",
+          "",
+          "[core: I am writing] to [phrase: apply for] the programmer position at your company.",
+          "[core: I have developed] practical skills in Java, Python, and web development through university projects and personal practice.",
+          "",
+          wordCards(["Dear", "Hiring", "Manager", "I", "am", "writing", "to", "apply", "for", "the", "programmer", "position", "at", "your", "company", "have", "developed", "practical", "skills", "in", "Java", "Python", "and", "web", "development", "through", "university", "projects", "personal", "practice"])
+        ].join("\n")
       ]
     })
   }), bindings);
@@ -556,21 +583,114 @@ test("gui state fills word cards from the coach Glossary and hides the glossary 
   const state = await json<{ messages: { author_kind: string; body_html?: string }[] }>(
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
-  const agent = state.messages.find((message) => message.author_kind === "agent");
-  const html = agent?.body_html ?? "";
-  // Content words pick up their meaning from the Glossary even though the model did not wrap them.
-  assert.match(html, /data-word="cherish" data-meaning="珍惜" data-phonetic="\/ˈtʃerɪʃ\/" data-syllables="cher-ish"[^>]*>cherish<\/span>/);
-  assert.match(html, /data-word="moment" data-meaning="时刻" data-phonetic="\/ˈmoʊmənt\/" data-syllables="mo-ment"[^>]*>moment<\/span>/);
-  // Highlighted phrases stay visual; their meanings are explained in the visible Tip line.
-  assert.match(html, /class="ielts-phrase"/);
-  assert.doesNotMatch(html, /class="ielts-phrase"[^>]*data-meaning=/);
-  assert.match(html, /data-word="Useful"[^>]*>Useful<\/span> <span class="ielts-word" data-word="phrases"[^>]*>phrases<\/span>/);
-  assert.match(html, /安静的时刻/);
-  // Function words still come from the built-in dictionary.
-  assert.match(html, /data-word="this" data-meaning="这个"[^>]*>this<\/span>/);
-  // The core still renders, and the raw Glossary line is consumed rather than shown.
-  assert.match(html, /class="ielts-core"/);
-  assert.doesNotMatch(html, /Glossary/);
+  const html = state.messages.find((message) => message.author_kind === "agent")?.body_html ?? "";
+  for (const word of ["Hiring", "programmer", "company", "through", "university", "projects"]) {
+    assert.match(html, new RegExp(`data-word="${word}" data-meaning="[^"]+" data-phonetic="[^"]+" data-syllables="[^"]+"[^>]*>${word}<\\/span>`));
+  }
+});
+
+test("gui state fills word cards from structured WordCards JSON and hides it", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const room = await json<{ conversation: { id: string } }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({ title: "IELTS WordCards", workflowId: "ielts-study", teamMode: "single" })
+    }), bindings)
+  );
+  const tokenRes = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/ielts-tutor/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${tokenRes.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      argv: [
+        "reply",
+        room.conversation.id,
+        [
+          "[core: I customized] the dashboard [phrase: for daily practice].",
+          "",
+          "WordCards: {\"cards\":[{\"token\":\"I\",\"lemma\":\"I\",\"meaningZh\":\"我\",\"phonetic\":\"/aɪ/\",\"syllables\":[\"I\"]},{\"token\":\"customized\",\"lemma\":\"customize\",\"meaningZh\":\"定制；个性化调整\",\"phonetic\":\"/ˈkʌstəmaɪzd/\",\"syllables\":[\"cus\",\"tom\",\"ized\"]},{\"token\":\"the\",\"lemma\":\"the\",\"meaningZh\":\"这；那\",\"phonetic\":\"/ðə/\",\"syllables\":[\"the\"]},{\"token\":\"dashboard\",\"lemma\":\"dashboard\",\"meaningZh\":\"仪表盘；信息面板\",\"phonetic\":\"/ˈdæʃbɔːrd/\",\"syllables\":[\"dash\",\"board\"]},{\"token\":\"for\",\"lemma\":\"for\",\"meaningZh\":\"为了；给\",\"phonetic\":\"/fɔːr/\",\"syllables\":[\"for\"]},{\"token\":\"daily\",\"lemma\":\"daily\",\"meaningZh\":\"每日的\",\"phonetic\":\"/ˈdeɪli/\",\"syllables\":[\"dai\",\"ly\"]},{\"token\":\"practice\",\"lemma\":\"practice\",\"meaningZh\":\"练习\",\"phonetic\":\"/ˈpræktɪs/\",\"syllables\":[\"prac\",\"tice\"]}]}"
+        ].join("\n")
+      ]
+    })
+  }), bindings);
+
+  const state = await json<{ messages: { author_kind: string; body_html?: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  const html = state.messages.find((message) => message.author_kind === "agent")?.body_html ?? "";
+  for (const word of ["I", "customized", "the", "dashboard", "for", "daily", "practice"]) {
+    assert.match(html, new RegExp(`data-word="${word}" data-meaning="[^"]+" data-phonetic="[^"]+" data-syllables="[^"]+"[^>]*>${word}<\\/span>`));
+  }
+  assert.match(html, /data-word="customized" data-meaning="定制；个性化调整" data-phonetic="\/ˈkʌstəmaɪzd\/" data-syllables="cus-tom-ized"[^>]*>customized<\/span>/);
+  assert.match(html, /data-word="dashboard" data-meaning="仪表盘；信息面板" data-phonetic="\/ˈdæʃbɔːrd\/" data-syllables="dash-board"[^>]*>dashboard<\/span>/);
+  assert.doesNotMatch(html, /WordCards/);
+});
+
+test("gui runtime rejects IELTS coach replies with incomplete WordCards JSON", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const room = await json<{ conversation: { id: string } }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({ title: "IELTS WordCards Gate", workflowId: "ielts-study", teamMode: "single" })
+    }), bindings)
+  );
+  const tokenRes = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/ielts-tutor/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  const auth = { Authorization: `Bearer ${tokenRes.token}`, "Content-Type": "application/json" };
+  const rejected = await json<{ exitCode: number; text: string }>(
+    await worker.fetch(new Request("https://gui/runtime/cli", {
+      method: "POST",
+      headers: auth,
+      body: JSON.stringify({
+        argv: [
+          "reply",
+          room.conversation.id,
+          "[core: I customized] the dashboard [phrase: for daily practice].\n\nWordCards: {\"cards\":[{\"token\":\"customized\",\"meaningZh\":\"定制\",\"phonetic\":\"/ˈkʌstəmaɪzd/\",\"syllables\":[\"cus\",\"tom\",\"ized\"]},{\"token\":\"dashboard\",\"meaningZh\":\"仪表盘\",\"phonetic\":\"/ˈdæʃbɔːrd/\",\"syllables\":[\"dash\",\"board\"]}]}"
+        ]
+      })
+    }), bindings)
+  );
+  const accepted = await json<{ exitCode: number; text: string }>(
+    await worker.fetch(new Request("https://gui/runtime/cli", {
+      method: "POST",
+      headers: auth,
+      body: JSON.stringify({
+        argv: [
+          "reply",
+          room.conversation.id,
+          [
+            "[core: I customized] the dashboard [phrase: for daily practice].",
+            "",
+            wordCards(["I", "customized", "the", "dashboard", "for", "daily", "practice"])
+          ].join("\n")
+        ]
+      })
+    }), bindings)
+  );
+
+  assert.equal(rejected.exitCode, 64);
+  assert.match(rejected.text, /IELTS WordCards validation failed/);
+  assert.match(rejected.text, /missing tokens: I, the, for, daily, practice/);
+  assert.equal(accepted.exitCode, 0);
+  assert.equal(accepted.text, "reply posted");
+  const state = await json<{ messages: { conversation_id: string; body: string }[]; cliLog: { result: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  const roomMessages = state.messages.filter((message) => message.conversation_id === room.conversation.id);
+  assert.equal(roomMessages.length, 1);
+  assert.equal(roomMessages[0]?.body.includes("customized"), true);
+  assert.equal(state.cliLog.some((row) => row.result.includes("IELTS WordCards validation failed")), true);
 });
 
 test("gui state removes duplicate text after IELTS core markers", async () => {
@@ -595,7 +715,11 @@ test("gui state removes duplicate text after IELTS core markers", async () => {
       argv: [
         "reply",
         room.conversation.id,
-        "[core: I am writing] am writing [phrase: to apply for] the position. [core: I helped customers] helped customers choose products.\n\nGlossary: writing = 写作 | /ˈraɪtɪŋ/ | writ-ing; helped = 帮助 | /helpt/ | helped"
+        [
+          "[core: I am writing] am writing [phrase: to apply for] the position. [core: I helped customers] helped customers choose products.",
+          "",
+          wordCards(["I", "am", "writing", "to", "apply", "for", "the", "position", "helped", "customers", "choose", "products"])
+        ].join("\n")
       ]
     })
   }), bindings);
@@ -631,7 +755,11 @@ test("gui state keeps valid repeated words after IELTS core markers", async () =
       argv: [
         "reply",
         room.conversation.id,
-        "[core: Students study] study skills every day.\n\nGlossary: students = 学生 | /ˈstuːdənts/ | stu-dents; study = 学习 | /ˈstʌdi/ | stud-y; skills = 技能 | /skɪlz/ | skills"
+        [
+          "[core: Students study] study skills every day.",
+          "",
+          "WordCards: {\"cards\":[{\"token\":\"Students\",\"meaningZh\":\"学生\",\"phonetic\":\"/ˈstuːdənts/\",\"syllables\":[\"stu\",\"dents\"]},{\"token\":\"study\",\"meaningZh\":\"学习\",\"phonetic\":\"/ˈstʌdi/\",\"syllables\":[\"stud\",\"y\"]},{\"token\":\"skills\",\"meaningZh\":\"技能\",\"phonetic\":\"/skɪlz/\",\"syllables\":[\"skills\"]},{\"token\":\"every\",\"meaningZh\":\"每个\",\"phonetic\":\"/ˈevri/\",\"syllables\":[\"eve\",\"ry\"]},{\"token\":\"day\",\"meaningZh\":\"一天\",\"phonetic\":\"/deɪ/\",\"syllables\":[\"day\"]}]}"
+        ].join("\n")
       ]
     })
   }), bindings);
@@ -665,7 +793,11 @@ test("gui state cards possessives via the base word and contractions via the dic
       argv: [
         "reply",
         room.conversation.id,
-        "[core: I don't think] [phrase: the teacher's notes] helped much.\n\nGlossary: think = 认为; teacher = 老师; notes = 笔记; helped = 帮助"
+        [
+          "[core: I don't think] [phrase: the teacher's notes] helped much.",
+          "",
+          "WordCards: {\"cards\":[{\"token\":\"I\",\"meaningZh\":\"我\",\"phonetic\":\"/aɪ/\",\"syllables\":[\"I\"]},{\"token\":\"don't\",\"meaningZh\":\"不（do not）\",\"phonetic\":\"/doʊnt/\",\"syllables\":[\"don't\"]},{\"token\":\"think\",\"meaningZh\":\"认为\",\"phonetic\":\"/θɪŋk/\",\"syllables\":[\"think\"]},{\"token\":\"the\",\"meaningZh\":\"这；那\",\"phonetic\":\"/ðə/\",\"syllables\":[\"the\"]},{\"token\":\"teacher\",\"meaningZh\":\"老师\",\"phonetic\":\"/ˈtiːtʃər/\",\"syllables\":[\"teach\",\"er\"]},{\"token\":\"notes\",\"meaningZh\":\"笔记\",\"phonetic\":\"/noʊts/\",\"syllables\":[\"notes\"]},{\"token\":\"helped\",\"meaningZh\":\"帮助了\",\"phonetic\":\"/helpt/\",\"syllables\":[\"helped\"]},{\"token\":\"much\",\"meaningZh\":\"许多\",\"phonetic\":\"/mʌtʃ/\",\"syllables\":[\"much\"]}]}"
+        ].join("\n")
       ]
     })
   }), bindings);
@@ -674,11 +806,11 @@ test("gui state cards possessives via the base word and contractions via the dic
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
   const html = state.messages.find((message) => message.author_kind === "agent")?.body_html ?? "";
-  // teacher's falls back to the base word "teacher" in the glossary.
+  // teacher's falls back to the base word "teacher" from WordCards.
   assert.match(html, /data-meaning="老师"/);
   // don't keeps its own dictionary card rather than being stripped to "don".
   assert.match(html, /data-meaning="不（do not）"/);
-  assert.doesNotMatch(html, /Glossary/);
+  assert.doesNotMatch(html, /WordCards/);
 });
 
 test("gui state keeps markdown structure while annotating IELTS coach replies", async () => {
@@ -703,7 +835,14 @@ test("gui state keeps markdown structure while annotating IELTS coach replies", 
       argv: [
         "reply",
         room.conversation.id,
-        "Two **tips**:\n\n- [core: Plan your essay] [phrase: before writing].\n- [core: Review grammar] carefully.\n\nGlossary: plan = 计划; essay = 文章; review = 检查; grammar = 语法"
+        [
+          "Two **tips**:",
+          "",
+          "- [core: Plan your essay] [phrase: before writing].",
+          "- [core: Review grammar] carefully.",
+          "",
+          "WordCards: {\"cards\":[{\"token\":\"Two\",\"meaningZh\":\"两个\",\"phonetic\":\"/tuː/\",\"syllables\":[\"two\"]},{\"token\":\"tips\",\"meaningZh\":\"提示\",\"phonetic\":\"/tɪps/\",\"syllables\":[\"tips\"]},{\"token\":\"Plan\",\"meaningZh\":\"计划\",\"phonetic\":\"/plæn/\",\"syllables\":[\"plan\"]},{\"token\":\"your\",\"meaningZh\":\"你的\",\"phonetic\":\"/jɔːr/\",\"syllables\":[\"your\"]},{\"token\":\"essay\",\"meaningZh\":\"文章\",\"phonetic\":\"/ˈeseɪ/\",\"syllables\":[\"es\",\"say\"]},{\"token\":\"before\",\"meaningZh\":\"在之前\",\"phonetic\":\"/bɪˈfɔːr/\",\"syllables\":[\"be\",\"fore\"]},{\"token\":\"writing\",\"meaningZh\":\"写作\",\"phonetic\":\"/ˈraɪtɪŋ/\",\"syllables\":[\"writ\",\"ing\"]},{\"token\":\"Review\",\"meaningZh\":\"检查\",\"phonetic\":\"/rɪˈvjuː/\",\"syllables\":[\"re\",\"view\"]},{\"token\":\"grammar\",\"meaningZh\":\"语法\",\"phonetic\":\"/ˈɡræmər/\",\"syllables\":[\"gram\",\"mar\"]},{\"token\":\"carefully\",\"meaningZh\":\"仔细地\",\"phonetic\":\"/ˈkerfəli/\",\"syllables\":[\"care\",\"ful\",\"ly\"]}]}"
+        ].join("\n")
       ]
     })
   }), bindings);
@@ -721,7 +860,7 @@ test("gui state keeps markdown structure while annotating IELTS coach replies", 
   // no markers leak into the rendered output
   assert.doesNotMatch(html, /\[core:/);
   assert.doesNotMatch(html, /\[phrase:/);
-  assert.doesNotMatch(html, /Glossary/);
+  assert.doesNotMatch(html, /WordCards/);
 });
 
 test("gui state recalls past agent messages through the episodic FTS index", async () => {
@@ -744,7 +883,15 @@ test("gui state recalls past agent messages through the episodic FTS index", asy
     headers: { Authorization: `Bearer ${tokenRes.token}`, "Content-Type": "application/json" },
     body: JSON.stringify({ argv })
   }), bindings);
-  await cli(["reply", room.conversation.id, "We finalized the mitochondria decision for the biology essay."]);
+  await cli([
+    "reply",
+    room.conversation.id,
+    [
+      "We finalized the mitochondria decision for the biology essay.",
+      "",
+      wordCards(["We", "finalized", "the", "mitochondria", "decision", "for", "biology", "essay"])
+    ].join("\n")
+  ]);
 
   const recalled = await json<{ text: string }>(await cli(["recall", "mitochondria"]));
   assert.match(recalled.text, /mitochondria/i);
@@ -776,7 +923,11 @@ test("gui state preserves inline IELTS spans for nested sentence highlights", as
       argv: [
         "reply",
         room.conversation.id,
-        "<span class=\"ielts-core\">I <span class=\"ielts-word\" data-word=\"want\" data-meaning=\"想要\" data-phonetic=\"/wɑːnt/\" data-syllables=\"want\">want</span> <span class=\"ielts-phrase\">to eat</span></span>."
+        [
+          "<span class=\"ielts-core\">I <span class=\"ielts-word\" data-word=\"want\" data-meaning=\"想要\" data-phonetic=\"/wɑːnt/\" data-syllables=\"want\">want</span> <span class=\"ielts-phrase\">to eat</span></span>.",
+          "",
+          wordCards(["I", "want", "to", "eat"])
+        ].join("\n")
       ]
     })
   }), bindings);
@@ -1249,12 +1400,14 @@ test("gui windows choose agents from the selected workflow", async () => {
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Explain the highlighted phrases in the same visible Tip line/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /after any natural-English expression for the learner's Chinese request/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not rely on phrase click cards/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /End your reply with one Glossary line/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /word = 中文 \| \/phonetic\/ \| syl-la-bles/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /single content words only/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /you may skip very common function words/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Meanings must be concise Chinese, not English/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /End your reply with one hidden WordCards JSON block/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /\"token\":\"I\"/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /\"meaningZh\":\"珍惜\"/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Include every distinct English word token/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not skip words because they are common/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /IPA-style phonetics, and syllable arrays/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /fill word cards and does not show it to the learner/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not put prose inside WordCards/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Keep replies compact/);
 
   const single = await json<{
@@ -2901,7 +3054,14 @@ test("gui runtime run contract rejects replies to the wrong conversation", async
     await worker.fetch(new Request("https://gui/runtime/cli", {
       method: "POST",
       headers: auth,
-      body: JSON.stringify({ runId: run.runId, argv: ["reply", first.conversation.id, "right room"] })
+      body: JSON.stringify({
+        runId: run.runId,
+        argv: [
+          "reply",
+          first.conversation.id,
+          ["right room", "", wordCards(["right", "room"])].join("\n")
+        ]
+      })
     }), bindings)
   );
 
@@ -2921,7 +3081,7 @@ test("gui runtime run contract rejects replies to the wrong conversation", async
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
   assert.equal(state.messages.some((message) => message.conversation_id === second.conversation.id && message.body === "wrong room"), false);
-  assert.equal(state.messages.some((message) => message.conversation_id === first.conversation.id && message.body === "right room"), true);
+  assert.equal(state.messages.some((message) => message.conversation_id === first.conversation.id && message.body.includes("right room")), true);
   assert.equal(state.cliLog.some((row) => row.result.includes("run contract mismatch")), true);
 });
 

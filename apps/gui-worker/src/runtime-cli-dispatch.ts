@@ -35,6 +35,12 @@ export type RuntimeCliDeps<S, A> = {
   unreadMessagesFor: (state: S, agentId: string) => unknown[];
   isRuntimeVisibleMessage: (message: { conversation_id?: string }) => boolean;
   pendingBelongsToAgent: (message: { to_agent_id?: string }, actor: A) => boolean;
+  validateReply?: (
+    state: S,
+    actor: A,
+    conversation: { id: string; title: string; kind?: string; updated_at?: number },
+    body: string
+  ) => string | undefined;
   recordRunAction: (
     state: S,
     runId: string | undefined,
@@ -150,6 +156,8 @@ export async function dispatchRuntimeCli<S, A>(
       return absoluteIdx !== quoteIdx && absoluteIdx !== quoteIdx + 1;
     });
     const body = bodyArgs.join(" ").trim() || "(empty reply)";
+    const replyError = deps.validateReply?.(state, actor, conversation, body);
+    if (replyError) return reject(replyError);
     const now = Date.now();
     const messages = deps.getStateField.messages(state);
     const pending = [...messages].reverse().find((message) =>

@@ -188,6 +188,142 @@ function displayNameForHuman(state: State, user: AuthUser | undefined): string {
   return fromMessages?.author_name.trim() || fromAuth;
 }
 
+const IELTS_WORD_CARD_AGENT_ID = "ielts-tutor";
+const IELTS_WORD_CARDS_MARKER = /(^|\n)[^\S\n]*(?:WordCards|Word Cards|词卡)[^\S\n]*[:：]/i;
+
+function validateIeltsWordCardsReply(actor: Agent, conversation: Pick<Conversation, "workflowId"> | undefined, body: string): string | undefined {
+  if (actor.id !== IELTS_WORD_CARD_AGENT_ID && actor.name !== "IELTS Reading & Writing Coach") return undefined;
+  if (conversation?.workflowId && conversation.workflowId !== "ielts-study") return undefined;
+  const parsed = parseIeltsWordCardsReply(body);
+  if (!parsed.ok) return parsed.error;
+  return undefined;
+}
+
+function parseIeltsWordCardsReply(body: string): { ok: true } | { ok: false; error: string } {
+  const marker = IELTS_WORD_CARDS_MARKER.exec(body);
+  const visibleText = marker ? body.slice(0, marker.index) : body;
+  const visibleTokens = distinctIeltsVisibleTokens(visibleText);
+  if (!visibleTokens.length) return { ok: true };
+  if (!marker) return { ok: false, error: "IELTS WordCards validation failed: missing trailing WordCards JSON block." };
+  const jsonText = firstJsonValueText(body.slice(marker.index + marker[0].length));
+  if (!jsonText) return { ok: false, error: "IELTS WordCards validation failed: WordCards must contain valid JSON." };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch {
+    return { ok: false, error: "IELTS WordCards validation failed: WordCards JSON is not parseable." };
+  }
+  const cards = ieltsWordCardRows(parsed);
+  if (!cards.length) return { ok: false, error: "IELTS WordCards validation failed: WordCards.cards must be a non-empty array." };
+  const cardKeys = new Set<string>();
+  const incomplete: string[] = [];
+  for (const card of cards) {
+    const token = ieltsWordCardToken(card);
+    if (!token) continue;
+    const key = normalizeIeltsToken(token);
+    if (key) cardKeys.add(key);
+    const row = card as Record<string, unknown>;
+    if (!ieltsString(row.meaningZh) && !ieltsString(row.meaning) && !ieltsString(row.zh)) incomplete.push(token);
+    if (!ieltsString(row.phonetic) && !ieltsString(row.ipa) && !ieltsString(row.pronunciation)) incomplete.push(token);
+    if (!hasIeltsSyllables(row.syllables)) incomplete.push(token);
+  }
+  const missing = visibleTokens.filter((token) => {
+    const key = normalizeIeltsToken(token);
+    const baseKey = key.replace(/['’]s?$/i, "");
+    return !cardKeys.has(key) && (baseKey === key || !cardKeys.has(baseKey));
+  });
+  const errors: string[] = [];
+  if (missing.length) errors.push(`missing tokens: ${missing.slice(0, 20).join(", ")}${missing.length > 20 ? ", ..." : ""}`);
+  if (incomplete.length) errors.push(`incomplete cards: ${[...new Set(incomplete)].slice(0, 20).join(", ")}`);
+  if (errors.length) {
+    return {
+      ok: false,
+      error: `IELTS WordCards validation failed: ${errors.join("; ")}. Include every distinct visible English word token with meaningZh, phonetic, and syllables, then retry the reply.`
+    };
+  }
+  return { ok: true };
+}
+
+function ieltsWordCardRows(parsed: unknown): unknown[] {
+  if (Array.isArray(parsed)) return parsed;
+  if (!parsed || typeof parsed !== "object") return [];
+  const container = parsed as Record<string, unknown>;
+  if (Array.isArray(container.cards)) return container.cards;
+  if (Array.isArray(container.wordCards)) return container.wordCards;
+  if (Array.isArray(container.words)) return container.words;
+  return [];
+}
+
+function ieltsWordCardToken(card: unknown): string {
+  if (!card || typeof card !== "object" || Array.isArray(card)) return "";
+  const row = card as Record<string, unknown>;
+  return ieltsString(row.token) || ieltsString(row.word) || ieltsString(row.lemma) || "";
+}
+
+function ieltsString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function hasIeltsSyllables(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some((part) => ieltsString(part));
+  return Boolean(ieltsString(value));
+}
+
+function distinctIeltsVisibleTokens(text: string): string[] {
+  const withoutMarkers = text
+    .replace(/\[word\s+([^\]\n|]+)\|[^\]\n]*\]/g, "$1")
+    .replace(/\[(?:core|phrase):\s*([^\]\n]+)\]/g, "$1")
+    .replace(/<[^>]+>/g, " ");
+  const seen = new Set<string>();
+  const tokens: string[] = [];
+  for (const match of withoutMarkers.matchAll(/\b[A-Za-z]+(?:['’][A-Za-z]+)?\b/g)) {
+    const token = match[0];
+    const key = normalizeIeltsToken(token);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    tokens.push(token);
+  }
+  return tokens;
+}
+
+function normalizeIeltsToken(token: string): string {
+  return token.trim().toLowerCase().replace(/’/g, "'");
+}
+
+function firstJsonValueText(input: string): string | undefined {
+  const start = input.search(/[\[{]/);
+  if (start < 0) return undefined;
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+  for (let idx = start; idx < input.length; idx += 1) {
+    const ch = input[idx];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === "\"") {
+      inString = true;
+      continue;
+    }
+    if (ch === "{" || ch === "[") {
+      stack.push(ch === "{" ? "}" : "]");
+      continue;
+    }
+    if (ch === "}" || ch === "]") {
+      if (stack.pop() !== ch) return undefined;
+      if (stack.length === 0) return input.slice(start, idx + 1);
+    }
+  }
+  return undefined;
+}
+
 
 const app = createGuiApp({
   requireGuiAuth,
@@ -785,6 +921,8 @@ export class GuiState implements DurableObject {
       unreadMessagesFor,
       isRuntimeVisibleMessage: (message) => isRuntimeVisibleMessage(message as Message),
       pendingBelongsToAgent: (message, currentActor) => pendingBelongsToAgent(message as Message, currentActor),
+      validateReply: (currentState, currentActor, conversation, body) =>
+        validateIeltsWordCardsReply(currentActor, currentState.conversations.find((row) => row.id === conversation.id), body),
       recordRunAction: (currentState, runId, contract, currentActor, action, detail) => {
         if (action !== "reply" && action !== "task" && action !== "ignore") return;
         recordRunAction(currentState, runId, contract as RunContract | undefined, currentActor, action, detail);
