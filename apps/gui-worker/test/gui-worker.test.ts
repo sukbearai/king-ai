@@ -107,6 +107,29 @@ function wordCards(tokens: string[]): string {
   })}`;
 }
 
+function structuredWordCards(sentences: Array<{ text: string; clauses: Array<{ text: string; core: string; phrases?: string[] }> }>, tokens: string[]): string {
+  return `WordCards: ${JSON.stringify({
+    sentences,
+    cards: tokens.map((token) => ({
+      token,
+      lemma: token,
+      meaningZh: `${token} 的中文义`,
+      phonetic: `/${token.toLowerCase()}/`,
+      syllables: [token]
+    }))
+  })}`;
+}
+
+function cardJson(token: string, overrides: Partial<{ lemma: string; meaningZh: string; phonetic: string; syllables: string[] }> = {}): { token: string; lemma: string; meaningZh: string; phonetic: string; syllables: string[] } {
+  return {
+    token,
+    lemma: overrides.lemma ?? token,
+    meaningZh: overrides.meaningZh ?? `${token} 的中文义`,
+    phonetic: overrides.phonetic ?? `/${token.toLowerCase()}/`,
+    syllables: overrides.syllables ?? [token]
+  };
+}
+
 test("gui runtime isolates state by tenant identity", async () => {
   const bindings = env();
   const aliceHeaders = { "Cf-Access-Authenticated-User-Email": "alice@example.com" };
@@ -436,7 +459,7 @@ test("gui state renders IELTS learning annotations", async () => {
       headers: { Authorization: `Bearer ${paired.deviceToken}` }
     }), bindings)
   );
-  await worker.fetch(new Request("https://gui/runtime/cli", {
+  const posted = await json<{ exitCode: number; text: string }>(await worker.fetch(new Request("https://gui/runtime/cli", {
     method: "POST",
     headers: { Authorization: `Bearer ${tokenRes.token}`, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -444,13 +467,26 @@ test("gui state renders IELTS learning annotations", async () => {
         "reply",
         room.conversation.id,
         [
-          "Natural English: [core: I have been working overtime] [phrase: for almost two weeks]. Vocabulary: [word overtime|加班时间|/ˈoʊvərtaɪm/|o-ver-time]",
+          "I have been working overtime for almost two weeks.",
           "",
-          wordCards(["Natural", "English", "I", "have", "been", "working", "overtime", "for", "almost", "two", "weeks", "Vocabulary"])
+          `WordCards: ${JSON.stringify({
+            sentences: [
+              {
+                text: "I have been working overtime for almost two weeks.",
+                clauses: [
+                  { text: "I have been working overtime for almost two weeks", core: "I have been working", phrases: ["for almost two weeks"] }
+                ]
+              }
+            ],
+            cards: ["I", "have", "been", "working", "for", "almost", "two", "weeks"].map((token) => cardJson(token)).concat([
+              cardJson("overtime", { meaningZh: "加班时间", phonetic: "/ˈoʊvərtaɪm/", syllables: ["o", "ver", "time"] })
+            ])
+          })}`
         ].join("\n")
       ]
     })
-  }), bindings);
+  }), bindings));
+  assert.equal(posted.exitCode, 0, posted.text);
 
   const state = await json<{ messages: { author_kind: string; body_html?: string }[] }>(
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
@@ -476,7 +512,7 @@ test("gui state makes every IELTS coach English word clickable without explicit 
       headers: { Authorization: `Bearer ${paired.deviceToken}` }
     }), bindings)
   );
-  await worker.fetch(new Request("https://gui/runtime/cli", {
+  const posted = await json<{ exitCode: number; text: string }>(await worker.fetch(new Request("https://gui/runtime/cli", {
     method: "POST",
     headers: { Authorization: `Bearer ${tokenRes.token}`, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -486,11 +522,20 @@ test("gui state makes every IELTS coach English word clickable without explicit 
         [
           "Yes, I am here, and I can help you improve your IELTS reading and writing.",
           "",
-          wordCards(["Yes", "I", "am", "here", "and", "can", "help", "you", "improve", "your", "IELTS", "reading", "writing"])
+          structuredWordCards([
+            {
+              text: "Yes, I am here, and I can help you improve your IELTS reading and writing.",
+              clauses: [
+                { text: "Yes, I am here", core: "I am", phrases: ["Yes", "here"] },
+                { text: "and I can help you improve your IELTS reading and writing", core: "I can help", phrases: ["your IELTS reading and writing"] }
+              ]
+            }
+          ], ["Yes", "I", "am", "here", "and", "can", "help", "you", "improve", "your", "IELTS", "reading", "writing"])
         ].join("\n")
       ]
     })
-  }), bindings);
+  }), bindings));
+  assert.equal(posted.exitCode, 0, posted.text);
 
   const state = await json<{ messages: { author_kind: string; body_html?: string }[] }>(
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
@@ -518,7 +563,7 @@ test("gui state makes long IELTS coach sample paragraphs clickable", async () =>
       headers: { Authorization: `Bearer ${paired.deviceToken}` }
     }), bindings)
   );
-  await worker.fetch(new Request("https://gui/runtime/cli", {
+  const posted = await json<{ exitCode: number; text: string }>(await worker.fetch(new Request("https://gui/runtime/cli", {
     method: "POST",
     headers: { Authorization: `Bearer ${tokenRes.token}`, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -531,11 +576,32 @@ test("gui state makes long IELTS coach sample paragraphs clickable", async () =>
           "My name is Li Ming, and I am writing to introduce myself.",
           "I have developed a strong interest in English communication.",
           "",
-          wordCards(["Dear", "Sir", "or", "Madam", "My", "name", "is", "Li", "Ming", "and", "I", "am", "writing", "to", "introduce", "myself", "have", "developed", "a", "strong", "interest", "in", "English", "communication"])
+          structuredWordCards([
+            {
+              text: "Dear Sir or Madam,",
+              clauses: [
+                { text: "Dear Sir or Madam", core: "Dear Sir or Madam", phrases: [] }
+              ]
+            },
+            {
+              text: "My name is Li Ming, and I am writing to introduce myself.",
+              clauses: [
+                { text: "My name is Li Ming", core: "name is", phrases: ["Li Ming"] },
+                { text: "and I am writing to introduce myself", core: "I am writing", phrases: ["to introduce myself"] }
+              ]
+            },
+            {
+              text: "I have developed a strong interest in English communication.",
+              clauses: [
+                { text: "I have developed a strong interest in English communication", core: "I have developed", phrases: ["a strong interest", "in English communication"] }
+              ]
+            }
+          ], ["Dear", "Sir", "or", "Madam", "My", "name", "is", "Li", "Ming", "and", "I", "am", "writing", "to", "introduce", "myself", "have", "developed", "a", "strong", "interest", "in", "English", "communication"])
         ].join("\n")
       ]
     })
-  }), bindings);
+  }), bindings));
+  assert.equal(posted.exitCode, 0, posted.text);
 
   const state = await json<{ messages: { author_kind: string; body_html?: string }[] }>(
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
@@ -561,7 +627,7 @@ test("gui state gives fallback IELTS word cards meaning phonetic and syllables",
       headers: { Authorization: `Bearer ${paired.deviceToken}` }
     }), bindings)
   );
-  await worker.fetch(new Request("https://gui/runtime/cli", {
+  const posted = await json<{ exitCode: number; text: string }>(await worker.fetch(new Request("https://gui/runtime/cli", {
     method: "POST",
     headers: { Authorization: `Bearer ${tokenRes.token}`, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -571,14 +637,34 @@ test("gui state gives fallback IELTS word cards meaning phonetic and syllables",
         [
           "Dear Hiring Manager,",
           "",
-          "[core: I am writing] to [phrase: apply for] the programmer position at your company.",
-          "[core: I have developed] practical skills in Java, Python, and web development through university projects and personal practice.",
+          "I am writing to apply for the programmer position at your company.",
+          "I have developed practical skills in Java, Python, and web development through university projects and personal practice.",
           "",
-          wordCards(["Dear", "Hiring", "Manager", "I", "am", "writing", "to", "apply", "for", "the", "programmer", "position", "at", "your", "company", "have", "developed", "practical", "skills", "in", "Java", "Python", "and", "web", "development", "through", "university", "projects", "personal", "practice"])
+          structuredWordCards([
+            {
+              text: "Dear Hiring Manager,",
+              clauses: [
+                { text: "Dear Hiring Manager", core: "Dear Hiring Manager", phrases: [] }
+              ]
+            },
+            {
+              text: "I am writing to apply for the programmer position at your company.",
+              clauses: [
+                { text: "I am writing to apply for the programmer position at your company", core: "I am writing", phrases: ["to apply for", "the programmer position", "at your company"] }
+              ]
+            },
+            {
+              text: "I have developed practical skills in Java, Python, and web development through university projects and personal practice.",
+              clauses: [
+                { text: "I have developed practical skills in Java, Python, and web development through university projects and personal practice", core: "I have developed", phrases: ["practical skills", "through university projects", "personal practice"] }
+              ]
+            }
+          ], ["Dear", "Hiring", "Manager", "I", "am", "writing", "to", "apply", "for", "the", "programmer", "position", "at", "your", "company", "have", "developed", "practical", "skills", "in", "Java", "Python", "and", "web", "development", "through", "university", "projects", "personal", "practice"])
         ].join("\n")
       ]
     })
-  }), bindings);
+  }), bindings));
+  assert.equal(posted.exitCode, 0, posted.text);
 
   const state = await json<{ messages: { author_kind: string; body_html?: string }[] }>(
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
@@ -612,9 +698,9 @@ test("gui state fills word cards from structured WordCards JSON and hides it", a
         "reply",
         room.conversation.id,
         [
-          "[core: I customized] the dashboard [phrase: for daily practice].",
+          "I customized the dashboard for daily practice.",
           "",
-          "WordCards: {\"cards\":[{\"token\":\"I\",\"lemma\":\"I\",\"meaningZh\":\"我\",\"phonetic\":\"/aɪ/\",\"syllables\":[\"I\"]},{\"token\":\"customized\",\"lemma\":\"customize\",\"meaningZh\":\"定制；个性化调整\",\"phonetic\":\"/ˈkʌstəmaɪzd/\",\"syllables\":[\"cus\",\"tom\",\"ized\"]},{\"token\":\"the\",\"lemma\":\"the\",\"meaningZh\":\"这；那\",\"phonetic\":\"/ðə/\",\"syllables\":[\"the\"]},{\"token\":\"dashboard\",\"lemma\":\"dashboard\",\"meaningZh\":\"仪表盘；信息面板\",\"phonetic\":\"/ˈdæʃbɔːrd/\",\"syllables\":[\"dash\",\"board\"]},{\"token\":\"for\",\"lemma\":\"for\",\"meaningZh\":\"为了；给\",\"phonetic\":\"/fɔːr/\",\"syllables\":[\"for\"]},{\"token\":\"daily\",\"lemma\":\"daily\",\"meaningZh\":\"每日的\",\"phonetic\":\"/ˈdeɪli/\",\"syllables\":[\"dai\",\"ly\"]},{\"token\":\"practice\",\"lemma\":\"practice\",\"meaningZh\":\"练习\",\"phonetic\":\"/ˈpræktɪs/\",\"syllables\":[\"prac\",\"tice\"]}]}"
+          "WordCards: {\"sentences\":[{\"text\":\"I customized the dashboard for daily practice.\",\"clauses\":[{\"text\":\"I customized the dashboard for daily practice\",\"core\":\"I customized\",\"phrases\":[\"the dashboard\",\"for daily practice\"]}]}],\"cards\":[{\"token\":\"I\",\"lemma\":\"I\",\"meaningZh\":\"我\",\"phonetic\":\"/aɪ/\",\"syllables\":[\"I\"]},{\"token\":\"customized\",\"lemma\":\"customize\",\"meaningZh\":\"定制；个性化调整\",\"phonetic\":\"/ˈkʌstəmaɪzd/\",\"syllables\":[\"cus\",\"tom\",\"ized\"]},{\"token\":\"the\",\"lemma\":\"the\",\"meaningZh\":\"这；那\",\"phonetic\":\"/ðə/\",\"syllables\":[\"the\"]},{\"token\":\"dashboard\",\"lemma\":\"dashboard\",\"meaningZh\":\"仪表盘；信息面板\",\"phonetic\":\"/ˈdæʃbɔːrd/\",\"syllables\":[\"dash\",\"board\"]},{\"token\":\"for\",\"lemma\":\"for\",\"meaningZh\":\"为了；给\",\"phonetic\":\"/fɔːr/\",\"syllables\":[\"for\"]},{\"token\":\"daily\",\"lemma\":\"daily\",\"meaningZh\":\"每日的\",\"phonetic\":\"/ˈdeɪli/\",\"syllables\":[\"dai\",\"ly\"]},{\"token\":\"practice\",\"lemma\":\"practice\",\"meaningZh\":\"练习\",\"phonetic\":\"/ˈpræktɪs/\",\"syllables\":[\"prac\",\"tice\"]}]}"
         ].join("\n")
       ]
     })
@@ -632,74 +718,13 @@ test("gui state fills word cards from structured WordCards JSON and hides it", a
   assert.doesNotMatch(html, /WordCards/);
 });
 
-test("gui runtime rejects IELTS coach replies with incomplete WordCards JSON", async () => {
+test("gui state renders IELTS sentence and clause annotations from structured WordCards JSON", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
   const room = await json<{ conversation: { id: string } }>(
     await worker.fetch(new Request("https://gui/gui/conversations", {
       method: "POST",
-      body: JSON.stringify({ title: "IELTS WordCards Gate", workflowId: "ielts-study", teamMode: "single" })
-    }), bindings)
-  );
-  const tokenRes = await json<{ token: string }>(
-    await worker.fetch(new Request("https://gui/api/agents/ielts-tutor/runtime-token", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${paired.deviceToken}` }
-    }), bindings)
-  );
-  const auth = { Authorization: `Bearer ${tokenRes.token}`, "Content-Type": "application/json" };
-  const rejected = await json<{ exitCode: number; text: string }>(
-    await worker.fetch(new Request("https://gui/runtime/cli", {
-      method: "POST",
-      headers: auth,
-      body: JSON.stringify({
-        argv: [
-          "reply",
-          room.conversation.id,
-          "[core: I customized] the dashboard [phrase: for daily practice].\n\nWordCards: {\"cards\":[{\"token\":\"customized\",\"meaningZh\":\"定制\",\"phonetic\":\"/ˈkʌstəmaɪzd/\",\"syllables\":[\"cus\",\"tom\",\"ized\"]},{\"token\":\"dashboard\",\"meaningZh\":\"仪表盘\",\"phonetic\":\"/ˈdæʃbɔːrd/\",\"syllables\":[\"dash\",\"board\"]}]}"
-        ]
-      })
-    }), bindings)
-  );
-  const accepted = await json<{ exitCode: number; text: string }>(
-    await worker.fetch(new Request("https://gui/runtime/cli", {
-      method: "POST",
-      headers: auth,
-      body: JSON.stringify({
-        argv: [
-          "reply",
-          room.conversation.id,
-          [
-            "[core: I customized] the dashboard [phrase: for daily practice].",
-            "",
-            wordCards(["I", "customized", "the", "dashboard", "for", "daily", "practice"])
-          ].join("\n")
-        ]
-      })
-    }), bindings)
-  );
-
-  assert.equal(rejected.exitCode, 64);
-  assert.match(rejected.text, /IELTS WordCards validation failed/);
-  assert.match(rejected.text, /missing tokens: I, the, for, daily, practice/);
-  assert.equal(accepted.exitCode, 0);
-  assert.equal(accepted.text, "reply posted");
-  const state = await json<{ messages: { conversation_id: string; body: string }[]; cliLog: { result: string }[] }>(
-    await worker.fetch(new Request("https://gui/gui/state"), bindings)
-  );
-  const roomMessages = state.messages.filter((message) => message.conversation_id === room.conversation.id);
-  assert.equal(roomMessages.length, 1);
-  assert.equal(roomMessages[0]?.body.includes("customized"), true);
-  assert.equal(state.cliLog.some((row) => row.result.includes("IELTS WordCards validation failed")), true);
-});
-
-test("gui state removes duplicate text after IELTS core markers", async () => {
-  const bindings = env();
-  const paired = await pairComputer(bindings, { engines: ["codex"] });
-  const room = await json<{ conversation: { id: string } }>(
-    await worker.fetch(new Request("https://gui/gui/conversations", {
-      method: "POST",
-      body: JSON.stringify({ title: "IELTS Core Repeat", workflowId: "ielts-study", teamMode: "single" })
+      body: JSON.stringify({ title: "IELTS Structured Clauses", workflowId: "ielts-study", teamMode: "single" })
     }), bindings)
   );
   const tokenRes = await json<{ token: string }>(
@@ -716,9 +741,17 @@ test("gui state removes duplicate text after IELTS core markers", async () => {
         "reply",
         room.conversation.id,
         [
-          "[core: I am writing] am writing [phrase: to apply for] the position. [core: I helped customers] helped customers choose products.",
+          "Your smile gives my days light, even when life feels heavy.",
           "",
-          wordCards(["I", "am", "writing", "to", "apply", "for", "the", "position", "helped", "customers", "choose", "products"])
+          structuredWordCards([
+            {
+              text: "Your smile gives my days light, even when life feels heavy.",
+              clauses: [
+                { text: "Your smile gives my days light", core: "Your smile gives", phrases: ["my days light"] },
+                { text: "even when life feels heavy", core: "life feels", phrases: ["even when", "heavy"] }
+              ]
+            }
+          ], ["Your", "smile", "gives", "my", "days", "light", "even", "when", "life", "feels", "heavy"])
         ].join("\n")
       ]
     })
@@ -728,47 +761,12 @@ test("gui state removes duplicate text after IELTS core markers", async () => {
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
   const html = state.messages.find((message) => message.author_kind === "agent")?.body_html ?? "";
-  assert.match(html, /class="ielts-core">[\s\S]*data-word="I"[^>]*>I<\/span>[\s\S]*data-word="writing"[^>]*>writing<\/span>[\s\S]*<\/span> <span class="ielts-phrase"/);
-  assert.doesNotMatch(html, /<\/span> am writing/);
-  assert.doesNotMatch(html, /<\/span> helped customers/);
-});
-
-test("gui state keeps valid repeated words after IELTS core markers", async () => {
-  const bindings = env();
-  const paired = await pairComputer(bindings, { engines: ["codex"] });
-  const room = await json<{ conversation: { id: string } }>(
-    await worker.fetch(new Request("https://gui/gui/conversations", {
-      method: "POST",
-      body: JSON.stringify({ title: "IELTS Core Valid Repeat", workflowId: "ielts-study", teamMode: "single" })
-    }), bindings)
-  );
-  const tokenRes = await json<{ token: string }>(
-    await worker.fetch(new Request("https://gui/api/agents/ielts-tutor/runtime-token", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${paired.deviceToken}` }
-    }), bindings)
-  );
-  await worker.fetch(new Request("https://gui/runtime/cli", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${tokenRes.token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      argv: [
-        "reply",
-        room.conversation.id,
-        [
-          "[core: Students study] study skills every day.",
-          "",
-          "WordCards: {\"cards\":[{\"token\":\"Students\",\"meaningZh\":\"学生\",\"phonetic\":\"/ˈstuːdənts/\",\"syllables\":[\"stu\",\"dents\"]},{\"token\":\"study\",\"meaningZh\":\"学习\",\"phonetic\":\"/ˈstʌdi/\",\"syllables\":[\"stud\",\"y\"]},{\"token\":\"skills\",\"meaningZh\":\"技能\",\"phonetic\":\"/skɪlz/\",\"syllables\":[\"skills\"]},{\"token\":\"every\",\"meaningZh\":\"每个\",\"phonetic\":\"/ˈevri/\",\"syllables\":[\"eve\",\"ry\"]},{\"token\":\"day\",\"meaningZh\":\"一天\",\"phonetic\":\"/deɪ/\",\"syllables\":[\"day\"]}]}"
-        ].join("\n")
-      ]
-    })
-  }), bindings);
-
-  const state = await json<{ messages: { author_kind: string; body_html?: string }[] }>(
-    await worker.fetch(new Request("https://gui/gui/state"), bindings)
-  );
-  const html = state.messages.find((message) => message.author_kind === "agent")?.body_html ?? "";
-  assert.match(html, /<\/span> <span class="ielts-word" data-word="study" data-meaning="学习" data-phonetic="\/ˈstʌdi\/" data-syllables="stud-y"[^>]*>study<\/span> <span class="ielts-word" data-word="skills"/);
+  const coreMatches = html.match(/class="ielts-core"/g) ?? [];
+  assert.equal(coreMatches.length, 2);
+  assert.match(html, /class="ielts-core"><span class="ielts-word" data-word="Your"[^>]*>Your<\/span> <span class="ielts-word" data-word="smile"[^>]*>smile<\/span> <span class="ielts-word" data-word="gives"[^>]*>gives<\/span><\/span>/);
+  assert.match(html, /class="ielts-core"><span class="ielts-word" data-word="life"[^>]*>life<\/span> <span class="ielts-word" data-word="feels"[^>]*>feels<\/span><\/span>/);
+  assert.match(html, /class="ielts-phrase"><span class="ielts-word" data-word="even"[^>]*>even<\/span> <span class="ielts-word" data-word="when"[^>]*>when<\/span><\/span>/);
+  assert.doesNotMatch(html, /WordCards/);
 });
 
 test("gui state cards possessives via the base word and contractions via the dictionary", async () => {
@@ -794,9 +792,9 @@ test("gui state cards possessives via the base word and contractions via the dic
         "reply",
         room.conversation.id,
         [
-          "[core: I don't think] [phrase: the teacher's notes] helped much.",
+          "I don't think the teacher's notes helped much.",
           "",
-          "WordCards: {\"cards\":[{\"token\":\"I\",\"meaningZh\":\"我\",\"phonetic\":\"/aɪ/\",\"syllables\":[\"I\"]},{\"token\":\"don't\",\"meaningZh\":\"不（do not）\",\"phonetic\":\"/doʊnt/\",\"syllables\":[\"don't\"]},{\"token\":\"think\",\"meaningZh\":\"认为\",\"phonetic\":\"/θɪŋk/\",\"syllables\":[\"think\"]},{\"token\":\"the\",\"meaningZh\":\"这；那\",\"phonetic\":\"/ðə/\",\"syllables\":[\"the\"]},{\"token\":\"teacher\",\"meaningZh\":\"老师\",\"phonetic\":\"/ˈtiːtʃər/\",\"syllables\":[\"teach\",\"er\"]},{\"token\":\"notes\",\"meaningZh\":\"笔记\",\"phonetic\":\"/noʊts/\",\"syllables\":[\"notes\"]},{\"token\":\"helped\",\"meaningZh\":\"帮助了\",\"phonetic\":\"/helpt/\",\"syllables\":[\"helped\"]},{\"token\":\"much\",\"meaningZh\":\"许多\",\"phonetic\":\"/mʌtʃ/\",\"syllables\":[\"much\"]}]}"
+          "WordCards: {\"sentences\":[{\"text\":\"I don't think the teacher's notes helped much.\",\"clauses\":[{\"text\":\"I don't think the teacher's notes helped much\",\"core\":\"I don't think\",\"phrases\":[\"the teacher's notes\"]}]}],\"cards\":[{\"token\":\"I\",\"meaningZh\":\"我\",\"phonetic\":\"/aɪ/\",\"syllables\":[\"I\"]},{\"token\":\"don't\",\"meaningZh\":\"不（do not）\",\"phonetic\":\"/doʊnt/\",\"syllables\":[\"don't\"]},{\"token\":\"think\",\"meaningZh\":\"认为\",\"phonetic\":\"/θɪŋk/\",\"syllables\":[\"think\"]},{\"token\":\"the\",\"meaningZh\":\"这；那\",\"phonetic\":\"/ðə/\",\"syllables\":[\"the\"]},{\"token\":\"teacher\",\"meaningZh\":\"老师\",\"phonetic\":\"/ˈtiːtʃər/\",\"syllables\":[\"teach\",\"er\"]},{\"token\":\"notes\",\"meaningZh\":\"笔记\",\"phonetic\":\"/noʊts/\",\"syllables\":[\"notes\"]},{\"token\":\"helped\",\"meaningZh\":\"帮助了\",\"phonetic\":\"/helpt/\",\"syllables\":[\"helped\"]},{\"token\":\"much\",\"meaningZh\":\"许多\",\"phonetic\":\"/mʌtʃ/\",\"syllables\":[\"much\"]}]}"
         ].join("\n")
       ]
     })
@@ -836,12 +834,12 @@ test("gui state keeps markdown structure while annotating IELTS coach replies", 
         "reply",
         room.conversation.id,
         [
-          "Two **tips**:",
+          "**Tips**:",
           "",
-          "- [core: Plan your essay] [phrase: before writing].",
-          "- [core: Review grammar] carefully.",
+          "- Plan your essay before writing.",
+          "- Review grammar carefully.",
           "",
-          "WordCards: {\"cards\":[{\"token\":\"Two\",\"meaningZh\":\"两个\",\"phonetic\":\"/tuː/\",\"syllables\":[\"two\"]},{\"token\":\"tips\",\"meaningZh\":\"提示\",\"phonetic\":\"/tɪps/\",\"syllables\":[\"tips\"]},{\"token\":\"Plan\",\"meaningZh\":\"计划\",\"phonetic\":\"/plæn/\",\"syllables\":[\"plan\"]},{\"token\":\"your\",\"meaningZh\":\"你的\",\"phonetic\":\"/jɔːr/\",\"syllables\":[\"your\"]},{\"token\":\"essay\",\"meaningZh\":\"文章\",\"phonetic\":\"/ˈeseɪ/\",\"syllables\":[\"es\",\"say\"]},{\"token\":\"before\",\"meaningZh\":\"在之前\",\"phonetic\":\"/bɪˈfɔːr/\",\"syllables\":[\"be\",\"fore\"]},{\"token\":\"writing\",\"meaningZh\":\"写作\",\"phonetic\":\"/ˈraɪtɪŋ/\",\"syllables\":[\"writ\",\"ing\"]},{\"token\":\"Review\",\"meaningZh\":\"检查\",\"phonetic\":\"/rɪˈvjuː/\",\"syllables\":[\"re\",\"view\"]},{\"token\":\"grammar\",\"meaningZh\":\"语法\",\"phonetic\":\"/ˈɡræmər/\",\"syllables\":[\"gram\",\"mar\"]},{\"token\":\"carefully\",\"meaningZh\":\"仔细地\",\"phonetic\":\"/ˈkerfəli/\",\"syllables\":[\"care\",\"ful\",\"ly\"]}]}"
+          "WordCards: {\"sentences\":[{\"text\":\"Tips:\",\"clauses\":[{\"text\":\"Tips\",\"core\":\"Tips\",\"phrases\":[]}]},{\"text\":\"Plan your essay before writing.\",\"clauses\":[{\"text\":\"Plan your essay before writing\",\"core\":\"Plan your essay\",\"phrases\":[\"before writing\"]}]},{\"text\":\"Review grammar carefully.\",\"clauses\":[{\"text\":\"Review grammar carefully\",\"core\":\"Review grammar\",\"phrases\":[\"carefully\"]}]}],\"cards\":[{\"token\":\"Tips\",\"meaningZh\":\"提示\",\"phonetic\":\"/tɪps/\",\"syllables\":[\"tips\"]},{\"token\":\"Plan\",\"meaningZh\":\"计划\",\"phonetic\":\"/plæn/\",\"syllables\":[\"plan\"]},{\"token\":\"your\",\"meaningZh\":\"你的\",\"phonetic\":\"/jɔːr/\",\"syllables\":[\"your\"]},{\"token\":\"essay\",\"meaningZh\":\"文章\",\"phonetic\":\"/ˈeseɪ/\",\"syllables\":[\"es\",\"say\"]},{\"token\":\"before\",\"meaningZh\":\"在之前\",\"phonetic\":\"/bɪˈfɔːr/\",\"syllables\":[\"be\",\"fore\"]},{\"token\":\"writing\",\"meaningZh\":\"写作\",\"phonetic\":\"/ˈraɪtɪŋ/\",\"syllables\":[\"writ\",\"ing\"]},{\"token\":\"Review\",\"meaningZh\":\"检查\",\"phonetic\":\"/rɪˈvjuː/\",\"syllables\":[\"re\",\"view\"]},{\"token\":\"grammar\",\"meaningZh\":\"语法\",\"phonetic\":\"/ˈɡræmər/\",\"syllables\":[\"gram\",\"mar\"]},{\"token\":\"carefully\",\"meaningZh\":\"仔细地\",\"phonetic\":\"/ˈkerfəli/\",\"syllables\":[\"care\",\"ful\",\"ly\"]}]}"
         ].join("\n")
       ]
     })
@@ -851,15 +849,65 @@ test("gui state keeps markdown structure while annotating IELTS coach replies", 
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
   const html = state.messages.find((message) => message.author_kind === "agent")?.body_html ?? "";
-  // markdown still renders into list/bold structure, and a word inside bold is still carded
+  // markdown still renders into list/bold structure, and a bold sentence core is highlighted
+  // (and carded) even though the `**Tips**` emphasis sits between the core text and the markup
   assert.match(html, /<li>/);
-  assert.match(html, /<strong><span class="ielts-word"[^>]*>tips<\/span><\/strong>/);
+  assert.match(html, /<strong><span class="ielts-core"><span class="ielts-word"[^>]*>Tips<\/span><\/span><\/strong>/);
   // cores render inside the list items and content words still get glossary cards
   assert.match(html, /class="ielts-core"/);
   assert.match(html, /data-word="essay" data-meaning="文章"/);
   // no markers leak into the rendered output
   assert.doesNotMatch(html, /\[core:/);
   assert.doesNotMatch(html, /\[phrase:/);
+  assert.doesNotMatch(html, /WordCards/);
+});
+
+test("gui state highlights IELTS cores even when the sentence carries markdown emphasis", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const room = await json<{ conversation: { id: string } }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({ title: "IELTS Emphasis", workflowId: "ielts-study", teamMode: "single" })
+    }), bindings)
+  );
+  const tokenRes = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/ielts-tutor/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${tokenRes.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      argv: [
+        "reply",
+        room.conversation.id,
+        [
+          "Practice makes **perfect** for every test.",
+          "",
+          structuredWordCards([
+            {
+              text: "Practice makes perfect for every test.",
+              clauses: [
+                { text: "Practice makes perfect for every test", core: "Practice makes", phrases: ["every test"] }
+              ]
+            }
+          ], ["Practice", "makes", "perfect", "for", "every", "test"])
+        ].join("\n")
+      ]
+    })
+  }), bindings);
+
+  const state = await json<{ messages: { author_kind: string; body_html?: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  const html = state.messages.find((message) => message.author_kind === "agent")?.body_html ?? "";
+  // the core before the bold word still highlights, and the bold word is still a markdown <strong>
+  assert.match(html, /class="ielts-core"><span class="ielts-word" data-word="Practice"[^>]*>Practice<\/span> <span class="ielts-word" data-word="makes"[^>]*>makes<\/span><\/span>/);
+  assert.match(html, /<strong><span class="ielts-word"[^>]*>perfect<\/span><\/strong>/);
+  assert.match(html, /class="ielts-phrase"><span class="ielts-word" data-word="every"/);
   assert.doesNotMatch(html, /WordCards/);
 });
 
@@ -889,7 +937,14 @@ test("gui state recalls past agent messages through the episodic FTS index", asy
     [
       "We finalized the mitochondria decision for the biology essay.",
       "",
-      wordCards(["We", "finalized", "the", "mitochondria", "decision", "for", "biology", "essay"])
+      structuredWordCards([
+        {
+          text: "We finalized the mitochondria decision for the biology essay.",
+          clauses: [
+            { text: "We finalized the mitochondria decision for the biology essay", core: "We finalized", phrases: ["the mitochondria decision", "for the biology essay"] }
+          ]
+        }
+      ], ["We", "finalized", "the", "mitochondria", "decision", "for", "biology", "essay"])
     ].join("\n")
   ]);
 
@@ -901,7 +956,7 @@ test("gui state recalls past agent messages through the episodic FTS index", asy
   assert.match(miss.text, /No episodic memory found/);
 });
 
-test("gui state preserves inline IELTS spans for nested sentence highlights", async () => {
+test("gui state renders nested IELTS highlights from structured clauses", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
   const room = await json<{ conversation: { id: string } }>(
@@ -924,9 +979,9 @@ test("gui state preserves inline IELTS spans for nested sentence highlights", as
         "reply",
         room.conversation.id,
         [
-          "<span class=\"ielts-core\">I <span class=\"ielts-word\" data-word=\"want\" data-meaning=\"想要\" data-phonetic=\"/wɑːnt/\" data-syllables=\"want\">want</span> <span class=\"ielts-phrase\">to eat</span></span>.",
+          "I want to eat.",
           "",
-          wordCards(["I", "want", "to", "eat"])
+          "WordCards: {\"sentences\":[{\"text\":\"I want to eat.\",\"clauses\":[{\"text\":\"I want to eat\",\"core\":\"I want\",\"phrases\":[\"to eat\"]}]}],\"cards\":[{\"token\":\"I\",\"meaningZh\":\"我\",\"phonetic\":\"/aɪ/\",\"syllables\":[\"I\"]},{\"token\":\"want\",\"meaningZh\":\"想要\",\"phonetic\":\"/wɑːnt/\",\"syllables\":[\"want\"]},{\"token\":\"to\",\"meaningZh\":\"去；向\",\"phonetic\":\"/tuː/\",\"syllables\":[\"to\"]},{\"token\":\"eat\",\"meaningZh\":\"吃\",\"phonetic\":\"/iːt/\",\"syllables\":[\"eat\"]}]}"
         ].join("\n")
       ]
     })
@@ -936,7 +991,7 @@ test("gui state preserves inline IELTS spans for nested sentence highlights", as
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
   const agent = state.messages.find((message) => message.author_kind === "agent");
-  assert.match(agent?.body_html ?? "", /<span class="ielts-core"><span class="ielts-word" data-word="I"[^>]*>I<\/span> <span class="ielts-word" data-word="want" data-meaning="想要" data-phonetic="\/wɑːnt\/" data-syllables="want">want<\/span> <span class="ielts-phrase"><span class="ielts-word" data-word="to"[^>]*>to<\/span> <span class="ielts-word" data-word="eat"[^>]*>eat<\/span><\/span><\/span>\./);
+  assert.match(agent?.body_html ?? "", /<span class="ielts-core"><span class="ielts-word" data-word="I"[^>]*>I<\/span> <span class="ielts-word" data-word="want" data-meaning="想要" data-phonetic="\/wɑːnt\/" data-syllables="want">want<\/span><\/span> <span class="ielts-phrase"><span class="ielts-word" data-word="to"[^>]*>to<\/span> <span class="ielts-word" data-word="eat" data-meaning="吃"[^>]*>eat<\/span><\/span>\./);
 });
 
 test("gui messages preserve attachment metadata for runtime prompts", async () => {
@@ -1377,36 +1432,34 @@ test("gui windows choose agents from the selected workflow", async () => {
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /summarize the request itself in natural English/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /always write that deliverable itself in English/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not give generic acknowledgements/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /except for the visible Tip line/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /do not add \[core: \.\.\.\] or \[phrase: \.\.\.\] markers inside that Tip text/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Use the hidden WordCards JSON to annotate English/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /The app automatically makes every single word clickable/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /do NOT wrap individual words yourself in the visible text/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /mark exactly one sentence core with \[core: \.\.\.\]/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /mark useful phrases with \[phrase: \.\.\.\]/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /insert the marker inline by replacing the original words it marks/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /continuous substring that actually appears word-for-word in the sentence/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /add one WordCards\.sentences entry/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /simple sentence usually has one clause/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /compound sentences have one clause per coordinated clause/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /complex and compound-complex sentences include every main clause/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Every finite clause gets its own core/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /continuous substring that actually appears word-for-word in that clause/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Never rewrite, compress, reorder, or skip across words to create a new core/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not restate the core in a separate green fragment/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Never write '\[core: I am writing\] am writing'/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /\[core: I have kept\] these feelings \[phrase: in my heart\]/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /not 'I have kept these feelings \[core: I have kept feelings\]'/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Your \[core: kindness makes\] ordinary moments special/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /not '\[core: kindness makes moments\]'/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /use cores 'I have kept' and 'I hope'/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /use cores 'Your smile gives' and 'life feels'/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /the core is 'I want' and 'to eat' is a phrase/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Each phrase is the shortest meaningful chunk/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Never wrap a whole clause, the sentence core, or most of a sentence in one phrase/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Every English sentence MUST have exactly one \[core: \.\.\.\]/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Never send a sentence that has phrases but no core/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Every finite clause gets its own core/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Explain the highlighted phrases in the same visible Tip line/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /after any natural-English expression for the learner's Chinese request/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not rely on phrase click cards/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /End your reply with one hidden WordCards JSON block/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /\"token\":\"I\"/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /\"meaningZh\":\"珍惜\"/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /\"sentences\"/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /\"core\":\"life feels\"/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /\"token\":\"Your\"/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /\"meaningZh\":\"微笑\"/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Include every distinct English word token/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not skip words because they are common/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /IPA-style phonetics, and syllable arrays/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /fill word cards and does not show it to the learner/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /IPA phonetics wrapped in slashes/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /fill word cards and render core\/phrase highlights/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not put prose inside WordCards/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Keep replies compact/);
 
@@ -3059,7 +3112,18 @@ test("gui runtime run contract rejects replies to the wrong conversation", async
         argv: [
           "reply",
           first.conversation.id,
-          ["right room", "", wordCards(["right", "room"])].join("\n")
+          [
+            "right room",
+            "",
+            structuredWordCards([
+              {
+                text: "right room",
+                clauses: [
+                  { text: "right room", core: "right room", phrases: [] }
+                ]
+              }
+            ], ["right", "room"])
+          ].join("\n")
         ]
       })
     }), bindings)

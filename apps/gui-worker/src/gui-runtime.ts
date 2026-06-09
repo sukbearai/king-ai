@@ -529,6 +529,9 @@ const COMMON_WORD_CARDS: Record<string, { meaning: string; phonetic: string; syl
 
 type IeltsCardDetails = { meaning: string; phonetic: string; syllables: string };
 type IeltsCardIndex = { words: Map<string, IeltsCardDetails> };
+type IeltsClauseAnnotation = { text: string; core: string; phrases: string[] };
+type IeltsSentenceAnnotation = { text: string; clauses: IeltsClauseAnnotation[] };
+type IeltsHighlightSpans = { cores: string[]; phrases: string[] };
 
 function emptyIeltsCardIndex(): IeltsCardIndex {
   return { words: new Map() };
@@ -629,15 +632,17 @@ function firstJsonValueText(input: string): string | undefined {
   return undefined;
 }
 
-function addIeltsWordCardsFromJson(glossary: IeltsCardIndex, raw: string): void {
+function parseIeltsWordCardsJson(raw: string): unknown {
   const jsonText = firstJsonValueText(raw);
-  if (!jsonText) return;
-  let parsed: unknown;
+  if (!jsonText) return undefined;
   try {
-    parsed = JSON.parse(jsonText);
+    return JSON.parse(jsonText);
   } catch {
-    return;
+    return undefined;
   }
+}
+
+function addIeltsWordCardsFromJson(glossary: IeltsCardIndex, parsed: unknown): void {
   const container = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
   const cards = Array.isArray(parsed)
     ? parsed
@@ -670,51 +675,86 @@ function addIeltsWordCardsFromJson(glossary: IeltsCardIndex, raw: string): void 
   }
 }
 
+function ieltsAnnotationSentences(parsed: unknown): IeltsSentenceAnnotation[] {
+  const container = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  if (!Array.isArray(container.sentences)) return [];
+  const sentences: IeltsSentenceAnnotation[] = [];
+  for (const item of container.sentences) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const row = item as Record<string, unknown>;
+    const text = typeof row.text === "string" ? row.text.trim() : typeof row.sentence === "string" ? row.sentence.trim() : "";
+    if (!text) continue;
+    const clauses: IeltsClauseAnnotation[] = [];
+    const rawClauses = Array.isArray(row.clauses) ? row.clauses : [];
+    for (const clause of rawClauses) {
+      if (!clause || typeof clause !== "object" || Array.isArray(clause)) continue;
+      const clauseRow = clause as Record<string, unknown>;
+      const clauseText = typeof clauseRow.text === "string" ? clauseRow.text.trim() : "";
+      const core = typeof clauseRow.core === "string" ? clauseRow.core.trim() : "";
+      const rawPhrases = Array.isArray(clauseRow.phrases) ? clauseRow.phrases : [];
+      clauses.push({
+        text: clauseText || text,
+        core,
+        phrases: rawPhrases.map((part) => typeof part === "string" ? part.trim() : "").filter(Boolean)
+      });
+    }
+    sentences.push({ text, clauses });
+  }
+  return sentences;
+}
+
+// Collect the core/phrase strings the coach declared. Highlighting happens later on rendered
+// HTML text nodes (see highlightIeltsSpansInHtml), so it survives markdown emphasis and lists.
+function ieltsHighlightSpansFromJson(parsed: unknown): IeltsHighlightSpans {
+  const cores: string[] = [];
+  const phrases: string[] = [];
+  for (const sentence of ieltsAnnotationSentences(parsed)) {
+    for (const clause of sentence.clauses) {
+      if (clause.core) cores.push(clause.core);
+      for (const phrase of clause.phrases) phrases.push(phrase);
+    }
+  }
+  return { cores, phrases };
+}
+
+function overlapsAny(range: { start: number; end: number }, spans: Array<{ start: number; end: number }>): boolean {
+  return spans.some((span) => range.start < span.end && range.end > span.start);
+}
+
 // The coach supplies complete word details in a trailing "WordCards:" JSON block. Parse and
-// strip that block before markdown rendering so learners see only the annotated English.
-function extractIeltsWordCards(body: string, glossary: IeltsCardIndex): string {
+// strip that block before markdown rendering so learners see only the natural English.
+function extractIeltsWordCards(body: string, glossary: IeltsCardIndex): { text: string; spans: IeltsHighlightSpans } {
   const marker = /(^|\n)[^\S\n]*(?:WordCards|Word Cards|词卡)[^\S\n]*[:：]/i.exec(body);
-  if (!marker) return body;
+  if (!marker) return { text: body, spans: { cores: [], phrases: [] } };
   const tailStart = marker.index + marker[0].length;
-  addIeltsWordCardsFromJson(glossary, body.slice(tailStart));
+  const parsed = parseIeltsWordCardsJson(body.slice(tailStart));
+  addIeltsWordCardsFromJson(glossary, parsed);
+  const visible = body.slice(0, marker.index).replace(/\s+$/, "");
+  return { text: visible, spans: ieltsHighlightSpansFromJson(parsed) };
+}
+
+function stripDeprecatedIeltsGlossary(body: string): string {
+  const marker = /(^|\n)[^\S\n]*(?:Glossary|词汇|词表)[^\S\n]*[:：]/i.exec(body);
+  if (!marker) return body;
   return body.slice(0, marker.index).replace(/\s+$/, "");
 }
 
-function extractIeltsCardData(body: string): { text: string; glossary: IeltsCardIndex } {
+function extractIeltsCardData(body: string): { text: string; glossary: IeltsCardIndex; spans: IeltsHighlightSpans } {
   const glossary = emptyIeltsCardIndex();
-  return { text: extractIeltsWordCards(body, glossary), glossary };
-}
-
-function cleanupRepeatedIeltsCoreText(markdown: string): string {
-  return markdown.replace(/\[core:\s*([^\]\n]+)\]([ \t]+)([A-Za-z][A-Za-z'’]*(?:[ \t]+[A-Za-z][A-Za-z'’]*){0,8})/g, (match, rawCore: string, spaces: string, rawTail: string) => {
-    const coreWords = rawCore.trim().split(/\s+/);
-    const tailWords = rawTail.trim().split(/\s+/);
-    let removeCount = 0;
-    for (let start = 0; start < coreWords.length; start += 1) {
-      const suffix = coreWords.slice(start);
-      if (suffix.length > tailWords.length) continue;
-      if (suffix.every((word, index) => word.toLowerCase() === tailWords[index].toLowerCase())) {
-        removeCount = suffix.length;
-        break;
-      }
-    }
-    if (removeCount === 0) return match;
-    const rest = tailWords.slice(removeCount).join(" ");
-    if (removeCount === 1 && rest) return match;
-    return `[core: ${rawCore.trim()}]${rest ? `${spaces}${rest}` : ""}`;
-  });
+  const { text, spans } = extractIeltsWordCards(body, glossary);
+  return { text: stripDeprecatedIeltsGlossary(text), glossary, spans };
 }
 
 function renderIeltsAnnotations(markdown: string): string {
   return markdown
     .replace(/\[word\s+([^\]\n|]+)\|([^\]\n|]+)\|([^\]\n|]+)\|([^\]\n|]+)\]/g, (_match, word: string, meaning: string, phonetic: string, syllables: string) =>
       `<span class="ielts-word" data-word="${escapeHtmlAttribute(word.trim())}" data-meaning="${escapeHtmlAttribute(meaning.trim())}" data-phonetic="${escapeHtmlAttribute(phonetic.trim())}" data-syllables="${escapeHtmlAttribute(syllables.trim())}">${escapeHtml(word.trim())}</span>`
-    )
-    .replace(/\[core:\s*([^\]\n]+)\]/g, (_match, core: string) => `<span class="ielts-core">${escapeHtml(core.trim())}</span>`)
-    .replace(/\[phrase:\s*([^\]\n]+)\]/g, (_match, phrase: string) => `<span class="ielts-phrase">${escapeHtml(phrase.trim())}</span>`);
+    );
 }
 
-function renderFallbackClickableWords(html: string, glossary?: IeltsCardIndex): string {
+// Walk rendered HTML and transform only the visible text nodes, skipping links/code and any
+// element whose class equals skipClassName (used to avoid descending into already-wrapped words).
+function transformIeltsTextNodes(html: string, skipClassName: string | null, transform: (text: string) => string): string {
   const skipTags = new Set(["a", "code", "pre", "script", "style"]);
   const stack: Array<{ name: string; className: string }> = [];
   return html.split(/(<[^>]+>)/g).map((part) => {
@@ -738,25 +778,75 @@ function renderFallbackClickableWords(html: string, glossary?: IeltsCardIndex): 
       }
       return part;
     }
-    if (stack.some((entry) => skipTags.has(entry.name) || entry.className === "ielts-word")) return part;
-    return part.replace(/\b[A-Za-z]+(?:'[A-Za-z]+)?\b/g, (word) => clickableWordSpan(word, glossary));
+    if (stack.some((entry) => skipTags.has(entry.name) || (skipClassName !== null && entry.className === skipClassName))) return part;
+    return transform(part);
   }).join("");
 }
 
+// Wrap the coach's declared cores/phrases on rendered HTML text nodes. Matching plain substrings
+// here (rather than on raw markdown) means **bold**, list markers, and headings no longer hide a
+// highlight. Cores claim their range before phrases; each distinct span is highlighted once.
+function highlightIeltsSpansInHtml(html: string, spans: IeltsHighlightSpans): string {
+  const needles: Array<{ value: string; kind: "core" | "phrase" }> = [
+    ...spans.cores.map((value) => ({ value, kind: "core" as const })),
+    ...spans.phrases.map((value) => ({ value, kind: "phrase" as const }))
+  ]
+    .filter((needle) => needle.value)
+    .sort((a, b) => (a.kind === b.kind ? b.value.length - a.value.length : a.kind === "core" ? -1 : 1));
+  if (!needles.length) return html;
+  const consumed = new Set<string>();
+  return transformIeltsTextNodes(html, null, (text) => wrapIeltsSpansInText(text, needles, consumed));
+}
+
+function wrapIeltsSpansInText(text: string, needles: Array<{ value: string; kind: "core" | "phrase" }>, consumed: Set<string>): string {
+  const spans: Array<{ start: number; end: number; kind: "core" | "phrase" }> = [];
+  for (const needle of needles) {
+    const key = `${needle.kind} ${needle.value}`;
+    if (consumed.has(key)) continue;
+    const idx = text.indexOf(needle.value);
+    if (idx < 0) continue;
+    const range = { start: idx, end: idx + needle.value.length, kind: needle.kind };
+    if (overlapsAny(range, spans)) continue;
+    spans.push(range);
+    consumed.add(key);
+  }
+  if (!spans.length) return text;
+  // The text node is already escaped HTML, so wrap the slice as-is without re-escaping.
+  return spans
+    .sort((a, b) => b.start - a.start || b.end - a.end)
+    .reduce((next, span) => {
+      const className = span.kind === "core" ? "ielts-core" : "ielts-phrase";
+      return `${next.slice(0, span.start)}<span class="${className}">${next.slice(span.start, span.end)}</span>${next.slice(span.end)}`;
+    }, text);
+}
+
+function renderFallbackClickableWords(html: string, glossary?: IeltsCardIndex): string {
+  return transformIeltsTextNodes(html, "ielts-word", (text) =>
+    text.replace(/\b[A-Za-z]+(?:'[A-Za-z]+)?\b/g, (word) => clickableWordSpan(word, glossary))
+  );
+}
+
+// Messages carry the author's display name but no agent id, so identify the coach through its
+// definition (name or id) instead of a hardcoded literal that silently breaks on rename.
+const IELTS_COACH_AGENT = IELTS_WORKFLOW_AGENTS[0];
+
 function shouldRenderIeltsClickableWords(message: Message): boolean {
-  return message.author_kind === "agent" && message.author_name === "IELTS Reading & Writing Coach";
+  return message.author_kind === "agent" &&
+    (message.author_name === IELTS_COACH_AGENT.name || message.author_name === IELTS_COACH_AGENT.id);
 }
 
 async function renderMessageMarkdown(message: Message): Promise<Message> {
   if (message.status === "pending" || message.kind === "system") return { ...message };
   try {
     const isIelts = shouldRenderIeltsClickableWords(message);
-    const { text, glossary } = isIelts
+    const { text, glossary, spans } = isIelts
       ? extractIeltsCardData(message.body || "")
-      : { text: message.body || "", glossary: emptyIeltsCardIndex() };
-    const rendered = await renderMarkdownHtml(renderIeltsAnnotations(cleanupRepeatedIeltsCoreText(text)));
+      : { text: message.body || "", glossary: emptyIeltsCardIndex(), spans: { cores: [], phrases: [] } as IeltsHighlightSpans };
+    const rendered = await renderMarkdownHtml(renderIeltsAnnotations(text));
     const sanitized = sanitizeMarkdownHtml(rendered);
-    const body_html = isIelts ? renderFallbackClickableWords(sanitized, glossary) : sanitized;
+    const body_html = isIelts
+      ? renderFallbackClickableWords(highlightIeltsSpansInHtml(sanitized, spans), glossary)
+      : sanitized;
     return { ...message, body_html };
   } catch {
     return { ...message };
@@ -1125,9 +1215,20 @@ function normalizeAgents(agents: Agent[] | undefined): Agent[] {
   }
   for (const agent of [...DEFAULT_TEAM_AGENTS, ...IELTS_WORKFLOW_AGENTS]) {
     const existing = byId.get(agent.id);
-    byId.set(agent.id, { ...agent, ...existing });
+    byId.set(agent.id, migrateBuiltInAgent({ ...agent, ...existing }, agent));
   }
   return [...byId.values()];
+}
+
+function migrateBuiltInAgent(agent: Agent, builtIn: Agent): Agent {
+  if (builtIn.id === "ielts-tutor" && usesDeprecatedIeltsGlossaryRole(agent.role)) {
+    return { ...agent, role: builtIn.role };
+  }
+  return agent;
+}
+
+function usesDeprecatedIeltsGlossaryRole(role: string): boolean {
+  return /\bGlossary\b/i.test(role) && !/\bWordCards\b/i.test(role);
 }
 
 function findAgent(state: State, agentId?: string | null): Agent | undefined {
