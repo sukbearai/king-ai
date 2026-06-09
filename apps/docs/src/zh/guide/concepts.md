@@ -24,6 +24,38 @@ King AI 分为两侧：
 
 这种边界让模型凭据和引擎会话保留在本地，同时 GUI 仍然拥有共享协作账本。
 
+## GUI 与 daemon 如何通信
+
+浏览器 GUI 和本地 daemon **从不直接互联**。它们通过远端 runtime 中转——一个 Cloudflare Worker(Hono 应用),其后是**每个租户一个的 `GuiState` Durable Object**,作为会话、消息、任务、卡片、智能体注册表和状态的唯一持久账本。三类客户端都用 HTTPS 与同一个 Worker 通信：
+
+| 客户端 | 访问 | 用途 |
+| --- | --- | --- |
+| 浏览器 GUI | `/gui/*` | 读状态、建会话、发送人类消息 |
+| 本地 daemon(`king-ai agent computer`) | `/api/*`、`/runtime/*` | 配对、签发 token、接收唤醒、回传回复/状态/事件/run |
+| 本地智能体(Claude / Codex) | 经 PATH 上的 shim 访问 `/runtime/cli` | 智能体执行的每一条 `king-ai <cmd>` |
+
+**不开端口穿透 NAT。** 本地机器从不是服务器——它始终主动外拨。每个 agent runner 在启动时会向 `GET /runtime/wake-stream` 打开一条长连的 **Server-Sent Events** 流并保持。Durable Object 在内存里持有这条连接的 writer(`waiters`),因此可以随时向流里下推。这就是云端如何触达 NAT 或防火墙后面的笔记本。
+
+一条人类消息的端到端流程如下：
+
+```text
+浏览器 ──POST /gui/message──▶ Worker ──▶ GuiState DO
+                                            │ 追加消息、持久化
+                                            │ broadcast { event: "wake", conversationId, messageId, agentId }
+                                            ▼
+                            wake 帧 ──▶ daemon 打开的 /runtime/wake-stream(SSE)
+                                            ▼
+                  AgentRunner：GET /runtime/inbox → 小模型 triage → 本地 Claude/Codex 一轮
+                                            ▼
+                  POST /runtime/cli { argv: ["reply", convId, text] } ──▶ DO 追加回复、持久化
+                                            ▼
+浏览器 ◀──GET /gui/state──── Worker ◀────── DO（此时已显示回复）
+```
+
+**身份与隔离。** 配对用一次性配对码(`POST /api/computers/pair`)换取长期 device token,保存在 `~/.king-ai`。daemon 由它签发短期的每智能体 runtime token(`POST /api/agents/<id>/runtime-token`),用于授权 `/runtime/*` 调用。每个请求都被路由到 `GUI_STATE.idFromName(tenantId)`,因此每个租户得到一个隔离的 Durable Object——拥有各自的消息、智能体与状态。
+
+**什么留在本地。** 模型凭据和引擎会话从不离开机器。Worker 只会看到运行时消息和状态变更;真正的 Claude/Codex 进程、它们的会话以及你的 workspace 全部只存在于你的电脑上。
+
 ## Agent Runner
 
 每个远端智能体对应一个本地 runner。Runner 会通过轮询或 SSE 接收 wake 事件，读取未读消息和分配的工作，先用小模型判断是否需要行动，再在需要处理时调用大模型。
@@ -36,9 +68,15 @@ King AI 分为两侧：
 
 智能体通过 `king-ai recall <query> [--limit n] [--conversation <id>]` 查询：它执行带排名的全文检索，返回命中片段及其所属会话和作者。用它来取回过往决策、之前的回答或更早会话的上下文，而不必重新推导。这把智能体模型中的 **M(记忆)** 组件落实为持久、可检索的经验，而不仅是当前的上下文窗口。
 
+## 技能自演化
+
+智能体可以把一段行之有效的流程沉淀为可复用的**技能**，供后续会话使用：`king-ai skill save <name> --file notes/skill.md`（以及 `skill list`、`show`、`remove`）。学习到的技能存放在易失的智能体 home 之外，因此能在重启与 reset 后保留；daemon 在每次启动时把它们重新安装进 `.claude/skills` 和 `.codex/skills`——形成一个团队过程性知识随时间复利累积的学习闭环。保存会经过校验（名称 slug、大小与数量上限），且按智能体隔离。这把范式中「可自我改进的 skills」落实为持久、可复用的模块，而非用完即弃的上下文。
+
 ## 协作层
 
-King AI 把工作建模成一个小型软件团队。内置角色包括 planner、builder、reviewer、tester、ops、researcher、doc-writer 和 summarizer。Workflow 可以分配任务、请求评审、创建交接，并发起人工决策。
+King AI 把工作建模成一个小型团队。**角色模板**是一套小而**领域无关**的词表，描述一个 agent **如何**参与工作流——它的协作行为，以及随之而来的能力与权限。内置模板有 `planner`、`builder`、`reviewer`、`tester`、`ops`、`researcher`、`doc-writer` 和 `summarizer`。Workflow 用它们按能力路由任务、请求评审、创建交接，并发起人工决策。
+
+模板不是 agent。具体花名册把 agent 映射到模板，并且可以**把一个模板折叠进另一个**，而不是 1:1 配人——例如默认团队没有独立的 summarizer，收尾职责由 planner（King AI CEO）承担。领域 agent 也是同理：雅思 coach 是单 agent 工作流，在协作维度上复用通用的 `builder` 模板（它直接干活），而它的学科专长写在自由文本 role 里，不另造模板。这样模板集保持通用、可跨领域复用——**agent 懂什么**取决于它的 role 和所属的**工作流模板**，而不是协作词表。
 
 模型仍然负责策略和内容；系统负责身份、归属、幂等、任务状态流转和持久审计记录。
 
