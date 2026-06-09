@@ -13,6 +13,7 @@ export function runtimeCliHelp(): string {
     "  king-ai reply <conversationId> <text>",
     "  king-ai send <agentId> <message> [--steer] [--type message|decision|blocker]",
     "  king-ai recv [--agent agent-id]",
+    "  king-ai recall <query> [--limit n] [--conversation <id>]",
     "  king-ai escalate <message>",
     "  king-ai status",
     "  king-ai state export|import|reset",

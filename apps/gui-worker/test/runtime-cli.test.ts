@@ -69,6 +69,7 @@ test("dispatchRuntimeCli routes help without mutating state", async () => {
     safetyCommand: () => "",
     sendCommand: () => "",
     recvCommand: () => "",
+    recallCommand: () => "",
     escalateCommand: () => "",
     agendaJson: async () => ({}),
     getStateField: {

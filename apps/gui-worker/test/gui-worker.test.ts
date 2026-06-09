@@ -12,6 +12,7 @@ import worker, {
   wakeEventVisibleToAgent,
   wakeResolveContextFromState
 } from "../src/index.js";
+import { createFakeSql } from "./fake-sql.js";
 
 type StorageMap = Map<string, unknown>;
 
@@ -50,7 +51,8 @@ function env(initialState?: unknown, extraBindings: Record<string, unknown> = {}
   const createStub = (name: string) => {
     const storage: StorageMap = new Map();
     if (initialState && name === "global") storage.set("state:base", initialState);
-    const state = { storage: new FakeStorage(storage, failPutAfter) } as unknown as DurableObjectState;
+    const storageWithSql = Object.assign(new FakeStorage(storage, failPutAfter), { sql: createFakeSql() });
+    const state = { storage: storageWithSql } as unknown as DurableObjectState;
     const instance = new GuiState(state);
     return {
       fetch: (input: string | URL | Request, init?: RequestInit) => instance.fetch(new Request(input, init))
@@ -524,6 +526,159 @@ test("gui state makes long IELTS coach sample paragraphs clickable", async () =>
   }
 });
 
+test("gui state fills word cards from the coach Glossary and hides the glossary line", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const room = await json<{ conversation: { id: string } }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({ title: "IELTS Glossary", workflowId: "ielts-study", teamMode: "single" })
+    }), bindings)
+  );
+  const tokenRes = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/ielts-tutor/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${tokenRes.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      argv: [
+        "reply",
+        room.conversation.id,
+        "[core: I cherish] this quiet moment.\n\nGlossary: cherish = 珍惜; quiet = 安静的; moment = 时刻"
+      ]
+    })
+  }), bindings);
+
+  const state = await json<{ messages: { author_kind: string; body_html?: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  const agent = state.messages.find((message) => message.author_kind === "agent");
+  const html = agent?.body_html ?? "";
+  // Content words pick up their meaning from the Glossary even though the model did not wrap them.
+  assert.match(html, /data-word="cherish" data-meaning="珍惜"[^>]*>cherish<\/span>/);
+  assert.match(html, /data-word="moment" data-meaning="时刻"[^>]*>moment<\/span>/);
+  // Function words still come from the built-in dictionary.
+  assert.match(html, /data-word="this" data-meaning="这个"[^>]*>this<\/span>/);
+  // The core still renders, and the raw Glossary line is consumed rather than shown.
+  assert.match(html, /class="ielts-core"/);
+  assert.doesNotMatch(html, /Glossary/);
+});
+
+test("gui state cards possessives via the base word and contractions via the dictionary", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const room = await json<{ conversation: { id: string } }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({ title: "IELTS Possessive", workflowId: "ielts-study", teamMode: "single" })
+    }), bindings)
+  );
+  const tokenRes = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/ielts-tutor/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${tokenRes.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      argv: [
+        "reply",
+        room.conversation.id,
+        "[core: I don't think] [phrase: the teacher's notes] helped much.\n\nGlossary: think = 认为; teacher = 老师; notes = 笔记; helped = 帮助"
+      ]
+    })
+  }), bindings);
+
+  const state = await json<{ messages: { author_kind: string; body_html?: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  const html = state.messages.find((message) => message.author_kind === "agent")?.body_html ?? "";
+  // teacher's falls back to the base word "teacher" in the glossary.
+  assert.match(html, /data-meaning="老师"/);
+  // don't keeps its own dictionary card rather than being stripped to "don".
+  assert.match(html, /data-meaning="不（do not）"/);
+  assert.doesNotMatch(html, /Glossary/);
+});
+
+test("gui state keeps markdown structure while annotating IELTS coach replies", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const room = await json<{ conversation: { id: string } }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({ title: "IELTS Markdown", workflowId: "ielts-study", teamMode: "single" })
+    }), bindings)
+  );
+  const tokenRes = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/ielts-tutor/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${tokenRes.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      argv: [
+        "reply",
+        room.conversation.id,
+        "Two **tips**:\n\n- [core: Plan your essay] [phrase: before writing].\n- [core: Review grammar] carefully.\n\nGlossary: plan = 计划; essay = 文章; review = 检查; grammar = 语法"
+      ]
+    })
+  }), bindings);
+
+  const state = await json<{ messages: { author_kind: string; body_html?: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  const html = state.messages.find((message) => message.author_kind === "agent")?.body_html ?? "";
+  // markdown still renders into list/bold structure, and a word inside bold is still carded
+  assert.match(html, /<li>/);
+  assert.match(html, /<strong><span class="ielts-word"[^>]*>tips<\/span><\/strong>/);
+  // cores render inside the list items and content words still get glossary cards
+  assert.match(html, /class="ielts-core"/);
+  assert.match(html, /data-word="essay" data-meaning="文章"/);
+  // no markers leak into the rendered output
+  assert.doesNotMatch(html, /\[core:/);
+  assert.doesNotMatch(html, /\[phrase:/);
+  assert.doesNotMatch(html, /Glossary/);
+});
+
+test("gui state recalls past agent messages through the episodic FTS index", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const room = await json<{ conversation: { id: string } }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({ title: "Episodic", workflowId: "ielts-study", teamMode: "single" })
+    }), bindings)
+  );
+  const tokenRes = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/ielts-tutor/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  const cli = (argv: string[]) => worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${tokenRes.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ argv })
+  }), bindings);
+  await cli(["reply", room.conversation.id, "We finalized the mitochondria decision for the biology essay."]);
+
+  const recalled = await json<{ text: string }>(await cli(["recall", "mitochondria"]));
+  assert.match(recalled.text, /mitochondria/i);
+  assert.match(recalled.text, new RegExp(room.conversation.id));
+
+  const miss = await json<{ text: string }>(await cli(["recall", "zzzznotpresentkeyword"]));
+  assert.match(miss.text, /No episodic memory found/);
+});
+
 test("gui state preserves inline IELTS spans for nested sentence highlights", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
@@ -992,30 +1147,25 @@ test("gui windows choose agents from the selected workflow", async () => {
   assert.equal(ieltsWorkflow?.agents[0]?.name, "IELTS Reading & Writing Coach");
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Keep the conversation in English/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /expression gap/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /always write that deliverable itself in English/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not give generic acknowledgements/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /For every sentence, mark only the minimal sentence core and useful phrases inline/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Treat the whole coach reply as teaching material/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /model answer, sample letter, essay, paragraph, explanation, or example sentence/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /do not leave long English body paragraphs as plain unmarked text/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Sentence core means only the main clause skeleton/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not include modifiers/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do include required complements for linking verbs/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /mark 'It is Saturday' and 'I feel exhausted' as cores/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /prefer the shortest possible spans/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Never wrap a whole clause, the sentence core, or most of a sentence in one ielts-phrase/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /never skip a word/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /mark only 'engineer uses tools' as core/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /mark only 'I want' as core/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /safe HTML spans/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /class ielts-word with data-word, data-meaning, data-phonetic, and data-syllables/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /phonetic/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /\[core: \.\.\.\]/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /\[phrase: \.\.\.\]/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /\[word word\|中文词义\|phonetic\|syllables\]/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /meaning field must be concise Chinese/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /include every highlighted phrase in the writing tip with concise Chinese meanings/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not explain only one phrase when multiple ielts-phrase highlights appear/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not default to separate Sentence Core, Clauses\/Phrases, or Vocabulary lists/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /The app automatically makes every single word clickable/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /do NOT wrap individual words yourself and do NOT provide phonetics or syllables/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /mark exactly one sentence core with \[core: \.\.\.\]/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /mark useful phrases with \[phrase: \.\.\.\]/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /main-clause skeleton: subject \+ verb/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /the core is just 'engineer uses tools'/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /the core is 'I want' and 'to eat' is a phrase/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Each phrase is the shortest meaningful chunk/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Never wrap a whole clause, the sentence core, or most of a sentence in one phrase/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Every English sentence MUST have exactly one \[core: \.\.\.\]/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Never send a sentence that has phrases but no core/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /End your reply with one Glossary line/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /'word = 中文' pairs separated by ';'/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /you may skip very common function words/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Meanings must be concise Chinese, not English/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /does not show it to the learner/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Keep replies compact/);
 
   const single = await json<{
     conversation: { workflowId?: string; coordinatorAgentId?: string; teamAgentIds?: string[]; teamSnapshot?: { workflowId: string; agents: { id: string }[] } };

@@ -466,10 +466,27 @@ const COMMON_WORD_CARDS: Record<string, { meaning: string; phonetic: string; syl
   "i've": { meaning: "我已（I have）", phonetic: "/aɪv/", syllables: "" }
 };
 
-function clickableWordSpan(word: string): string {
+// Word cards draw their meaning from the coach's trailing Glossary first (context-specific
+// content words), then fall back to the built-in function-word dictionary. Phonetic/syllables
+// only come from the dictionary, so glossary-only words simply show a meaning and hide the
+// optional rows. A word with no meaning anywhere stays clickable but carries data-word only.
+function lookupWordCard(key: string, glossary?: Map<string, string>): { meaning: string; phonetic: string; syllables: string } | null {
+  const dict = COMMON_WORD_CARDS[key];
+  const glossMeaning = glossary?.get(key);
+  if (glossMeaning) return { meaning: glossMeaning, phonetic: dict?.phonetic ?? "", syllables: dict?.syllables ?? "" };
+  if (dict) return { meaning: dict.meaning, phonetic: dict.phonetic, syllables: dict.syllables };
+  return null;
+}
+
+function clickableWordSpan(word: string, glossary?: Map<string, string>): string {
   const escapedWord = escapeHtmlAttribute(word);
   const display = escapeHtml(word);
-  const card = COMMON_WORD_CARDS[word.toLowerCase()];
+  const key = word.toLowerCase();
+  // Possessive and plural-possessive forms (teacher's, students') fall back to the base word so
+  // the card still shows a meaning. Contractions like don't keep their own dictionary entry,
+  // which the direct lookup above resolves before any stripping.
+  const baseKey = key.replace(/['’]s?$/i, "");
+  const card = lookupWordCard(key, glossary) ?? (baseKey !== key ? lookupWordCard(baseKey, glossary) : null);
   if (!card) {
     return `<span class="ielts-word" data-word="${escapedWord}">${display}</span>`;
   }
@@ -481,6 +498,25 @@ function clickableWordSpan(word: string): string {
   return `<span class="ielts-word"${attrs}>${display}</span>`;
 }
 
+// The coach supplies content-word meanings in a trailing "Glossary:" line instead of wrapping
+// every word inline. Parse those `word = 中文` pairs (single words only; phrases are highlighted
+// separately) to fill the click cards, then strip the line so the learner sees only the
+// annotated sentence, not the raw word list.
+function extractIeltsGlossary(body: string): { text: string; glossary: Map<string, string> } {
+  const glossary = new Map<string, string>();
+  const marker = body.search(/(^|\n)[^\S\n]*(?:Glossary|词表|词汇)[^\S\n]*[:：]/i);
+  if (marker < 0) return { text: body, glossary };
+  const tail = body.slice(marker);
+  const pairPattern = /([A-Za-z][A-Za-z'’-]*)\s*[=＝]\s*([^;；\n]+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = pairPattern.exec(tail))) {
+    const term = match[1].trim().toLowerCase();
+    const meaning = match[2].trim();
+    if (term && meaning && !glossary.has(term)) glossary.set(term, meaning);
+  }
+  return { text: body.slice(0, marker).replace(/\s+$/, ""), glossary };
+}
+
 function renderIeltsAnnotations(markdown: string): string {
   return markdown
     .replace(/\[word\s+([^\]\n|]+)\|([^\]\n|]+)\|([^\]\n|]+)\|([^\]\n|]+)\]/g, (_match, word: string, meaning: string, phonetic: string, syllables: string) =>
@@ -490,7 +526,7 @@ function renderIeltsAnnotations(markdown: string): string {
     .replace(/\[phrase:\s*([^\]\n]+)\]/g, (_match, phrase: string) => `<span class="ielts-phrase">${escapeHtml(phrase.trim())}</span>`);
 }
 
-function renderFallbackClickableWords(html: string): string {
+function renderFallbackClickableWords(html: string, glossary?: Map<string, string>): string {
   const skipTags = new Set(["a", "code", "pre", "script", "style"]);
   const stack: Array<{ name: string; className: string }> = [];
   return html.split(/(<[^>]+>)/g).map((part) => {
@@ -515,7 +551,7 @@ function renderFallbackClickableWords(html: string): string {
       return part;
     }
     if (stack.some((entry) => skipTags.has(entry.name) || entry.className === "ielts-word")) return part;
-    return part.replace(/\b[A-Za-z]+(?:'[A-Za-z]+)?\b/g, (word) => clickableWordSpan(word));
+    return part.replace(/\b[A-Za-z]+(?:'[A-Za-z]+)?\b/g, (word) => clickableWordSpan(word, glossary));
   }).join("");
 }
 
@@ -526,9 +562,13 @@ function shouldRenderIeltsClickableWords(message: Message): boolean {
 async function renderMessageMarkdown(message: Message): Promise<Message> {
   if (message.status === "pending" || message.kind === "system") return { ...message };
   try {
-    const rendered = await renderMarkdownHtml(renderIeltsAnnotations(message.body || ""));
+    const isIelts = shouldRenderIeltsClickableWords(message);
+    const { text, glossary } = isIelts
+      ? extractIeltsGlossary(message.body || "")
+      : { text: message.body || "", glossary: new Map<string, string>() };
+    const rendered = await renderMarkdownHtml(renderIeltsAnnotations(text));
     const sanitized = sanitizeMarkdownHtml(rendered);
-    const body_html = shouldRenderIeltsClickableWords(message) ? renderFallbackClickableWords(sanitized) : sanitized;
+    const body_html = isIelts ? renderFallbackClickableWords(sanitized, glossary) : sanitized;
     return { ...message, body_html };
   } catch {
     return { ...message };

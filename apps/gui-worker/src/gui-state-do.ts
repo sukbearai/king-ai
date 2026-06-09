@@ -158,6 +158,7 @@ import { runStateCommand } from "./gui-cli-state.js";
 import { runTaskCommand } from "./gui-cli-task.js";
 import { runArtifactCommand } from "./gui-cli-artifact.js";
 import { dispatchRuntimeCli } from "./runtime-cli-dispatch.js";
+import { indexEpisodicMessages, runRecallCommand, type SqlLike } from "./episodic.js";
 import {
   artifactCandidateFromArgs as artifactCandidateFromArgsHelper,
   checkArtifactQuality as checkArtifactQualityHelper,
@@ -203,8 +204,29 @@ const app = createGuiApp({
 export class GuiState implements DurableObject {
   private waiters = new Set<{ agentId: string; writer: WritableStreamDefaultWriter<Uint8Array> }>();
   private persistedStateFingerprint = new Map<string, string>();
+  private episodicIndexedIds = new Set<string>();
 
   constructor(private state: DurableObjectState) {}
+
+  private episodicSql(): SqlLike | undefined {
+    const sql = (this.state.storage as { sql?: SqlLike }).sql;
+    return sql && typeof sql.exec === "function" ? sql : undefined;
+  }
+
+  // Best-effort: mirror new human/agent messages into the FTS5 episodic index. Never let an
+  // indexing hiccup break state persistence, and skip ids we have already indexed this lifetime.
+  private indexEpisodic(state: State): void {
+    const sql = this.episodicSql();
+    if (!sql) return;
+    const fresh = state.messages.filter((message) => message.id && !this.episodicIndexedIds.has(message.id));
+    if (fresh.length === 0) return;
+    try {
+      indexEpisodicMessages(sql, fresh);
+    } catch {
+      // FTS index is additive; persistence and the live UI must not depend on it.
+    }
+    for (const message of fresh) if (message.id) this.episodicIndexedIds.add(message.id);
+  }
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -286,6 +308,7 @@ export class GuiState implements DurableObject {
   }
 
   private async put(state: State, options: { force?: boolean } = {}): Promise<void> {
+    this.indexEpisodic(state);
     const base = stripEntityState(state);
     const writes: Promise<unknown>[] = [];
     this.queueStateWrite(writes, GUI_BASE_STATE_KEY, base, options.force === true);
@@ -799,6 +822,7 @@ export class GuiState implements DurableObject {
       safetyCommand: (currentState, commandArgs) => this.safetyCommand(currentState, commandArgs),
       sendCommand: (currentState, commandArgs, currentActor) => this.sendCommand(currentState, commandArgs, currentActor),
       recvCommand: (currentState, commandArgs) => this.recvCommand(currentState, commandArgs),
+      recallCommand: (commandArgs) => runRecallCommand(this.episodicSql(), commandArgs),
       escalateCommand: (currentState, commandArgs, currentActor) => this.escalateCommand(currentState, commandArgs, currentActor),
       agendaJson: async (agentId) => (await this.agenda(agentId).then((res) => res.json())) as AgendaPayload,
       getStateField: {

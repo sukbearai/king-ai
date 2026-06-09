@@ -81,6 +81,7 @@ export type RuntimeCliDeps<S, A> = {
   safetyCommand: (state: S, args: string[]) => string;
   sendCommand: (state: S, args: string[], actor: A) => string;
   recvCommand: (state: S, args: string[]) => string;
+  recallCommand: (args: string[]) => string;
   escalateCommand: (state: S, args: string[], actor: A) => string;
   agendaJson: (agentId: string) => Promise<unknown>;
   getStateField: {
@@ -312,6 +313,7 @@ export async function dispatchRuntimeCli<S, A>(
   if (argv[0] === "safety" || argv[0] === "approval") return success(deps.safetyCommand(state, argv.slice(1)));
   if (argv[0] === "send") return success(deps.sendCommand(state, argv.slice(1), actor));
   if (argv[0] === "recv") return success(deps.recvCommand(state, argv.slice(1)));
+  if (argv[0] === "recall") return success(deps.recallCommand(argv.slice(1)));
   if (argv[0] === "escalate") return success(deps.escalateCommand(state, argv.slice(1), actor));
   if (argv[0] === "agenda") return success(JSON.stringify(await deps.agendaJson(actorId), null, 2));
   if (argv[0] === "help" || argv[0] === "--help") return success(runtimeCliHelp());

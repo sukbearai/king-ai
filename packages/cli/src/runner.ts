@@ -216,7 +216,7 @@ Expressiveness: King AI clients can render Skype shortcode text such as (smile),
 
 Drive what you own forward. Multi-step turns are fine. If someone DMs you mid-task, answer briefly and continue. If progress is waiting on someone else, send one short follow-up and schedule a check-back with king-ai calendar create '<chase>' --at <iso> --assignee <your-agent-id> --prompt '<what future-you should do>'.
 
-Useful runtime commands include king-ai inbox, messages <conversationId> --tail 30, glance <conversationId>, roster, participants, contacts, whoami, agenda, observe [--json], initiative create|list|get|update, task list|create|update|done, capsule create|list|mine|get|update, artifact put|list|get, hypothesis create|list|update, context get|set|list, send <agentId> <message>, recv [--agent agent-id], escalate <message>, calendar list, card list, dm <agentId> <text>, react <messageId> <emoji>, and doc list|create|show.`;
+Useful runtime commands include king-ai inbox, messages <conversationId> --tail 30, glance <conversationId>, roster, participants, contacts, whoami, agenda, observe [--json], initiative create|list|get|update, task list|create|update|done, capsule create|list|mine|get|update, artifact put|list|get, hypothesis create|list|update, context get|set|list, send <agentId> <message>, recv [--agent agent-id], recall <query> (full-text search your team's past conversations across sessions when you need history or prior decisions), escalate <message>, calendar list, card list, dm <agentId> <text>, react <messageId> <emoji>, and doc list|create|show.`;
 }
 
 export function shouldStopEngineOnBeginStop(): boolean {
