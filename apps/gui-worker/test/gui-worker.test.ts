@@ -548,7 +548,7 @@ test("gui state fills word cards from the coach Glossary and hides the glossary 
       argv: [
         "reply",
         room.conversation.id,
-        "[core: I cherish] this [phrase: quiet moment].\n\nGlossary: cherish = 珍惜 | /ˈtʃerɪʃ/ | cher-ish; quiet = 安静的 | /ˈkwaɪət/ | qui-et; moment = 时刻 | /ˈmoʊmənt/ | mo-ment; quiet moment = 安静的时刻"
+        "[core: I cherish] this [phrase: quiet moment].\n\nTip: Useful phrases: 'quiet moment' = 安静的时刻.\n\nGlossary: cherish = 珍惜 | /ˈtʃerɪʃ/ | cher-ish; quiet = 安静的 | /ˈkwaɪət/ | qui-et; moment = 时刻 | /ˈmoʊmənt/ | mo-ment"
       ]
     })
   }), bindings);
@@ -561,13 +561,86 @@ test("gui state fills word cards from the coach Glossary and hides the glossary 
   // Content words pick up their meaning from the Glossary even though the model did not wrap them.
   assert.match(html, /data-word="cherish" data-meaning="珍惜" data-phonetic="\/ˈtʃerɪʃ\/" data-syllables="cher-ish"[^>]*>cherish<\/span>/);
   assert.match(html, /data-word="moment" data-meaning="时刻" data-phonetic="\/ˈmoʊmənt\/" data-syllables="mo-ment"[^>]*>moment<\/span>/);
-  // Highlighted phrases can carry their own Chinese meaning while inner words remain clickable.
-  assert.match(html, /class="ielts-phrase" data-word="quiet moment" data-meaning="安静的时刻"/);
+  // Highlighted phrases stay visual; their meanings are explained in the visible Tip line.
+  assert.match(html, /class="ielts-phrase"/);
+  assert.doesNotMatch(html, /class="ielts-phrase"[^>]*data-meaning=/);
+  assert.match(html, /data-word="Useful"[^>]*>Useful<\/span> <span class="ielts-word" data-word="phrases"[^>]*>phrases<\/span>/);
+  assert.match(html, /安静的时刻/);
   // Function words still come from the built-in dictionary.
   assert.match(html, /data-word="this" data-meaning="这个"[^>]*>this<\/span>/);
   // The core still renders, and the raw Glossary line is consumed rather than shown.
   assert.match(html, /class="ielts-core"/);
   assert.doesNotMatch(html, /Glossary/);
+});
+
+test("gui state removes duplicate text after IELTS core markers", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const room = await json<{ conversation: { id: string } }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({ title: "IELTS Core Repeat", workflowId: "ielts-study", teamMode: "single" })
+    }), bindings)
+  );
+  const tokenRes = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/ielts-tutor/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${tokenRes.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      argv: [
+        "reply",
+        room.conversation.id,
+        "[core: I am writing] am writing [phrase: to apply for] the position. [core: I helped customers] helped customers choose products.\n\nGlossary: writing = 写作 | /ˈraɪtɪŋ/ | writ-ing; helped = 帮助 | /helpt/ | helped"
+      ]
+    })
+  }), bindings);
+
+  const state = await json<{ messages: { author_kind: string; body_html?: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  const html = state.messages.find((message) => message.author_kind === "agent")?.body_html ?? "";
+  assert.match(html, /class="ielts-core">[\s\S]*data-word="I"[^>]*>I<\/span>[\s\S]*data-word="writing"[^>]*>writing<\/span>[\s\S]*<\/span> <span class="ielts-phrase"/);
+  assert.doesNotMatch(html, /<\/span> am writing/);
+  assert.doesNotMatch(html, /<\/span> helped customers/);
+});
+
+test("gui state keeps valid repeated words after IELTS core markers", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const room = await json<{ conversation: { id: string } }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({ title: "IELTS Core Valid Repeat", workflowId: "ielts-study", teamMode: "single" })
+    }), bindings)
+  );
+  const tokenRes = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/ielts-tutor/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${tokenRes.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      argv: [
+        "reply",
+        room.conversation.id,
+        "[core: Students study] study skills every day.\n\nGlossary: students = 学生 | /ˈstuːdənts/ | stu-dents; study = 学习 | /ˈstʌdi/ | stud-y; skills = 技能 | /skɪlz/ | skills"
+      ]
+    })
+  }), bindings);
+
+  const state = await json<{ messages: { author_kind: string; body_html?: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  const html = state.messages.find((message) => message.author_kind === "agent")?.body_html ?? "";
+  assert.match(html, /<\/span> <span class="ielts-word" data-word="study" data-meaning="学习" data-phonetic="\/ˈstʌdi\/" data-syllables="stud-y"[^>]*>study<\/span> <span class="ielts-word" data-word="skills"/);
 });
 
 test("gui state cards possessives via the base word and contractions via the dictionary", async () => {
@@ -1149,17 +1222,21 @@ test("gui windows choose agents from the selected workflow", async () => {
   assert.equal(ieltsWorkflow?.agents[0]?.name, "IELTS Reading & Writing Coach");
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Keep the conversation in English/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /expression gap/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /one concise Chinese translation of that English expression/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Natural English for your Chinese request/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /summarize the request itself in natural English/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /always write that deliverable itself in English/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not give generic acknowledgements/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /except for the visible Tip line/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /do not add \[core: \.\.\.\] or \[phrase: \.\.\.\] markers inside that Tip text/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /The app automatically makes every single word clickable/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /do NOT wrap individual words yourself and do NOT provide phonetics or syllables/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /do NOT wrap individual words yourself in the visible text/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /mark exactly one sentence core with \[core: \.\.\.\]/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /mark useful phrases with \[phrase: \.\.\.\]/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /insert the marker inline by replacing the original words it marks/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /continuous substring that actually appears word-for-word in the sentence/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Never rewrite, compress, reorder, or skip across words to create a new core/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not restate the core in a separate green fragment/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Never write '\[core: I am writing\] am writing'/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /\[core: I have kept\] these feelings \[phrase: in my heart\]/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /not 'I have kept these feelings \[core: I have kept feelings\]'/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Your \[core: kindness makes\] ordinary moments special/);
@@ -1169,12 +1246,15 @@ test("gui windows choose agents from the selected workflow", async () => {
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Never wrap a whole clause, the sentence core, or most of a sentence in one phrase/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Every English sentence MUST have exactly one \[core: \.\.\.\]/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Never send a sentence that has phrases but no core/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Explain the highlighted phrases in the same visible Tip line/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /after any natural-English expression for the learner's Chinese request/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not rely on phrase click cards/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /End your reply with one Glossary line/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /word = 中文 \| \/phonetic\/ \| syl-la-bles/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /exact phrase = 中文/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /single content words only/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /you may skip very common function words/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Meanings must be concise Chinese, not English/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /fill word and phrase cards and does not show it to the learner/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /fill word cards and does not show it to the learner/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Keep replies compact/);
 
   const single = await json<{
@@ -2233,7 +2313,6 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /'post-body markdown-body'/);
   assert.match(html, /\.ielts-core/);
   assert.match(html, /\.ielts-phrase/);
-  assert.match(html, /\.ielts-phrase\[data-meaning\]/);
   assert.match(html, /\.ielts-word/);
   assert.match(html, /border-bottom:\s*1px dotted/);
   assert.match(html, /id="vocabDialog"/);

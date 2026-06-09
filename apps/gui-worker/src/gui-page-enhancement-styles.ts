@@ -310,9 +310,6 @@ export const guiPageEnhancementStyles = `
       padding: 0 3px;
       font-weight: 800;
     }
-    .ielts-phrase[data-meaning] {
-      cursor: pointer;
-    }
     .ielts-word {
       display: inline;
       border-bottom: 1px dotted #6b5b00;

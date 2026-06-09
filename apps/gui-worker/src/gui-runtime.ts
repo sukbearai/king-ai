@@ -467,14 +467,10 @@ const COMMON_WORD_CARDS: Record<string, { meaning: string; phonetic: string; syl
 };
 
 type IeltsCardDetails = { meaning: string; phonetic: string; syllables: string };
-type IeltsGlossary = { words: Map<string, IeltsCardDetails>; phrases: Map<string, string> };
+type IeltsGlossary = { words: Map<string, IeltsCardDetails> };
 
 function emptyIeltsGlossary(): IeltsGlossary {
-  return { words: new Map(), phrases: new Map() };
-}
-
-function normalizeIeltsPhraseKey(phrase: string): string {
-  return phrase.trim().toLowerCase().replace(/\s+/g, " ");
+  return { words: new Map() };
 }
 
 // Word cards draw their details from the coach's trailing Glossary first (context-specific
@@ -514,43 +510,51 @@ function clickableWordSpan(word: string, glossary?: IeltsGlossary): string {
   return `<span class="ielts-word"${attrs}>${display}</span>`;
 }
 
-// The coach supplies word and phrase details in a trailing "Glossary:" line instead of wrapping
-// every word inline. Parse `word = 中文 | /phonetic/ | syl-la-bles` and `phrase = 中文` pairs,
-// then strip the line so the learner sees only the annotated sentence, not the raw list.
+// The coach supplies word details in a trailing "Glossary:" line instead of wrapping every word
+// inline. Parse `word = 中文 | /phonetic/ | syl-la-bles` pairs, then strip the line so the
+// learner sees only the annotated sentence, not the raw list.
 function extractIeltsGlossary(body: string): { text: string; glossary: IeltsGlossary } {
   const glossary = emptyIeltsGlossary();
   const marker = body.search(/(^|\n)[^\S\n]*(?:Glossary|词表|词汇)[^\S\n]*[:：]/i);
   if (marker < 0) return { text: body, glossary };
   const tail = body.slice(marker);
-  const pairPattern = /([A-Za-z](?:[A-Za-z'’\-\s]*[A-Za-z])?)\s*[=＝]\s*([^;；\n]+)/g;
+  const pairPattern = /([A-Za-z][A-Za-z'’-]*)\s*[=＝]\s*([^;；\n]+)/g;
   let match: RegExpExecArray | null;
   while ((match = pairPattern.exec(tail))) {
-    const rawTerm = normalizeIeltsPhraseKey(match[1]);
+    const term = match[1].trim().toLowerCase();
     const [meaning = "", phonetic = "", syllables = ""] = match[2].split("|").map((part) => part.trim());
-    if (!rawTerm || !meaning) continue;
-    if (rawTerm.includes(" ")) {
-      if (!glossary.phrases.has(rawTerm)) glossary.phrases.set(rawTerm, meaning);
-    } else if (!glossary.words.has(rawTerm)) {
-      glossary.words.set(rawTerm, { meaning, phonetic, syllables });
-    }
+    if (term && meaning && !glossary.words.has(term)) glossary.words.set(term, { meaning, phonetic, syllables });
   }
   return { text: body.slice(0, marker).replace(/\s+$/, ""), glossary };
 }
 
-function renderIeltsAnnotations(markdown: string, glossary = emptyIeltsGlossary()): string {
+function cleanupRepeatedIeltsCoreText(markdown: string): string {
+  return markdown.replace(/\[core:\s*([^\]\n]+)\]([ \t]+)([A-Za-z][A-Za-z'’]*(?:[ \t]+[A-Za-z][A-Za-z'’]*){0,8})/g, (match, rawCore: string, spaces: string, rawTail: string) => {
+    const coreWords = rawCore.trim().split(/\s+/);
+    const tailWords = rawTail.trim().split(/\s+/);
+    let removeCount = 0;
+    for (let start = 0; start < coreWords.length; start += 1) {
+      const suffix = coreWords.slice(start);
+      if (suffix.length > tailWords.length) continue;
+      if (suffix.every((word, index) => word.toLowerCase() === tailWords[index].toLowerCase())) {
+        removeCount = suffix.length;
+        break;
+      }
+    }
+    if (removeCount === 0) return match;
+    const rest = tailWords.slice(removeCount).join(" ");
+    if (removeCount === 1 && rest) return match;
+    return `[core: ${rawCore.trim()}]${rest ? `${spaces}${rest}` : ""}`;
+  });
+}
+
+function renderIeltsAnnotations(markdown: string): string {
   return markdown
     .replace(/\[word\s+([^\]\n|]+)\|([^\]\n|]+)\|([^\]\n|]+)\|([^\]\n|]+)\]/g, (_match, word: string, meaning: string, phonetic: string, syllables: string) =>
       `<span class="ielts-word" data-word="${escapeHtmlAttribute(word.trim())}" data-meaning="${escapeHtmlAttribute(meaning.trim())}" data-phonetic="${escapeHtmlAttribute(phonetic.trim())}" data-syllables="${escapeHtmlAttribute(syllables.trim())}">${escapeHtml(word.trim())}</span>`
     )
     .replace(/\[core:\s*([^\]\n]+)\]/g, (_match, core: string) => `<span class="ielts-core">${escapeHtml(core.trim())}</span>`)
-    .replace(/\[phrase:\s*([^\]\n]+)\]/g, (_match, phrase: string) => {
-      const text = phrase.trim();
-      const meaning = glossary.phrases.get(normalizeIeltsPhraseKey(text));
-      const attrs = meaning
-        ? ` data-word="${escapeHtmlAttribute(text)}" data-meaning="${escapeHtmlAttribute(meaning)}"`
-        : "";
-      return `<span class="ielts-phrase"${attrs}>${escapeHtml(text)}</span>`;
-    });
+    .replace(/\[phrase:\s*([^\]\n]+)\]/g, (_match, phrase: string) => `<span class="ielts-phrase">${escapeHtml(phrase.trim())}</span>`);
 }
 
 function renderFallbackClickableWords(html: string, glossary?: IeltsGlossary): string {
@@ -593,7 +597,7 @@ async function renderMessageMarkdown(message: Message): Promise<Message> {
     const { text, glossary } = isIelts
       ? extractIeltsGlossary(message.body || "")
       : { text: message.body || "", glossary: emptyIeltsGlossary() };
-    const rendered = await renderMarkdownHtml(renderIeltsAnnotations(text, glossary));
+    const rendered = await renderMarkdownHtml(renderIeltsAnnotations(cleanupRepeatedIeltsCoreText(text)));
     const sanitized = sanitizeMarkdownHtml(rendered);
     const body_html = isIelts ? renderFallbackClickableWords(sanitized, glossary) : sanitized;
     return { ...message, body_html };
