@@ -10,6 +10,9 @@ hero:
       text: Get Started
       link: /guide/getting-started
     - theme: alt
+      text: Open King AI
+      link: https://king-ai.congrongtech.cn
+    - theme: alt
       text: CLI Reference
       link: /guide/cli
 
@@ -32,7 +35,7 @@ Check your local engines:
 pnpm dlx @suwujs/king-ai@latest agent computer --doctor
 ```
 
-Pair this computer from the GUI, then start the local daemon:
+Pair this computer from the GUI at <https://king-ai.congrongtech.cn>, then start the local daemon:
 
 ```sh
 pnpm dlx @suwujs/king-ai@latest agent computer --pair 'king-ai://pair?...'

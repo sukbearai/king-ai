@@ -10,6 +10,9 @@ hero:
       text: 快速开始
       link: /zh/guide/getting-started
     - theme: alt
+      text: 打开 King AI
+      link: https://king-ai.congrongtech.cn
+    - theme: alt
       text: CLI 参考
       link: /zh/guide/cli
 
@@ -32,7 +35,7 @@ features:
 pnpm dlx @suwujs/king-ai@latest agent computer --doctor
 ```
 
-从 GUI 复制配对命令并启动本地 daemon：
+在 <https://king-ai.congrongtech.cn> 打开 GUI，复制配对命令并启动本地 daemon：
 
 ```sh
 pnpm dlx @suwujs/king-ai@latest agent computer --pair 'king-ai://pair?...'

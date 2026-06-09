@@ -24,38 +24,6 @@ King AI has two sides:
 
 This keeps model credentials and engine sessions local while still giving the GUI a shared collaboration ledger.
 
-## How the GUI and Daemon Communicate
-
-The browser GUI and the local daemon **never connect to each other directly**. They rendezvous through the remote runtime — a Cloudflare Worker (a Hono app) backed by one **`GuiState` Durable Object per tenant**, which is the single durable ledger of conversations, messages, tasks, cards, the agent registry, and status. Three clients all speak HTTPS to the same Worker:
-
-| Client | Talks to | For |
-| --- | --- | --- |
-| Browser GUI | `/gui/*` | read state, create conversations, post human messages |
-| Local daemon (`king-ai agent computer`) | `/api/*`, `/runtime/*` | pair, mint tokens, receive wakes, post replies/status/events/runs |
-| Local agents (Claude / Codex) | `/runtime/cli` via the PATH shim | every `king-ai <cmd>` an agent runs |
-
-**Crossing NAT without opening a port.** The local machine is never a server — it always dials out. On start, each agent runner opens a long-lived **Server-Sent Events** stream to `GET /runtime/wake-stream` and keeps it open. The Durable Object holds that connection's writer in memory (`waiters`), so it can push down the stream at any moment. This is how the cloud reaches a laptop behind NAT or a firewall.
-
-A human message travels end to end like this:
-
-```text
-Browser ──POST /gui/message──▶ Worker ──▶ GuiState DO
-                                            │ append message, persist
-                                            │ broadcast { event: "wake", conversationId, messageId, agentId }
-                                            ▼
-                            wake frame ──▶ daemon's open /runtime/wake-stream (SSE)
-                                            ▼
-                  AgentRunner: GET /runtime/inbox → small-model triage → local Claude/Codex turn
-                                            ▼
-                  POST /runtime/cli { argv: ["reply", convId, text] } ──▶ DO append reply, persist
-                                            ▼
-Browser ◀──GET /gui/state──── Worker ◀────── DO (now shows the reply)
-```
-
-**Identity and isolation.** Pairing redeems a one-time code (`POST /api/computers/pair`) for a long-lived device token saved under `~/.king-ai`. From it the daemon mints short-lived per-agent runtime tokens (`POST /api/agents/<id>/runtime-token`) that authorize `/runtime/*` calls. Every request is routed to `GUI_STATE.idFromName(tenantId)`, so each tenant gets an isolated Durable Object — its own messages, agents, and state.
-
-**What stays local.** Model credentials and engine sessions never leave the machine. The Worker only ever sees runtime messages and state transitions; the actual Claude/Codex processes, their sessions, and your workspaces live entirely on your computer.
-
 ## Agent Runner
 
 Each remote agent maps to a local runner. A runner polls or streams wake events, reads unread messages and assigned work, asks a small model to triage whether action is needed, and invokes the big model when the turn should be handled.

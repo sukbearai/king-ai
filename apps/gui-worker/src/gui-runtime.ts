@@ -1215,20 +1215,9 @@ function normalizeAgents(agents: Agent[] | undefined): Agent[] {
   }
   for (const agent of [...DEFAULT_TEAM_AGENTS, ...IELTS_WORKFLOW_AGENTS]) {
     const existing = byId.get(agent.id);
-    byId.set(agent.id, migrateBuiltInAgent({ ...agent, ...existing }, agent));
+    byId.set(agent.id, { ...agent, ...existing });
   }
   return [...byId.values()];
-}
-
-function migrateBuiltInAgent(agent: Agent, builtIn: Agent): Agent {
-  if (builtIn.id === "ielts-tutor" && usesDeprecatedIeltsGlossaryRole(agent.role)) {
-    return { ...agent, role: builtIn.role };
-  }
-  return agent;
-}
-
-function usesDeprecatedIeltsGlossaryRole(role: string): boolean {
-  return /\bGlossary\b/i.test(role) && !/\bWordCards\b/i.test(role);
 }
 
 function findAgent(state: State, agentId?: string | null): Agent | undefined {

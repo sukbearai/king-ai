@@ -1446,6 +1446,10 @@ test("gui windows choose agents from the selected workflow", async () => {
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /use cores 'Your smile gives' and 'life feels'/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /the core is 'I want' and 'to eat' is a phrase/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Each phrase is the shortest meaningful chunk/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /never create a WordCards\.sentences entry for the Tip line/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Never mark a single word as a phrase/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Never glue grammatically unrelated pieces together/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Keep noun compounds whole/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Never wrap a whole clause, the sentence core, or most of a sentence in one phrase/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Every finite clause gets its own core/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Explain the highlighted phrases in the same visible Tip line/);

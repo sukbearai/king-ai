@@ -24,38 +24,6 @@ King AI 分为两侧：
 
 这种边界让模型凭据和引擎会话保留在本地，同时 GUI 仍然拥有共享协作账本。
 
-## GUI 与 daemon 如何通信
-
-浏览器 GUI 和本地 daemon **从不直接互联**。它们通过远端 runtime 中转——一个 Cloudflare Worker(Hono 应用),其后是**每个租户一个的 `GuiState` Durable Object**,作为会话、消息、任务、卡片、智能体注册表和状态的唯一持久账本。三类客户端都用 HTTPS 与同一个 Worker 通信：
-
-| 客户端 | 访问 | 用途 |
-| --- | --- | --- |
-| 浏览器 GUI | `/gui/*` | 读状态、建会话、发送人类消息 |
-| 本地 daemon(`king-ai agent computer`) | `/api/*`、`/runtime/*` | 配对、签发 token、接收唤醒、回传回复/状态/事件/run |
-| 本地智能体(Claude / Codex) | 经 PATH 上的 shim 访问 `/runtime/cli` | 智能体执行的每一条 `king-ai <cmd>` |
-
-**不开端口穿透 NAT。** 本地机器从不是服务器——它始终主动外拨。每个 agent runner 在启动时会向 `GET /runtime/wake-stream` 打开一条长连的 **Server-Sent Events** 流并保持。Durable Object 在内存里持有这条连接的 writer(`waiters`),因此可以随时向流里下推。这就是云端如何触达 NAT 或防火墙后面的笔记本。
-
-一条人类消息的端到端流程如下：
-
-```text
-浏览器 ──POST /gui/message──▶ Worker ──▶ GuiState DO
-                                            │ 追加消息、持久化
-                                            │ broadcast { event: "wake", conversationId, messageId, agentId }
-                                            ▼
-                            wake 帧 ──▶ daemon 打开的 /runtime/wake-stream(SSE)
-                                            ▼
-                  AgentRunner：GET /runtime/inbox → 小模型 triage → 本地 Claude/Codex 一轮
-                                            ▼
-                  POST /runtime/cli { argv: ["reply", convId, text] } ──▶ DO 追加回复、持久化
-                                            ▼
-浏览器 ◀──GET /gui/state──── Worker ◀────── DO（此时已显示回复）
-```
-
-**身份与隔离。** 配对用一次性配对码(`POST /api/computers/pair`)换取长期 device token,保存在 `~/.king-ai`。daemon 由它签发短期的每智能体 runtime token(`POST /api/agents/<id>/runtime-token`),用于授权 `/runtime/*` 调用。每个请求都被路由到 `GUI_STATE.idFromName(tenantId)`,因此每个租户得到一个隔离的 Durable Object——拥有各自的消息、智能体与状态。
-
-**什么留在本地。** 模型凭据和引擎会话从不离开机器。Worker 只会看到运行时消息和状态变更;真正的 Claude/Codex 进程、它们的会话以及你的 workspace 全部只存在于你的电脑上。
-
 ## Agent Runner
 
 每个远端智能体对应一个本地 runner。Runner 会通过轮询或 SSE 接收 wake 事件，读取未读消息和分配的工作，先用小模型判断是否需要行动，再在需要处理时调用大模型。
