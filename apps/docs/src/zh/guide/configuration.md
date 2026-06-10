@@ -60,6 +60,10 @@ king-ai agent computer --doctor
 
 播放范围只限 IELTS 教练消息。浏览器只会把教练回复中可读的英文部分发送给 TTS，并排除用于词卡和句子标注的隐藏 `WordCards` JSON。
 
+播放按钮会显示加载中、播放中和失败状态。同一时间只播放一条回复；再次点击正在播放的按钮会停止播放；生成后的音频会缓存在当前页面会话的浏览器内存中，重复点击同一条消息不会重新生成。
+
 `CLOUDFLARE_AI_GATEWAY_ID` 会为 TTS 调用启用 Cloudflare AI Gateway 路由。默认 Worker 配置把它设为 `default`，因此账号配置好 gateway 后，Workers AI 请求会进入该 gateway 的日志和治理链路。如果没有 `AI` binding，`/gui/tts` 可以用 `CLOUDFLARE_ACCOUNT_ID` 和 Worker secret `CLOUDFLARE_AI_API_TOKEN` fallback 到 Cloudflare REST `/ai/run` API。
+
+REST fallback 默认关闭，只用于本地调试或少数无法使用 `AI` binding 的部署。只有设置 `CLOUDFLARE_AI_REST_FALLBACK=1` 时才会启用。
 
 不要把 TTS 路由配置成 AI Gateway 的 `/compat/chat/completions` URL。这个 OpenAI-compatible 路径用于 chat completions；TTS 需要通过 binding 或 `/ai/run` 调用 Workers AI 的 `xai/grok-tts`。

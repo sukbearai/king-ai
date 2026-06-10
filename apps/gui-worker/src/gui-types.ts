@@ -9,6 +9,7 @@ export type Bindings = {
   CLOUDFLARE_ACCOUNT_ID?: string;
   CLOUDFLARE_AI_API_TOKEN?: string;
   CLOUDFLARE_AI_GATEWAY_ID?: string;
+  CLOUDFLARE_AI_REST_FALLBACK?: string;
   AUTH_DB?: D1Database;
   BETTER_AUTH_SECRET?: string;
   GITHUB_CLIENT_ID?: string;

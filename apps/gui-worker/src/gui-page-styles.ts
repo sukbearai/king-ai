@@ -347,11 +347,51 @@ export const guiPageStyles = `    :root {
       padding: 0;
       color: var(--muted);
     }
+    .tts-button[data-tts-state="loading"] {
+      color: var(--accent);
+    }
+    .tts-button[data-tts-state="loading"] svg {
+      animation: tts-spin 0.8s linear infinite;
+    }
+    .tts-button[data-tts-state="playing"] {
+      color: var(--accent);
+      background: var(--active);
+    }
+    .tts-button[data-tts-state="error"] {
+      color: #b42318;
+      background: #fff1f0;
+    }
     .tts-button svg {
       width: 12px;
       height: 12px;
       display: block;
       fill: currentColor;
+    }
+    @keyframes tts-spin {
+      to { transform: rotate(360deg); }
+    }
+    .tts-notice {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 80;
+      max-width: min(360px, calc(100vw - 36px));
+      padding: 9px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--body);
+      box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14);
+      font-size: 13px;
+      line-height: 1.35;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(8px);
+      transition: opacity 0.16s ease, transform 0.16s ease;
+    }
+    .tts-notice.show {
+      opacity: 1;
+      transform: translateY(0);
     }
     .post-body {
       color: var(--body);

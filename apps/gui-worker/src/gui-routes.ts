@@ -15,6 +15,7 @@ export type GuiBindings = {
   CLOUDFLARE_ACCOUNT_ID?: string;
   CLOUDFLARE_AI_API_TOKEN?: string;
   CLOUDFLARE_AI_GATEWAY_ID?: string;
+  CLOUDFLARE_AI_REST_FALLBACK?: string;
   AUTH_DB?: D1Database;
   BETTER_AUTH_SECRET?: string;
   GITHUB_CLIENT_ID?: string;
@@ -53,6 +54,7 @@ async function runTts(env: GuiBindings, input: Record<string, unknown>): Promise
     return { ok: true, response: await env.AI.run(TTS_MODEL, input, options) };
   }
 
+  if (env.CLOUDFLARE_AI_REST_FALLBACK !== "1") return { ok: false, status: 503, error: "workers_ai_not_configured" };
   const accountId = env.CLOUDFLARE_ACCOUNT_ID?.trim();
   const token = env.CLOUDFLARE_AI_API_TOKEN?.trim();
   if (!accountId || !token) return { ok: false, status: 503, error: "workers_ai_not_configured" };

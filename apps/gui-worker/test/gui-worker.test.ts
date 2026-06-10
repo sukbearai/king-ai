@@ -2531,6 +2531,11 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /function clearMessages/);
   assert.match(html, /renderMessages = function/);
   assert.match(html, /function playMessageTts/);
+  assert.match(html, /const ttsAudioCache = new Map/);
+  assert.match(html, /let activeTts = null/);
+  assert.match(html, /let loadingTtsMessageId = ''/);
+  assert.match(html, /function showTtsNotice/);
+  assert.match(html, /function stopActiveTts/);
   assert.match(html, /function isIeltsTutorMessage/);
   assert.match(html, /author_agent_id === 'ielts-tutor'/);
   assert.match(html, /function ttsTextFromIeltsMessage/);
@@ -2538,6 +2543,9 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /Useful phrases/);
   assert.match(html, /\/gui\/tts/);
   assert.match(html, /class="icon-btn tts-button"/);
+  assert.match(html, /data-tts-state="idle"/);
+  assert.match(html, /\.tts-notice/);
+  assert.match(html, /@keyframes tts-spin/);
   assert.match(html, /\.post-body\.markdown-body/);
   assert.match(html, /const renderedBody = message\.body_html \|\| ''/);
   assert.match(html, /renderedBody \|\| escapeHtml\(message\.body\)/);
@@ -2812,7 +2820,22 @@ test("gui tts endpoint runs Workers AI grok tts", async () => {
   }]);
 });
 
-test("gui tts endpoint can fall back to Cloudflare AI run REST gateway", async () => {
+test("gui tts endpoint requires explicit opt-in for Cloudflare AI REST fallback", async () => {
+  const bindings = env(undefined, {
+    CLOUDFLARE_ACCOUNT_ID: "account-123",
+    CLOUDFLARE_AI_API_TOKEN: "token-123",
+    CLOUDFLARE_AI_GATEWAY_ID: "default"
+  });
+  const res = await worker.fetch(new Request("https://gui/gui/tts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text: "Please read this IELTS answer.", language: "en" })
+  }), bindings);
+  assert.equal(res.status, 503);
+  assert.equal((await res.json() as { error?: string }).error, "workers_ai_not_configured");
+});
+
+test("gui tts endpoint can fall back to Cloudflare AI run REST gateway when enabled", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; auth: string; gateway: string; body: unknown }> = [];
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -2829,7 +2852,8 @@ test("gui tts endpoint can fall back to Cloudflare AI run REST gateway", async (
     const bindings = env(undefined, {
       CLOUDFLARE_ACCOUNT_ID: "account-123",
       CLOUDFLARE_AI_API_TOKEN: "token-123",
-      CLOUDFLARE_AI_GATEWAY_ID: "default"
+      CLOUDFLARE_AI_GATEWAY_ID: "default",
+      CLOUDFLARE_AI_REST_FALLBACK: "1"
     });
     const res = await worker.fetch(new Request("https://gui/gui/tts", {
       method: "POST",

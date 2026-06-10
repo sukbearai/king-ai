@@ -60,6 +60,10 @@ The GUI Worker uses Cloudflare Workers AI for IELTS coach text-to-speech when th
 
 Playback is scoped to messages from the IELTS coach. The browser sends only the readable English portion of the coach reply to TTS and excludes the hidden `WordCards` JSON used for vocabulary and sentence annotations.
 
+The playback button shows loading, playing, and failure states. Only one reply plays at a time, clicking the active button stops playback, and generated audio is cached in browser memory for the current page session so repeated clicks do not regenerate the same message.
+
 `CLOUDFLARE_AI_GATEWAY_ID` enables Cloudflare AI Gateway routing for the TTS call. The default Worker configuration sets it to `default`, so Workers AI requests are logged and governed by that gateway when the account has it configured. If the `AI` binding is unavailable, `/gui/tts` can fall back to the Cloudflare REST `/ai/run` API using `CLOUDFLARE_ACCOUNT_ID` and the Worker secret `CLOUDFLARE_AI_API_TOKEN`.
+
+The REST fallback is disabled by default and is intended for local debugging or unusual deployments. Set `CLOUDFLARE_AI_REST_FALLBACK=1` only when the Worker cannot use the `AI` binding.
 
 Do not configure the TTS route with an AI Gateway `/compat/chat/completions` URL. That OpenAI-compatible path is for chat completions; TTS uses Workers AI `xai/grok-tts` through the binding or `/ai/run`.

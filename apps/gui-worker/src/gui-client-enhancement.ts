@@ -493,6 +493,11 @@ function attachmentListHtml(attachments) {
   }).join('') + '</div>';
 }
 window.__messageAudioText = window.__messageAudioText || {};
+const ttsAudioCache = new Map();
+let activeTts = null;
+let loadingTtsMessageId = '';
+let ttsNoticeTimer = 0;
+let ttsPlayRequestId = 0;
 function isIeltsTutorMessage(message) {
   if (!message || message.author_kind !== 'agent') return false;
   if (message.author_agent_id === 'ielts-tutor') return true;
@@ -511,27 +516,117 @@ function ttsTextFromIeltsMessage(message) {
   }
   return englishLines.join(' ').replace(/\\s+/g, ' ').trim().slice(0, 1200);
 }
+function ttsIconHtml(kind) {
+  if (kind === 'stop') return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10v10H7z"/></svg>';
+  if (kind === 'loading') return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9h-3a6 6 0 1 1-6-6z"/></svg>';
+  return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>';
+}
+function setTtsButtonState(messageId, state, label) {
+  const button = document.querySelector('[data-tts-id="' + CSS.escape(messageId) + '"]');
+  if (!button) return;
+  button.dataset.ttsState = state;
+  button.disabled = state === 'loading';
+  button.title = label;
+  button.setAttribute('aria-label', label);
+  button.innerHTML = ttsIconHtml(state === 'playing' ? 'stop' : state);
+}
+function showTtsNotice(message) {
+  let notice = document.getElementById('ttsNotice');
+  if (!notice) {
+    notice = document.createElement('div');
+    notice.id = 'ttsNotice';
+    notice.className = 'tts-notice';
+    notice.setAttribute('role', 'status');
+    document.body.appendChild(notice);
+  }
+  notice.textContent = message;
+  notice.classList.add('show');
+  if (ttsNoticeTimer) clearTimeout(ttsNoticeTimer);
+  ttsNoticeTimer = setTimeout(function() { notice.classList.remove('show'); }, 3600);
+}
+function ttsErrorMessage(error) {
+  const raw = error && error.message ? String(error.message) : String(error || '');
+  if (/402|Insufficient balance|BYOK/i.test(raw)) return 'TTS needs Cloudflare AI balance or BYOK.';
+  if (/401|403|Authentication|Unauthorized|Forbidden/i.test(raw)) return 'TTS authentication failed. Check the Cloudflare AI token.';
+  if (/workers_ai_not_configured|not_configured/i.test(raw)) return 'TTS is not configured on this Worker.';
+  return 'TTS playback failed. Try again.';
+}
+function stopActiveTts() {
+  if (!activeTts) return;
+  activeTts.audio.pause();
+  activeTts.audio.currentTime = 0;
+  activeTts.cleanup();
+}
+function cacheTtsAudio(cacheKey, url) {
+  if (ttsAudioCache.size >= 20) {
+    const oldestKey = ttsAudioCache.keys().next().value;
+    const oldestUrl = ttsAudioCache.get(oldestKey);
+    if (oldestUrl) URL.revokeObjectURL(oldestUrl);
+    ttsAudioCache.delete(oldestKey);
+  }
+  ttsAudioCache.set(cacheKey, url);
+}
 async function playMessageTts(messageId) {
   const text = window.__messageAudioText && window.__messageAudioText[messageId];
   if (!text) return;
-  const button = document.querySelector('[data-tts-id="' + CSS.escape(messageId) + '"]');
-  if (button) button.disabled = true;
+  if (activeTts && activeTts.messageId === messageId) {
+    ttsPlayRequestId += 1;
+    stopActiveTts();
+    return;
+  }
+  const requestId = ++ttsPlayRequestId;
+  stopActiveTts();
+  if (loadingTtsMessageId && loadingTtsMessageId !== messageId) setTtsButtonState(loadingTtsMessageId, 'idle', 'Play audio');
+  loadingTtsMessageId = messageId;
+  setTtsButtonState(messageId, 'loading', 'Loading audio');
   try {
-    const response = await fetch('/gui/tts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: text, language: 'en' })
-    });
-    if (!response.ok) throw new Error(await response.text());
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
+    const cacheKey = messageId + ':' + text;
+    let url = ttsAudioCache.get(cacheKey);
+    if (!url) {
+      const response = await fetch('/gui/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: text, language: 'en' })
+      });
+      if (!response.ok) throw new Error(await response.text());
+      const blob = await response.blob();
+      url = URL.createObjectURL(blob);
+      cacheTtsAudio(cacheKey, url);
+    }
+    if (requestId !== ttsPlayRequestId) {
+      if (loadingTtsMessageId === messageId) {
+        loadingTtsMessageId = '';
+        setTtsButtonState(messageId, 'idle', 'Play audio');
+      }
+      return;
+    }
     const audio = new Audio(url);
-    audio.onended = function() { URL.revokeObjectURL(url); };
+    const cleanup = function() {
+      audio.onended = null;
+      audio.onerror = null;
+      if (activeTts && activeTts.audio === audio) activeTts = null;
+      setTtsButtonState(messageId, 'idle', 'Play audio');
+    };
+    activeTts = { messageId: messageId, audio: audio, cleanup: cleanup };
+    if (loadingTtsMessageId === messageId) loadingTtsMessageId = '';
+    audio.onended = cleanup;
+    audio.onerror = function() {
+      cleanup();
+      showTtsNotice('TTS audio could not be played.');
+    };
+    setTtsButtonState(messageId, 'playing', 'Stop audio');
     await audio.play();
   } catch (error) {
     console.warn('TTS playback failed', error);
+    if (loadingTtsMessageId === messageId) loadingTtsMessageId = '';
+    if (activeTts && activeTts.messageId === messageId) {
+      activeTts.audio.pause();
+      activeTts.cleanup();
+    }
+    showTtsNotice(ttsErrorMessage(error));
+    setTtsButtonState(messageId, 'error', 'TTS failed');
+    setTimeout(function() { setTtsButtonState(messageId, 'idle', 'Play audio'); }, 1800);
   } finally {
-    if (button) button.disabled = false;
   }
 }
 function ttsButtonHtml(message) {
@@ -539,7 +634,7 @@ function ttsButtonHtml(message) {
   const text = ttsTextFromIeltsMessage(message);
   if (!text) return '';
   window.__messageAudioText[message.id] = text;
-  return '<button class="icon-btn tts-button" data-tts-id="' + escapeHtml(message.id) + '" onclick="playMessageTts(&quot;' + escapeHtml(message.id) + '&quot;)" title="Play audio" aria-label="Play audio"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></button>';
+  return '<button class="icon-btn tts-button" data-tts-id="' + escapeHtml(message.id) + '" data-tts-state="idle" onclick="playMessageTts(&quot;' + escapeHtml(message.id) + '&quot;)" title="Play audio" aria-label="Play audio">' + ttsIconHtml('play') + '</button>';
 }
 	const REMOTE_ASSIST_URL_KEY = 'king-ai:remoteAssistUrl';
 let remoteAssistUrl = localStorage.getItem(REMOTE_ASSIST_URL_KEY) || '';
