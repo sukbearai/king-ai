@@ -658,12 +658,21 @@ async function playMessageTts(messageId) {
   const text = window.__messageAudioText && window.__messageAudioText[messageId];
   await playTts(messageId, text, messageTtsLabels);
 }
+function ttsButtonState(ttsId) {
+  if (activeTts && activeTts.ttsId === ttsId) return 'playing';
+  if (loadingTtsId === ttsId) return 'loading';
+  return 'idle';
+}
 function ttsButtonHtml(message) {
   if (!message || message.status === 'pending' || !message.body || !message.id || !isIeltsTutorMessage(message)) return '';
   const text = ttsTextFromIeltsMessage(message);
   if (!text) return '';
   window.__messageAudioText[message.id] = text;
-  return '<button class="icon-btn tts-button" data-tts-id="' + escapeHtml(message.id) + '" data-tts-state="idle" onclick="playMessageTts(&quot;' + escapeHtml(message.id) + '&quot;)" title="Play audio" aria-label="Play audio">' + ttsIconHtml('play') + '</button>';
+  const state = ttsButtonState(message.id);
+  const label = state === 'playing' ? messageTtsLabels.playing : state === 'loading' ? messageTtsLabels.loading : messageTtsLabels.idle;
+  const iconKind = state === 'playing' ? 'stop' : state === 'loading' ? 'loading' : 'play';
+  const disabledAttr = state === 'loading' ? ' disabled' : '';
+  return '<button class="icon-btn tts-button" data-tts-id="' + escapeHtml(message.id) + '" data-tts-state="' + state + '"' + disabledAttr + ' onclick="playMessageTts(&quot;' + escapeHtml(message.id) + '&quot;)" title="' + escapeHtml(label) + '" aria-label="' + escapeHtml(label) + '">' + ttsIconHtml(iconKind) + '</button>';
 }
 	const REMOTE_ASSIST_URL_KEY = 'king-ai:remoteAssistUrl';
 let remoteAssistUrl = localStorage.getItem(REMOTE_ASSIST_URL_KEY) || '';
