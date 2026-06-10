@@ -27,6 +27,7 @@ import {
   shouldFallbackAckSeen,
   shouldFallbackAckAfterStreak,
   shouldHandleWakeEvent,
+  shouldContinuePendingRerun,
   shouldPublishEngineFailureNotice,
   shouldSkipPollWake,
   shouldStopEngineOnBeginStop,
@@ -398,6 +399,14 @@ test("no-state-action streak grants a grace turn before fallback-acking unread",
   assert.equal(second, 2);
   // Same unread still unhandled after a second turn: now the fallback-ack fires.
   assert.equal(shouldFallbackAckAfterStreak(second), true);
+});
+
+test("pending reruns only continue when fresh unread work remains", () => {
+  assert.equal(shouldContinuePendingRerun({ pendingRerun: false, hasRealUnread: true, hasAgendaWork: false, stopped: false }), false);
+  assert.equal(shouldContinuePendingRerun({ pendingRerun: true, hasRealUnread: false, hasAgendaWork: false, stopped: false }), false);
+  assert.equal(shouldContinuePendingRerun({ pendingRerun: true, hasRealUnread: true, hasAgendaWork: false, stopped: true }), false);
+  assert.equal(shouldContinuePendingRerun({ pendingRerun: true, hasRealUnread: true, hasAgendaWork: false, stopped: false }), true);
+  assert.equal(shouldContinuePendingRerun({ pendingRerun: true, hasRealUnread: false, hasAgendaWork: true, stopped: false }), true);
 });
 
 test("unreadBatchKey changes when the unread batch changes", () => {

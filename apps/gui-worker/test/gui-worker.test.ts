@@ -3692,6 +3692,46 @@ test("gui runtime exposes King AI runtime preambles", async () => {
   assert.match((await callCli(["preamble", "--agent", "dev"])).text, /Role: Implement only assigned tasks/);
 });
 
+test("gui runtime preamble exposes full wake task ids", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const devToken = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/dev/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    body: JSON.stringify({ body: "@dev reply to the roll call" })
+  }), bindings);
+  const state = await json<{
+    tasks: { id: string; title: string; status: string; assignee?: string; conversationId?: string }[];
+    messages: { id: string; conversation_id: string; author_kind: string; body: string }[];
+  }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
+  const task = state.tasks.find((row) => row.assignee === "dev");
+  const message = state.messages.find((row) => row.author_kind === "human" && row.body === "@dev reply to the roll call");
+  assert.ok(task);
+  assert.ok(message);
+  const run = await json<{ runId: string }>(await worker.fetch(new Request("https://gui/runtime/runs", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${devToken.token}` },
+      body: JSON.stringify({
+        trigger: { source: "sse-wake", engine: "codex" },
+        contract: { conversationId: message.conversation_id, messageId: message.id, taskId: task.id }
+      })
+  }), bindings));
+
+  const preamble = await json<{ text: string }>(await worker.fetch(new Request(`https://gui/runtime/preamble?agent=dev&reason=wake&runId=${run.runId}`, {
+    headers: { Authorization: `Bearer ${devToken.token}` }
+  }), bindings));
+
+  assert.match(preamble.text, /Wake Contract/);
+  assert.match(preamble.text, new RegExp(`task: ${task.id}`));
+  assert.match(preamble.text, new RegExp(`close with: king-ai task done ${task.id}`));
+  assert.match(preamble.text, new RegExp(`\\[assigned\\] ${task.id} ${task.title}`));
+});
+
 test("gui runtime supports board, calendar, claims, roster, and agenda", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["claude", "codex"] });

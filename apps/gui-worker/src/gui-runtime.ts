@@ -1927,6 +1927,7 @@ function buildRuntimePreamble(
   options: { agentId: string; reason: string; runId?: string; steerReason?: string }
 ): string {
   const agent = state.agents.find((row) => row.id === options.agentId) ?? state.agents[0] ?? DEFAULT_AGENT;
+  const runContract = resolveRunContract(state, options.runId);
   const lines: string[] = [
     `## Runtime Context (Loop #${state.currentLoop})`,
     `Agent: ${agent.id} (${agent.name})`,
@@ -1939,6 +1940,16 @@ function buildRuntimePreamble(
     lines.push(`Steer interrupt: ${options.steerReason.slice(0, 300)}`);
     lines.push("Prioritize the steer before resuming previous work.");
   }
+  if (runContract) {
+    lines.push("");
+    lines.push("### Wake Contract");
+    if (runContract.conversationId) lines.push(`- conversation: ${runContract.conversationId}`);
+    if (runContract.messageId) lines.push(`- message: ${runContract.messageId}`);
+    if (runContract.taskId) {
+      lines.push(`- task: ${runContract.taskId}`);
+      lines.push(`- close with: king-ai task done ${runContract.taskId}`);
+    }
+  }
   const tasks = state.tasks
     .filter((task) =>
       task.assignee === agent.id ||
@@ -1950,7 +1961,7 @@ function buildRuntimePreamble(
     lines.push("");
     lines.push("### Current Tasks");
     for (const task of tasks) {
-      lines.push(`- [${taskVisibleStatus(state, task)}] ${task.id.slice(0, 12)} ${task.title}${task.assignee ? ` (${task.assignee})` : ""}`);
+      lines.push(`- [${taskVisibleStatus(state, task)}] ${task.id} ${task.title}${task.assignee ? ` (${task.assignee})` : ""}`);
     }
     const total = state.tasks.filter((task) =>
       task.assignee === agent.id ||

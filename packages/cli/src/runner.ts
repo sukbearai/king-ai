@@ -413,6 +413,10 @@ export function shouldFallbackAckAfterStreak(streak: number, limit = NO_STATE_AC
   return streak >= limit;
 }
 
+export function shouldContinuePendingRerun(args: { pendingRerun: boolean; hasRealUnread: boolean; hasAgendaWork: boolean; stopped: boolean }): boolean {
+  return args.pendingRerun && (args.hasRealUnread || args.hasAgendaWork) && !args.stopped;
+}
+
 export function nextFailOpenStreak(current: number, source?: string, handled = false): number {
   if (handled) return 0;
   return source === "fail-open" ? current + 1 : 0;
@@ -1342,6 +1346,20 @@ ${delta}`;
         await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" }, this.cfg.tenantId);
         await this.setActiveRun(null, null);
         this.lastTurnEndedAt = Date.now();
+        if (this.pendingRerun && !this.stopped) {
+          const fresh = await this.snapshotUnread(token).catch(() => null);
+          const agenda = fresh?.hasReal === true
+            ? null
+            : await runtimeGet<AgendaPayload>(this.cfg.serverUrl, "/agenda", token, this.cfg.tenantId).catch(() => null);
+          if (!shouldContinuePendingRerun({
+            pendingRerun: true,
+            hasRealUnread: fresh?.hasReal === true,
+            hasAgendaWork: agenda?.actionable === true,
+            stopped: this.stopped
+          })) {
+            this.pendingRerun = false;
+          }
+        }
       } while (this.pendingRerun && !this.stopped);
     } finally {
       this.busy = false;
