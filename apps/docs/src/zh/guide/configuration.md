@@ -53,3 +53,11 @@ king-ai agent computer --doctor
 ```
 
 来验证 PATH、登录或额度变化后的引擎可用性。
+
+## IELTS 教练语音
+
+当 GUI Worker 配置了 Cloudflare Workers AI 的 `AI` binding 时，IELTS 教练消息会显示播放按钮。按钮会调用 `/gui/tts`，运行 `xai/grok-tts`，并把生成的音频流式返回浏览器。部署所在的 Cloudflare 账号需要具备 Workers AI 访问权限，并且有足够余额或 BYOK 配置。
+
+`CLOUDFLARE_AI_GATEWAY_ID` 会为 TTS 调用启用 Cloudflare AI Gateway 路由。默认 Worker 配置把它设为 `default`，因此账号配置好 gateway 后，Workers AI 请求会进入该 gateway 的日志和治理链路。如果没有 `AI` binding，`/gui/tts` 可以用 `CLOUDFLARE_ACCOUNT_ID` 和 Worker secret `CLOUDFLARE_AI_API_TOKEN` fallback 到 Cloudflare REST `/ai/run` API。
+
+不要把 TTS 路由配置成 AI Gateway 的 `/compat/chat/completions` URL。这个 OpenAI-compatible 路径用于 chat completions；TTS 需要通过 binding 或 `/ai/run` 调用 Workers AI 的 `xai/grok-tts`。

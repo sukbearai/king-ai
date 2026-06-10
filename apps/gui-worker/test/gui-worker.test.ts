@@ -2530,6 +2530,9 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /id="clearButton"/);
   assert.match(html, /function clearMessages/);
   assert.match(html, /renderMessages = function/);
+  assert.match(html, /function playMessageTts/);
+  assert.match(html, /\/gui\/tts/);
+  assert.match(html, /class="icon-btn tts-button"/);
   assert.match(html, /\.post-body\.markdown-body/);
   assert.match(html, /const renderedBody = message\.body_html \|\| ''/);
   assert.match(html, /renderedBody \|\| escapeHtml\(message\.body\)/);
@@ -2776,6 +2779,72 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.doesNotMatch(html, /--pair gui/);
   assert.doesNotMatch(html, /id="state"/);
   assert.doesNotMatch(html, /King 本地 Agent 控制台/);
+});
+
+test("gui tts endpoint runs Workers AI grok tts", async () => {
+  const calls: Array<{ model: string; input: Record<string, unknown>; options?: Record<string, unknown> }> = [];
+  const bindings = env(undefined, {
+    CLOUDFLARE_AI_GATEWAY_ID: "default",
+    AI: {
+      async run(model: string, input: Record<string, unknown>, options?: Record<string, unknown>) {
+        calls.push({ model, input, options });
+        return new Uint8Array([1, 2, 3]);
+      }
+    }
+  });
+  const res = await worker.fetch(new Request("https://gui/gui/tts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text: "Hello! Welcome to IELTS practice.", language: "en" })
+  }), bindings);
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get("Content-Type") || "", /audio\/mpeg/);
+  assert.deepEqual([...new Uint8Array(await res.arrayBuffer())], [1, 2, 3]);
+  assert.deepEqual(calls, [{
+    model: "xai/grok-tts",
+    input: { text: "Hello! Welcome to IELTS practice.", language: "en" },
+    options: { gateway: { id: "default" } }
+  }]);
+});
+
+test("gui tts endpoint can fall back to Cloudflare AI run REST gateway", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; auth: string; gateway: string; body: unknown }> = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const request = new Request(input, init);
+    calls.push({
+      url: request.url,
+      auth: request.headers.get("Authorization") || "",
+      gateway: request.headers.get("cf-aig-gateway-id") || "",
+      body: await request.json()
+    });
+    return new Response(new Uint8Array([4, 5, 6]), { headers: { "Content-Type": "audio/mpeg" } });
+  }) as typeof fetch;
+  try {
+    const bindings = env(undefined, {
+      CLOUDFLARE_ACCOUNT_ID: "account-123",
+      CLOUDFLARE_AI_API_TOKEN: "token-123",
+      CLOUDFLARE_AI_GATEWAY_ID: "default"
+    });
+    const res = await worker.fetch(new Request("https://gui/gui/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "Please read this IELTS answer.", language: "en" })
+    }), bindings);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("Content-Type") || "", /audio\/mpeg/);
+    assert.deepEqual([...new Uint8Array(await res.arrayBuffer())], [4, 5, 6]);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, "https://api.cloudflare.com/client/v4/accounts/account-123/ai/run");
+    assert.equal(calls[0].auth, "Bearer token-123");
+    assert.equal(calls[0].gateway, "default");
+    assert.deepEqual(calls[0].body, {
+      model: "xai/grok-tts",
+      input: { text: "Please read this IELTS answer.", language: "en" }
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("gui ui summary and activity endpoints aggregate console state", async () => {

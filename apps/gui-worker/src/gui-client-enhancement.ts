@@ -483,7 +483,7 @@ function renderAttachmentTray() {
 	  }
 	  return uploaded;
 	}
-	function attachmentListHtml(attachments) {
+function attachmentListHtml(attachments) {
 	  const rows = Array.isArray(attachments) ? attachments : [];
   if (!rows.length) return '';
   return '<div class="message-attachments" aria-label="' + escapeHtml(t('attachments')) + '">' + rows.map(function(attachment) {
@@ -491,6 +491,35 @@ function renderAttachmentTray() {
     const href = attachment.url ? ' href="' + escapeHtml(attachment.url) + '" target="_blank" rel="noreferrer noopener"' : '';
     return '<a class="attachment-token"' + href + ' title="' + escapeHtml(name) + '"><span>[' + escapeHtml(name) + ']</span><span class="attachment-size">' + escapeHtml(formatBytes(attachment.size)) + '</span></a>';
   }).join('') + '</div>';
+}
+window.__messageAudioText = window.__messageAudioText || {};
+async function playMessageTts(messageId) {
+  const text = window.__messageAudioText && window.__messageAudioText[messageId];
+  if (!text) return;
+  const button = document.querySelector('[data-tts-id="' + CSS.escape(messageId) + '"]');
+  if (button) button.disabled = true;
+  try {
+    const response = await fetch('/gui/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: text, language: 'en' })
+    });
+    if (!response.ok) throw new Error(await response.text());
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.onended = function() { URL.revokeObjectURL(url); };
+    await audio.play();
+  } catch (error) {
+    console.warn('TTS playback failed', error);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+function ttsButtonHtml(message) {
+  if (!message || message.author_kind !== 'agent' || message.status === 'pending' || !message.body || !message.id) return '';
+  window.__messageAudioText[message.id] = String(message.body).replace(/\s+/g, ' ').trim().slice(0, 1200);
+  return '<button class="icon-btn tts-button" data-tts-id="' + escapeHtml(message.id) + '" onclick="playMessageTts(&quot;' + escapeHtml(message.id) + '&quot;)" title="Play audio" aria-label="Play audio">▶</button>';
 }
 	const REMOTE_ASSIST_URL_KEY = 'king-ai:remoteAssistUrl';
 let remoteAssistUrl = localStorage.getItem(REMOTE_ASSIST_URL_KEY) || '';
@@ -1410,7 +1439,7 @@ renderMessages = function(state, options) {
     const renderedBody = message.body_html || '';
     const bodyHtml = message.status === 'pending' ? '<span class="typing-dots"><span></span><span></span><span></span></span><span>' + escapeHtml(t('agentThinking')) + '</span>' : (renderedBody || escapeHtml(message.body));
     const bodyClass = renderedBody && message.status !== 'pending' ? 'post-body markdown-body' : 'post-body plain';
-	    return '<article class="post' + pendingClass + unreadClass + '"><div class="avatar">' + escapeHtml(initial) + '</div><div><div class="post-top"><span class="author">' + authorHtml(message) + '</span><span class="time">' + formatTime(message.created_at) + '</span></div><div class="' + bodyClass + '">' + bodyHtml + '</div>' + attachmentListHtml(message.attachments) + '</div></article>';
+	    return '<article class="post' + pendingClass + unreadClass + '"><div class="avatar">' + escapeHtml(initial) + '</div><div><div class="post-top"><span class="author">' + authorHtml(message) + '</span>' + ttsButtonHtml(message) + '<span class="time">' + formatTime(message.created_at) + '</span></div><div class="' + bodyClass + '">' + bodyHtml + '</div>' + attachmentListHtml(message.attachments) + '</div></article>';
   }).join('');
   const chatWindow = document.getElementById('chatWindow');
   chatWindow.classList.toggle('empty-state', !visibleRows.length);

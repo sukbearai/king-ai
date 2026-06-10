@@ -3,6 +3,12 @@ main = "src/index.ts"
 compatibility_date = "2026-06-02"
 compatibility_flags = ["nodejs_compat"]
 
+[vars]
+CLOUDFLARE_AI_GATEWAY_ID = "default"
+
+[ai]
+binding = "AI"
+
 [secrets]
 required = [
   "BETTER_AUTH_SECRET",

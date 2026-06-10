@@ -9,6 +9,12 @@ import type { GuiKanbanCardLike, GuiTaskLike } from "./workflow-state.js";
 
 export type GuiBindings = {
   GUI_STATE: DurableObjectNamespace;
+  AI?: {
+    run(model: string, input: Record<string, unknown>, options?: Record<string, unknown>): Promise<Response | ArrayBuffer | Uint8Array | Blob | string | Record<string, unknown>>;
+  };
+  CLOUDFLARE_ACCOUNT_ID?: string;
+  CLOUDFLARE_AI_API_TOKEN?: string;
+  CLOUDFLARE_AI_GATEWAY_ID?: string;
   AUTH_DB?: D1Database;
   BETTER_AUTH_SECRET?: string;
   GITHUB_CLIENT_ID?: string;
@@ -21,6 +27,9 @@ export type GuiBindings = {
 
 type GuiEnv = { Bindings: GuiBindings };
 type RouteContext = Context<GuiEnv>;
+const TTS_MODEL = "xai/grok-tts";
+const TTS_MAX_TEXT_CHARS = 1200;
+type TtsResponse = Response | ArrayBuffer | Uint8Array | Blob | string | Record<string, unknown>;
 
 export type GuiRouteDeps = {
   requireGuiAuth: (c: RouteContext) => Promise<Response | null>;
@@ -33,6 +42,83 @@ export type GuiRouteDeps = {
   sanitizeTenantId: (value: string) => string;
   tenantFromRequest: (c: RouteContext) => Promise<string>;
 };
+
+async function runTts(env: GuiBindings, input: Record<string, unknown>): Promise<
+  | { ok: true; response: TtsResponse }
+  | { ok: false; status: number; error: string; details?: unknown }
+> {
+  const gatewayId = env.CLOUDFLARE_AI_GATEWAY_ID?.trim();
+  if (env.AI) {
+    const options = gatewayId ? { gateway: { id: gatewayId } } : undefined;
+    return { ok: true, response: await env.AI.run(TTS_MODEL, input, options) };
+  }
+
+  const accountId = env.CLOUDFLARE_ACCOUNT_ID?.trim();
+  const token = env.CLOUDFLARE_AI_API_TOKEN?.trim();
+  if (!accountId || !token) return { ok: false, status: 503, error: "workers_ai_not_configured" };
+
+  const runUrl = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/run`;
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json"
+  };
+  if (gatewayId) headers["cf-aig-gateway-id"] = gatewayId;
+  const response = await fetch(runUrl, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ model: TTS_MODEL, input })
+  });
+  if (!response.ok) {
+    const details = await response.json().catch(async () => ({ message: await response.text().catch(() => "") }));
+    return { ok: false, status: response.status, error: "workers_ai_request_failed", details };
+  }
+  return { ok: true, response };
+}
+
+async function ttsResponseToHttp(response: TtsResponse): Promise<Response> {
+  if (response instanceof Response) {
+    const contentType = response.headers.get("Content-Type") || "";
+    if (contentType.includes("application/json")) {
+      const payload = await response.json().catch(() => null) as unknown;
+      const audioResponse = await audioUrlResponse(payload);
+      if (audioResponse) return audioResponse;
+      return json(payload);
+    }
+    const headers = new Headers(response.headers);
+    if (!headers.has("Content-Type")) headers.set("Content-Type", "audio/mpeg");
+    headers.set("Cache-Control", "no-store");
+    return new Response(response.body, { status: response.status, headers });
+  }
+
+  const headers = new Headers({ "Content-Type": "audio/mpeg", "Cache-Control": "no-store" });
+  if (typeof response === "string") return new Response(response, { headers });
+  if (response instanceof Blob) return new Response(response, { headers });
+  if (response instanceof ArrayBuffer || response instanceof Uint8Array) return new Response(response, { headers });
+  const audioResponse = await audioUrlResponse(response);
+  if (audioResponse) return audioResponse;
+  return json(response);
+}
+
+async function audioUrlResponse(payload: unknown): Promise<Response | null> {
+  const audioUrl = audioUrlFromPayload(payload);
+  if (!audioUrl) return null;
+  const audio = await fetch(audioUrl);
+  const audioHeaders = new Headers(audio.headers);
+  if (!audioHeaders.has("Content-Type")) audioHeaders.set("Content-Type", "audio/mpeg");
+  audioHeaders.set("Cache-Control", "no-store");
+  return new Response(audio.body, { status: audio.status, headers: audioHeaders });
+}
+
+function audioUrlFromPayload(payload: unknown): string {
+  if (!payload || typeof payload !== "object") return "";
+  const record = payload as Record<string, unknown>;
+  if (typeof record.audio === "string") return record.audio;
+  if (record.result && typeof record.result === "object") {
+    const result = record.result as Record<string, unknown>;
+    if (typeof result.audio === "string") return result.audio;
+  }
+  return "";
+}
 
 export function createGuiApp(deps: GuiRouteDeps): Hono<GuiEnv> {
   const app = new Hono<GuiEnv>();
@@ -50,6 +136,19 @@ export function createGuiApp(deps: GuiRouteDeps): Hono<GuiEnv> {
     return c.html(renderPage(guiPageStyles));
   });
   app.get("/favicon.ico", () => new Response(null, { status: 204 }));
+
+  app.post("/gui/tts", async (c) => {
+    const blocked = await deps.requireGuiAuth(c);
+    if (blocked) return blocked;
+    const body = await c.req.json().catch(() => ({})) as { text?: unknown; language?: unknown; voice?: unknown };
+    const text = typeof body.text === "string" ? body.text.trim().slice(0, TTS_MAX_TEXT_CHARS) : "";
+    if (!text) return json({ error: "text_required" }, { status: 400 });
+    const language = typeof body.language === "string" && body.language.trim() ? body.language.trim() : "en";
+    const voice = typeof body.voice === "string" && body.voice.trim() ? body.voice.trim() : undefined;
+    const result = await runTts(c.env, { text, language, ...(voice ? { voice_id: voice } : {}) });
+    if (!result.ok) return json({ error: result.error, details: result.details }, { status: result.status });
+    return ttsResponseToHttp(result.response);
+  });
 
   app.post("/api/computers/pair", async (c) => {
     const body = await c.req.json().catch(() => ({}));

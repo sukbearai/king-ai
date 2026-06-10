@@ -3,6 +3,12 @@ import type { RunStreamState } from "@suwujs/king-ai/run-stream";
 
 export type Bindings = {
   GUI_STATE: DurableObjectNamespace;
+  AI?: {
+    run(model: string, input: Record<string, unknown>, options?: Record<string, unknown>): Promise<Response | ArrayBuffer | Uint8Array | Blob | string | Record<string, unknown>>;
+  };
+  CLOUDFLARE_ACCOUNT_ID?: string;
+  CLOUDFLARE_AI_API_TOKEN?: string;
+  CLOUDFLARE_AI_GATEWAY_ID?: string;
   AUTH_DB?: D1Database;
   BETTER_AUTH_SECRET?: string;
   GITHUB_CLIENT_ID?: string;

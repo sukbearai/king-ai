@@ -53,3 +53,11 @@ king-ai agent computer --doctor
 ```
 
 to verify engine availability after PATH, login, or quota changes.
+
+## IELTS Coach Audio
+
+The GUI Worker uses Cloudflare Workers AI for IELTS coach text-to-speech when the `AI` binding is available. Agent messages show a play button that calls `/gui/tts`, runs `xai/grok-tts`, and streams the generated audio back to the browser. The deployed Cloudflare account must have Workers AI access and enough balance or BYOK configuration.
+
+`CLOUDFLARE_AI_GATEWAY_ID` enables Cloudflare AI Gateway routing for the TTS call. The default Worker configuration sets it to `default`, so Workers AI requests are logged and governed by that gateway when the account has it configured. If the `AI` binding is unavailable, `/gui/tts` can fall back to the Cloudflare REST `/ai/run` API using `CLOUDFLARE_ACCOUNT_ID` and the Worker secret `CLOUDFLARE_AI_API_TOKEN`.
+
+Do not configure the TTS route with an AI Gateway `/compat/chat/completions` URL. That OpenAI-compatible path is for chat completions; TTS uses Workers AI `xai/grok-tts` through the binding or `/ai/run`.

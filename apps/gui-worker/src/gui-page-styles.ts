@@ -341,6 +341,12 @@ export const guiPageStyles = `    :root {
     }
     .author { font-weight: 900; }
     .time { color: var(--muted); font-size: 10px; white-space: nowrap; }
+    .tts-button {
+      width: 22px;
+      height: 22px;
+      font-size: 10px;
+      line-height: 1;
+    }
     .post-body {
       color: var(--body);
       line-height: 1.45;
