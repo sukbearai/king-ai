@@ -363,13 +363,9 @@ if (mobileQuery.addEventListener) {
 const workspaceEl = document.querySelector('.workspace');
 if (workspaceEl) workspaceEl.addEventListener('scroll', updateBackToBottom);
 let pendingRevealTimer = 0;
-function pendingDisplayDelayMs(message) {
-  const id = String(message.id || '');
-  let hash = 0;
-  for (let index = 0; index < id.length; index += 1) {
-    hash = (hash * 31 + id.charCodeAt(index)) % 2001;
-  }
-  return 3000 + hash;
+function pendingDisplayDelayMs() {
+  // Show the "agent thinking" placeholder instantly — no artificial pacing delay.
+  return 0;
 }
 function shouldRenderChatMessage(message) {
   if (message.author_kind === 'system' && message.payload && message.payload.taskEventType) return false;
@@ -425,6 +421,70 @@ function updateBackToBottom() {
 	}
 	function refreshSoon() {
 	  setTimeout(function() { refresh().catch(function() {}); }, 0);
+	}
+	function lastAgentDescriptor() {
+	  const rows = ((window.__lastState && window.__lastState.messages) || []).filter(function(m) {
+	    return m.conversation_id === activeConversationId && m.author_kind === 'agent';
+	  });
+	  const last = rows[rows.length - 1];
+	  return { name: (last && last.author_name) || 'AI', engine: last && last.author_engine };
+	}
+	function addOptimisticMessages(optimisticBody) {
+	  const now = Date.now();
+	  const convRows = ((window.__lastState && window.__lastState.messages) || []).filter(function(m) {
+	    return m.conversation_id === activeConversationId;
+	  });
+	  const baselineHuman = convRows.filter(function(m) { return m.author_kind === 'human' && m.body === optimisticBody; }).length;
+	  const agent = lastAgentDescriptor();
+	  optimisticMessages.push({
+	    id: 'optimistic-' + now,
+	    __optimistic: true,
+	    __batch: now,
+	    __baseline: baselineHuman,
+	    conversation_id: activeConversationId,
+	    author_kind: 'human',
+	    body: optimisticBody,
+	    created_at: now,
+	    readBy: []
+	  });
+	  optimisticMessages.push({
+	    id: 'optimistic-' + now + '-pending',
+	    __optimistic: true,
+	    __batch: now,
+	    conversation_id: activeConversationId,
+	    author_kind: 'agent',
+	    author_name: agent.name,
+	    author_engine: agent.engine,
+	    status: 'pending',
+	    body: '',
+	    created_at: now + 1,
+	    readBy: []
+	  });
+	  return now;
+	}
+	function reconcileOptimistic(serverRows) {
+	  if (!optimisticMessages.length) return;
+	  const now = Date.now();
+	  // A batch is confirmed once the server reflects its human message (count for that exact body grew
+	  // past the baseline captured at send time). The server creates the human message and its pending
+	  // placeholder atomically, so confirming the human lets us drop the whole batch — placeholder included.
+	  const confirmed = {};
+	  optimisticMessages.forEach(function(opt) {
+	    if (opt.author_kind !== 'human' || opt.conversation_id !== activeConversationId) return;
+	    const count = serverRows.filter(function(m) { return m.author_kind === 'human' && m.body === opt.body; }).length;
+	    if (count > opt.__baseline) confirmed[opt.__batch] = true;
+	  });
+	  optimisticMessages = optimisticMessages.filter(function(opt) {
+	    if (now - (opt.created_at || 0) > 60000) return false; // safety TTL so nothing lingers forever
+	    if (opt.conversation_id !== activeConversationId) return true; // not in view; TTL bounds the leak
+	    return !confirmed[opt.__batch];
+	  });
+	}
+	function mergeOptimistic(serverRows) {
+	  if (!optimisticMessages.length) return serverRows.slice();
+	  const visible = optimisticMessages.filter(function(opt) { return opt.conversation_id === activeConversationId; });
+	  if (!visible.length) return serverRows.slice();
+	  return serverRows.concat(visible).sort(function(a, b) { return (a.created_at || 0) - (b.created_at || 0); });
 	}
 	let pendingAttachments = [];
 	function formatBytes(value) {
@@ -1528,29 +1588,36 @@ sendMessage = async function() {
 	  const attachmentsToSend = pendingAttachments.slice();
 	  if (!body && !attachmentsToSend.length) return;
 	  sendingMessage = true;
+	  const optimisticBody = body || t('attachments');
+	  // Paint the user's message + an "agent thinking" placeholder instantly, before any
+	  // network round trip; the next refresh swaps in the server's canonical copies.
+	  const batchId = addOptimisticMessages(optimisticBody);
 	  input.value = '';
 	  input.blur();
 	  button.disabled = true;
 	  button.textContent = t('send');
+	  visibleMessageCount = 20;
+	  shouldStickToBottom = true;
+	  renderMessages(window.__lastState || { messages: [] }, {});
 	  try {
 	    const attachments = await uploadPendingAttachments();
 	    await request('/gui/message', {
 	      method: 'POST',
 	      headers: { 'Content-Type': 'application/json' },
-	      body: JSON.stringify({ body: body || t('attachments'), conversationId: activeConversationId, attachments })
+	      body: JSON.stringify({ body: optimisticBody, conversationId: activeConversationId, attachments })
 	    });
 	    pendingAttachments = [];
 	    renderAttachmentTray();
-	    visibleMessageCount = 20;
-	    shouldStickToBottom = true;
 	    sendingMessage = false;
 	    button.disabled = false;
 	    button.textContent = t('send');
 	    refreshSoon();
 	  } catch (error) {
+	    optimisticMessages = optimisticMessages.filter(function(m) { return m.__batch !== batchId; });
 	    input.value = body;
 	    pendingAttachments = attachmentsToSend;
 	    renderAttachmentTray();
+	    renderMessages(window.__lastState || { messages: [] }, {});
 	    throw error;
   } finally {
     sendingMessage = false;
@@ -1582,7 +1649,9 @@ clearMessages = async function() {
   }
 };
 renderMessages = function(state, options) {
-  const allRows = (state.messages || []).filter(function(message) { return message.conversation_id === activeConversationId; });
+  const serverRows = (state.messages || []).filter(function(message) { return message.conversation_id === activeConversationId; });
+  reconcileOptimistic(serverRows);
+  const allRows = mergeOptimistic(serverRows);
   if (allRows.length > lastMessageTotal) visibleMessageCount = 20;
   lastMessageTotal = allRows.length;
   visibleMessageCount = Math.min(Math.max(visibleMessageCount, 20), Math.max(lastMessageTotal, 20));

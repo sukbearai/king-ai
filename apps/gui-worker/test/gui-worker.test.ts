@@ -2566,7 +2566,12 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /data-i18n="vocabMeaning"|vocabMeaning:/);
   assert.match(html, /\.message-list\.empty-state\s*\{[\s\S]*position:\s*sticky/);
   assert.match(html, /function pendingDisplayDelayMs/);
-  assert.match(html, /return 3000 \+ hash/);
+  // The "agent thinking" placeholder shows instantly — no artificial pacing delay.
+  assert.match(html, /Show the "agent thinking" placeholder instantly/);
+  // Outgoing messages render optimistically before the network round trip.
+  assert.match(html, /function addOptimisticMessages/);
+  assert.match(html, /function reconcileOptimistic/);
+  assert.match(html, /const batchId = addOptimisticMessages\(optimisticBody\)/);
   assert.match(html, /function shouldRenderChatMessage/);
   assert.match(html, /Date\.now\(\) - createdAt >= pendingDisplayDelayMs\(message\)/);
   assert.match(html, /function schedulePendingReveal/);

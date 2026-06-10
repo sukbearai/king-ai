@@ -10,6 +10,9 @@ let lastMessageTotal = 0;
 let loadingOlderMessages = false;
 let sendingMessage = false;
 let shouldStickToBottom = true;
+// Optimistic outgoing messages: rendered instantly on send, before any network round trip,
+// then dropped once the server's canonical copies arrive on the next refresh.
+let optimisticMessages = [];
 let activeConversationId = localStorage.getItem('king-ai:activeConversationId') || 'king-ai-convo';
 
 function escapeHtml(value) {
