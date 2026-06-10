@@ -1,6 +1,6 @@
 {
   "name": "king-ai-monorepo",
-  "version": "0.2.37",
+  "version": "0.2.38",
   "private": true,
   "type": "module",
   "description": "Monorepo for King AI CLI and app integrations.",
