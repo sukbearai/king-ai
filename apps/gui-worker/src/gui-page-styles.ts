@@ -320,7 +320,7 @@ export const guiPageStyles = `    :root {
       padding: 8px;
       border: 1px solid transparent;
     }
-    .post.highlight { border-color: var(--line); }
+    .post.highlight { border-color: transparent; }
     .avatar {
       width: 22px;
       height: 22px;

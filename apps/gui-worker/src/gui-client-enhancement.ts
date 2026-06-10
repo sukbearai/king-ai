@@ -429,13 +429,24 @@ function updateBackToBottom() {
 	  const last = rows[rows.length - 1];
 	  return { name: (last && last.author_name) || 'AI', engine: last && last.author_engine };
 	}
+	function coordinatorDescriptor() {
+	  // Mirror the agent the server will reply as (the room coordinator, shown first in the team strip)
+	  // so the optimistic placeholder doesn't visibly swap identity when the real pending arrives.
+	  const summary = window.__lastSummary || {};
+	  const room = typeof currentRoomAgents === 'function' ? currentRoomAgents(summary) : [];
+	  const coordinator = room[0] || summary.agent;
+	  if (coordinator && (coordinator.name || coordinator.id)) {
+	    return { name: coordinator.name || coordinator.id || 'AI', engine: coordinator.engine };
+	  }
+	  return lastAgentDescriptor();
+	}
 	function addOptimisticMessages(optimisticBody) {
 	  const now = Date.now();
 	  const convRows = ((window.__lastState && window.__lastState.messages) || []).filter(function(m) {
 	    return m.conversation_id === activeConversationId;
 	  });
 	  const baselineHuman = convRows.filter(function(m) { return m.author_kind === 'human' && m.body === optimisticBody; }).length;
-	  const agent = lastAgentDescriptor();
+	  const agent = coordinatorDescriptor();
 	  optimisticMessages.push({
 	    id: 'optimistic-' + now,
 	    __optimistic: true,
@@ -468,9 +479,14 @@ function updateBackToBottom() {
 	  // A batch is confirmed once the server reflects its human message (count for that exact body grew
 	  // past the baseline captured at send time). The server creates the human message and its pending
 	  // placeholder atomically, so confirming the human lets us drop the whole batch — placeholder included.
+	  const serverIds = {};
+	  serverRows.forEach(function(m) { if (m && m.id) serverIds[m.id] = true; });
 	  const confirmed = {};
 	  optimisticMessages.forEach(function(opt) {
-	    if (opt.author_kind !== 'human' || opt.conversation_id !== activeConversationId) return;
+	    if (opt.conversation_id !== activeConversationId) return;
+	    // Bulletproof: the POST response gave us the server's id for this send; drop the batch once it lands.
+	    if (opt.__serverId && serverIds[opt.__serverId]) confirmed[opt.__batch] = true;
+	    if (opt.author_kind !== 'human') return;
 	    const count = serverRows.filter(function(m) { return m.author_kind === 'human' && m.body === opt.body; }).length;
 	    if (count > opt.__baseline) confirmed[opt.__batch] = true;
 	  });
@@ -482,7 +498,11 @@ function updateBackToBottom() {
 	}
 	function mergeOptimistic(serverRows) {
 	  if (!optimisticMessages.length) return serverRows.slice();
-	  const visible = optimisticMessages.filter(function(opt) { return opt.conversation_id === activeConversationId; });
+	  let visible = optimisticMessages.filter(function(opt) { return opt.conversation_id === activeConversationId; });
+	  // Never show an optimistic "thinking" bubble next to a real server pending — exactly one at a time.
+	  if (serverRows.some(function(m) { return m.author_kind === 'agent' && m.status === 'pending'; })) {
+	    visible = visible.filter(function(opt) { return !(opt.author_kind === 'agent' && opt.status === 'pending'); });
+	  }
 	  if (!visible.length) return serverRows.slice();
 	  return serverRows.concat(visible).sort(function(a, b) { return (a.created_at || 0) - (b.created_at || 0); });
 	}
@@ -1601,11 +1621,13 @@ sendMessage = async function() {
 	  renderMessages(window.__lastState || { messages: [] }, {});
 	  try {
 	    const attachments = await uploadPendingAttachments();
-	    await request('/gui/message', {
+	    const result = await request('/gui/message', {
 	      method: 'POST',
 	      headers: { 'Content-Type': 'application/json' },
 	      body: JSON.stringify({ body: optimisticBody, conversationId: activeConversationId, attachments })
 	    });
+	    const serverId = result && result.message && result.message.id;
+	    if (serverId) optimisticMessages.forEach(function(m) { if (m.__batch === batchId) m.__serverId = serverId; });
 	    pendingAttachments = [];
 	    renderAttachmentTray();
 	    sendingMessage = false;
