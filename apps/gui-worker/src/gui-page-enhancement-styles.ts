@@ -537,21 +537,31 @@ export const guiPageEnhancementStyles = `
     }
     .run-indicator {
       flex: 0 0 auto;
-      width: 13px;
-      height: 13px;
-      border-radius: 50%;
-      border: 2px solid var(--soft-line);
-      border-top-color: var(--muted);
-      opacity: 0.55;
-      transition: opacity 120ms ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 10px;
+      color: var(--muted);
+      white-space: nowrap;
+      user-select: none;
+    }
+    .run-indicator .run-dot {
+      width: 8px;
+      height: 8px;
+      flex: 0 0 auto;
+      border: 1px solid var(--line);
+      background: var(--muted);
     }
     .run-indicator.running {
-      border-top-color: var(--active);
-      opacity: 1;
-      animation: kingRunSpin 0.8s linear infinite;
+      color: #5c9f96;
     }
-    @keyframes kingRunSpin {
-      to { transform: rotate(360deg); }
+    .run-indicator.running .run-dot {
+      background: #5c9f96;
+      animation: kingRunPulse 1s infinite ease-in-out;
+    }
+    @keyframes kingRunPulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
     }
     .composer-tools .jump {
       position: static;

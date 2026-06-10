@@ -2573,10 +2573,12 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /function shouldRenderChatMessage/);
   assert.match(html, /if \(message\.status === 'pending'\) return false/);
   assert.match(html, /const visibleRows = rows\.filter\(shouldRenderChatMessage\)/);
-  // Composer run indicator spins while the room is busy and pauses when idle.
+  // Composer run indicator: a labeled dot that pulses while the room is busy and is static when idle.
   assert.match(html, /id="runIndicator"/);
+  assert.match(html, /id="runLabel"/);
   assert.match(html, /runIndicator\.classList\.toggle\('running', busy\)/);
-  assert.match(html, /@keyframes kingRunSpin/);
+  assert.match(html, /if \(runLabel\) runLabel\.textContent = label/);
+  assert.match(html, /@keyframes kingRunPulse/);
   assert.match(html, /\.task-board\s*\{[\s\S]*display:\s*grid/);
   assert.match(html, /\.task-board\s*\{[\s\S]*overflow-x:\s*hidden/);
   assert.match(html, /#panel-tasks\.tab-panel,[\s\S]*#panel-files\.tab-panel,[\s\S]*#panel-decisions\.tab-panel\s*\{[\s\S]*width:\s*100%/);

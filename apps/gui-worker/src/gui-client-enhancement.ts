@@ -1067,10 +1067,14 @@ renderComputerFlow = function() {
 };
 activeConversationStatus = function(summary, active) {
   const state = summary.state || {};
-  const typing = (state.typingLog || []).slice().reverse().find(function(row) { return row.conversationId === active.id && !row.done; });
-  const thinking = (state.thinkingLog || []).slice().reverse().find(function(row) { return row.action === 'mark' && (row.conversationIds || []).includes(active.id); });
-  if (typing) return t('agentTyping');
-  if (thinking) return t('agentThinking');
+  // Drive "busy" off authoritative agent status (what the team strip shows), not the typing/thinking
+  // logs alone — those can leave a stale not-done entry that keeps the status stuck after work finishes.
+  const agents = typeof currentRoomAgents === 'function' ? currentRoomAgents(summary) : [];
+  const working = agents.some(function(agent) { return agent.status === 'running' || agent.status === 'thinking'; });
+  if (working) {
+    const typing = (state.typingLog || []).slice().reverse().find(function(row) { return row.conversationId === active.id && !row.done; });
+    return typing ? t('agentTyping') : t('agentThinking');
+  }
   if ((active.unread || 0) > 0) return t('waitingAgent');
   return '';
 };
@@ -1845,10 +1849,12 @@ renderConversations = function(summary) {
   const runIndicator = document.getElementById('runIndicator');
   if (runIndicator) {
     const busy = Boolean(runStatus);
+    const label = busy ? t('runActive') : t('runIdle');
     runIndicator.classList.toggle('running', busy);
-    runIndicator.setAttribute('aria-hidden', busy ? 'false' : 'true');
-    runIndicator.setAttribute('aria-label', busy ? t('runActive') : t('runIdle'));
-    runIndicator.setAttribute('title', busy ? t('runActive') : t('runIdle'));
+    runIndicator.setAttribute('aria-label', label);
+    runIndicator.setAttribute('title', runStatus || label);
+    const runLabel = document.getElementById('runLabel');
+    if (runLabel) runLabel.textContent = label;
   }
   document.getElementById('conversationList').innerHTML = conversations.map(function(row) {
     const deletable = row.id !== 'king-ai-convo';
