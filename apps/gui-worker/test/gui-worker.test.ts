@@ -2780,7 +2780,7 @@ test("gui page exposes channel chat shell with settings modal", async () => {
 
 test("gui ui summary and activity endpoints aggregate console state", async () => {
   const bindings = env();
-  await pairComputer(bindings, { engines: ["codex"], capabilities: { workspaces: ["/tmp/project"] } });
+  const paired = await pairComputer(bindings, { engines: ["codex"], capabilities: { workspaces: ["/tmp/project"] } });
   await worker.fetch(new Request("https://gui/gui/message", {
     method: "POST",
     body: JSON.stringify({ body: "inspect this" })
@@ -2788,6 +2788,20 @@ test("gui ui summary and activity endpoints aggregate console state", async () =
   await worker.fetch(new Request("https://gui/gui/task", {
     method: "POST",
     body: JSON.stringify({ title: "Console task", description: "verify summary", paths: "apps/gui-worker/src/index.ts" })
+  }), bindings);
+  const tokenRes = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/king-ai-ceo/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  await worker.fetch(new Request("https://gui/runtime/notices", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${tokenRes.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      noticeKind: "byoa_engine_failed",
+      text: "King AI CEO could not run on local codex: usage limit reached\nCodex quota or billing limit is blocking runs."
+    })
   }), bindings);
 
   const summary = await json<{
@@ -2807,6 +2821,7 @@ test("gui ui summary and activity endpoints aggregate console state", async () =
     await worker.fetch(new Request("https://gui/gui/activity?limit=10"), bindings)
   );
   assert.ok(activity.rows.some((row) => row.type === "message.human" && row.summary.includes("inspect this")));
+  assert.ok(activity.rows.some((row) => row.type === "runtime.notice" && row.summary.includes("usage limit reached")));
   assert.ok(activity.rows.some((row) => row.type === "queue.backlog"));
 });
 

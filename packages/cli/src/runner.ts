@@ -36,6 +36,8 @@ const BIG_BRAIN_SPAWN_JITTER_MS = Number(process.env.KING_AI_BYOA_BIG_BRAIN_SPAW
 const TRIAGE_SPAWN_JITTER_MS = Number(process.env.KING_AI_BYOA_TRIAGE_SPAWN_JITTER_MS) || 500;
 const AGENDA_QUIET_MS = Number(process.env.KING_AI_AGENDA_QUIET_MS) || 180_000;
 const AGENDA_CHECK_MS = Number(process.env.KING_AI_AGENDA_CHECK_MS) || 120_000;
+const RECENT_WAKE_EVENT_TTL_MS = 30_000;
+const RECENT_WAKE_EVENT_LIMIT = 100;
 export const FAIL_OPEN_STREAK_LIMIT = 3;
 export const NO_STATE_ACTION_ACK_STREAK = 2;
 const WAKE_STREAM_HEALTH_FACTOR = 3;
@@ -367,6 +369,20 @@ export function shouldHandleWakeEvent(info: WakeEventInfo, agentId: string): boo
   return !info.agentId || info.agentId === agentId;
 }
 
+export function wakeEventKey(event: string, info: WakeEventInfo): string | null {
+  const stableId = info.messageId ?? info.requestId ?? info.taskId;
+  if (!info.conversationId || !stableId) return null;
+  return `${event}:${info.conversationId}:${stableId}`;
+}
+
+export function isRuntimeAuthError(message: string): boolean {
+  return /\bHTTP (401|403)\b/i.test(message);
+}
+
+export function shouldPublishEngineFailureNotice(error: string | undefined): boolean {
+  return !!error?.trim();
+}
+
 export function shouldSkipPollWake(args: { wakeStreamHealthy: boolean; busy: boolean; stopped: boolean }): boolean {
   return args.busy || args.stopped || args.wakeStreamHealthy;
 }
@@ -441,6 +457,7 @@ export class AgentRunner {
   private failOpenBackoffTimer: NodeJS.Timeout | null = null;
   private noStateActionStreak = 0;
   private noStateActionUnreadKey = "";
+  private readonly recentWakeEvents = new Map<string, number>();
 
   constructor(
     private readonly cfg: ComputerConfig,
@@ -596,6 +613,7 @@ export class AgentRunner {
     this.activeRunContract = null;
     this.lastSteeredMsgId = null;
     this.remediation = null;
+    this.recentWakeEvents.clear();
     await rm(this.sessionFile, { force: true });
     await rm(this.home, { recursive: true, force: true });
     this.stopped = false;
@@ -660,6 +678,21 @@ export class AgentRunner {
     if (!this.failOpenBackoffTimer) return;
     clearTimeout(this.failOpenBackoffTimer);
     this.failOpenBackoffTimer = null;
+  }
+
+  private rememberWakeEvent(key: string | null, now = Date.now()): boolean {
+    if (!key) return true;
+    for (const [knownKey, seenAt] of this.recentWakeEvents) {
+      if (now - seenAt > RECENT_WAKE_EVENT_TTL_MS) this.recentWakeEvents.delete(knownKey);
+    }
+    if (this.recentWakeEvents.has(key)) return false;
+    this.recentWakeEvents.set(key, now);
+    while (this.recentWakeEvents.size > RECENT_WAKE_EVENT_LIMIT) {
+      const oldest = this.recentWakeEvents.keys().next().value;
+      if (!oldest) break;
+      this.recentWakeEvents.delete(oldest);
+    }
+    return true;
   }
 
   private steerRunningTurn(text: string): void {
@@ -1068,6 +1101,12 @@ ${delta}`;
           const message = err instanceof Error ? err.message : String(err);
           console.warn(`[${this.agent.id}/${this.adapter.id}] runtime inbox unavailable: ${message}; backing off without acking unread`);
           await this.publishEvent("runtime.inbox_unavailable", { reason, error: message }, "warn");
+          if (isRuntimeAuthError(message)) {
+            this.token = "";
+            this.tokenExpiresAt = 0;
+            this.onConfigChange?.();
+            break;
+          }
           await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" }, this.cfg.tenantId);
           break;
         }
@@ -1192,9 +1231,7 @@ ${delta}`;
 
         if (error) {
           if (isRateLimited(error)) this.engineBackoffUntil = Date.now() + ENGINE_BACKOFF_MS;
-          if (!isRateLimited(error)) {
-            await this.publishEngineFailure({ token, runId: run?.runId, conversationId: typingConvo, error, exitCode });
-          }
+          if (shouldPublishEngineFailureNotice(error)) await this.publishEngineFailure({ token, runId: run?.runId, conversationId: typingConvo, error, exitCode });
         } else {
           if (triage?.source === "fail-open") {
             this.failOpenStreak = nextFailOpenStreak(this.failOpenStreak, triage.source, true);
@@ -1330,15 +1367,7 @@ ${delta}`;
     }
     if (error) {
       if (isRateLimited(error)) this.engineBackoffUntil = Date.now() + ENGINE_BACKOFF_MS;
-      if (!isRateLimited(error)) {
-        await runtimePost(this.cfg.serverUrl, "/events", token, {
-          runId: run?.runId,
-          kind: "agenda.failed",
-          level: "error",
-          title: `${this.adapter.id} agenda failed`,
-          data: { error }
-        }, this.cfg.tenantId);
-      }
+      if (shouldPublishEngineFailureNotice(error)) await this.publishEngineFailure({ token, runId: run?.runId, conversationId: null, error, exitCode });
     }
     await runtimePost(this.cfg.serverUrl, `/runs/${run?.runId}/finish`, token, {
       status: error ? "failed" : "completed",
@@ -1404,6 +1433,8 @@ ${delta}`;
             // Runtime config (engine/model/lifecycle) changed: ask the daemon to re-sync now
             // instead of waiting for the next poll.
             this.lastWakeStreamAt = Date.now();
+            this.token = "";
+            this.tokenExpiresAt = 0;
             console.log(`[${this.agent.id}/${this.adapter.id}] SSE config received; requesting runtime re-sync`);
             this.onConfigChange?.();
             continue;
@@ -1419,6 +1450,14 @@ ${delta}`;
             this.handleResetLocalState();
             break;
           }
+          const conversationId = info.conversationId;
+          const eventKey = wakeEventKey(evt.event, info);
+          if (!this.rememberWakeEvent(eventKey)) {
+            console.log(
+              `[${this.agent.id}/${this.adapter.id}] duplicate SSE ${evt.event} ignored${conversationId ? ` conversation=${conversationId}` : ""}`
+            );
+            continue;
+          }
           const contract: RuntimeRunContract = {
             agentId: this.agent.id,
             conversationId: info.conversationId ?? undefined,
@@ -1426,7 +1465,6 @@ ${delta}`;
             messageId: info.messageId ?? undefined,
             taskId: info.taskId ?? undefined
           };
-          const conversationId = info.conversationId;
           if (evt.event === "steer") {
             if (conversationId) void this.maybeSteer(conversationId);
             else {

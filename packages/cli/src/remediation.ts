@@ -61,7 +61,7 @@ export function engineRemediationAdvice(engine: string, detail: string): Remedia
     };
   }
 
-  if (has(lower, /\bquota\b|credit|billing|subscription|usage limit|insufficient_quota|resource_exhausted/)) {
+  if (has(lower, /\bquota\b|credit|billing|subscription|usage limit|session limit|insufficient_quota|resource_exhausted/)) {
     return {
       engine,
       category: "quota",

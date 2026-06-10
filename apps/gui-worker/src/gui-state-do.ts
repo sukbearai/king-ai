@@ -188,6 +188,16 @@ function displayNameForHuman(state: State, user: AuthUser | undefined): string {
   return fromMessages?.author_name.trim() || fromAuth;
 }
 
+function formatNoticeSummary(body: unknown): string {
+  if (!body || typeof body !== "object") return summarizeUnknown(body);
+  const notice = body as { noticeKind?: unknown; text?: unknown };
+  if (notice.noticeKind === "byoa_engine_failed" && typeof notice.text === "string" && notice.text.trim()) {
+    return notice.text.replace(/\s+/g, " ").slice(0, 220);
+  }
+  if (typeof notice.noticeKind === "string") return notice.noticeKind;
+  return summarizeUnknown(body);
+}
+
 const app = createGuiApp({
   requireGuiAuth,
   requireOwnerGuiAuth,
@@ -637,7 +647,7 @@ export class GuiState implements DurableObject {
       ...state.noticeLog.map((row) => ({
         type: "runtime.notice",
         at: row.at,
-        summary: summarizeUnknown(row.body),
+        summary: formatNoticeSummary(row.body),
         body: row
       })),
       ...state.triageLog.map((row) => ({

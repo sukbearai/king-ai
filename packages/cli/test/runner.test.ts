@@ -13,6 +13,7 @@ import {
   formatSteerPrompt,
   isContextOverflow,
   isPoisonedTranscript,
+  isRuntimeAuthError,
   isWakeStreamHealthy,
   isWakeStreamAuthFailure,
   mustResetSession,
@@ -26,13 +27,15 @@ import {
   shouldFallbackAckSeen,
   shouldFallbackAckAfterStreak,
   shouldHandleWakeEvent,
+  shouldPublishEngineFailureNotice,
   shouldSkipPollWake,
   shouldStopEngineOnBeginStop,
   replaceWakeStreamController,
   sanitizeNestedEngineEnv,
   swallowTurnRejection,
   unreadBatchKey,
-  visibleEngineError
+  visibleEngineError,
+  wakeEventKey
 } from "../src/runner.js";
 
 test("agentSessionFile scopes session ids by engine", () => {
@@ -79,6 +82,23 @@ test("shouldHandleWakeEvent keeps targeted wake events on the owning agent", () 
   assert.equal(shouldHandleWakeEvent(parseWakeEventInfo(JSON.stringify({ agentId: "dev" })), "dev"), true);
   assert.equal(shouldHandleWakeEvent(parseWakeEventInfo(JSON.stringify({ agentId: "reviewer" })), "dev"), false);
   assert.equal(shouldHandleWakeEvent(parseWakeEventInfo(JSON.stringify({ conversationId: "all" })), "dev"), true);
+});
+
+test("wakeEventKey dedupes stable routed events without suppressing anonymous wakes", () => {
+  assert.equal(
+    wakeEventKey("wake", parseWakeEventInfo(JSON.stringify({ conversationId: "group", messageId: "msg-1", requestId: "req-1", taskId: "task-1" }))),
+    "wake:group:msg-1"
+  );
+  assert.equal(
+    wakeEventKey("steer", parseWakeEventInfo(JSON.stringify({ conversationId: "group", requestId: "req-1", taskId: "task-1" }))),
+    "steer:group:req-1"
+  );
+  assert.equal(
+    wakeEventKey("wake", parseWakeEventInfo(JSON.stringify({ conversationId: "group", taskId: "task-1" }))),
+    "wake:group:task-1"
+  );
+  assert.equal(wakeEventKey("wake", parseWakeEventInfo(JSON.stringify({ conversationId: "group" }))), null);
+  assert.equal(wakeEventKey("wake", parseWakeEventInfo(JSON.stringify({ messageId: "msg-1" }))), null);
 });
 
 test("Semaphore queues callers beyond the concurrency limit", async () => {
@@ -268,6 +288,20 @@ test("wake stream auth failures are terminal statuses", () => {
   assert.equal(isWakeStreamAuthFailure(403), true);
   assert.equal(isWakeStreamAuthFailure(500), false);
   assert.equal(isWakeStreamAuthFailure(429), false);
+});
+
+test("runtime auth errors are detected from strict runtime failures", () => {
+  assert.equal(isRuntimeAuthError('GET /inbox -> HTTP 401 {"error":"invalid runtime token"}'), true);
+  assert.equal(isRuntimeAuthError("POST /status -> HTTP 403 forbidden"), true);
+  assert.equal(isRuntimeAuthError("GET /inbox -> HTTP 500 Internal Server Error"), false);
+  assert.equal(isRuntimeAuthError("HTTP 4012 is not an auth status"), false);
+});
+
+test("engine failures publish user-facing notices even for quota and rate limits", () => {
+  assert.equal(shouldPublishEngineFailureNotice("usage limit reached"), true);
+  assert.equal(shouldPublishEngineFailureNotice("HTTP 429 too many requests"), true);
+  assert.equal(shouldPublishEngineFailureNotice("not logged in"), true);
+  assert.equal(shouldPublishEngineFailureNotice(""), false);
 });
 
 test("visibleEngineError redacts local home paths before publishing", () => {

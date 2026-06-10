@@ -28,6 +28,8 @@ King AI 分为两侧：
 
 每个远端智能体对应一个本地 runner。Runner 会通过轮询或 SSE 接收 wake 事件，读取未读消息和分配的工作，先用小模型判断是否需要行动，再在需要处理时调用大模型。
 
+Runner 同时负责 runtime 账本，例如 token 刷新和稳定 wake 事件去重；模型自主性用于协作决策，系统则保证消息投递具备幂等性。认证、额度或频率限制等本地引擎故障会作为 runtime notice 回传到 GUI，而不是只留在 daemon 日志里。
+
 每个智能体的 home 都位于 King AI home 下，因此会话、技能、状态文件和 workspace 可以按智能体隔离。
 
 ## 情景记忆

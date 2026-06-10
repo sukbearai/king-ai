@@ -18,6 +18,7 @@ test("engineInstallAdvice renders missing PATH remediation", () => {
 test("engineRemediationAdvice classifies auth, quota, rate, context, and unknown failures", () => {
   assert.equal(engineRemediationAdvice("claude", "not logged in").category, "auth");
   assert.equal(engineRemediationAdvice("codex", "usage limit reached").category, "quota");
+  assert.equal(engineRemediationAdvice("claude", "You've hit your session limit").category, "quota");
   assert.equal(engineRemediationAdvice("codex", "HTTP 429 too many requests").category, "rate_limit");
   assert.equal(engineRemediationAdvice("codex", "context_length_exceeded").category, "context");
   assert.equal(engineRemediationAdvice("codex", "unpaired surrogate").category, "session");
