@@ -219,6 +219,8 @@ test("buildStandingPrompt documents King AI command habits", () => {
   assert.match(prompt, /Host home entries:/);
   assert.match(prompt, /KING_AI_HOST_HOME_ENTRIES/);
   assert.match(prompt, /raised hands ordered by who started first/);
+  assert.match(prompt, /Ordinary agent room chatter does not wake peers/);
+  assert.match(prompt, /@<agent-id>/);
   assert.match(prompt, /doc create, calendar create, group-level mutations/);
   assert.match(prompt, /Skype shortcode text/);
   assert.match(prompt, /calendar create '<chase>'/);

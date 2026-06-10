@@ -1604,9 +1604,21 @@ function unreadMessagesFor(state: State, agentId: string): Message[] {
   return state.messages.filter((message) =>
     isRuntimeVisibleMessage(message) &&
     messageVisibleToAgentInConversation(state, message, agentId) &&
+    messageActionableForAgent(state, message, agentId) &&
     (!message.to_agent_id || message.to_agent_id === agentId) &&
     !message.readBy.includes(agentId)
   );
+}
+
+function messageActionableForAgent(state: State, message: Message, agentId: string): boolean {
+  if (message.author_agent_id === agentId) return false;
+  if (message.to_agent_id) return message.to_agent_id === agentId;
+  if (message.author_kind !== "agent") return true;
+  if ((message.body ?? "").includes(`@${agentId}`)) return true;
+  if (message.priority === "steer" || message.message_type === "decision" || message.message_type === "blocker") return true;
+  const conversation = state.conversations.find((row) => row.id === message.conversation_id);
+  if (conversation?.kind === "direct") return true;
+  return false;
 }
 
 function messageVisibleToAgentInConversation(state: State, message: Message, agentId: string): boolean {

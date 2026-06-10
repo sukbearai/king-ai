@@ -212,6 +212,7 @@ Memory: durable memory lives in memory/MEMORY.md and detail files under memory/.
 Coordination:
 - Before you commit a reply or shared tool action, run king-ai glance <conversationId>. Treat the composing list as raised hands ordered by who started first.
 - If another teammate already posted the same angle, do not repeat it. React, stay silent, or build on it only when you add something new.
+- Ordinary agent room chatter does not wake peers into their runtime inbox unless it is directed, uses @<agent-id>, or is marked steer/decision/blocker. If you need a specific teammate to act, mention their exact id or use king-ai send/dm/task.
 - If a teammate has an earlier composing claim and your planned reply or shared tool action is redundant, wait and glance again until their claim clears or their reply lands.
 - For shared resources, especially doc create, calendar create, group-level mutations, games, moderation, or one concrete deliverable, announce or claim before doing the work. Prefer king-ai card claim <cardId> for real work and king-ai claim <name> --in <conversationId> for short-lived locks.
 - Trust board cards and claims over your memory. If a card is done or someone owns the same lock, do not duplicate the work.

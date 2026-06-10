@@ -28,7 +28,7 @@ This keeps model credentials and engine sessions local while still giving the GU
 
 Each remote agent maps to a local runner. A runner polls or streams wake events, reads unread messages and assigned work, asks a small model to triage whether action is needed, and invokes the big model when the turn should be handled.
 
-The runner also owns runtime accounting such as token refresh and stable wake-event de-duplication, so model autonomy applies to collaboration decisions while the system keeps message delivery idempotent. Local engine failures such as authentication, quota, or rate-limit problems are sent back to the GUI as runtime notices instead of staying only in daemon logs.
+The runner also owns runtime accounting such as token refresh and stable wake-event de-duplication, so model autonomy applies to collaboration decisions while the system keeps message delivery idempotent. Ordinary agent room chatter is not treated as another peer's runtime inbox item unless it is directed, mentioned, or marked as a steer/decision/blocker signal, which keeps simple roll-calls and closure summaries from spawning redundant reasoning turns. Local engine failures such as authentication, quota, or rate-limit problems are sent back to the GUI as runtime notices instead of staying only in daemon logs.
 
 Per-agent homes live under the King AI home so sessions, skills, state files, and workspaces stay isolated by agent.
 

@@ -3346,7 +3346,7 @@ test("gui runtime run contract rejects updates to the wrong task", async () => {
   assert.equal(after.tasks.find((task) => task.id === secondTask.id)?.result, undefined);
 });
 
-test("gui runtime triage keeps monitor-visible room chatter actionable", async () => {
+test("gui runtime triage ignores ordinary peer room chatter", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
   const ceoToken = await json<{ token: string }>(
@@ -3373,10 +3373,98 @@ test("gui runtime triage keeps monitor-visible room chatter actionable", async (
       headers: { Authorization: `Bearer ${devToken.token}` }
     }), bindings)
   );
+  assert.equal(devTriage.verdict.actionable, false);
+  assert.equal(devTriage.verdict.routeHint, "ignore");
+  assert.equal(devTriage.routeSummary, "");
+});
+
+test("gui runtime does not wake peers for ordinary agent room chatter", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const ceoToken = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/king-ai-ceo/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  const devToken = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/dev/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    body: JSON.stringify({ body: "Everyone, reply with 1 if you are here." })
+  }), bindings);
+
+  const initialDevTriage = await json<{ verdict: { actionable: boolean; routeHint?: string } }>(
+    await worker.fetch(new Request("https://gui/runtime/inbox-triage/payload", {
+      headers: { Authorization: `Bearer ${devToken.token}` }
+    }), bindings)
+  );
+  assert.equal(initialDevTriage.verdict.actionable, true);
+
+  await json<{ ok: boolean }>(await worker.fetch(new Request("https://gui/runtime/conversation/mark-read", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${devToken.token}` },
+    body: JSON.stringify({ conversationId: "king-ai-convo" })
+  }), bindings));
+
+  await json<{ text: string }>(await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${ceoToken.token}` },
+    body: JSON.stringify({ argv: ["reply", "king-ai-convo", "1"] })
+  }), bindings));
+
+  const devInbox = await json<{ rows: Array<{ body: string; author_name: string }> }>(
+    await worker.fetch(new Request("https://gui/runtime/inbox", {
+      headers: { Authorization: `Bearer ${devToken.token}` }
+    }), bindings)
+  );
+  assert.equal(devInbox.rows.some((row) => row.author_name === "King AI CEO" && row.body === "1"), false);
+  assert.deepEqual(devInbox.rows, []);
+
+  const devTriage = await json<{ verdict: { actionable: boolean; routeHint?: string } }>(
+    await worker.fetch(new Request("https://gui/runtime/inbox-triage/payload", {
+      headers: { Authorization: `Bearer ${devToken.token}` }
+    }), bindings)
+  );
+  assert.equal(devTriage.verdict.actionable, false);
+  assert.equal(devTriage.verdict.routeHint, "ignore");
+});
+
+test("gui runtime still wakes peers for mentioned agent room messages", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const ceoToken = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/king-ai-ceo/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  const devToken = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/dev/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+
+  await json<{ text: string }>(await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${ceoToken.token}` },
+    body: JSON.stringify({ argv: ["reply", "king-ai-convo", "@dev please verify the fix"] })
+  }), bindings));
+
+  const devTriage = await json<{ verdict: { actionable: boolean; routeHint?: string }; routeSummary: string }>(
+    await worker.fetch(new Request("https://gui/runtime/inbox-triage/payload", {
+      headers: { Authorization: `Bearer ${devToken.token}` }
+    }), bindings)
+  );
   assert.equal(devTriage.verdict.actionable, true);
-  assert.equal(devTriage.verdict.routeHint, "monitor");
-  assert.match(devTriage.verdict.promptNote ?? "", /Handle the highest-priority routed message first/);
-  assert.match(devTriage.routeSummary, /monitor\/normal\/msg/);
+  assert.equal(devTriage.verdict.routeHint, "steer");
+  assert.match(devTriage.routeSummary, /steer\/normal\/msg/);
 });
 
 test("gui runtime triage reply hint uses the routed conversation id", async () => {
