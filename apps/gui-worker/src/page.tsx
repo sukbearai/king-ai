@@ -79,6 +79,7 @@ export function renderPage(styles: string): string {
                 <div id="chatWindow" class="message-list"></div>
                 <div class="composer">
 	                  <div class="composer-tools">
+	                    <span id="runIndicator" class="run-indicator" role="status" aria-hidden="true"></span>
 	                    <button class="jump" onclick="scrollToBottom()" data-i18n="backToBottom">↓ Back to bottom</button>
 	                    <button onclick="openAttachmentPicker()" data-i18n="attachFile">Attach</button>
 	                    <button id="clearButton" onclick="clearMessages()" data-i18n="clearScreen">Clear</button>

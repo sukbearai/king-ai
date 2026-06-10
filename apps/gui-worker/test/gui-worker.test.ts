@@ -2565,18 +2565,18 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /closest\('\.vocab-row'\)\.hidden = !hasDetails/);
   assert.match(html, /data-i18n="vocabMeaning"|vocabMeaning:/);
   assert.match(html, /\.message-list\.empty-state\s*\{[\s\S]*position:\s*sticky/);
-  assert.match(html, /function pendingDisplayDelayMs/);
-  // The "agent thinking" placeholder shows instantly — no artificial pacing delay.
-  assert.match(html, /Show the "agent thinking" placeholder instantly/);
-  // Outgoing messages render optimistically before the network round trip.
+  // Outgoing user messages render optimistically before the network round trip.
   assert.match(html, /function addOptimisticMessages/);
   assert.match(html, /function reconcileOptimistic/);
   assert.match(html, /const batchId = addOptimisticMessages\(optimisticBody\)/);
+  // The "agent thinking" placeholder is no longer shown — pending bubbles are filtered out.
   assert.match(html, /function shouldRenderChatMessage/);
-  assert.match(html, /Date\.now\(\) - createdAt >= pendingDisplayDelayMs\(message\)/);
-  assert.match(html, /function schedulePendingReveal/);
-  assert.match(html, /window\.setTimeout\(function\(\) \{[\s\S]*refresh\(\);/);
+  assert.match(html, /if \(message\.status === 'pending'\) return false/);
   assert.match(html, /const visibleRows = rows\.filter\(shouldRenderChatMessage\)/);
+  // Composer run indicator spins while the room is busy and pauses when idle.
+  assert.match(html, /id="runIndicator"/);
+  assert.match(html, /runIndicator\.classList\.toggle\('running', busy\)/);
+  assert.match(html, /@keyframes kingRunSpin/);
   assert.match(html, /\.task-board\s*\{[\s\S]*display:\s*grid/);
   assert.match(html, /\.task-board\s*\{[\s\S]*overflow-x:\s*hidden/);
   assert.match(html, /#panel-tasks\.tab-panel,[\s\S]*#panel-files\.tab-panel,[\s\S]*#panel-decisions\.tab-panel\s*\{[\s\S]*width:\s*100%/);

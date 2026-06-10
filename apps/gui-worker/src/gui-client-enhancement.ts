@@ -86,6 +86,8 @@ const TRANSLATIONS = {
     waitingAgent: '等待本地 agent 回复',
     agentThinking: 'agent 正在处理...',
     agentTyping: 'agent 正在输入...',
+    runActive: '运行中',
+    runIdle: '空闲',
     backToBottom: '↓ 回到底部',
     loadOlder: '向上滚动加载更早消息...',
     noOlderMessages: '没有更早消息',
@@ -235,6 +237,8 @@ const TRANSLATIONS = {
     waitingAgent: 'Waiting for local agent',
     agentThinking: 'agent is processing...',
     agentTyping: 'agent is typing...',
+    runActive: 'Running',
+    runIdle: 'Idle',
     backToBottom: '↓ Back to bottom',
     loadOlder: 'Scroll to top to load older messages...',
     noOlderMessages: 'No older messages',
@@ -362,33 +366,10 @@ if (mobileQuery.addEventListener) {
 }
 const workspaceEl = document.querySelector('.workspace');
 if (workspaceEl) workspaceEl.addEventListener('scroll', updateBackToBottom);
-let pendingRevealTimer = 0;
-function pendingDisplayDelayMs() {
-  // Show the "agent thinking" placeholder instantly — no artificial pacing delay.
-  return 0;
-}
 function shouldRenderChatMessage(message) {
   if (message.author_kind === 'system' && message.payload && message.payload.taskEventType) return false;
-  if (message.status !== 'pending') return true;
-  const createdAt = Number(message.created_at || Date.now());
-  return Date.now() - createdAt >= pendingDisplayDelayMs(message);
-}
-function schedulePendingReveal(rows) {
-  if (pendingRevealTimer) {
-    clearTimeout(pendingRevealTimer);
-    pendingRevealTimer = 0;
-  }
-  const remaining = rows
-    .filter(function(message) { return message.status === 'pending' && !shouldRenderChatMessage(message); })
-    .map(function(message) {
-      return Number(message.created_at || Date.now()) + pendingDisplayDelayMs(message) - Date.now();
-    })
-    .filter(function(delay) { return delay > 0; });
-  if (!remaining.length) return;
-  pendingRevealTimer = window.setTimeout(function() {
-    pendingRevealTimer = 0;
-    refresh();
-  }, Math.max(250, Math.min.apply(Math, remaining)));
+  if (message.status === 'pending') return false; // "agent thinking" placeholder bubbles are not shown
+  return true;
 }
 function workspaceScroller() {
   return document.querySelector('.workspace');
@@ -422,31 +403,13 @@ function updateBackToBottom() {
 	function refreshSoon() {
 	  setTimeout(function() { refresh().catch(function() {}); }, 0);
 	}
-	function lastAgentDescriptor() {
-	  const rows = ((window.__lastState && window.__lastState.messages) || []).filter(function(m) {
-	    return m.conversation_id === activeConversationId && m.author_kind === 'agent';
-	  });
-	  const last = rows[rows.length - 1];
-	  return { name: (last && last.author_name) || 'AI', engine: last && last.author_engine };
-	}
-	function coordinatorDescriptor() {
-	  // Mirror the agent the server will reply as (the room coordinator, shown first in the team strip)
-	  // so the optimistic placeholder doesn't visibly swap identity when the real pending arrives.
-	  const summary = window.__lastSummary || {};
-	  const room = typeof currentRoomAgents === 'function' ? currentRoomAgents(summary) : [];
-	  const coordinator = room[0] || summary.agent;
-	  if (coordinator && (coordinator.name || coordinator.id)) {
-	    return { name: coordinator.name || coordinator.id || 'AI', engine: coordinator.engine };
-	  }
-	  return lastAgentDescriptor();
-	}
 	function addOptimisticMessages(optimisticBody) {
+	  // Only the human message is shown optimistically; we no longer render an agent "thinking" placeholder.
 	  const now = Date.now();
 	  const convRows = ((window.__lastState && window.__lastState.messages) || []).filter(function(m) {
 	    return m.conversation_id === activeConversationId;
 	  });
 	  const baselineHuman = convRows.filter(function(m) { return m.author_kind === 'human' && m.body === optimisticBody; }).length;
-	  const agent = coordinatorDescriptor();
 	  optimisticMessages.push({
 	    id: 'optimistic-' + now,
 	    __optimistic: true,
@@ -456,19 +419,6 @@ function updateBackToBottom() {
 	    author_kind: 'human',
 	    body: optimisticBody,
 	    created_at: now,
-	    readBy: []
-	  });
-	  optimisticMessages.push({
-	    id: 'optimistic-' + now + '-pending',
-	    __optimistic: true,
-	    __batch: now,
-	    conversation_id: activeConversationId,
-	    author_kind: 'agent',
-	    author_name: agent.name,
-	    author_engine: agent.engine,
-	    status: 'pending',
-	    body: '',
-	    created_at: now + 1,
 	    readBy: []
 	  });
 	  return now;
@@ -498,11 +448,7 @@ function updateBackToBottom() {
 	}
 	function mergeOptimistic(serverRows) {
 	  if (!optimisticMessages.length) return serverRows.slice();
-	  let visible = optimisticMessages.filter(function(opt) { return opt.conversation_id === activeConversationId; });
-	  // Never show an optimistic "thinking" bubble next to a real server pending — exactly one at a time.
-	  if (serverRows.some(function(m) { return m.author_kind === 'agent' && m.status === 'pending'; })) {
-	    visible = visible.filter(function(opt) { return !(opt.author_kind === 'agent' && opt.status === 'pending'); });
-	  }
+	  const visible = optimisticMessages.filter(function(opt) { return opt.conversation_id === activeConversationId; });
 	  if (!visible.length) return serverRows.slice();
 	  return serverRows.concat(visible).sort(function(a, b) { return (a.created_at || 0) - (b.created_at || 0); });
 	}
@@ -1680,7 +1626,6 @@ renderMessages = function(state, options) {
   const rows = allRows.slice(-visibleMessageCount);
   const hasOlder = rows.length < allRows.length;
   const olderLine = hasOlder ? t('loadOlder') : t('noOlderMessages');
-  schedulePendingReveal(rows);
   const visibleRows = rows.filter(shouldRenderChatMessage);
   function currentHumanName() {
     const user = window.__lastSummary && window.__lastSummary.currentUser;
@@ -1895,7 +1840,16 @@ renderConversations = function(summary) {
   document.querySelector('.channel-name').textContent = activeTitle;
   document.querySelector('.composer textarea').placeholder = 'Message #' + activeTitle;
   document.querySelector('.hash').textContent = active.id === 'king-ai-convo' ? '#' : '~';
-  document.getElementById('routeSummary').textContent = activeConversationStatus(summary, active);
+  const runStatus = activeConversationStatus(summary, active);
+  document.getElementById('routeSummary').textContent = runStatus;
+  const runIndicator = document.getElementById('runIndicator');
+  if (runIndicator) {
+    const busy = Boolean(runStatus);
+    runIndicator.classList.toggle('running', busy);
+    runIndicator.setAttribute('aria-hidden', busy ? 'false' : 'true');
+    runIndicator.setAttribute('aria-label', busy ? t('runActive') : t('runIdle'));
+    runIndicator.setAttribute('title', busy ? t('runActive') : t('runIdle'));
+  }
   document.getElementById('conversationList').innerHTML = conversations.map(function(row) {
     const deletable = row.id !== 'king-ai-convo';
     return '<div class="window-item' + (row.id === activeConversationId ? ' active' : '') + '"><button class="window-select" onclick="selectConversation(&quot;' + escapeHtml(row.id) + '&quot;)"><span class="window-name">' + escapeHtml(displayConversationTitle(row)) + '</span></button><span class="window-meta">' + escapeHtml(row.unread || 0) + '</span>' + (deletable ? '<button class="window-delete" onclick="deleteConversation(event, &quot;' + escapeHtml(row.id) + '&quot;)" aria-label="Delete window">x</button>' : '') + '</div>';

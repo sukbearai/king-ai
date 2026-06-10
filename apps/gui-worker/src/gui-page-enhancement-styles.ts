@@ -535,6 +535,24 @@ export const guiPageEnhancementStyles = `
       align-items: center;
       background: var(--canvas);
     }
+    .run-indicator {
+      flex: 0 0 auto;
+      width: 13px;
+      height: 13px;
+      border-radius: 50%;
+      border: 2px solid var(--soft-line);
+      border-top-color: var(--muted);
+      opacity: 0.55;
+      transition: opacity 120ms ease;
+    }
+    .run-indicator.running {
+      border-top-color: var(--active);
+      opacity: 1;
+      animation: kingRunSpin 0.8s linear infinite;
+    }
+    @keyframes kingRunSpin {
+      to { transform: rotate(360deg); }
+    }
     .composer-tools .jump {
       position: static;
       display: none;
