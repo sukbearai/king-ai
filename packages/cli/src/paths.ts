@@ -32,5 +32,5 @@ export const HEARTBEAT_PATH = join(CONFIG_DIR, "heartbeat.json");
 export const HOST_EVENTS_PATH = join(CONFIG_DIR, "host-events.ndjson");
 export const HOST_RUNS_PATH = join(CONFIG_DIR, "host-runs.ndjson");
 export const SERVICE_LABEL = "dev.king-ai";
-export const CURRENT_VERSION = "0.2.45";
+export const CURRENT_VERSION = "0.2.46";
 export const DEFAULT_SERVER = process.env.KING_AI_SERVER_URL || "https://king-ai.congrongtech.cn";
