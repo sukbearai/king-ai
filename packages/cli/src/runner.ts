@@ -27,13 +27,13 @@ import type { AgentConfigWarning } from "./agent-config-validation.js";
 
 const TOKEN_REFRESH_SKEW_MS = 5 * 60 * 1000;
 const INBOX_POLL_MS = Number(process.env.KING_AI_INBOX_POLL_MS) || 20_000;
-const WAKE_DEBOUNCE_MS = Number(process.env.KING_AI_WAKE_DEBOUNCE_MS) || 2500;
+const WAKE_DEBOUNCE_MS = Number(process.env.KING_AI_WAKE_DEBOUNCE_MS) || 300;
 const RUN_HEARTBEAT_MS = Number(process.env.KING_AI_RUN_HEARTBEAT_MS) || 60_000;
 const TRIAGE_TIMEOUT_MS = Number(process.env.KING_AI_TRIAGE_TIMEOUT_MS) || 30_000;
 const ENGINE_BACKOFF_MS = Number(process.env.KING_AI_ENGINE_BACKOFF_MS) || 60_000;
 const TRIAGE_BACKOFF_MAX_MS = Number(process.env.KING_AI_TRIAGE_BACKOFF_MAX_MS) || 600_000;
-const BIG_BRAIN_SPAWN_JITTER_MS = Number(process.env.KING_AI_BYOA_BIG_BRAIN_SPAWN_JITTER_MS) || 1500;
-const TRIAGE_SPAWN_JITTER_MS = Number(process.env.KING_AI_BYOA_TRIAGE_SPAWN_JITTER_MS) || 500;
+const BIG_BRAIN_SPAWN_JITTER_MS = Number(process.env.KING_AI_BYOA_BIG_BRAIN_SPAWN_JITTER_MS) || 0;
+const TRIAGE_SPAWN_JITTER_MS = Number(process.env.KING_AI_BYOA_TRIAGE_SPAWN_JITTER_MS) || 0;
 const AGENDA_QUIET_MS = Number(process.env.KING_AI_AGENDA_QUIET_MS) || 180_000;
 const AGENDA_CHECK_MS = Number(process.env.KING_AI_AGENDA_CHECK_MS) || 120_000;
 const RECENT_WAKE_EVENT_TTL_MS = 30_000;
