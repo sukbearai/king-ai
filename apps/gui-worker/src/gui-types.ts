@@ -562,6 +562,7 @@ export type State = {
   runStreams?: Record<string, RunStreamState>;
   activeRunContracts?: Record<string, RunContract>;
   runActions?: Record<string, RunAction[]>;
+  agentBeats?: Record<string, number>;
   initiatives: Initiative[];
   tasks: Task[];
   taskEvents: TaskEvent[];

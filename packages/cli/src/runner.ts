@@ -28,7 +28,7 @@ import type { AgentConfigWarning } from "./agent-config-validation.js";
 const TOKEN_REFRESH_SKEW_MS = 5 * 60 * 1000;
 const INBOX_POLL_MS = Number(process.env.KING_AI_INBOX_POLL_MS) || 20_000;
 const WAKE_DEBOUNCE_MS = Number(process.env.KING_AI_WAKE_DEBOUNCE_MS) || 300;
-const RUN_HEARTBEAT_MS = Number(process.env.KING_AI_RUN_HEARTBEAT_MS) || 60_000;
+const RUN_HEARTBEAT_MS = Number(process.env.KING_AI_RUN_HEARTBEAT_MS) || 5_000;
 const TRIAGE_TIMEOUT_MS = Number(process.env.KING_AI_TRIAGE_TIMEOUT_MS) || 30_000;
 const ENGINE_BACKOFF_MS = Number(process.env.KING_AI_ENGINE_BACKOFF_MS) || 60_000;
 const TRIAGE_BACKOFF_MAX_MS = Number(process.env.KING_AI_TRIAGE_BACKOFF_MAX_MS) || 600_000;
@@ -813,7 +813,7 @@ export class AgentRunner {
 
   private beatRun(token: string, runId?: string): () => void {
     if (!runId) return () => undefined;
-    const beat = () => void runtimePost(this.cfg.serverUrl, `/runs/${runId}/heartbeat`, token, {}, this.cfg.tenantId);
+    const beat = () => void runtimePost(this.cfg.serverUrl, `/runs/${runId}/heartbeat`, token, { agentId: this.agent.id }, this.cfg.tenantId);
     beat();
     const timer = setInterval(beat, RUN_HEARTBEAT_MS);
     return () => clearInterval(timer);

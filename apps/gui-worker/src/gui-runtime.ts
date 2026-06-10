@@ -155,6 +155,15 @@ function normalizeRuntimeTokenMeta(value: Record<string, RuntimeTokenMeta> | und
   return next;
 }
 
+function normalizeAgentBeats(value: Record<string, number> | undefined): Record<string, number> {
+  const next: Record<string, number> = {};
+  for (const [agentId, beatAt] of Object.entries(value ?? {})) {
+    const id = normalizeAgentId(agentId);
+    if (id && Number.isFinite(beatAt)) next[id] = beatAt;
+  }
+  return next;
+}
+
 function entityStateStorageKey(key: EntityStateKey): string {
   return `state:${key}`;
 }
@@ -801,7 +810,7 @@ function highlightIeltsSpansInHtml(html: string, spans: IeltsHighlightSpans): st
 function wrapIeltsSpansInText(text: string, needles: Array<{ value: string; kind: "core" | "phrase" }>, consumed: Set<string>): string {
   const spans: Array<{ start: number; end: number; kind: "core" | "phrase" }> = [];
   for (const needle of needles) {
-    const key = `${needle.kind} ${needle.value}`;
+    const key = `${needle.kind}\u0000${needle.value}`;
     if (consumed.has(key)) continue;
     const idx = text.indexOf(needle.value);
     if (idx < 0) continue;
@@ -1783,6 +1792,11 @@ function normalizeRunStreamEvent(value: unknown): RunStreamEvent | null {
   return null;
 }
 
+function hasRunHeartbeatBody(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  return Object.keys(value).some((key) => key !== "agentId");
+}
+
 function approximateBase64Bytes(value: string): number {
   const clean = value.replace(/\s+/g, "");
   if (!clean) return 0;
@@ -1830,10 +1844,28 @@ function summarizeUnknown(value: unknown): string {
   return JSON.stringify(value).slice(0, 180);
 }
 
+// A busy status ("thinking"/"running") is posted once at turn start and only cleared by the
+// matching "avail" post. If the runner crashes or the computer disconnects mid-turn, that "avail"
+// never arrives and the status, plus the run indicator it drives, would stick on forever. Treat a
+// busy status as stale once the agent stops emitting liveness signals for this long.
+const STATUS_BUSY_TTL_MS = 15_000;
+
 function agentStateSummary(state: State, agent: Agent): AgentStateSummary {
   const lifecycle = agent.lifecycle ?? "on-demand";
   const latestStatus = state.statusLog.slice().reverse().find((row) => !row.agentId || row.agentId === agent.id);
-  const status = lifecycle === "disabled" ? "disabled" : latestStatus?.status ?? "idle";
+  let status = lifecycle === "disabled" ? "disabled" : latestStatus?.status ?? "idle";
+  if (status === "thinking" || status === "running") {
+    // The runner refreshes composing claims (~6s) while a turn is live but never re-posts the
+    // status itself, so use the freshest of those claims plus the status post as the heartbeat.
+    // Once that goes quiet past the TTL (runner crashed / computer disconnected, so the claims
+    // stop refreshing too), fall back to idle so it self-clears instead of sticking on forever.
+    const now = Date.now();
+    const lastBusyAt = state.composing.reduce(
+      (latest, claim) => (claim.agentId === agent.id ? Math.max(latest, claim.claimed_at) : latest),
+      Math.max(latestStatus?.at ?? 0, state.agentBeats?.[agent.id] ?? 0)
+    );
+    if (now - lastBusyAt > STATUS_BUSY_TTL_MS) status = "idle";
+  }
   return {
     id: agent.id,
     name: agent.name,
@@ -2726,6 +2758,7 @@ export {
   normalizeAgentId,
   normalizeRuntimeTokens,
   normalizeRuntimeTokenMeta,
+  normalizeAgentBeats,
   entityStateStorageKey,
   stableStorageValue,
   stripEntityState,
@@ -2794,6 +2827,7 @@ export {
   runtimeBodyStatus,
   runtimeBodyEngine,
   normalizeRunStreamEvent,
+  hasRunHeartbeatBody,
   approximateBase64Bytes,
   base64ToBytes,
   uploadChunkKey,

@@ -39,6 +39,8 @@ The GUI shows two commands:
 
 Run the pairing command on the machine that should host local agents. After pairing, the GUI waits for the computer daemon to come online and report available engines.
 
+Agent roster status and the composer run indicator are driven by runtime heartbeats from the local runner. While an agent is actively running, the runner refreshes its heartbeat every few seconds. If a runner crashes or the computer disconnects before it can report `avail`, the GUI treats the stale busy state as idle after about 15 seconds so `thinking`/`running` indicators do not stay pinned forever.
+
 ## Work Surfaces
 
 The GUI exposes:

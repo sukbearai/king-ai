@@ -3151,6 +3151,7 @@ test("gui runtime records status, typing, thinking, events, and runs", async () 
   await worker.fetch(new Request(`https://gui/runtime/runs/${run.runId}/heartbeat`, { method: "POST", headers: auth, body: JSON.stringify({ stream: { type: "tool_started", id: "tool-1", name: "shell", input: "pnpm test" } }) }), bindings);
   await worker.fetch(new Request(`https://gui/runtime/runs/${run.runId}/heartbeat`, { method: "POST", headers: auth, body: JSON.stringify({ stream: { type: "message_delta", text: "done" } }) }), bindings);
   await worker.fetch(new Request(`https://gui/runtime/runs/${run.runId}/heartbeat`, { method: "POST", headers: auth }), bindings);
+  await worker.fetch(new Request(`https://gui/runtime/runs/${run.runId}/heartbeat`, { method: "POST", headers: auth, body: JSON.stringify({ agentId: "king-ai-ceo" }) }), bindings);
   await worker.fetch(new Request(`https://gui/runtime/runs/${run.runId}/finish`, { method: "POST", headers: auth, body: JSON.stringify({ status: "completed" }) }), bindings);
   await worker.fetch(new Request("https://gui/runtime/thinking/unmark", { method: "POST", headers: auth, body: JSON.stringify({ conversationIds: ["king-ai-convo"] }) }), bindings);
 
@@ -3162,6 +3163,7 @@ test("gui runtime records status, typing, thinking, events, and runs", async () 
     noticeLog: { body: { noticeKind?: string } }[];
     triageLog: { body: { source?: string } }[];
     runLog: { action: string; card?: { summary?: string; sections?: { kind: string; title: string }[] } }[];
+    agentBeats?: Record<string, number>;
     runStreams?: Record<string, { message?: string; tools?: { name: string }[] }>;
   }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
   assert.equal(state.statusLog.at(-1)?.status, "thinking");
@@ -3170,7 +3172,8 @@ test("gui runtime records status, typing, thinking, events, and runs", async () 
   assert.equal(state.eventLog.at(-1)?.body.kind, "gui.event");
   assert.equal(state.noticeLog.at(-1)?.body.noticeKind, "byoa_engine_failed");
   assert.equal(state.triageLog.at(-1)?.body.source, "byoa-codex");
-  assert.deepEqual(state.runLog.map((row) => row.action), ["start", "stream", "heartbeat", "stream", "heartbeat", "heartbeat", "finish"]);
+  assert.deepEqual(state.runLog.map((row) => row.action), ["start", "stream", "heartbeat", "stream", "heartbeat", "finish"]);
+  assert.equal(typeof state.agentBeats?.["king-ai-ceo"], "number");
   assert.equal(state.runStreams?.[run.runId]?.message, "done");
   assert.equal(state.runStreams?.[run.runId]?.tools?.[0]?.name, "shell");
   assert.equal(state.runLog.at(-1)?.card?.summary, "Completed");
@@ -3666,6 +3669,68 @@ test("gui runtime supports board, calendar, claims, roster, and agenda", async (
   assert.equal(roster.agentStates[0]?.status, "thinking");
   assert.equal(roster.agentStates[0]?.lifecycle, "on-demand");
   assert.equal(roster.agentStates[0]?.engine, "codex");
+});
+
+test("gui agent status expires a stale thinking heartbeat back to idle", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const tokenRes = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/king-ai-ceo/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  const ceoStatus = async () => {
+    const summary = await json<{ agents: { id: string; status: string }[] }>(
+      await worker.fetch(new Request("https://gui/gui/summary"), bindings)
+    );
+    return summary.agents.find((agent) => agent.id === "king-ai-ceo")?.status;
+  };
+
+  // A freshly posted "thinking" status is reported as-is.
+  await worker.fetch(new Request("https://gui/runtime/status", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${tokenRes.token}` },
+    body: JSON.stringify({ status: "thinking" })
+  }), bindings);
+  assert.equal(await ceoStatus(), "thinking");
+
+  // A fresh run heartbeat keeps an old status alive, covering agenda/background turns that do not
+  // refresh composing claims.
+  const run = await json<{ runId: string }>(await worker.fetch(new Request("https://gui/runtime/runs", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${tokenRes.token}` },
+    body: JSON.stringify({ trigger: "test" })
+  }), bindings));
+  await worker.fetch(new Request(`https://gui/runtime/runs/${run.runId}/heartbeat`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${tokenRes.token}` },
+    body: JSON.stringify({ agentId: "king-ai-ceo" })
+  }), bindings);
+  const active = await json<{ schema: string; state: { statusLog: { at: number }[]; composing: unknown[]; agentBeats?: Record<string, number> } }>(
+    await worker.fetch(new Request("https://gui/gui/export-state"), bindings)
+  );
+  for (const row of active.state.statusLog) row.at = Date.now() - 120_000;
+  active.state.composing = [];
+  await json<{ ok: true }>(await worker.fetch(new Request("https://gui/gui/import-state", {
+    method: "POST",
+    body: JSON.stringify(active)
+  }), bindings));
+  assert.equal(await ceoStatus(), "thinking");
+
+  // Once both composing and run heartbeats go stale, it must self-clear instead of pinning the run
+  // indicator on forever.
+  const exported = await json<{ schema: string; state: { statusLog: { at: number }[]; composing: unknown[]; agentBeats?: Record<string, number> } }>(
+    await worker.fetch(new Request("https://gui/gui/export-state"), bindings)
+  );
+  for (const row of exported.state.statusLog) row.at = Date.now() - 120_000;
+  exported.state.composing = [];
+  exported.state.agentBeats = { "king-ai-ceo": Date.now() - 120_000 };
+  await json<{ ok: true }>(await worker.fetch(new Request("https://gui/gui/import-state", {
+    method: "POST",
+    body: JSON.stringify(exported)
+  }), bindings));
+  assert.equal(await ceoStatus(), "idle");
 });
 
 test("gui runtime supports cron-backed calendar agenda items", async () => {

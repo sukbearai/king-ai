@@ -39,6 +39,8 @@ GUI 会展示两条命令：
 
 在承载本地智能体的机器上运行配对命令。配对完成后，GUI 会等待 computer daemon 上线并上报可用引擎。
 
+智能体 roster 状态和 composer 的运行中提示由本地 runner 的 runtime 心跳驱动。智能体运行时，runner 会每隔几秒刷新心跳。如果 runner 崩溃或电脑断连，导致它来不及上报 `avail`，GUI 会在约 15 秒后把过期的 busy 状态视为空闲，避免 `thinking`/`running` 指示永久卡住。
+
 ## 工作界面
 
 GUI 提供：

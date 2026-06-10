@@ -260,8 +260,8 @@ export class GuiState implements DurableObject {
     if (path === "/notices") return this.authRuntime(request, async () => this.logBody("noticeLog", await request.json().catch(() => null)));
     if (path === "/triage-log") return this.authRuntime(request, async () => this.logBody("triageLog", await request.json().catch(() => null)));
     if (path === "/runs") return this.authRuntime(request, async () => this.startRun(await request.json().catch(() => null)));
-    if (path.startsWith("/runs/") && path.endsWith("/heartbeat")) return this.authRuntime(request, async () => this.runAction(path.split("/")[2] || "run", "heartbeat", await request.json().catch(() => null)));
-    if (path.startsWith("/runs/") && path.endsWith("/finish")) return this.authRuntime(request, async () => this.runAction(path.split("/")[2] || "run", "finish", await request.json().catch(() => null)));
+    if (path.startsWith("/runs/") && path.endsWith("/heartbeat")) return this.authRuntime(request, async (agentId) => this.runAction(path.split("/")[2] || "run", "heartbeat", await request.json().catch(() => null), agentId));
+    if (path.startsWith("/runs/") && path.endsWith("/finish")) return this.authRuntime(request, async (agentId) => this.runAction(path.split("/")[2] || "run", "finish", await request.json().catch(() => null), agentId));
     if (path.startsWith("/runs/") && path.endsWith("/actions")) return this.authRuntime(request, async (agentId) => this.runActions(path.split("/")[2] || "run", agentId));
     if (path === "/gui-events") return this.guiEvents();
     if (path === "/gui-state") return json(await stateForGui(await this.get(), url.searchParams.get("redact") === "1"));
@@ -387,6 +387,7 @@ export class GuiState implements DurableObject {
       runStreams: {},
       activeRunContracts: {},
       runActions: {},
+      agentBeats: {},
       initiatives: [],
       tasks: [],
       taskEvents: [],
@@ -474,6 +475,7 @@ export class GuiState implements DurableObject {
     saved.runStreams = pruneRunStreams(saved.runStreams ?? {});
     saved.activeRunContracts = pruneActiveRunContracts(saved.activeRunContracts ?? {});
     saved.runActions = pruneRunActions(saved.runActions ?? {});
+    saved.agentBeats = normalizeAgentBeats(saved.agentBeats);
     saved.capabilities ??= { workspaces: [] };
     saved.availableEngines ??= [];
     return saved;
@@ -1307,13 +1309,15 @@ export class GuiState implements DurableObject {
     return json({ runId, contract });
   }
 
-  private async runAction(runId: string, action: "heartbeat" | "finish", body?: unknown): Promise<Response> {
+  private async runAction(runId: string, action: "heartbeat" | "finish", body?: unknown, agentId?: string): Promise<Response> {
     const state = await this.get();
+    const now = Date.now();
+    if (agentId) state.agentBeats = { ...(state.agentBeats ?? {}), [agentId]: now };
     const streamEvent = normalizeRunStreamEvent(body);
     if (streamEvent) {
       const current = state.runStreams?.[runId] ?? initialRunStreamState();
       state.runStreams = pruneRunStreams({ ...(state.runStreams ?? {}), [runId]: reduceRunStream(current, streamEvent) });
-      state.runLog.push({ at: Date.now(), runId, action: "stream", body: streamEvent, card: renderRunStreamCard(state.runStreams[runId]) });
+      state.runLog.push({ at: now, runId, action: "stream", body: streamEvent, card: renderRunStreamCard(state.runStreams[runId]) });
     }
     if (action === "finish") {
       const current = state.runStreams?.[runId] ?? initialRunStreamState();
@@ -1325,9 +1329,9 @@ export class GuiState implements DurableObject {
         state.activeRunContracts = { ...state.activeRunContracts };
         delete state.activeRunContracts[runId];
       }
-      state.runLog.push({ at: Date.now(), runId, action, body, card: renderRunStreamCard(terminal) });
-    } else {
-      state.runLog.push({ at: Date.now(), runId, action, body, card: state.runStreams?.[runId] ? renderRunStreamCard(state.runStreams[runId]) : undefined });
+      state.runLog.push({ at: now, runId, action, body, card: renderRunStreamCard(terminal) });
+    } else if (streamEvent || hasRunHeartbeatBody(body)) {
+      state.runLog.push({ at: now, runId, action, body, card: state.runStreams?.[runId] ? renderRunStreamCard(state.runStreams[runId]) : undefined });
     }
     await this.put(state);
     return json({ ok: true, runId });
@@ -1966,6 +1970,7 @@ import {
   normalizeAgentId,
   normalizeRuntimeTokens,
   normalizeRuntimeTokenMeta,
+  normalizeAgentBeats,
   entityStateStorageKey,
   stableStorageValue,
   stripEntityState,
@@ -2034,6 +2039,7 @@ import {
   runtimeBodyStatus,
   runtimeBodyEngine,
   normalizeRunStreamEvent,
+  hasRunHeartbeatBody,
   approximateBase64Bytes,
   base64ToBytes,
   uploadChunkKey,
