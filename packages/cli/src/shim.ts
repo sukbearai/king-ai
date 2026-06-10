@@ -84,9 +84,24 @@ const SHIM = `#!/usr/bin/env node
     console.error(commandName + ': runtime env not set')
     process.exit(70)
   }
+  let runId = process.env.KING_AI_AGENT_RUNTIME_RUN_ID || undefined
   let contract
   if (process.env.KING_AI_AGENT_RUNTIME_CONTRACT) {
     try { contract = JSON.parse(process.env.KING_AI_AGENT_RUNTIME_CONTRACT) } catch {}
+  }
+  // A persistent engine session is spawned once, so the RUN_ID/CONTRACT env above freezes to the
+  // wake that started it. The host rewrites this file every turn; re-reading it makes each call act
+  // under the CURRENT turn's run/contract (mirrors how the token file refreshes the auth token).
+  const runFile = process.env.KING_AI_AGENT_RUNTIME_RUN_FILE
+  if (runFile) {
+    try {
+      const raw = fs.readFileSync(runFile, 'utf8').trim()
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        runId = parsed.runId || undefined
+        contract = parsed.contract || undefined
+      }
+    } catch {}
   }
   const res = await fetch(url + '/cli', {
     method: 'POST',
@@ -95,7 +110,7 @@ const SHIM = `#!/usr/bin/env node
       argv,
       agentId: process.env.KING_AI_AGENT_ID || undefined,
       engine: process.env.KING_AI_AGENT_ENGINE || undefined,
-      runId: process.env.KING_AI_AGENT_RUNTIME_RUN_ID || undefined,
+      runId,
       contract
     })
   })

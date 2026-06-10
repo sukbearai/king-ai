@@ -4,12 +4,31 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { anyRunnerBusy, clearLocalRuntimeState, doctorExitCode, formatDoctorReport, missingEngineMessage, parsePairLocator, resolveHostName, shouldExitForUpdate } from "../src/daemon.js";
+import { anyRunnerBusy, clearLocalRuntimeState, doctorExitCode, formatDoctorReport, installLogTimestamps, missingEngineMessage, parsePairLocator, resolveHostName, shouldExitForUpdate } from "../src/daemon.js";
 
 test("anyRunnerBusy reports whether any runner is active", () => {
   assert.equal(anyRunnerBusy([]), false);
   assert.equal(anyRunnerBusy([{ isBusy: false }, { isBusy: false }]), false);
   assert.equal(anyRunnerBusy([{ isBusy: false }, { isBusy: true }]), true);
+});
+
+test("installLogTimestamps prefixes daemon log lines with an ISO wall-clock time", () => {
+  const flag = Symbol.for("king-ai.logTimestamps");
+  const globalState = globalThis as unknown as Record<symbol, boolean>;
+  const originalLog = console.log;
+  const originalFlag = globalState[flag];
+  const captured: unknown[][] = [];
+  try {
+    delete globalState[flag];
+    console.log = (...args: unknown[]) => { captured.push(args); };
+    installLogTimestamps(() => new Date("2026-06-10T08:02:02.913Z"));
+    installLogTimestamps(); // idempotent: a second install must not double-wrap
+    console.log("[dev/codex] SSE wake received");
+    assert.deepEqual(captured, [["[2026-06-10T08:02:02.913Z]", "[dev/codex] SSE wake received"]]);
+  } finally {
+    console.log = originalLog;
+    if (originalFlag) globalState[flag] = originalFlag; else delete globalState[flag];
+  }
 });
 
 test("shouldExitForUpdate waits for update readiness, idle runners, and no shutdown", () => {

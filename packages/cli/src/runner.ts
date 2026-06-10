@@ -37,6 +37,7 @@ const TRIAGE_SPAWN_JITTER_MS = Number(process.env.KING_AI_BYOA_TRIAGE_SPAWN_JITT
 const AGENDA_QUIET_MS = Number(process.env.KING_AI_AGENDA_QUIET_MS) || 180_000;
 const AGENDA_CHECK_MS = Number(process.env.KING_AI_AGENDA_CHECK_MS) || 120_000;
 const RECENT_WAKE_EVENT_TTL_MS = 30_000;
+const TRIAGE_CACHE_TTL_MS = Number(process.env.KING_AI_TRIAGE_CACHE_TTL_MS) || 15_000;
 const RECENT_WAKE_EVENT_LIMIT = 100;
 export const FAIL_OPEN_STREAK_LIMIT = 3;
 export const NO_STATE_ACTION_ACK_STREAK = 2;
@@ -55,6 +56,7 @@ const NESTED_ENV_BLOCKLIST = [
   "KING_AI_AGENT_RUNTIME_TENANT",
   "KING_AI_AGENT_RUNTIME_RUN_ID",
   "KING_AI_AGENT_RUNTIME_CONTRACT",
+  "KING_AI_AGENT_RUNTIME_RUN_FILE",
   "KING_AI_AGENT_ID",
   "KING_AI_AGENT_ENGINE",
   "KING_AI_AGENT_HOME",
@@ -457,6 +459,7 @@ export class AgentRunner {
   private failOpenBackoffTimer: NodeJS.Timeout | null = null;
   private noStateActionStreak = 0;
   private noStateActionUnreadKey = "";
+  private triageVerdictCache: { key: string; verdict: TriageVerdict; at: number } | null = null;
   private readonly recentWakeEvents = new Map<string, number>();
 
   constructor(
@@ -748,6 +751,11 @@ export class AgentRunner {
       KING_AI_AGENT_RUNTIME_TENANT: this.cfg.tenantId ?? "",
       KING_AI_AGENT_RUNTIME_RUN_ID: this.activeRunId ?? "",
       KING_AI_AGENT_RUNTIME_CONTRACT: this.activeRunContract ? JSON.stringify(this.activeRunContract) : "",
+      // Persistent engine sessions outlive the wake that spawned them, so the spawn-time RUN_ID/
+      // CONTRACT env above freezes to the first wake and would reject every later `task done`. The
+      // run file is rewritten each turn and re-read by the shim, so the live session always acts
+      // under the CURRENT turn's run/contract. Stable path: env is frozen but the file is not.
+      KING_AI_AGENT_RUNTIME_RUN_FILE: join(this.binDir, ".runtime-run"),
       KING_AI_AGENT_ID: this.agent.id,
       KING_AI_AGENT_ENGINE: this.adapter.id,
       KING_AI_AGENT_HOME: this.home,
@@ -759,6 +767,24 @@ export class AgentRunner {
       KING_AI_AGENT_SKILL_SNAPSHOT_MANIFEST: this.sharedSkillSnapshot?.manifestPath ?? "",
       KING_AI_AGENT_LEARNED_SKILLS: learnedSkillsDir(this.agent.id)
     };
+  }
+
+  // Update both the in-memory active run and the on-disk run file the shim re-reads each call.
+  // Must be invoked before the engine runs for the turn so a persistent session's `king-ai` calls
+  // resolve against the current run/contract instead of the frozen spawn-time env.
+  private async setActiveRun(runId: string | null, contract: RuntimeRunContract | null): Promise<void> {
+    this.activeRunId = runId;
+    this.activeRunContract = contract;
+    try {
+      await mkdir(this.binDir, { recursive: true });
+      await writeFile(
+        join(this.binDir, ".runtime-run"),
+        JSON.stringify({ runId, contract }),
+        { mode: 0o600 }
+      );
+    } catch {
+      // Best-effort: the spawn-time env still carries a (possibly stale) fallback for the shim.
+    }
   }
 
   private standingPrompt(): string {
@@ -909,6 +935,17 @@ export class AgentRunner {
     if (payload.verdict) return payload.verdict;
     if (!payload.instructions || !payload.input) return null;
 
+    // Group fan-out (one human ping wakes the whole roster, then every reply re-wakes everyone)
+    // replays byte-identical triage inputs. Identical input yields the same verdict, so a recently
+    // cached "not actionable" result short-circuits the classify engine round-trip — the main lever
+    // for cutting wake latency under a roll-call storm. Only cache definitive not-actionable
+    // verdicts; never cache "actionable"/fail-open so a turn that should reach the big brain still does.
+    const triageKey = hashText(`${payload.instructions}\n${payload.input}`);
+    const cached = this.triageVerdictCache;
+    if (cached && cached.key === triageKey && Date.now() - cached.at < TRIAGE_CACHE_TTL_MS) {
+      return cached.verdict;
+    }
+
     const jitter = Math.floor(Math.random() * TRIAGE_SPAWN_JITTER_MS);
     if (jitter > 0) await new Promise((resolve) => setTimeout(resolve, jitter));
     await triageSem.acquire();
@@ -939,6 +976,7 @@ export class AgentRunner {
       if (parsed) {
         const verdict = { ...parsed, source: "local" };
         void this.recordTriageUsage(token, verdict, res.usage);
+        if (parsed.actionable === false) this.triageVerdictCache = { key: triageKey, verdict, at: Date.now() };
         return verdict;
       }
       return {
@@ -1173,8 +1211,10 @@ ${delta}`;
             agentId: this.agent.id
           }
         }, this.cfg.tenantId);
-        this.activeRunId = run?.runId ?? null;
-        this.activeRunContract = run?.contract ?? (activeContract ? { ...activeContract, agentId: this.agent.id } : null);
+        await this.setActiveRun(
+          run?.runId ?? null,
+          run?.contract ?? (activeContract ? { ...activeContract, agentId: this.agent.id } : null)
+        );
         await this.publishEvent("turn.started", { reason, runId: run?.runId, conversationId: activeConversationId });
         const stopBeat = this.beatRun(token, run?.runId);
         let error: string | undefined;
@@ -1296,8 +1336,7 @@ ${delta}`;
           durationMs
         }, error ? "error" : "info");
         await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" }, this.cfg.tenantId);
-        this.activeRunId = null;
-        this.activeRunContract = null;
+        await this.setActiveRun(null, null);
         this.lastTurnEndedAt = Date.now();
       } while (this.pendingRerun && !this.stopped);
     } finally {
@@ -1319,6 +1358,9 @@ ${delta}`;
     const run = await runtimePost<RuntimeRun>(this.cfg.serverUrl, "/runs", token, {
       trigger: { source: "agenda", engine: this.adapter.id }
     }, this.cfg.tenantId);
+    // Self-initiated agenda work carries no wake contract; point the run file at this run with no
+    // task pin so the engine can act freely (and isn't constrained by a previous wake's contract).
+    await this.setActiveRun(run?.runId ?? null, null);
     const stopBeat = this.beatRun(token, run?.runId);
     let error: string | undefined;
     let exitCode = 0;
@@ -1364,6 +1406,7 @@ ${delta}`;
     } finally {
       bigBrainSem.release();
       stopBeat();
+      await this.setActiveRun(null, null);
     }
     if (error) {
       if (isRateLimited(error)) this.engineBackoffUntil = Date.now() + ENGINE_BACKOFF_MS;

@@ -47,6 +47,25 @@ export function installProcessErrorLogging(): void {
   });
 }
 
+const LOG_TIMESTAMPS_INSTALLED = Symbol.for("king-ai.logTimestamps");
+
+// Prefix every daemon log line with a high-resolution wall-clock timestamp so wake-to-response
+// latency can be measured by diffing line times (e.g. "SSE wake received" -> first "[codex] $").
+// Engine output is forwarded through console.* as well, so wrapping here timestamps host and
+// engine lines uniformly and matches the codex runtime's own ISO timestamps for easy correlation.
+export function installLogTimestamps(now: () => Date = () => new Date()): void {
+  const globalState = globalThis as unknown as Record<symbol, boolean>;
+  if (globalState[LOG_TIMESTAMPS_INSTALLED]) return;
+  globalState[LOG_TIMESTAMPS_INSTALLED] = true;
+  const methods = ["log", "info", "warn", "error"] as const;
+  for (const method of methods) {
+    const original = console[method].bind(console);
+    console[method] = (...args: unknown[]): void => {
+      original(`[${now().toISOString()}]`, ...args);
+    };
+  }
+}
+
 export function resolveHostName(base: string | undefined | null, platform: NodeJS.Platform, platformNames: string[] = []): string {
   if (base && base.toLowerCase() !== "localhost") return base;
   if (platform === "darwin") {
@@ -232,6 +251,7 @@ export async function runDoctor(): Promise<void> {
 
 export async function doRun(serverOverride?: string, tenantOverride?: string): Promise<void> {
   installProcessErrorLogging();
+  installLogTimestamps();
   const cfg = await loadConfig();
   if (!cfg) throw new Error("not paired. Run: king-ai agent computer --pair <code> --server <url>");
   const runtimeCfg: ComputerConfig = { ...cfg, serverUrl: serverOverride ?? cfg.serverUrl, tenantId: tenantOverride ?? cfg.tenantId };

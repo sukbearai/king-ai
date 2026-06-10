@@ -1,34 +1,27 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { dispatchRuntimeCli } from "../src/runtime-cli-dispatch.js";
+import type { RuntimeCliDeps } from "../src/runtime-cli-dispatch.js";
 import { runtimeCliHelp } from "../src/runtime-cli-help.js";
 
-test("runtimeCliHelp lists core collaboration commands", () => {
-  const help = runtimeCliHelp();
-  assert.match(help, /king-ai task create/);
-  assert.match(help, /king-ai card list/);
-  assert.match(help, /king-ai reply/);
-});
+type TestState = {
+  messages: Array<Record<string, unknown>>;
+  agents: Array<{ id: string; name: string; engine?: string }>;
+  composing: Array<{ conversationId: string; agentName: string; claimed_at: number; expires_at: number }>;
+  claims: Array<{ conversationId: string; name: string; owner: string }>;
+  statusLog: Array<{ status?: string }>;
+  availableEngines: string[];
+};
 
-test("dispatchRuntimeCli routes help without mutating state", async () => {
-  type TestState = {
-    messages: Array<Record<string, unknown>>;
-    agents: Array<{ id: string; name: string; engine?: string }>;
-    composing: Array<{ conversationId: string; agentName: string; claimed_at: number; expires_at: number }>;
-    claims: Array<{ conversationId: string; name: string; owner: string }>;
-    statusLog: Array<{ status?: string }>;
-    availableEngines: string[];
-  };
-  const state: TestState = { messages: [], agents: [], composing: [], claims: [], statusLog: [], availableEngines: [] };
-  const actor = { id: "dev", name: "Dev", engine: "codex" };
-  const outcome = await dispatchRuntimeCli({
-    argv: ["help"],
-    state,
-    actor,
-    authorEngine: "codex",
-    runContract: undefined,
-    payload: {}
-  }, {
+function freshState(): TestState {
+  return { messages: [], agents: [], composing: [], claims: [], statusLog: [], availableEngines: [] };
+}
+
+type Actor = { id: string; name: string; engine?: string };
+type Deps = RuntimeCliDeps<TestState, Actor>;
+
+function makeDeps(overrides: Partial<Deps> = {}): Deps {
+  const base: Deps = {
     defaultAgentId: "king-ai-ceo",
     findConversation: () => undefined,
     validateRunContractAction: () => undefined,
@@ -88,7 +81,60 @@ test("dispatchRuntimeCli routes help without mutating state", async () => {
       engine: (a) => a.engine,
       json: (a) => a
     }
-  });
+  };
+  return { ...base, ...overrides };
+}
+
+test("runtimeCliHelp lists core collaboration commands", () => {
+  const help = runtimeCliHelp();
+  assert.match(help, /king-ai task create/);
+  assert.match(help, /king-ai card list/);
+  assert.match(help, /king-ai reply/);
+});
+
+test("dispatchRuntimeCli routes help without mutating state", async () => {
+  const state = freshState();
+  const actor = { id: "dev", name: "Dev", engine: "codex" };
+  const outcome = await dispatchRuntimeCli({
+    argv: ["help"],
+    state,
+    actor,
+    authorEngine: "codex",
+    runContract: undefined,
+    payload: {}
+  }, makeDeps());
   assert.equal(outcome.kind, "success");
   if (outcome.kind === "success") assert.match(outcome.result, /king-ai inbox/);
+});
+
+test("dispatchRuntimeCli only contract-checks id-targeted task mutations, not flags or reads", async () => {
+  const actor = { id: "dev", name: "Dev", engine: "codex" };
+  // Mirrors gui-runtime's isTaskMutationCommand: only done/update/create mutate.
+  const isTaskMutationCommand = (args: string[]) => args[0] === "done" || args[0] === "update" || args[0] === "create";
+  const seenTaskIds: Array<string | undefined> = [];
+  const run = (argv: string[]) =>
+    dispatchRuntimeCli({
+      argv,
+      state: freshState(),
+      actor,
+      authorEngine: "codex",
+      // A live wake contract pinned to one task; the bug let any argv[2] (incl. flags) trip it.
+      runContract: { agentId: "dev", taskId: "task-pinned" },
+      payload: { runId: "run-1" }
+    }, makeDeps({
+      isTaskMutationCommand,
+      taskCommand: () => "ok",
+      validateRunContractAction: (_state, _contract, _actor, action) => {
+        seenTaskIds.push(action.taskId);
+        return undefined;
+      }
+    }));
+
+  await run(["task", "list", "--json"]); // read subcommand: no taskId
+  await run(["task", "done", "--help"]);  // usage flag must not be read as a taskId
+  await run(["task", "get", "task-123"]); // read subcommand: not contract-gated
+  await run(["task", "done", "task-123"]); // real id-targeted mutation: validated
+  await run(["task", "create", "Write the spec"]); // create makes a new id, not validated
+
+  assert.deepEqual(seenTaskIds, [undefined, undefined, undefined, "task-123", undefined]);
 });

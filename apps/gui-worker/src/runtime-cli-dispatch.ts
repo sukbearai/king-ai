@@ -291,13 +291,17 @@ export async function dispatchRuntimeCli<S, A>(
   if (argv[0] === "card") return success(deps.cardCommand(state, argv.slice(1)));
 
   if (argv[0] === "task") {
-    // For `task create`, argv[2] is the title, not an existing task id, so it must not be
-    // validated/recorded as a taskId (that would falsely trip the run-contract task check).
-    const taskActionId = argv[1] === "create" ? undefined : argv[2];
+    // Only id-targeted mutations carry a taskId to validate against the run contract. `task create`
+    // makes a new task (argv[2] is the title, not an existing id), and read/usage subcommands
+    // (`list`, `get`, `--help`, `--json`) must never be gated by the contract — otherwise an option
+    // flag gets misread as a taskId and trips a bogus "does not match wake task" rejection that even
+    // blocks the agent from inspecting its own tasks.
+    const mutates = deps.isTaskMutationCommand(argv.slice(1));
+    const taskActionId = mutates && argv[1] !== "create" && argv[2] && !argv[2].startsWith("-") ? argv[2] : undefined;
     const contractError = deps.validateRunContractAction(state, runContract, actor, { command: "task", taskId: taskActionId });
     if (contractError) return reject(contractError);
     const result = deps.taskCommand(state, argv.slice(1), actor);
-    if (deps.isTaskMutationCommand(argv.slice(1)) && !deps.isCliUsageOrError(result)) {
+    if (mutates && !deps.isCliUsageOrError(result)) {
       deps.recordRunAction(state, payload.runId, runContract, actor, "task", { taskId: taskActionId, summary: result.slice(0, 160) });
     }
     return success(result);
