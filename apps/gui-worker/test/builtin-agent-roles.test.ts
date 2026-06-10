@@ -12,11 +12,7 @@ test("every built-in software-dev agent declares an explicit role template", () 
   const expected: Record<string, string> = {
     "king-ai-ceo": "planner",
     dev: "builder",
-    reviewer: "reviewer",
-    tester: "tester",
-    ops: "ops",
-    researcher: "researcher",
-    "doc-writer": "doc-writer"
+    reviewer: "reviewer"
   };
   assert.deepEqual(
     DEFAULT_TEAM_AGENTS.map((agent) => agent.id),
@@ -46,17 +42,20 @@ test("the IELTS coach is a conversation partner, not a translator that echoes th
   assert.match(tutor.role, /Only write a direct translation or a standalone piece of text when the learner explicitly asks/);
 });
 
-test("normalizeAgents refreshes built-in workflow roles from source but keeps the operator's custom role", () => {
+test("normalizeAgents keeps only the four built-in system agents", () => {
   const tutorTemplate = IELTS_WORKFLOW_AGENTS.find((agent) => agent.id === "ielts-tutor");
   assert.ok(tutorTemplate, "ielts-tutor template should exist");
   const normalized = normalizeAgents([
     // A stale coach role persisted from an older build, plus a user-set model override.
     { id: "ielts-tutor", name: "IELTS Reading & Writing Coach", role: "STALE coach role", engine: "codex", lifecycle: "on-demand", model: "custom-model" },
     // The default operator agent with a role the user customized via agent-config.
-    { id: "king-ai-ceo", name: "King AI Helper", role: "Answer in a concise operator voice.", engine: "claude", lifecycle: "disabled" }
+    { id: "king-ai-ceo", name: "King AI Helper", role: "Answer in a concise operator voice.", engine: "claude", lifecycle: "disabled" },
+    { id: "tester", name: "Tester", role: "Legacy tester.", engine: "codex", lifecycle: "on-demand" },
+    { id: "ielts-vocab-coach", name: "IELTS Vocabulary Coach", role: "Custom coach.", engine: "codex", lifecycle: "on-demand" }
   ]);
   const tutor = normalized.find((agent) => agent.id === "ielts-tutor");
   const ceo = normalized.find((agent) => agent.id === "king-ai-ceo");
+  assert.deepEqual([...normalized.map((agent) => agent.id)].sort(), ["dev", "ielts-tutor", "king-ai-ceo", "reviewer"]);
   // The built-in coach role is refreshed from the source template, not frozen at the stale value.
   assert.equal(tutor?.role, tutorTemplate.role);
   assert.notEqual(tutor?.role, "STALE coach role");

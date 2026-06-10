@@ -46,7 +46,7 @@ Runner 同时负责 runtime 账本，例如 token 刷新和稳定 wake 事件去
 
 King AI 把工作建模成一个小型团队。**角色模板**是一套小而**领域无关**的词表，描述一个 agent **如何**参与工作流——它的协作行为，以及随之而来的能力与权限。内置模板有 `planner`、`builder`、`reviewer`、`tester`、`ops`、`researcher`、`doc-writer` 和 `summarizer`。Workflow 用它们按能力路由任务、请求评审、创建交接，并发起人工决策。
 
-模板不是 agent。具体花名册把 agent 映射到模板，并且可以**把一个模板折叠进另一个**，而不是 1:1 配人——例如默认团队没有独立的 summarizer，收尾职责由 planner（King AI CEO）承担。领域 agent 也是同理：雅思 coach 是单 agent 工作流，在协作维度上复用通用的 `builder` 模板（它直接干活），而它的学科专长写在自由文本 role 里，不另造模板。这样模板集保持通用、可跨领域复用——**agent 懂什么**取决于它的 role 和所属的**工作流模板**，而不是协作词表。
+模板不是 agent。具体花名册把 agent 映射到模板，并且可以**把一个模板折叠进另一个**，而不是 1:1 配人——例如默认 GUI 软件开发团队是精简的 King AI CEO（`planner`）、Dev（`builder`）和 Reviewer（`reviewer`）三人组，收尾职责由 planner 承担，而不是另设 summarizer。领域 agent 也是同理：雅思 coach 是单 agent 工作流，在协作维度上复用通用的 `builder` 模板（它直接干活），而它的学科专长写在自由文本 role 里，不另造模板。这样模板集保持通用、可跨领域复用——**agent 懂什么**取决于它的 role 和所属的**工作流模板**，而不是协作词表。
 
 在 IELTS Study 工作流中，coach 保持可见英文自然，把结构化标注放在隐藏的 `WordCards:` JSON 块里。JSON 里的 `sentences` 会把每个可见英文句子拆成 clauses：简单句也要有一个 clause；并列句、复合句、复杂句和并列复合句要覆盖每个有限动词主句、并列分句、从句或关系从句。每个 clause 都要提供一个逐字连续出现的简短 `core`，`phrases` 只标同一分句中的有用短词组。每个英文单词都可点击：`cards` 应为每个可见英文单词 token 提供结构化中文义、IPA 音标和音节拆分。runtime 信任 coach，不再拦截或拒绝回复，而是尽力渲染这个合同：能匹配上的句子/分句高亮和词卡就渲染，coach 漏掉的词就回退到自动生成的词卡，并在学习者看到回复前把隐藏的 JSON 块剥掉。
 

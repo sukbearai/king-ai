@@ -205,7 +205,7 @@ test("runRouteCommand sets event routes for agents", () => {
   };
   const result = runRouteCommand(state, ["set", "task.created", "--agent", "dev"], {
     defaultAgentId: "king-ai-ceo",
-    ensureRouteAgent: () => {},
+    ensureRouteAgent: () => undefined,
     formatEventRouteLine: (route) => `${route.eventType}->${route.agentId}`,
     readOption: (args, flag) => {
       const idx = args.indexOf(flag);

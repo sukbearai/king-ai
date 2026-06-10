@@ -245,7 +245,7 @@ export function roleTemplateForAgent(agent: KingAgentRoleLike): KingRoleTemplate
 export function requiredCapabilitiesForText(text: string): string[] {
   const value = text.toLowerCase();
   if (/\b(test|verify|verification|regression|qa)\b/.test(value)) return ["testing", "verification"];
-  if (/\b(release|deploy|queue|approval|audit|ops)\b/.test(value)) return ["ops", "release", "audit"];
+  if (/\b(release|deploy|queue|approval|audit|ops|devops)\b/.test(value)) return ["ops", "release", "audit"];
   if (/\b(research|compare|brief|market|source|evidence)\b/.test(value)) return ["research", "evidence"];
   if (/\b(doc|docs|readme|release note|write|summary)\b/.test(value)) return ["documentation", "summary"];
   return ["implementation", "code"];

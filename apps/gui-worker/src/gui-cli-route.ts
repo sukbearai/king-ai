@@ -23,7 +23,7 @@ export type RunRouteCommandDeps<S extends {
   agents: GuiCliRouteAgent[];
 }> = {
   defaultAgentId: string;
-  ensureRouteAgent: (state: S, agentId: string) => void;
+  ensureRouteAgent: (state: S, agentId: string) => string | undefined;
   formatEventRouteLine: (route: GuiCliEventRoute) => string;
   readOption: (args: string[], flag: string) => string | undefined;
   parseExternalEventArgs: (eventType: string, args: string[]) => GuiCliExternalEvent;
@@ -47,7 +47,8 @@ export function runRouteCommand<S extends {
     const eventType = args[1];
     const agentId = deps.readOption(args, "--agent") || args[2] || deps.defaultAgentId;
     if (!eventType) return "usage: king-ai route set <eventType> --agent <agentId>";
-    deps.ensureRouteAgent(state, agentId);
+    const agentError = deps.ensureRouteAgent(state, agentId);
+    if (agentError) return agentError;
     if (!state.eventRoutes.some((route) => route.eventType === eventType && route.agentId === agentId)) {
       state.eventRoutes.push({ eventType, agentId, createdAt: Date.now() });
     }

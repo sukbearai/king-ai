@@ -704,12 +704,9 @@ export const DEFAULT_AGENT: Agent = {
   lifecycle: "on-demand"
 };
 
-// Concrete software-dev roster. There is intentionally no standalone `summarizer` agent:
-// the `summarizer` role template (team-workflow.ts) stays the capability/permission
-// definition for loop-closing, but in this roster the planner (king-ai-ceo) owns that
-// responsibility — "summarize verified results back to the human". Role templates define
-// capabilities/permissions; a concrete roster may fold a template into another agent
-// instead of mapping 1:1.
+// Concrete software-dev roster. The default GUI team is intentionally compact:
+// planner -> builder -> reviewer. Other role templates still exist in team-workflow.ts
+// as governance vocabulary, but they are not staffed by default GUI agents.
 export const DEFAULT_TEAM_AGENTS: Agent[] = [
   DEFAULT_AGENT,
   {
@@ -723,34 +720,6 @@ export const DEFAULT_TEAM_AGENTS: Agent[] = [
     id: "reviewer",
     name: "Reviewer",
     role: "Review completed Dev work before King AI CEO summarizes. Check correctness, regressions, and missing tests; pass verified work back to King AI CEO or request specific revisions. Role template: reviewer.",
-    engine: "codex",
-    lifecycle: "on-demand"
-  },
-  {
-    id: "tester",
-    name: "Tester",
-    role: "Role template: tester. Run verification and regression checks, record commands, and surface release-readiness risk.",
-    engine: "codex",
-    lifecycle: "on-demand"
-  },
-  {
-    id: "ops",
-    name: "Ops",
-    role: "Role template: ops. Handle queues, release, environment, approval, and audit-sensitive work.",
-    engine: "codex",
-    lifecycle: "on-demand"
-  },
-  {
-    id: "researcher",
-    name: "Researcher",
-    role: "Role template: researcher. Collect evidence, compare options, and produce sourced artifacts with confidence.",
-    engine: "codex",
-    lifecycle: "on-demand"
-  },
-  {
-    id: "doc-writer",
-    name: "Doc Writer",
-    role: "Role template: doc-writer. Write verified briefs, documentation, release notes, and user-facing summaries.",
     engine: "codex",
     lifecycle: "on-demand"
   }

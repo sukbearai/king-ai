@@ -1217,10 +1217,11 @@ test("gui all window routes team collaboration across CEO, dev, and reviewer age
     }), bindings)
   );
   assert.deepEqual(agents.map((agent) => agent.id).slice(0, 3), ["king-ai-ceo", "dev", "reviewer"]);
-  assert.equal(agents.some((agent) => agent.id === "tester"), true);
-  assert.equal(agents.some((agent) => agent.id === "ops"), true);
-  assert.equal(agents.some((agent) => agent.id === "researcher"), true);
-  assert.equal(agents.some((agent) => agent.id === "doc-writer"), true);
+  assert.equal(agents.length, 4);
+  assert.equal(agents.some((agent) => agent.id === "tester"), false);
+  assert.equal(agents.some((agent) => agent.id === "ops"), false);
+  assert.equal(agents.some((agent) => agent.id === "researcher"), false);
+  assert.equal(agents.some((agent) => agent.id === "doc-writer"), false);
 
   await worker.fetch(new Request("https://gui/gui/message", {
     method: "POST",
@@ -1282,7 +1283,7 @@ test("gui all window routes team collaboration across CEO, dev, and reviewer age
     await worker.fetch(new Request("https://gui/gui/summary"), bindings)
   );
   assert.deepEqual(summary.agents.map((agent) => agent.id).slice(0, 3), ["king-ai-ceo", "dev", "reviewer"]);
-  assert.equal(summary.agents.some((agent) => agent.id === "tester"), true);
+  assert.equal(summary.agents.some((agent) => agent.id === "tester"), false);
   assert.equal(summary.agents.find((agent) => agent.id === "reviewer")?.openTasks, 1);
   assert.equal(summary.agents.find((agent) => agent.id === "reviewer")?.unreadMessages, 1);
 });
@@ -1331,7 +1332,7 @@ test("wake filtering resolves implicit card wake targets before checking visibil
 test("new gui windows carry a collaboration team", async () => {
   const bindings = env();
   await pairComputer(bindings, { engines: ["codex"] });
-  const defaultTeamAgentIds = ["king-ai-ceo", "dev", "reviewer", "tester", "ops", "researcher", "doc-writer"];
+  const defaultTeamAgentIds = ["king-ai-ceo", "dev", "reviewer"];
   const createdWindow = await json<{
     conversation: { id: string; coordinatorAgentId?: string; teamAgentIds?: string[]; teamSnapshot?: { mode: string; teamAgentIds: string[]; agents: { id: string }[] } };
   }>(
@@ -1513,7 +1514,7 @@ test("new gui windows default to the IELTS workflow", async () => {
   assert.deepEqual(room.conversation.teamSnapshot?.agents.map((agent) => agent.id), ["ielts-tutor"]);
 });
 
-test("workflow agent membership can be updated before creating rooms", async () => {
+test("workflow agent membership stays within the fixed system roster", async () => {
   const bindings = env();
   await pairComputer(bindings, { engines: ["codex"] });
   const updated = await json<{ workflow: { id: string; agentIds: string[]; agents: { id: string; name: string }[] } }>(
@@ -1525,8 +1526,8 @@ test("workflow agent membership can be updated before creating rooms", async () 
       })
     }), bindings)
   );
-  assert.deepEqual(updated.workflow.agentIds, ["ielts-tutor", "ielts-vocab-coach"]);
-  assert.equal(updated.workflow.agents.some((agent) => agent.id === "ielts-vocab-coach"), true);
+  assert.deepEqual(updated.workflow.agentIds, ["ielts-tutor"]);
+  assert.equal(updated.workflow.agents.some((agent) => agent.id === "ielts-vocab-coach"), false);
 
   const teamRoom = await json<{ conversation: { workflowId?: string; teamAgentIds?: string[]; teamSnapshot?: { agents: { id: string }[] } } }>(
     await worker.fetch(new Request("https://gui/gui/conversations", {
@@ -1535,8 +1536,8 @@ test("workflow agent membership can be updated before creating rooms", async () 
     }), bindings)
   );
   assert.equal(teamRoom.conversation.workflowId, "ielts-study");
-  assert.deepEqual(teamRoom.conversation.teamAgentIds, ["ielts-tutor", "ielts-vocab-coach"]);
-  assert.deepEqual(teamRoom.conversation.teamSnapshot?.agents.map((agent) => agent.id), ["ielts-tutor", "ielts-vocab-coach"]);
+  assert.deepEqual(teamRoom.conversation.teamAgentIds, ["ielts-tutor"]);
+  assert.deepEqual(teamRoom.conversation.teamSnapshot?.agents.map((agent) => agent.id), ["ielts-tutor"]);
 
   const removed = await json<{ workflow: { agentIds: string[] } }>(
     await worker.fetch(new Request("https://gui/gui/workflows/ielts-study/agents", {
@@ -1545,6 +1546,11 @@ test("workflow agent membership can be updated before creating rooms", async () 
     }), bindings)
   );
   assert.deepEqual(removed.workflow.agentIds, ["ielts-tutor"]);
+
+  const state = await json<{ agents: { id: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  assert.deepEqual(state.agents.map((agent) => agent.id), ["king-ai-ceo", "dev", "reviewer", "ielts-tutor"]);
 
   const missing = await worker.fetch(new Request("https://gui/gui/workflows/missing-workflow/agents", {
     method: "POST",
@@ -1713,7 +1719,7 @@ test("single-agent workflow completion does not prompt a duplicate chat summary"
   assert.equal(afterDone.taskEvents.some((row) => row.taskId === task?.id && row.type === "completed"), true);
 });
 
-test("custom gui windows route work by role capability", async () => {
+test("software-dev system roster contains only the fixed built-in agents", async () => {
   const bindings = env();
   await pairComputer(bindings, { engines: ["codex"] });
   const room = await json<{ conversation: { id: string; teamAgentIds?: string[] } }>(
@@ -1722,30 +1728,13 @@ test("custom gui windows route work by role capability", async () => {
       body: JSON.stringify({ title: "Research Room", workflowId: "software-dev", teamMode: "custom", teamAgentIds: ["dev", "reviewer", "researcher", "tester", "ops"] })
     }), bindings)
   );
-  assert.deepEqual(room.conversation.teamAgentIds, ["king-ai-ceo", "dev", "reviewer", "researcher", "tester", "ops"]);
-
-  await worker.fetch(new Request("https://gui/gui/message", {
-    method: "POST",
-    body: JSON.stringify({ conversationId: room.conversation.id, body: "research competitors and source evidence" })
-  }), bindings);
-  await worker.fetch(new Request("https://gui/gui/message", {
-    method: "POST",
-    body: JSON.stringify({ conversationId: room.conversation.id, body: "run regression verification tests" })
-  }), bindings);
-  await worker.fetch(new Request("https://gui/gui/message", {
-    method: "POST",
-    body: JSON.stringify({ conversationId: room.conversation.id, body: "prepare release approval and audit queue" })
-  }), bindings);
+  assert.deepEqual(room.conversation.teamAgentIds, ["king-ai-ceo", "dev", "reviewer"]);
 
   const state = await json<{
-    tasks: { conversationId?: string; assignee?: string; ownerRole?: string; reviewerRole?: string; acceptance?: string[] }[];
+    agents: { id: string }[];
+    workflows: { id: string; agentIds: string[] }[];
   }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
-  const tasks = state.tasks.filter((task) => task.conversationId === room.conversation.id);
-  assert.equal(tasks.find((task) => task.ownerRole === "researcher")?.assignee, "researcher");
-  assert.equal(tasks.find((task) => task.ownerRole === "tester")?.assignee, "tester");
-  assert.equal(tasks.find((task) => task.ownerRole === "ops")?.assignee, "ops");
-  assert.equal(tasks.every((task) => task.reviewerRole === "reviewer"), true);
-  assert.equal(tasks.every((task) => (task.acceptance ?? []).length > 0), true);
+  assert.deepEqual(state.agents.map((agent) => agent.id), ["king-ai-ceo", "dev", "reviewer", "ielts-tutor"]);
 });
 
 test("gui window requests close the loop through dev, reviewer, and coordinator", async () => {
@@ -3091,18 +3080,19 @@ test("gui runtime routes external events to subscribed agents", async () => {
     body: JSON.stringify({ argv })
   }), bindings));
 
-  assert.match((await callCli(["route", "set", "github_issue", "--agent", "feedback"])).text, /route set github_issue -> feedback/);
-  assert.match((await callCli(["route", "set", "shared_event", "--agent", "feedback"])).text, /route set shared_event -> feedback/);
-  assert.match((await callCli(["route", "set", "shared_event", "--agent", "devops"])).text, /route set shared_event -> devops/);
-  assert.match((await callCli(["route", "list"])).text, /github_issue\t-> feedback/);
+  assert.match((await callCli(["route", "set", "github_issue", "--agent", "reviewer"])).text, /route set github_issue -> reviewer/);
+  assert.match((await callCli(["route", "set", "shared_event", "--agent", "reviewer"])).text, /route set shared_event -> reviewer/);
+  assert.match((await callCli(["route", "set", "shared_event", "--agent", "dev"])).text, /route set shared_event -> dev/);
+  assert.match((await callCli(["route", "set", "external_event", "--agent", "feedback"])).text, /unknown agent: feedback/);
+  assert.match((await callCli(["route", "list"])).text, /github_issue\t-> reviewer/);
 
-  assert.match((await callCli(["route", "emit", "github_issue", "--source", "github", "{\"title\":\"Login broken\"}"])).text, /event routed github_issue -> feedback/);
-  assert.match((await callCli(["recv", "--agent", "feedback"])).text, /\[steer\/normal\/msg\] Runtime Event .*github_issue.*Login broken/);
-  assert.match((await callCli(["recv", "--agent", "devops"])).text, /No pending messages/);
+  assert.match((await callCli(["route", "emit", "github_issue", "--source", "github", "{\"title\":\"Login broken\"}"])).text, /event routed github_issue -> reviewer/);
+  assert.match((await callCli(["recv", "--agent", "reviewer"])).text, /\[steer\/normal\/msg\] Runtime Event .*github_issue.*Login broken/);
+  assert.match((await callCli(["recv", "--agent", "dev"])).text, /No pending messages/);
 
-  assert.match((await callCli(["route", "emit", "shared_event", "--source", "test", "{\"data\":\"broadcast\"}"])).text, /event routed shared_event -> devops,feedback/);
-  assert.match((await callCli(["recv", "--agent", "feedback"])).text, /shared_event.*broadcast/);
-  assert.match((await callCli(["recv", "--agent", "devops"])).text, /shared_event.*broadcast/);
+  assert.match((await callCli(["route", "emit", "shared_event", "--source", "test", "{\"data\":\"broadcast\"}"])).text, /event routed shared_event -> (dev,reviewer|reviewer,dev)/);
+  assert.match((await callCli(["recv", "--agent", "reviewer"])).text, /shared_event.*broadcast/);
+  assert.match((await callCli(["recv", "--agent", "dev"])).text, /shared_event.*broadcast/);
   assert.match((await callCli(["route", "emit", "unknown_event", "--source", "test", "{}"])).text, /event ignored unknown_event/);
 
   const eventRes = await json<{ routed: string[] }>(await worker.fetch(new Request("https://gui/runtime/events", {
@@ -3110,24 +3100,25 @@ test("gui runtime routes external events to subscribed agents", async () => {
     headers: auth,
     body: JSON.stringify({ type: "github_issue", source: "github", payload: { title: "Billing broken" } })
   }), bindings));
-  assert.deepEqual(eventRes.routed, ["feedback"]);
-  assert.match((await callCli(["recv", "--agent", "feedback"])).text, /Billing broken/);
+  assert.deepEqual(eventRes.routed, ["reviewer"]);
+  assert.match((await callCli(["recv", "--agent", "reviewer"])).text, /Billing broken/);
 
   const state = await json<{ eventRoutes: { eventType: string; agentId: string }[]; agents: { id: string; events?: string[] }[]; messages: { to_agent_id?: string; payload?: { type?: string; payload?: { title?: string } } }[] }>(
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
+  assert.deepEqual(state.agents.map((agent) => agent.id), ["king-ai-ceo", "dev", "reviewer", "ielts-tutor"]);
   assert.deepEqual(state.eventRoutes.map((route) => `${route.eventType}->${route.agentId}`).sort(), [
-    "github_issue->feedback",
-    "shared_event->devops",
-    "shared_event->feedback"
+    "github_issue->reviewer",
+    "shared_event->dev",
+    "shared_event->reviewer"
   ]);
-  assert.deepEqual(state.agents.find((agent) => agent.id === "feedback")?.events?.sort(), ["github_issue", "shared_event"]);
+  assert.deepEqual(state.agents.find((agent) => agent.id === "reviewer")?.events?.sort(), ["github_issue", "shared_event"]);
   assert.equal(state.messages.some((message) =>
-    message.to_agent_id === "feedback" &&
+    message.to_agent_id === "reviewer" &&
     message.payload?.type === "github_issue" &&
     message.payload.payload?.title === "Billing broken"
   ), true);
-  assert.match((await callCli(["route", "delete", "github_issue", "--agent", "feedback"])).text, /route deleted github_issue -> feedback/);
+  assert.match((await callCli(["route", "delete", "github_issue", "--agent", "reviewer"])).text, /route deleted github_issue -> reviewer/);
 });
 
 test("gui runtime records status, typing, thinking, events, and runs", async () => {
@@ -3631,13 +3622,13 @@ test("gui runtime records King AI loop events", async () => {
 
   assert.match((await callCli(["loop", "snapshot"])).text, /classification=idle/);
   assert.match((await callCli(["loop", "tick", "--run", "run-test"])).text, /loop tick 1 run=run-test/);
-  assert.match((await callCli(["loop", "emit", "queue.backlog", "--agent", "feedback", "--pending", "2", "{\"source\":\"manual\"}"])).text, /loop event queue.backlog recorded loop=1/);
+  assert.match((await callCli(["loop", "emit", "queue.backlog", "--agent", "reviewer", "--pending", "2", "{\"source\":\"manual\"}"])).text, /loop event queue.backlog recorded loop=1/);
   assert.match((await callCli(["loop", "classify"])).text, /loop classified backlog_stuck/);
-  assert.match((await callCli(["loop", "recent", "--type", "queue.backlog"])).text, /queue\.backlog agent=feedback pending=2/);
+  assert.match((await callCli(["loop", "recent", "--type", "queue.backlog"])).text, /queue\.backlog agent=reviewer pending=2/);
 
-  assert.match((await callCli(["route", "set", "github_issue", "--agent", "feedback"])).text, /route set github_issue -> feedback/);
-  assert.match((await callCli(["route", "emit", "github_issue", "--source", "github", "{\"title\":\"Loop backlog\"}"])).text, /event routed github_issue -> feedback/);
-  assert.match((await callCli(["loop", "recent", "--agent", "feedback"])).text, /queue\.backlog agent=feedback pending=1/);
+  assert.match((await callCli(["route", "set", "github_issue", "--agent", "reviewer"])).text, /route set github_issue -> reviewer/);
+  assert.match((await callCli(["route", "emit", "github_issue", "--source", "github", "{\"title\":\"Loop backlog\"}"])).text, /event routed github_issue -> reviewer/);
+  assert.match((await callCli(["loop", "recent", "--agent", "reviewer"])).text, /queue\.backlog agent=reviewer pending=1/);
 
   const task = await callCli(["task", "create", "Loop task", "--assign", "king-ai-ceo"]);
   const taskId = task.text.match(/Task (task-[^ ]+) created/)?.[1];

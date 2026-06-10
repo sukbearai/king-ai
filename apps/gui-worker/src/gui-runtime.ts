@@ -1047,6 +1047,10 @@ function defaultWorkflowAgents(): Agent[] {
   return [...byId.values()];
 }
 
+function systemAgentIds(): Set<string> {
+  return new Set(defaultWorkflowAgents().map((agent) => agent.id));
+}
+
 function workflowAgentIdsFor(state: State, workflow: WorkflowTemplate): string[] {
   return state.workflowAgentIds?.[workflow.id]?.length ? state.workflowAgentIds[workflow.id] : workflow.agentIds;
 }
@@ -1057,7 +1061,9 @@ function normalizeWorkflowAgentIds(value: unknown, agents: Agent[]): Record<stri
   const normalized: Record<string, string[]> = {};
   for (const workflow of WORKFLOW_TEMPLATES) {
     const incomingIds = normalizeStringList(input[workflow.id]).map(normalizeAgentId).filter((id): id is string => Boolean(id));
-    const ids = [...new Set((incomingIds.length ? incomingIds : workflow.agentIds).filter((id) => availableIds.has(id)))];
+    const workflowTemplateIds = new Set(workflow.agentIds);
+    const ids = [...new Set((incomingIds.length ? incomingIds : workflow.agentIds)
+      .filter((id) => workflowTemplateIds.has(id) && availableIds.has(id)))];
     if (!ids.includes(workflow.defaultCoordinatorAgentId) && availableIds.has(workflow.defaultCoordinatorAgentId)) ids.unshift(workflow.defaultCoordinatorAgentId);
     normalized[workflow.id] = ids.length ? ids : workflow.agentIds;
   }
@@ -1136,7 +1142,7 @@ function normalizeConversationTeam(state: State, payload: GuiConversationPayload
     return { workflowId: workflow.id, teamMode: mode, coordinatorAgentId: coordinator.id, teamAgentIds: [coordinator.id] };
   }
   if (mode === "custom") {
-    const requestedIds = normalizeStringList(payload.teamAgentIds).map(normalizeAgentId).filter((id): id is string => Boolean(id));
+    const requestedIds = normalizeStringList(payload.teamAgentIds ?? previous?.teamAgentIds).map(normalizeAgentId).filter((id): id is string => Boolean(id));
     const ids = [...new Set([coordinator.id, ...requestedIds])]
       .filter((id) => workflowIds.has(id) && Boolean(findAgent(state, id)));
     return { workflowId: workflow.id, teamMode: mode, coordinatorAgentId: coordinator.id, teamAgentIds: ids.length ? ids : [coordinator.id] };
@@ -1216,10 +1222,12 @@ function buildConversationTeamSnapshot(
 function normalizeAgents(agents: Agent[] | undefined): Agent[] {
   const byId = new Map<string, Agent>();
   const incoming = Array.isArray(agents) && agents.length ? agents : [DEFAULT_AGENT];
+  const allowedAgentIds = systemAgentIds();
   for (const agent of incoming) {
     if (!agent?.id) continue;
     const id = normalizeAgentId(agent.id);
     if (!id) continue;
+    if (!allowedAgentIds.has(id)) continue;
     byId.set(id, { ...agent, id });
   }
   for (const agent of [...DEFAULT_TEAM_AGENTS, ...IELTS_WORKFLOW_AGENTS]) {

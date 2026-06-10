@@ -461,7 +461,7 @@ export class GuiState implements DurableObject {
       conversation.teamMode = team.teamMode;
       conversation.coordinatorAgentId = team.coordinatorAgentId;
       conversation.teamAgentIds = team.teamAgentIds;
-      conversation.teamSnapshot ??= buildConversationTeamSnapshot(saved, team, {}, conversation.created_at || Date.now());
+      conversation.teamSnapshot = buildConversationTeamSnapshot(saved, team, {}, conversation.teamSnapshot?.createdAt ?? (conversation.created_at || Date.now()));
     }
     saved.cliLog = (saved.cliLog ?? []).slice(-CLI_LOG_CAPACITY);
     saved.statusLog = (saved.statusLog ?? []).slice(-STATUS_LOG_CAPACITY);
@@ -1042,8 +1042,9 @@ export class GuiState implements DurableObject {
       defaultAgentId: DEFAULT_AGENT.id,
       ensureRouteAgent: (currentState, agentId) => {
         if (!currentState.agents.some((agent) => agent.id === agentId)) {
-          currentState.agents.push({ ...DEFAULT_AGENT, id: agentId, name: agentId, role: "Event subscriber" });
+          return `unknown agent: ${agentId}`;
         }
+        return undefined;
       },
       formatEventRouteLine,
       readOption,
@@ -1397,7 +1398,8 @@ export class GuiState implements DurableObject {
     const state = await this.get();
     const workflow = workflowTemplateByIdOrUndefined(workflowIdValue);
     if (!workflow) return json({ error: `workflow not found: ${workflowIdValue || ""}` }, { status: 404 });
-    const incomingAgents = normalizeWorkflowAgentDefinitions(payload.agents);
+    const systemIds = new Set(defaultTeamAgents().map((agent) => agent.id));
+    const incomingAgents = normalizeWorkflowAgentDefinitions(payload.agents).filter((agent) => systemIds.has(agent.id));
     if (incomingAgents.length) state.agents = upsertAgents(state.agents, incomingAgents);
     state.workflowAgentIds = normalizeWorkflowAgentIds(state.workflowAgentIds, state.agents);
     const requestedIds = normalizeStringList(payload.agentIds).map(normalizeAgentId).filter((id): id is string => Boolean(id));
