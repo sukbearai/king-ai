@@ -58,7 +58,7 @@ to verify engine availability after PATH, login, or quota changes.
 
 The GUI Worker uses Cloudflare Workers AI for IELTS coach text-to-speech when the `AI` binding is available. Agent messages show a play button that calls `/gui/tts`, runs `xai/grok-tts`, and streams the generated audio back to the browser. The deployed Cloudflare account must have Workers AI access and enough balance or BYOK configuration.
 
-Playback is scoped to messages from the IELTS coach. The browser sends only the readable English portion of the coach reply to TTS and excludes the hidden `WordCards` JSON used for vocabulary and sentence annotations.
+Playback is scoped to messages from the IELTS coach and to individual word cards opened from those messages. For full-message playback, the browser sends only the readable English portion of the coach reply to TTS and excludes the hidden `WordCards` JSON used for vocabulary and sentence annotations. For word cards, the browser sends only the selected word.
 
 The playback button shows loading, playing, and failure states. Only one reply plays at a time, clicking the active button stops playback, and generated audio is cached in browser memory for the current page session so repeated clicks do not regenerate the same message.
 

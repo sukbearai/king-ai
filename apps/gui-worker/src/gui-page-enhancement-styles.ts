@@ -341,8 +341,22 @@ export const guiPageEnhancementStyles = `
       padding-bottom: 8px;
     }
     .vocab-title {
+      min-width: 0;
       font-size: 18px;
       font-weight: 900;
+      overflow-wrap: anywhere;
+    }
+    .vocab-actions {
+      display: inline-flex;
+      flex: 0 0 auto;
+      align-items: center;
+      gap: 6px;
+    }
+    .vocab-audio-button {
+      width: 28px;
+      min-width: 28px;
+      min-height: 28px;
+      height: 28px;
     }
     .vocab-row {
       display: grid;

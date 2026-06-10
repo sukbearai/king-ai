@@ -342,28 +342,45 @@ export const guiPageStyles = `    :root {
     .author { font-weight: 900; }
     .time { color: var(--muted); font-size: 10px; white-space: nowrap; }
     .tts-button {
-      width: 22px;
-      height: 22px;
+      width: 24px;
+      min-width: 24px;
+      min-height: 24px;
+      height: 24px;
       padding: 0;
-      color: var(--muted);
+      display: inline-grid;
+      place-items: center;
+      color: var(--line);
+      background: var(--panel);
+      border-color: var(--soft-line);
+      border-radius: 999px;
+      box-shadow: none;
+      vertical-align: middle;
+    }
+    .tts-button:hover {
+      background: var(--accent);
+      border-color: var(--line);
     }
     .tts-button[data-tts-state="loading"] {
       color: var(--accent);
+      background: var(--line);
+      border-color: var(--line);
     }
     .tts-button[data-tts-state="loading"] svg {
       animation: tts-spin 0.8s linear infinite;
     }
     .tts-button[data-tts-state="playing"] {
-      color: var(--accent);
-      background: var(--active);
+      color: var(--line);
+      background: var(--accent);
+      border-color: var(--line);
     }
     .tts-button[data-tts-state="error"] {
       color: #b42318;
       background: #fff1f0;
+      border-color: #b42318;
     }
     .tts-button svg {
-      width: 12px;
-      height: 12px;
+      width: 14px;
+      height: 14px;
       display: block;
       fill: currentColor;
     }

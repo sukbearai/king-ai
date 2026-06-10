@@ -114,7 +114,10 @@ export function renderPage(styles: string): string {
           <div class="vocab-card">
             <div class="vocab-head">
               <div id="vocabWord" class="vocab-title"></div>
-              <button class="icon" onclick="closeVocabDialog()" aria-label="Close vocabulary">x</button>
+              <div class="vocab-actions">
+                <button id="vocabAudioButton" class="icon-btn tts-button vocab-audio-button" data-tts-id="" data-tts-state="idle" onclick="playVocabTts()" title="Play word audio" aria-label="Play word audio"></button>
+                <button class="icon" onclick="closeVocabDialog()" aria-label="Close vocabulary">x</button>
+              </div>
             </div>
             <div class="vocab-row">
               <span id="vocabMeaningLabel" class="vocab-label">Meaning</span>

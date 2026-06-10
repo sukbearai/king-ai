@@ -123,6 +123,10 @@ const TRANSLATIONS = {
     taskEventReview: '提交评审',
     taskEventCompleted: '已完成',
     taskEventChanges: '需修改',
+    vocabAudio: '播放单词发音',
+    vocabAudioLoading: '正在加载单词发音',
+    vocabAudioStop: '停止单词发音',
+    vocabAudioFailed: '单词发音失败',
     vocabMeaning: '词义',
     vocabPhonetic: '音标',
     vocabSyllables: '音节',
@@ -268,6 +272,10 @@ const TRANSLATIONS = {
     taskEventReview: 'Review',
     taskEventCompleted: 'Completed',
     taskEventChanges: 'Changes',
+    vocabAudio: 'Play word audio',
+    vocabAudioLoading: 'Loading word audio',
+    vocabAudioStop: 'Stop word audio',
+    vocabAudioFailed: 'Word audio failed',
     vocabMeaning: 'Meaning',
     vocabPhonetic: 'Phonetic',
     vocabSyllables: 'Syllables',
@@ -495,9 +503,15 @@ function attachmentListHtml(attachments) {
 window.__messageAudioText = window.__messageAudioText || {};
 const ttsAudioCache = new Map();
 let activeTts = null;
-let loadingTtsMessageId = '';
+let loadingTtsId = '';
 let ttsNoticeTimer = 0;
 let ttsPlayRequestId = 0;
+const messageTtsLabels = {
+  idle: 'Play audio',
+  loading: 'Loading audio',
+  playing: 'Stop audio',
+  error: 'TTS failed'
+};
 function isIeltsTutorMessage(message) {
   if (!message || message.author_kind !== 'agent') return false;
   if (message.author_agent_id === 'ielts-tutor') return true;
@@ -517,18 +531,21 @@ function ttsTextFromIeltsMessage(message) {
   return englishLines.join(' ').replace(/\\s+/g, ' ').trim().slice(0, 1200);
 }
 function ttsIconHtml(kind) {
-  if (kind === 'stop') return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10v10H7z"/></svg>';
+  if (kind === 'stop') return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h8v8H8z"/></svg>';
   if (kind === 'loading') return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9h-3a6 6 0 1 1-6-6z"/></svg>';
-  return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>';
+  return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 9v6h4l5 4V5L9 9H5zm12.5 3a4.5 4.5 0 0 0-2-3.74v7.48a4.5 4.5 0 0 0 2-3.74z"/></svg>';
 }
-function setTtsButtonState(messageId, state, label) {
-  const button = document.querySelector('[data-tts-id="' + CSS.escape(messageId) + '"]');
+function setTtsButtonState(ttsId, state, label) {
+  const button = document.querySelector('[data-tts-id="' + CSS.escape(ttsId) + '"]');
   if (!button) return;
   button.dataset.ttsState = state;
   button.disabled = state === 'loading';
   button.title = label;
   button.setAttribute('aria-label', label);
   button.innerHTML = ttsIconHtml(state === 'playing' ? 'stop' : state);
+}
+function ttsIdleLabel(ttsId) {
+  return String(ttsId || '').startsWith('vocab:') ? t('vocabAudio') : messageTtsLabels.idle;
 }
 function showTtsNotice(message) {
   let notice = document.getElementById('ttsNotice');
@@ -557,6 +574,15 @@ function stopActiveTts() {
   activeTts.audio.currentTime = 0;
   activeTts.cleanup();
 }
+function cancelTts(ttsId) {
+  if (!ttsId) return;
+  if (activeTts && activeTts.ttsId === ttsId) stopActiveTts();
+  if (loadingTtsId === ttsId) {
+    ttsPlayRequestId += 1;
+    loadingTtsId = '';
+    setTtsButtonState(ttsId, 'idle', ttsIdleLabel(ttsId));
+  }
+}
 function cacheTtsAudio(cacheKey, url) {
   if (ttsAudioCache.size >= 20) {
     const oldestKey = ttsAudioCache.keys().next().value;
@@ -566,21 +592,20 @@ function cacheTtsAudio(cacheKey, url) {
   }
   ttsAudioCache.set(cacheKey, url);
 }
-async function playMessageTts(messageId) {
-  const text = window.__messageAudioText && window.__messageAudioText[messageId];
+async function playTts(ttsId, text, labels) {
   if (!text) return;
-  if (activeTts && activeTts.messageId === messageId) {
+  if (activeTts && activeTts.ttsId === ttsId) {
     ttsPlayRequestId += 1;
     stopActiveTts();
     return;
   }
   const requestId = ++ttsPlayRequestId;
   stopActiveTts();
-  if (loadingTtsMessageId && loadingTtsMessageId !== messageId) setTtsButtonState(loadingTtsMessageId, 'idle', 'Play audio');
-  loadingTtsMessageId = messageId;
-  setTtsButtonState(messageId, 'loading', 'Loading audio');
+  if (loadingTtsId && loadingTtsId !== ttsId) setTtsButtonState(loadingTtsId, 'idle', ttsIdleLabel(loadingTtsId));
+  loadingTtsId = ttsId;
+  setTtsButtonState(ttsId, 'loading', labels.loading);
   try {
-    const cacheKey = messageId + ':' + text;
+    const cacheKey = ttsId + ':' + text;
     let url = ttsAudioCache.get(cacheKey);
     if (!url) {
       const response = await fetch('/gui/tts', {
@@ -594,9 +619,9 @@ async function playMessageTts(messageId) {
       cacheTtsAudio(cacheKey, url);
     }
     if (requestId !== ttsPlayRequestId) {
-      if (loadingTtsMessageId === messageId) {
-        loadingTtsMessageId = '';
-        setTtsButtonState(messageId, 'idle', 'Play audio');
+      if (loadingTtsId === ttsId) {
+        loadingTtsId = '';
+        setTtsButtonState(ttsId, 'idle', labels.idle);
       }
       return;
     }
@@ -605,29 +630,33 @@ async function playMessageTts(messageId) {
       audio.onended = null;
       audio.onerror = null;
       if (activeTts && activeTts.audio === audio) activeTts = null;
-      setTtsButtonState(messageId, 'idle', 'Play audio');
+      setTtsButtonState(ttsId, 'idle', labels.idle);
     };
-    activeTts = { messageId: messageId, audio: audio, cleanup: cleanup };
-    if (loadingTtsMessageId === messageId) loadingTtsMessageId = '';
+    activeTts = { ttsId: ttsId, audio: audio, cleanup: cleanup };
+    if (loadingTtsId === ttsId) loadingTtsId = '';
     audio.onended = cleanup;
     audio.onerror = function() {
       cleanup();
       showTtsNotice('TTS audio could not be played.');
     };
-    setTtsButtonState(messageId, 'playing', 'Stop audio');
+    setTtsButtonState(ttsId, 'playing', labels.playing);
     await audio.play();
   } catch (error) {
     console.warn('TTS playback failed', error);
-    if (loadingTtsMessageId === messageId) loadingTtsMessageId = '';
-    if (activeTts && activeTts.messageId === messageId) {
+    if (loadingTtsId === ttsId) loadingTtsId = '';
+    if (activeTts && activeTts.ttsId === ttsId) {
       activeTts.audio.pause();
       activeTts.cleanup();
     }
     showTtsNotice(ttsErrorMessage(error));
-    setTtsButtonState(messageId, 'error', 'TTS failed');
-    setTimeout(function() { setTtsButtonState(messageId, 'idle', 'Play audio'); }, 1800);
+    setTtsButtonState(ttsId, 'error', labels.error);
+    setTimeout(function() { setTtsButtonState(ttsId, 'idle', labels.idle); }, 1800);
   } finally {
   }
+}
+async function playMessageTts(messageId) {
+  const text = window.__messageAudioText && window.__messageAudioText[messageId];
+  await playTts(messageId, text, messageTtsLabels);
 }
 function ttsButtonHtml(message) {
   if (!message || message.status === 'pending' || !message.body || !message.id || !isIeltsTutorMessage(message)) return '';
@@ -1197,11 +1226,25 @@ function closeTaskChat() {
 function openVocabDialog(node) {
   const dialog = document.getElementById('vocabDialog');
   if (!dialog || !node) return;
+  const previousAudioButton = document.getElementById('vocabAudioButton');
+  if (previousAudioButton) cancelTts(previousAudioButton.dataset.ttsId || '');
+  const word = node.getAttribute('data-word') || node.textContent || '';
   const meaning = node.getAttribute('data-meaning') || '';
   const phonetic = node.getAttribute('data-phonetic') || '';
   const syllables = node.getAttribute('data-syllables') || '';
   const hasDetails = Boolean(meaning || phonetic || syllables);
-  document.getElementById('vocabWord').textContent = node.getAttribute('data-word') || node.textContent || '';
+  document.getElementById('vocabWord').textContent = word;
+  const audioButton = document.getElementById('vocabAudioButton');
+  if (audioButton) {
+    const ttsId = 'vocab:' + word.toLowerCase();
+    audioButton.dataset.ttsId = ttsId;
+    audioButton.dataset.ttsText = word;
+    audioButton.dataset.ttsState = 'idle';
+    audioButton.disabled = !word;
+    audioButton.title = t('vocabAudio');
+    audioButton.setAttribute('aria-label', t('vocabAudio'));
+    audioButton.innerHTML = ttsIconHtml('play');
+  }
   document.getElementById('vocabMeaningLabel').textContent = t('vocabMeaning');
   document.getElementById('vocabMeaning').textContent = meaning || t('vocabNoDetails');
   document.getElementById('vocabPhoneticLabel').textContent = t('vocabPhonetic');
@@ -1212,8 +1255,20 @@ function openVocabDialog(node) {
   document.getElementById('vocabSyllables').closest('.vocab-row').hidden = !hasDetails || !syllables;
   if (!dialog.open) dialog.showModal();
 }
+function playVocabTts() {
+  const button = document.getElementById('vocabAudioButton');
+  if (!button) return;
+  playTts(button.dataset.ttsId || 'vocab', (button.dataset.ttsText || '').trim(), {
+    idle: t('vocabAudio'),
+    loading: t('vocabAudioLoading'),
+    playing: t('vocabAudioStop'),
+    error: t('vocabAudioFailed')
+  });
+}
 function closeVocabDialog() {
   const dialog = document.getElementById('vocabDialog');
+  const audioButton = document.getElementById('vocabAudioButton');
+  if (audioButton) cancelTts(audioButton.dataset.ttsId || '');
   if (dialog && dialog.open) dialog.close();
 }
 document.addEventListener('click', function(event) {

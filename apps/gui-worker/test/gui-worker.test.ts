@@ -2533,9 +2533,10 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /function playMessageTts/);
   assert.match(html, /const ttsAudioCache = new Map/);
   assert.match(html, /let activeTts = null/);
-  assert.match(html, /let loadingTtsMessageId = ''/);
+  assert.match(html, /let loadingTtsId = ''/);
   assert.match(html, /function showTtsNotice/);
   assert.match(html, /function stopActiveTts/);
+  assert.match(html, /function playTts/);
   assert.match(html, /function isIeltsTutorMessage/);
   assert.match(html, /author_agent_id === 'ielts-tutor'/);
   assert.match(html, /function ttsTextFromIeltsMessage/);
@@ -2555,6 +2556,9 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /\.ielts-word/);
   assert.match(html, /border-bottom:\s*1px dotted/);
   assert.match(html, /id="vocabDialog"/);
+  assert.match(html, /id="vocabAudioButton"/);
+  assert.match(html, /function playVocabTts/);
+  assert.match(html, /vocabAudio/);
   assert.match(html, /function openVocabDialog/);
   assert.match(html, /target\.closest\('\.ielts-word'\)/);
   assert.match(html, /vocabNoDetails/);

@@ -58,7 +58,7 @@ king-ai agent computer --doctor
 
 当 GUI Worker 配置了 Cloudflare Workers AI 的 `AI` binding 时，IELTS 教练消息会显示播放按钮。按钮会调用 `/gui/tts`，运行 `xai/grok-tts`，并把生成的音频流式返回浏览器。部署所在的 Cloudflare 账号需要具备 Workers AI 访问权限，并且有足够余额或 BYOK 配置。
 
-播放范围只限 IELTS 教练消息。浏览器只会把教练回复中可读的英文部分发送给 TTS，并排除用于词卡和句子标注的隐藏 `WordCards` JSON。
+播放范围只限 IELTS 教练消息，以及从这些消息打开的单词卡。整条消息播放时，浏览器只会把教练回复中可读的英文部分发送给 TTS，并排除用于词卡和句子标注的隐藏 `WordCards` JSON；单词卡播放时只发送当前单词。
 
 播放按钮会显示加载中、播放中和失败状态。同一时间只播放一条回复；再次点击正在播放的按钮会停止播放；生成后的音频会缓存在当前页面会话的浏览器内存中，重复点击同一条消息不会重新生成。
 
