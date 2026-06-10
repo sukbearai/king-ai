@@ -519,7 +519,7 @@ async function playMessageTts(messageId) {
 function ttsButtonHtml(message) {
   if (!message || message.author_kind !== 'agent' || message.status === 'pending' || !message.body || !message.id) return '';
   window.__messageAudioText[message.id] = String(message.body).replace(/\s+/g, ' ').trim().slice(0, 1200);
-  return '<button class="icon-btn tts-button" data-tts-id="' + escapeHtml(message.id) + '" onclick="playMessageTts(&quot;' + escapeHtml(message.id) + '&quot;)" title="Play audio" aria-label="Play audio">▶</button>';
+  return '<button class="icon-btn tts-button" data-tts-id="' + escapeHtml(message.id) + '" onclick="playMessageTts(&quot;' + escapeHtml(message.id) + '&quot;)" title="Play audio" aria-label="Play audio"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></button>';
 }
 	const REMOTE_ASSIST_URL_KEY = 'king-ai:remoteAssistUrl';
 let remoteAssistUrl = localStorage.getItem(REMOTE_ASSIST_URL_KEY) || '';

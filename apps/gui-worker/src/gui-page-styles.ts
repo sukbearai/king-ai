@@ -344,8 +344,14 @@ export const guiPageStyles = `    :root {
     .tts-button {
       width: 22px;
       height: 22px;
-      font-size: 10px;
-      line-height: 1;
+      padding: 0;
+      color: var(--muted);
+    }
+    .tts-button svg {
+      width: 12px;
+      height: 12px;
+      display: block;
+      fill: currentColor;
     }
     .post-body {
       color: var(--body);
