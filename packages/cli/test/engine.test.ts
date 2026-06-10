@@ -238,6 +238,50 @@ rl.on('line', (line) => {
   ]);
 });
 
+test("Codex app-server session aborts when a turn produces no output", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-codex-no-output-"));
+  const binDir = join(dir, "bin");
+  await mkdir(binDir);
+  const codex = join(binDir, "codex");
+  await writeFile(
+    codex,
+    `#!/usr/bin/env node
+const readline = require('node:readline');
+const rl = readline.createInterface({ input: process.stdin });
+function send(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
+rl.on('line', (line) => {
+  const msg = JSON.parse(line);
+  if (msg.method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: {} });
+  else if (msg.method === 'thread/start') send({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: 'thread-1' } } });
+});
+`,
+    "utf8"
+  );
+  await chmod(codex, 0o755);
+
+  const old = process.env.KING_AI_SESSION_NO_OUTPUT_TIMEOUT_MS;
+  process.env.KING_AI_SESSION_NO_OUTPUT_TIMEOUT_MS = "25";
+  try {
+    const session = getAdapter("codex").startSession?.({
+      home: dir,
+      env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` },
+      standingPrompt: "standing",
+      onLog: () => {}
+    });
+    assert.ok(session);
+    const result = await session.send("hello");
+
+    assert.equal(result.exitCode, 124);
+    assert.match(result.error ?? "", /codex engine produced no output/);
+    assert.match(result.error ?? "", /quota, authentication\/login, or interactive prompt/);
+    assert.equal(session.alive, false);
+  } finally {
+    if (old === undefined) delete process.env.KING_AI_SESSION_NO_OUTPUT_TIMEOUT_MS;
+    else process.env.KING_AI_SESSION_NO_OUTPUT_TIMEOUT_MS = old;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("writeShim installs the king-ai command", async () => {
   const dir = await mkdtemp(join(tmpdir(), "king-ai-shim-"));
   await writeShim(dir);

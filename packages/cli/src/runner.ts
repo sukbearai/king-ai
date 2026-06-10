@@ -310,6 +310,7 @@ export function appendRuntimePreamble(delta: string, preamble?: string): string 
 
 const CONTEXT_OVERFLOW_RE = /context window|context length|context_length_exceeded|maximum context|reached its context|prompt is too long|input is too long|too many tokens/i;
 const POISONED_BODY_RE = /no (?:low|high) surrogate|unpaired surrogate|lone surrogate|surrogate in string|request body is not valid json/i;
+const ENGINE_NO_OUTPUT_RE = /engine produced no output|session\.send|interactive prompt/i;
 
 export function isContextOverflow(error: string): boolean {
   return CONTEXT_OVERFLOW_RE.test(error);
@@ -322,6 +323,7 @@ export function isPoisonedTranscript(error: string): boolean {
 export function mustResetSession(error: string, hadResume: boolean): boolean {
   if (isContextOverflow(error)) return true;
   if (isPoisonedTranscript(error)) return true;
+  if (ENGINE_NO_OUTPUT_RE.test(error)) return true;
   if (hadResume && /resume|session|conversation/i.test(error)) return true;
   return false;
 }
@@ -329,6 +331,7 @@ export function mustResetSession(error: string, hadResume: boolean): boolean {
 export function sessionResetReason(error: string): string {
   if (isContextOverflow(error)) return "engine hit its context-window limit";
   if (isPoisonedTranscript(error)) return "transcript poisoned by a malformed character";
+  if (ENGINE_NO_OUTPUT_RE.test(error)) return "engine produced no output";
   return "engine session problem";
 }
 

@@ -18,8 +18,30 @@ import { cleanLine, stripLoneSurrogates } from "./text.js";
 const IS_WIN = process.platform === "win32";
 const DOCTOR_PROMPT = "Connectivity check. Reply with exactly: OK";
 const MAX_FAILURE_CHARS = 4000;
-const TURN_TIMEOUT_MS = Number(process.env.KING_AI_TURN_TIMEOUT_MS) || 0;
-const SESSION_TIMEOUT_MS = Number(process.env.KING_AI_SESSION_TIMEOUT_MS) || 0;
+const DEFAULT_SESSION_NO_OUTPUT_TIMEOUT_MS = 300_000;
+
+function envDurationMs(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw == null || raw.trim() === "") return fallback;
+  const ms = Number(raw);
+  return Number.isFinite(ms) && ms >= 0 ? Math.floor(ms) : fallback;
+}
+
+function turnTimeoutMs(): number {
+  return envDurationMs("KING_AI_TURN_TIMEOUT_MS", 0);
+}
+
+function sessionTimeoutMs(): number {
+  return envDurationMs("KING_AI_SESSION_TIMEOUT_MS", 0);
+}
+
+function sessionNoOutputTimeoutMs(): number {
+  return envDurationMs("KING_AI_SESSION_NO_OUTPUT_TIMEOUT_MS", DEFAULT_SESSION_NO_OUTPUT_TIMEOUT_MS);
+}
+
+function engineNoOutputError(engine: EngineId, ms: number): string {
+  return `${engine} engine produced no output for ${Math.round(ms / 1000)}s after session.send - aborted; possible quota, authentication/login, or interactive prompt issue; run ${engine} locally and re-run king-ai agent computer --doctor`;
+}
 
 export function splitExtraArgs(raw: string | undefined): string[] {
   if (!raw) return [];
@@ -399,7 +421,8 @@ function spawnEngine(
     let timer: NodeJS.Timeout | null = null;
     const onAbort = () => child.kill("SIGTERM");
     opts.signal.addEventListener("abort", onAbort, { once: true });
-    if (TURN_TIMEOUT_MS > 0) timer = setTimeout(onAbort, TURN_TIMEOUT_MS);
+    const timeoutMs = turnTimeoutMs();
+    if (timeoutMs > 0) timer = setTimeout(onAbort, timeoutMs);
 
     child.stdout?.on("data", (buf) => {
       for (const raw of buf.toString("utf8").split("\n")) {
@@ -452,6 +475,7 @@ class ClaudeSession implements EngineSession {
     stdout: string[];
     stderr: string[];
     timer: NodeJS.Timeout | null;
+    noOutputTimer: NodeJS.Timeout | null;
   } | null = null;
   private exited = false;
   private exitCode = 0;
@@ -496,18 +520,26 @@ class ClaudeSession implements EngineSession {
       return Promise.resolve({ exitCode, error: detail || "engine session is not alive", sessionId: this.sid });
     }
     return new Promise((resolve) => {
-      const pending = { resolve, stdout: [] as string[], stderr: [] as string[], timer: null as NodeJS.Timeout | null };
-      if (SESSION_TIMEOUT_MS > 0) {
+      const pending = {
+        resolve,
+        stdout: [] as string[],
+        stderr: [] as string[],
+        timer: null as NodeJS.Timeout | null,
+        noOutputTimer: null as NodeJS.Timeout | null
+      };
+      const timeoutMs = sessionTimeoutMs();
+      if (timeoutMs > 0) {
         pending.timer = setTimeout(() => {
           this.settle({
             exitCode: 124,
-            error: `engine turn exceeded KING_AI_TURN_TIMEOUT_MS (${Math.round(SESSION_TIMEOUT_MS / 1000)}s) - aborted; session will respawn`,
+            error: `claude engine turn exceeded KING_AI_SESSION_TIMEOUT_MS (${Math.round(timeoutMs / 1000)}s) - aborted; session will respawn`,
             sessionId: this.sid
           });
           this.stop();
-        }, SESSION_TIMEOUT_MS);
+        }, timeoutMs);
         pending.timer.unref?.();
       }
+      this.resetNoOutputTimer(pending);
       this.pending = pending;
       this.child.stdin?.write(claudeStreamUserMessage(prompt));
     });
@@ -535,6 +567,7 @@ class ClaudeSession implements EngineSession {
       if (this.pending) pushTail(this.pending.stdout, line);
       const display = formatEngineLogLine("claude", line);
       if (display) onLog(display);
+      this.resetNoOutputTimer();
       if (!line.startsWith("{")) continue;
       try {
         const obj = JSON.parse(line) as Record<string, unknown>;
@@ -570,6 +603,7 @@ class ClaudeSession implements EngineSession {
       pushTail(this.stderrTail, line);
       if (this.pending) pushTail(this.pending.stderr, line);
       onLog(line);
+      this.resetNoOutputTimer();
     }
   }
 
@@ -591,7 +625,27 @@ class ClaudeSession implements EngineSession {
     this.pending = null;
     if (!pending) return;
     if (pending.timer) clearTimeout(pending.timer);
+    if (pending.noOutputTimer) clearTimeout(pending.noOutputTimer);
     pending.resolve(result);
+  }
+
+  private resetNoOutputTimer(pending = this.pending): void {
+    if (!pending) return;
+    if (pending.noOutputTimer) clearTimeout(pending.noOutputTimer);
+    const timeoutMs = sessionNoOutputTimeoutMs();
+    if (timeoutMs <= 0) {
+      pending.noOutputTimer = null;
+      return;
+    }
+    pending.noOutputTimer = setTimeout(() => {
+      this.settle({
+        exitCode: 124,
+        error: engineNoOutputError("claude", timeoutMs),
+        sessionId: this.sid
+      });
+      this.stop();
+    }, timeoutMs);
+    pending.noOutputTimer.unref?.();
   }
 
   private die(exitCode: number, error: string): void {
@@ -620,7 +674,12 @@ class CodexSession implements EngineSession {
   private threadReqId: number | null = null;
   private turnStart = { input: 0, cached: 0, output: 0 };
   private usage = { input: 0, cached: 0, output: 0 };
-  private pending: { resolve: (result: EngineResult) => void; timer: NodeJS.Timeout | null } | null = null;
+  private pending: {
+    resolve: (result: EngineResult) => void;
+    timer: NodeJS.Timeout | null;
+    noOutputTimer: NodeJS.Timeout | null;
+    sawOutput: boolean;
+  } | null = null;
   private queuedTurn: { prompt: string; options?: EngineTurnOptions } | null = null;
   private ready = false;
   private exited = false;
@@ -668,14 +727,21 @@ class CodexSession implements EngineSession {
       return Promise.resolve({ exitCode, error: failurePreview(exitCode, null, this.stderrTail, this.stdoutTail), sessionId: this.threadId });
     }
     return new Promise((resolve) => {
-      const pending = { resolve, timer: null as NodeJS.Timeout | null };
-      if (SESSION_TIMEOUT_MS > 0) {
+      const pending = {
+        resolve,
+        timer: null as NodeJS.Timeout | null,
+        noOutputTimer: null as NodeJS.Timeout | null,
+        sawOutput: false
+      };
+      const timeoutMs = sessionTimeoutMs();
+      if (timeoutMs > 0) {
         pending.timer = setTimeout(() => {
           this.stop();
-          this.settle("engine session timed out", 124);
-        }, SESSION_TIMEOUT_MS);
+          this.settle(`codex engine turn exceeded KING_AI_SESSION_TIMEOUT_MS (${Math.round(timeoutMs / 1000)}s) - aborted; session will respawn`, 124);
+        }, timeoutMs);
         pending.timer.unref?.();
       }
+      this.resetNoOutputTimer(pending);
       this.pending = pending;
       this.turnStart = { ...this.usage };
       if (this.ready && this.threadId) this.startTurn(prompt, options);
@@ -751,6 +817,7 @@ class CodexSession implements EngineSession {
         msg = JSON.parse(line) as Record<string, unknown>;
       } catch {
         this.opts.onLog(line);
+        this.noteOutput();
         continue;
       }
       if (process.env.KING_AI_CODEX_VERBOSE === "1") this.opts.onLog(line);
@@ -789,7 +856,10 @@ class CodexSession implements EngineSession {
     }
 
     const reduced = reduceCodexAppEvent({ activeTurnId: this.activeTurnId, steerGate: this.steerGate }, msg);
-    for (const line of reduced.logs) this.opts.onLog(line);
+    for (const line of reduced.logs) {
+      this.opts.onLog(line);
+      this.noteOutput();
+    }
     this.activeTurnId = reduced.activeTurnId;
     this.steerGate = reduced.steerGate;
     if (reduced.usage) this.updateUsage(reduced.usage);
@@ -835,6 +905,7 @@ class CodexSession implements EngineSession {
     this.pending = null;
     if (!pending) return;
     if (pending.timer) clearTimeout(pending.timer);
+    if (pending.noOutputTimer) clearTimeout(pending.noOutputTimer);
     pending.resolve({
       exitCode,
       error,
@@ -842,6 +913,31 @@ class CodexSession implements EngineSession {
       usage: this.turnUsage(),
       model: this.opts.model ?? null
     });
+  }
+
+  private noteOutput(): void {
+    const pending = this.pending;
+    if (!pending) return;
+    pending.sawOutput = true;
+    if (pending.noOutputTimer) {
+      clearTimeout(pending.noOutputTimer);
+      pending.noOutputTimer = null;
+    }
+  }
+
+  private resetNoOutputTimer(pending = this.pending): void {
+    if (!pending || pending.sawOutput) return;
+    if (pending.noOutputTimer) clearTimeout(pending.noOutputTimer);
+    const timeoutMs = sessionNoOutputTimeoutMs();
+    if (timeoutMs <= 0) {
+      pending.noOutputTimer = null;
+      return;
+    }
+    pending.noOutputTimer = setTimeout(() => {
+      this.stop();
+      this.settle(engineNoOutputError("codex", timeoutMs), 124);
+    }, timeoutMs);
+    pending.noOutputTimer.unref?.();
   }
 
   private die(exitCode: number, error: string): void {

@@ -61,6 +61,21 @@ export function engineRemediationAdvice(engine: string, detail: string): Remedia
     };
   }
 
+  if (has(lower, /engine produced no output|session\.send|interactive prompt/)) {
+    return {
+      engine,
+      category: "quota",
+      severity: "error",
+      summary: `${engine} produced no output and may be blocked by quota or login`,
+      detail: text,
+      actions: [
+        `Open ${engine} locally and confirm it can complete one prompt without an interactive login, quota, billing, or credits prompt.`,
+        "Re-run: king-ai agent computer --doctor",
+        "Wake the agent again after the local engine is healthy."
+      ]
+    };
+  }
+
   if (has(lower, /\bquota\b|credit|billing|subscription|usage limit|session limit|insufficient_quota|resource_exhausted/)) {
     return {
       engine,

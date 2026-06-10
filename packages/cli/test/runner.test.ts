@@ -290,6 +290,12 @@ test("wake stream auth failures are terminal statuses", () => {
   assert.equal(isWakeStreamAuthFailure(429), false);
 });
 
+test("no-output engine failures reset persistent sessions", () => {
+  const error = "local codex failed (exit 124): codex engine produced no output for 300s after session.send";
+  assert.equal(mustResetSession(error, false), true);
+  assert.equal(sessionResetReason(error), "engine produced no output");
+});
+
 test("runtime auth errors are detected from strict runtime failures", () => {
   assert.equal(isRuntimeAuthError('GET /inbox -> HTTP 401 {"error":"invalid runtime token"}'), true);
   assert.equal(isRuntimeAuthError("POST /status -> HTTP 403 forbidden"), true);

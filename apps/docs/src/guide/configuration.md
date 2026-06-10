@@ -43,6 +43,9 @@ Treat this directory as sensitive because it contains runtime tokens and local e
 - `KING_AI_SERVER_URL`: override the default runtime server URL. The production default is `https://king-ai.congrongtech.cn`.
 - `KING_AI_TEAM_ROLE`: provide an actor role for host command governance.
 - `KING_AI_AGENT_WORKSPACE_ROOT`: constrain or point agent workspace preparation in development.
+- `KING_AI_SESSION_NO_OUTPUT_TIMEOUT_MS`: watchdog for persistent engine turns that produce no visible output. The default is `300000` (5 minutes); set `0` to disable.
+- `KING_AI_SESSION_TIMEOUT_MS`: optional hard timeout for a persistent engine turn. It is disabled by default.
+- `KING_AI_TURN_TIMEOUT_MS`: optional hard timeout for one-shot engine runs. It is disabled by default.
 
 ## Local Engines
 
@@ -53,6 +56,8 @@ king-ai agent computer --doctor
 ```
 
 to verify engine availability after PATH, login, or quota changes.
+
+Persistent engine sessions have a no-output watchdog. If a local CLI such as Codex gets stuck behind an interactive login, quota, billing, or credits prompt and produces no engine output, King AI aborts that turn, resets the affected session, posts a clear runtime failure notice, and backs off instead of waiting forever. Run the engine directly in a local terminal and then re-run `king-ai agent computer --doctor` before waking the agent again.
 
 ## IELTS Coach Audio
 

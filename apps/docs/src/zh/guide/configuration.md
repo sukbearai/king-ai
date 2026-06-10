@@ -43,6 +43,9 @@ KING_AI_CONFIG_DIR=/tmp/king-ai-dev king-ai agent computer --doctor
 - `KING_AI_SERVER_URL`：覆盖默认 runtime server URL。生产环境默认值是 `https://king-ai.congrongtech.cn`。
 - `KING_AI_TEAM_ROLE`：为 host command governance 提供 actor role。
 - `KING_AI_AGENT_WORKSPACE_ROOT`：在开发中限制或指定智能体 workspace 准备路径。
+- `KING_AI_SESSION_NO_OUTPUT_TIMEOUT_MS`：持久引擎 turn 没有任何可见输出时的 watchdog。默认值是 `300000`（5 分钟）；设为 `0` 可关闭。
+- `KING_AI_SESSION_TIMEOUT_MS`：持久引擎 turn 的可选硬超时。默认关闭。
+- `KING_AI_TURN_TIMEOUT_MS`：一次性引擎运行的可选硬超时。默认关闭。
 
 ## 本地引擎
 
@@ -53,6 +56,8 @@ king-ai agent computer --doctor
 ```
 
 来验证 PATH、登录或额度变化后的引擎可用性。
+
+持久引擎 session 会启用无输出 watchdog。如果 Codex 等本地 CLI 卡在交互式登录、额度、账单或 credits 提示后没有产生任何引擎输出，King AI 会中止当前 turn、重置受影响的 session、发送明确的 runtime failure notice，并进入退避，而不是一直无声等待。修复时先在本地终端直接运行对应引擎，再重新执行 `king-ai agent computer --doctor`，确认健康后再唤醒智能体。
 
 ## IELTS 教练语音
 
