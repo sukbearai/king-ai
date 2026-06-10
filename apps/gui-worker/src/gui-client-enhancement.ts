@@ -493,6 +493,24 @@ function attachmentListHtml(attachments) {
   }).join('') + '</div>';
 }
 window.__messageAudioText = window.__messageAudioText || {};
+function isIeltsTutorMessage(message) {
+  if (!message || message.author_kind !== 'agent') return false;
+  if (message.author_agent_id === 'ielts-tutor') return true;
+  return !message.author_agent_id && message.author_name === 'IELTS Reading & Writing Coach';
+}
+function ttsTextFromIeltsMessage(message) {
+  const codeFencePattern = new RegExp(String.fromCharCode(96) + String.fromCharCode(96) + String.fromCharCode(96) + '[\\\\s\\\\S]*?' + String.fromCharCode(96) + String.fromCharCode(96) + String.fromCharCode(96), 'g');
+  const source = String(message && message.body || '').replace(/WordCards:\\s*\\{[\\s\\S]*$/i, '').replace(codeFencePattern, ' ');
+  const lines = source.split(/\\n+/).map(function(line) { return line.trim(); }).filter(Boolean);
+  const englishLines = [];
+  for (const line of lines) {
+    const withoutTip = line.replace(/^Tip:\\s*/i, '').replace(/Useful phrases:[\\s\\S]*$/i, '');
+    const asciiLetters = (withoutTip.match(/[A-Za-z]/g) || []).length;
+    const cjkChars = (withoutTip.match(/[\\u3400-\\u9fff]/g) || []).length;
+    if (asciiLetters >= 3 && asciiLetters >= cjkChars * 2) englishLines.push(withoutTip);
+  }
+  return englishLines.join(' ').replace(/\\s+/g, ' ').trim().slice(0, 1200);
+}
 async function playMessageTts(messageId) {
   const text = window.__messageAudioText && window.__messageAudioText[messageId];
   if (!text) return;
@@ -517,8 +535,10 @@ async function playMessageTts(messageId) {
   }
 }
 function ttsButtonHtml(message) {
-  if (!message || message.author_kind !== 'agent' || message.status === 'pending' || !message.body || !message.id) return '';
-  window.__messageAudioText[message.id] = String(message.body).replace(/\s+/g, ' ').trim().slice(0, 1200);
+  if (!message || message.status === 'pending' || !message.body || !message.id || !isIeltsTutorMessage(message)) return '';
+  const text = ttsTextFromIeltsMessage(message);
+  if (!text) return '';
+  window.__messageAudioText[message.id] = text;
   return '<button class="icon-btn tts-button" data-tts-id="' + escapeHtml(message.id) + '" onclick="playMessageTts(&quot;' + escapeHtml(message.id) + '&quot;)" title="Play audio" aria-label="Play audio"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></button>';
 }
 	const REMOTE_ASSIST_URL_KEY = 'king-ai:remoteAssistUrl';

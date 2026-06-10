@@ -75,6 +75,7 @@ export type Message = {
   conversation_kind: "direct" | "group";
   author_name: string;
   author_kind: "human" | "agent" | "system";
+  author_agent_id?: string;
   author_engine?: Agent["engine"];
   status?: "pending" | "done";
   kind: "message" | "system";

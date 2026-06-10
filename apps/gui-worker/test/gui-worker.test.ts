@@ -2272,13 +2272,13 @@ test("runtime replies only replace pending placeholders for the executing agent"
     body: JSON.stringify({ agentId: "dev", argv: ["reply", "king-ai-convo", "dev status"] })
   }), bindings));
 
-  let state = await json<{ messages: { author_name: string; author_kind: string; body: string; status?: string; to_agent_id?: string }[] }>(
+  let state = await json<{ messages: { author_name: string; author_kind: string; author_agent_id?: string; body: string; status?: string; to_agent_id?: string }[] }>(
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
-  assert.deepEqual(state.messages.filter((row) => row.author_kind !== "system").map((row) => [row.author_name, row.body, row.status, row.to_agent_id]), [
-    ["King AI Human", "please coordinate", undefined, "king-ai-ceo"],
-    ["King AI CEO", "已委派给 dev 处理...", "pending", "king-ai-ceo"],
-    ["Dev", "dev status", "done", undefined]
+  assert.deepEqual(state.messages.filter((row) => row.author_kind !== "system").map((row) => [row.author_name, row.author_agent_id, row.body, row.status, row.to_agent_id]), [
+    ["King AI Human", undefined, "please coordinate", undefined, "king-ai-ceo"],
+    ["King AI CEO", "king-ai-ceo", "已委派给 dev 处理...", "pending", "king-ai-ceo"],
+    ["Dev", "dev", "dev status", "done", undefined]
   ]);
 
   await json<{ text: string }>(await worker.fetch(new Request("https://gui/runtime/cli", {
@@ -2287,13 +2287,13 @@ test("runtime replies only replace pending placeholders for the executing agent"
     body: JSON.stringify({ agentId: "king-ai-ceo", argv: ["reply", "king-ai-convo", "ceo close"] })
   }), bindings));
 
-  state = await json<{ messages: { author_name: string; author_kind: string; body: string; status?: string; to_agent_id?: string }[] }>(
+  state = await json<{ messages: { author_name: string; author_kind: string; author_agent_id?: string; body: string; status?: string; to_agent_id?: string }[] }>(
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
-  assert.deepEqual(state.messages.filter((row) => row.author_kind !== "system").map((row) => [row.author_name, row.body, row.status, row.to_agent_id]), [
-    ["King AI Human", "please coordinate", undefined, "king-ai-ceo"],
-    ["King AI CEO", "ceo close", "done", undefined],
-    ["Dev", "dev status", "done", undefined]
+  assert.deepEqual(state.messages.filter((row) => row.author_kind !== "system").map((row) => [row.author_name, row.author_agent_id, row.body, row.status, row.to_agent_id]), [
+    ["King AI Human", undefined, "please coordinate", undefined, "king-ai-ceo"],
+    ["King AI CEO", "king-ai-ceo", "ceo close", "done", undefined],
+    ["Dev", "dev", "dev status", "done", undefined]
   ]);
 });
 
@@ -2315,10 +2315,10 @@ test("runtime replies use the executing agent display name", async () => {
     body: JSON.stringify({ agentId: "king-ai-ceo", engine: "codex", argv: ["reply", "king-ai-convo", "hello"] })
   }), bindings));
 
-  const state = await json<{ messages: { author_name: string; author_kind: string; author_engine?: string; body: string }[] }>(
+  const state = await json<{ messages: { author_name: string; author_kind: string; author_agent_id?: string; author_engine?: string; body: string }[] }>(
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
-  assert.deepEqual(state.messages.map((row) => [row.author_name, row.author_kind, row.author_engine, row.body]), [["Claude Runner", "agent", "codex", "hello"]]);
+  assert.deepEqual(state.messages.map((row) => [row.author_name, row.author_kind, row.author_agent_id, row.author_engine, row.body]), [["Claude Runner", "agent", "king-ai-ceo", "codex", "hello"]]);
 });
 
 test("runtime CLI side effects default to the executing agent identity", async () => {
@@ -2531,6 +2531,11 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /function clearMessages/);
   assert.match(html, /renderMessages = function/);
   assert.match(html, /function playMessageTts/);
+  assert.match(html, /function isIeltsTutorMessage/);
+  assert.match(html, /author_agent_id === 'ielts-tutor'/);
+  assert.match(html, /function ttsTextFromIeltsMessage/);
+  assert.match(html, /WordCards/);
+  assert.match(html, /Useful phrases/);
   assert.match(html, /\/gui\/tts/);
   assert.match(html, /class="icon-btn tts-button"/);
   assert.match(html, /\.post-body\.markdown-body/);

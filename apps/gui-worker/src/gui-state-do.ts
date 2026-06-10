@@ -1451,6 +1451,7 @@ export class GuiState implements DurableObject {
       conversation_kind: conversation.kind,
       author_name: targetAgent.name,
       author_kind: "agent",
+      author_agent_id: targetAgent.id,
       author_engine: targetAgent.engine,
       status: "pending",
       kind: "message",

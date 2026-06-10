@@ -173,6 +173,7 @@ export async function dispatchRuntimeCli<S, A>(
       conversation_kind: conversation.kind,
       author_name: actorName,
       author_kind: "agent",
+      author_agent_id: actorId,
       author_engine: authorEngine,
       status: "done",
       kind: "message",
@@ -184,6 +185,7 @@ export async function dispatchRuntimeCli<S, A>(
     if (pending) {
       Object.assign(pending, {
         author_name: reply.author_name,
+        author_agent_id: reply.author_agent_id,
         author_engine: reply.author_engine,
         status: reply.status,
         body: reply.body,
