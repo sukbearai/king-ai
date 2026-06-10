@@ -325,11 +325,18 @@ function renderSummary(summary) {
     }, 250);
   }
   const engines = summary.availableEngines || [];
-  document.getElementById('engine').innerHTML = engines.length ? engines.map(function(engine) {
-    return '<option value="' + escapeHtml(engine) + '"' + (engine === agent.engine ? ' selected' : '') + '>' + escapeHtml(engine) + '</option>';
+  const settingsOpen = document.getElementById('settingsDialog').open;
+  const engineSelect = document.getElementById('engine');
+  // While the settings dialog is open, keep the user's in-progress choice instead of
+  // resetting it to the saved engine on every auto-refresh.
+  const selectedEngine = settingsOpen && engineSelect.value ? engineSelect.value : agent.engine;
+  engineSelect.innerHTML = engines.length ? engines.map(function(engine) {
+    return '<option value="' + escapeHtml(engine) + '"' + (engine === selectedEngine ? ' selected' : '') + '>' + escapeHtml(engine) + '</option>';
   }).join('') : '<option value="">请先配对</option>';
-  document.getElementById('model').value = agent.model === 'default' ? '' : (agent.model || '');
-  document.getElementById('fastModel').value = agent.fastModel === 'default' ? '' : (agent.fastModel || '');
+  if (!settingsOpen) {
+    document.getElementById('model').value = agent.model === 'default' ? '' : (agent.model || '');
+    document.getElementById('fastModel').value = agent.fastModel === 'default' ? '' : (agent.fastModel || '');
+  }
   const modelRows = ['claude', 'codex'].map(function(engine) {
     const available = engines.includes(engine);
     const active = agent.engine === engine;
@@ -350,6 +357,45 @@ async function refresh(options) {
 }
 refresh();
 document.querySelector('.workspace').addEventListener('scroll', handleWorkspaceScroll);
-setInterval(function() { if (document.visibilityState === 'visible') refresh(); }, 3500);
+// Real-time updates over SSE: the server pushes a "change" nudge on any state change so the page
+// refreshes instantly instead of relying on the poll. The poll below stays as a fallback.
+let guiEventsHealthy = false;
+let guiEventSource = null;
+let refreshNudgeTimer = null;
+function nudgeRefresh() {
+  if (refreshNudgeTimer) return;
+  refreshNudgeTimer = setTimeout(function() {
+    refreshNudgeTimer = null;
+    if (document.visibilityState === 'visible') refresh();
+  }, 300);
+}
+function guiEventsUrl() {
+  const params = new URLSearchParams(location.search);
+  const assist = params.get('assist');
+  const tenant = params.get('tenant');
+  let url = base + '/gui/events';
+  if (assist) url += '?assist=' + encodeURIComponent(assist) + (tenant ? '&tenant=' + encodeURIComponent(tenant) : '');
+  return url;
+}
+function connectGuiEvents() {
+  if (typeof EventSource === 'undefined') return;
+  try {
+    if (guiEventSource) guiEventSource.close();
+    guiEventSource = new EventSource(guiEventsUrl());
+    guiEventSource.addEventListener('open', function() { guiEventsHealthy = true; });
+    guiEventSource.addEventListener('change', nudgeRefresh);
+    guiEventSource.addEventListener('error', function() { guiEventsHealthy = false; });
+  } catch (error) {
+    guiEventsHealthy = false;
+  }
+}
+connectGuiEvents();
+// Fallback poll: slow while SSE is healthy, faster if the stream is down.
+(function scheduleFallbackPoll() {
+  setTimeout(function() {
+    if (document.visibilityState === 'visible') refresh();
+    scheduleFallbackPoll();
+  }, guiEventsHealthy ? 15000 : 3500);
+})();
 document.addEventListener('visibilitychange', function() { if (document.visibilityState === 'visible') refresh(); });
 `;

@@ -91,6 +91,7 @@ export function wakeEventVisibleToAgent(evt: { data: unknown }, agentId: string)
   const data = evt.data as Record<string, unknown>;
   const target = normalizeAgentId(data.agentId);
   if (target) return target === agentId;
-  if (data.resetState === true || data.importedState === true) return true;
+  // Reset/import and runtime config changes are computer-wide, so every connected runner sees them.
+  if (data.resetState === true || data.importedState === true || data.config === true) return true;
   return false;
 }

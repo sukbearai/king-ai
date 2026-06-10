@@ -173,6 +173,11 @@ export function createGuiApp(deps: GuiRouteDeps): Hono<GuiEnv> {
     body: JSON.stringify(await c.req.json())
   }));
 
+  app.get("/gui/events", async (c) => {
+    const blocked = await deps.requireGuiAuth(c);
+    if (blocked) return blocked;
+    return (await deps.stateForRequest(c)).fetch("https://state/gui-events", { headers: await deps.forwardHeaders(c) });
+  });
   app.get("/gui/state", async (c) => {
     const blocked = await deps.requireGuiAuth(c);
     if (blocked) return blocked;

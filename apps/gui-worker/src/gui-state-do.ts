@@ -201,7 +201,7 @@ const app = createGuiApp({
 });
 
 export class GuiState implements DurableObject {
-  private waiters = new Set<{ agentId: string; writer: WritableStreamDefaultWriter<Uint8Array> }>();
+  private waiters = new Set<{ agentId: string; gui?: boolean; writer: WritableStreamDefaultWriter<Uint8Array> }>();
   private persistedStateFingerprint = new Map<string, string>();
   private episodicIndexedIds = new Set<string>();
 
@@ -253,6 +253,7 @@ export class GuiState implements DurableObject {
     if (path.startsWith("/runs/") && path.endsWith("/heartbeat")) return this.authRuntime(request, async () => this.runAction(path.split("/")[2] || "run", "heartbeat", await request.json().catch(() => null)));
     if (path.startsWith("/runs/") && path.endsWith("/finish")) return this.authRuntime(request, async () => this.runAction(path.split("/")[2] || "run", "finish", await request.json().catch(() => null)));
     if (path.startsWith("/runs/") && path.endsWith("/actions")) return this.authRuntime(request, async (agentId) => this.runActions(path.split("/")[2] || "run", agentId));
+    if (path === "/gui-events") return this.guiEvents();
     if (path === "/gui-state") return json(await stateForGui(await this.get(), url.searchParams.get("redact") === "1"));
     if (path === "/gui-summary") return this.guiSummary(request);
     if (path === "/gui-activity") return this.guiActivity(url.searchParams);
@@ -672,6 +673,24 @@ export class GuiState implements DurableObject {
     const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
     const writer = writable.getWriter();
     const waiter = { agentId, writer };
+    this.waiters.add(waiter);
+    void writer.write(encode(": connected\n\n")).catch(() => this.waiters.delete(waiter));
+    requestKeepAlive(writer, () => this.waiters.delete(waiter));
+    return new Response(readable, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive"
+      }
+    });
+  }
+
+  // Server-sent events for the browser GUI: it gets a generic "change" nudge on every broadcast so
+  // it can refresh immediately instead of polling. Authentication is enforced by the worker route.
+  private async guiEvents(): Promise<Response> {
+    const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+    const writer = writable.getWriter();
+    const waiter = { agentId: "", gui: true, writer };
     this.waiters.add(waiter);
     void writer.write(encode(": connected\n\n")).catch(() => this.waiters.delete(waiter));
     requestKeepAlive(writer, () => this.waiters.delete(waiter));
@@ -1838,33 +1857,50 @@ export class GuiState implements DurableObject {
     const lifecycle = isAgentLifecycle(payload.lifecycle)
       ? payload.lifecycle
       : previous.lifecycle ?? DEFAULT_AGENT.lifecycle;
-    const nextAgent = {
-      ...DEFAULT_AGENT,
-      ...previous,
-      name: name || previous.name || DEFAULT_AGENT.name,
-      role: role || previous.role || DEFAULT_AGENT.role,
-      engine: engine === "claude" || engine === "codex" ? engine : DEFAULT_AGENT.engine,
-      lifecycle,
-      model: model || undefined,
-      fastModel: fastModel || undefined
-    };
-    const changed =
-      previous.name !== nextAgent.name ||
-      previous.role !== nextAgent.role ||
-      previous.engine !== nextAgent.engine ||
-      previous.lifecycle !== nextAgent.lifecycle ||
-      previous.model !== nextAgent.model ||
-      previous.fastModel !== nextAgent.fastModel;
-    state.agents = normalizeAgents(state.agents).map((agent) => agent.id === nextAgent.id ? nextAgent : agent);
+    // Engine / model / fastModel / lifecycle are runtime (local CLI) settings that should apply to
+    // the whole team hosted on this computer, so propagate them to every agent. Name / role are
+    // coordinator-specific and only update the default operator agent.
+    const nextEngine = engine === "claude" || engine === "codex" ? engine : DEFAULT_AGENT.engine;
+    const nextModel = model || undefined;
+    const nextFastModel = fastModel || undefined;
+    const agents = normalizeAgents(state.agents);
+    const previousAgents = agents;
+    state.agents = agents.map((agent) => {
+      const isDefault = agent.id === previous.id;
+      return {
+        ...agent,
+        name: isDefault ? name || agent.name || DEFAULT_AGENT.name : agent.name,
+        role: isDefault ? role || agent.role || DEFAULT_AGENT.role : agent.role,
+        engine: nextEngine,
+        lifecycle,
+        model: nextModel,
+        fastModel: nextFastModel
+      };
+    });
+    const nextAgent = state.agents.find((agent) => agent.id === previous.id) ?? defaultAgentFor(state);
+    const changed = previousAgents.some((before) => {
+      const after = state.agents.find((agent) => agent.id === before.id);
+      return !after
+        || before.name !== after.name
+        || before.role !== after.role
+        || before.engine !== after.engine
+        || before.lifecycle !== after.lifecycle
+        || before.model !== after.model
+        || before.fastModel !== after.fastModel;
+    });
     state.agentConfigUpdatedAt = Date.now();
     if (changed) {
+      // Every agent's config changed, so invalidate all runtime tokens to force a clean re-host.
       state.runtimeToken = crypto.randomUUID();
-      state.runtimeTokens ??= {};
-      state.runtimeTokenMeta ??= {};
-      delete state.runtimeTokens[nextAgent.id];
-      delete state.runtimeTokenMeta[nextAgent.id];
+      state.runtimeTokens = {};
+      state.runtimeTokenMeta = {};
     }
     await this.put(state);
+    if (changed) {
+      // Push a config event so connected runners re-sync immediately instead of waiting for the
+      // next poll, which makes engine/model switches take effect within ~1s.
+      await this.broadcast({ event: "config", data: { config: true, at: Date.now() } });
+    }
     return json({ ok: true, agent: nextAgent });
   }
 
@@ -1893,12 +1929,14 @@ export class GuiState implements DurableObject {
       // Wake delivery must not depend on observability persistence.
     }
     const frame = encode(`event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`);
+    // GUI clients only need a "something changed" nudge, so collapse every event into one frame.
+    const guiFrame = encode(`event: change\ndata: ${JSON.stringify({ event: event.event, at: Date.now() })}\n\n`);
     await Promise.all([...this.waiters].map(async (waiter) => {
-      if (!wakeEventVisibleToAgent(event, waiter.agentId)) return;
+      if (!waiter.gui && !wakeEventVisibleToAgent(event, waiter.agentId)) return;
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         await Promise.race([
-          waiter.writer.write(frame),
+          waiter.writer.write(waiter.gui ? guiFrame : frame),
           new Promise((_, reject) => {
             timer = setTimeout(() => reject(new Error("sse write timeout")), 1000);
           })

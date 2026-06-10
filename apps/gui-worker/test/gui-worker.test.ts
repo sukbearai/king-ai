@@ -2133,11 +2133,24 @@ test("gui runtime lets the page choose agent engine and models", async () => {
   assert.equal(agents[0]?.lifecycle, "disabled");
   assert.equal(agents[0]?.model, "opus-test");
   assert.equal(agents[0]?.fastModel, "haiku-test");
+  // Runtime settings apply to the whole team, not just the coordinator agent.
+  assert.ok(agents.length > 1);
+  for (const agent of agents) {
+    assert.equal(agent.engine, "claude");
+    assert.equal(agent.lifecycle, "disabled");
+    assert.equal(agent.model, "opus-test");
+    assert.equal(agent.fastModel, "haiku-test");
+  }
+  // Name / role stay specific to the coordinator agent.
+  assert.notEqual(agents[1]?.name, "King AI Helper");
+  assert.notEqual(agents[1]?.role, "Answer in a concise operator voice.");
 
-  const state = await json<{ agentConfigUpdatedAt?: number }>(
+  const state = await json<{ agentConfigUpdatedAt?: number; wakeLog?: { event?: string; data?: { config?: boolean } }[] }>(
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
   assert.equal(typeof state.agentConfigUpdatedAt, "number");
+  // A config change pushes a config event so connected runners re-sync immediately.
+  assert.ok((state.wakeLog ?? []).some((entry) => entry.event === "config" && entry.data?.config === true));
 
   const oldTokenStatus = await worker.fetch(new Request("https://gui/runtime/cli", {
     method: "POST",
@@ -4587,6 +4600,40 @@ test("wakeEventVisibleToAgent only broadcasts undirected wakes for global reset/
   assert.equal(wakeEventVisibleToAgent({ data: { agenda: true } }, "dev"), false);
   assert.equal(wakeEventVisibleToAgent({ data: { resetState: true } }, "dev"), true);
   assert.equal(wakeEventVisibleToAgent({ data: { importedState: true } }, "reviewer"), true);
+  // Runtime config changes are computer-wide, so every connected runner must see them.
+  assert.equal(wakeEventVisibleToAgent({ data: { config: true } }, "dev"), true);
+  assert.equal(wakeEventVisibleToAgent({ data: { config: true } }, "reviewer"), true);
+});
+
+test("gui events SSE pushes a generic change nudge on any state change", async () => {
+  const bindings = env();
+  const eventsRes = await worker.fetch(new Request("https://gui/gui/events"), bindings);
+  assert.equal(eventsRes.status, 200);
+  assert.match(eventsRes.headers.get("Content-Type") || "", /text\/event-stream/);
+  const reader = eventsRes.body!.getReader();
+  const decoder = new TextDecoder();
+
+  // The stream opens with a comment so the connection is established before any change.
+  const opening = await reader.read();
+  assert.match(decoder.decode(opening.value), /connected/);
+
+  // Any broadcast (here an agent-config rename) should reach the GUI as a generic "change" event.
+  await json(await worker.fetch(new Request("https://gui/gui/agent-config", {
+    method: "POST",
+    body: JSON.stringify({ name: "Renamed Operator" })
+  }), bindings));
+
+  let buffer = "";
+  const deadline = Date.now() + 2000;
+  while (!buffer.includes("event: change") && Date.now() < deadline) {
+    const chunk = await Promise.race([
+      reader.read(),
+      new Promise<{ value: Uint8Array | undefined }>((resolve) => setTimeout(() => resolve({ value: undefined }), 300))
+    ]);
+    if (chunk.value) buffer += decoder.decode(chunk.value);
+  }
+  await reader.cancel();
+  assert.match(buffer, /event: change/);
 });
 
 test("resolveWakeData fills missing agent targets for agenda and conversation wakes", () => {

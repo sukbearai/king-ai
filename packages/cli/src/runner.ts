@@ -447,7 +447,8 @@ export class AgentRunner {
     private readonly agent: AgentConfig,
     engine: EngineId,
     private readonly availableEngines: EngineId[] = [engine],
-    private readonly onStateChange?: () => void
+    private readonly onStateChange?: () => void,
+    private readonly onConfigChange?: () => void
   ) {
     this.home = join(AGENTS_ROOT, agent.id);
     this.binDir = join(this.home, "bin");
@@ -1399,6 +1400,14 @@ ${delta}`;
         this.scheduleWake("reconnect-catchup");
         for await (const evt of parseSseStream(res.body)) {
           if (this.stopped) break;
+          if (evt.event === "config") {
+            // Runtime config (engine/model/lifecycle) changed: ask the daemon to re-sync now
+            // instead of waiting for the next poll.
+            this.lastWakeStreamAt = Date.now();
+            console.log(`[${this.agent.id}/${this.adapter.id}] SSE config received; requesting runtime re-sync`);
+            this.onConfigChange?.();
+            continue;
+          }
           if (evt.event !== "wake" && evt.event !== "steer") continue;
           // Only genuine wake/steer frames mark the stream healthy for poll suppression;
           // heartbeats or other frame types must not keep the poll fallback disabled.

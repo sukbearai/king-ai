@@ -266,7 +266,7 @@ export async function doRun(serverOverride?: string, tenantOverride?: string): P
       ]
     });
   };
-  const sync = async () => {
+  const runSync = async () => {
     let agents: AgentConfig[];
     try {
       agents = await api<AgentConfig[]>(runtimeCfg.serverUrl, "/api/computers/me/agents", {
@@ -295,7 +295,7 @@ export async function doRun(serverOverride?: string, tenantOverride?: string): P
       const existing = runners.get(agent.id);
       if (existing?.configMatches(agent, engine)) continue;
       existing?.stop();
-      const runner = new AgentRunner(runtimeCfg, { ...agent, lifecycle }, engine, available, () => publishRunningAgents());
+      const runner = new AgentRunner(runtimeCfg, { ...agent, lifecycle }, engine, available, () => publishRunningAgents(), requestResync);
       runners.set(agent.id, runner);
       console.log(`hosting ${agent.name} (${agent.id}) on ${engine} lifecycle=${lifecycle}`);
       recordRunningState({
@@ -327,6 +327,35 @@ export async function doRun(serverOverride?: string, tenantOverride?: string): P
     recordRunningState({
       lastSyncAt: new Date().toISOString()
     });
+  };
+
+  // Serialize syncs so a poll and a config-triggered re-sync can't race and double-host an agent.
+  let syncing = false;
+  let syncQueued = false;
+  const sync = async (): Promise<void> => {
+    if (syncing) {
+      syncQueued = true;
+      return;
+    }
+    syncing = true;
+    try {
+      await runSync();
+    } finally {
+      syncing = false;
+      if (syncQueued) {
+        syncQueued = false;
+        void sync();
+      }
+    }
+  };
+  // Coalesce the burst of config events (one per connected runner) into a single re-sync.
+  let resyncTimer: NodeJS.Timeout | null = null;
+  const requestResync = () => {
+    if (resyncTimer) return;
+    resyncTimer = setTimeout(() => {
+      resyncTimer = null;
+      void sync();
+    }, 250);
   };
 
   const heartbeat = () => {
