@@ -119,6 +119,7 @@ import type {
 import {
   resolveWakeEvent,
   resolveWakeData,
+  isGroupRollCallMessage,
   shouldAutoDelegateMessage,
   triageResponseMode,
   wakeEventVisibleToAgent
@@ -1549,7 +1550,10 @@ export class GuiState implements DurableObject {
     const delegated = state.tasks.find((task) => task.requestMessageId === message.id);
     if (delegated?.assignee && delegated.assignee !== targetAgent.id) updatePendingForTask(state, delegated, `已委派给 ${delegated.assignee} 处理...`);
     await this.put(state);
-    await this.broadcast({ event: "wake", data: { conversationId: message.conversation_id, requestId: message.id, messageId: message.id, taskId: delegated?.id, agentId: targetAgent.id, at: now } });
+    const targetWake = delegated?.assignee === targetAgent.id
+      ? { conversationId: message.conversation_id, requestId: message.id, messageId: message.id, taskId: delegated.id, agentId: targetAgent.id, at: now }
+      : { conversationId: message.conversation_id, requestId: message.id, messageId: message.id, agentId: targetAgent.id, at: now };
+    await this.broadcast({ event: "wake", data: targetWake });
     if (delegated?.assignee) {
       await this.broadcast({ event: "wake", data: { agenda: true, conversationId: conversation.id, requestId: message.id, messageId: message.id, taskId: delegated.id, agentId: delegated.assignee, at: Date.now() } });
 	    }
@@ -2201,6 +2205,7 @@ import {
 export {
   resolveWakeEvent,
   resolveWakeData,
+  isGroupRollCallMessage,
   shouldAutoDelegateMessage,
   triageResponseMode,
   wakeEventVisibleToAgent,

@@ -2,6 +2,7 @@
 
 export {
   GuiState,
+  isGroupRollCallMessage,
   resolveWakeEvent,
   resolveWakeData,
   shouldAutoDelegateMessage,

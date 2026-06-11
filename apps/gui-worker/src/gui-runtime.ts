@@ -7,6 +7,7 @@ import { selectOwnerRole } from "@suwujs/king-ai/team-routing";
 import { defaultTeamSpec, requiredCapabilitiesForText, roleTemplateForAgent } from "@suwujs/king-ai/team-workflow";
 import { taskDoneTransition, workflowCardFromTask, workflowReadiness } from "@suwujs/king-ai/workflow-core";
 import { sanitizeTenantId, displayNameForAuthUser } from "./gui-auth.js";
+import { isGroupRollCallMessage } from "./runtime-helpers.js";
 import {
   artifactCandidateFromArgs as artifactCandidateFromArgsHelper,
   checkArtifactQuality,
@@ -1407,10 +1408,15 @@ function agentIdForRuntimeToken(state: State, runtimeToken: string): string | nu
 }
 
 function autoDelegateMessage(state: State, conversation: Conversation, message: Message, coordinator: Agent): Task | undefined {
-  const ownerRole = selectOwnerRole(teamSpecForConversation(state, conversation), requiredCapabilitiesForText(message.body)) ?? "builder";
-  const worker = agentForRoleInConversation(state, conversation, ownerRole) ?? workerAgentForConversation(state, conversation);
+  const isGroupRollCall = isGroupRollCallMessage(conversation, message.body);
+  const ownerRole = isGroupRollCall
+    ? "builder"
+    : selectOwnerRole(teamSpecForConversation(state, conversation), requiredCapabilitiesForText(message.body)) ?? "builder";
+  const worker = isGroupRollCall
+    ? workerAgentForConversation(state, conversation) ?? agentForRoleInConversation(state, conversation, ownerRole)
+    : agentForRoleInConversation(state, conversation, ownerRole) ?? workerAgentForConversation(state, conversation);
   if (!worker) return undefined;
-  const reviewer = agentForRoleInConversation(state, conversation, "reviewer") ?? reviewerAgentForConversation(state, conversation);
+  const reviewer = isGroupRollCall ? undefined : agentForRoleInConversation(state, conversation, "reviewer") ?? reviewerAgentForConversation(state, conversation);
   const now = Date.now();
   const task: Task = {
     id: `task-${now}-${Math.random().toString(36).slice(2)}`,

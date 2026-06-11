@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import worker, {
   GuiState,
+  isGroupRollCallMessage,
   resolveWakeEvent,
   resolveWakeData,
   shouldAutoDelegateMessage,
@@ -1752,6 +1753,46 @@ test("single-agent gui windows keep requests with King AI CEO", async () => {
     }), bindings)
   );
   assert.deepEqual(reviewerInbox.rows, []);
+});
+
+test("team roll calls delegate without coordinator task contracts or review", async () => {
+  const bindings = env();
+  await pairComputer(bindings, { engines: ["codex"] });
+  const room = await json<{ conversation: { id: string } }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({ title: "Roll Call Room", workflowId: "software-dev" })
+    }), bindings)
+  );
+
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    body: JSON.stringify({ conversationId: room.conversation.id, body: "所有人在回个 1" })
+  }), bindings);
+
+  const state = await json<{
+    tasks: { id: string; conversationId?: string; assignee?: string; reviewerAgentId?: string }[];
+    messages: { conversation_id: string; to_agent_id?: string; body: string }[];
+    wakeLog?: { event: string; data: { conversationId?: string; agentId?: string; taskId?: string; agenda?: boolean } }[];
+  }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
+  const task = state.tasks.find((row) => row.conversationId === room.conversation.id);
+  assert.equal(task?.assignee, "dev");
+  assert.equal(task?.reviewerAgentId, undefined);
+  assert.equal(state.messages.some((row) => row.conversation_id === room.conversation.id && row.to_agent_id === "dev" && row.body.includes("Task assigned")), true);
+  assert.equal(state.messages.some((row) => row.conversation_id === room.conversation.id && row.to_agent_id === "reviewer" && row.body.includes("Task assigned")), false);
+  assert.equal(state.wakeLog?.some((row) =>
+    row.event === "wake" &&
+    row.data.conversationId === room.conversation.id &&
+    row.data.agentId === "king-ai-ceo" &&
+    row.data.taskId === undefined
+  ), true);
+  assert.equal(state.wakeLog?.some((row) =>
+    row.event === "wake" &&
+    row.data.conversationId === room.conversation.id &&
+    row.data.agentId === "dev" &&
+    row.data.taskId === task?.id &&
+    row.data.agenda === true
+  ), true);
 });
 
 test("custom gui windows can include dev without reviewer", async () => {
@@ -5147,6 +5188,19 @@ test("shouldAutoDelegateMessage keeps single-mode tracking and gates casual team
   assert.equal(shouldAutoDelegateMessage(single, "reply with 1"), true);
   assert.equal(shouldAutoDelegateMessage(team, "hello"), false);
   assert.equal(shouldAutoDelegateMessage(team, "大家好"), false);
+  assert.equal(shouldAutoDelegateMessage(team, "所有人在回个 1"), false);
+  assert.equal(shouldAutoDelegateMessage(team, "everyone roll call reply with 1"), false);
+  assert.equal(shouldAutoDelegateMessage(team, "@dev roll call reply"), true);
   assert.equal(shouldAutoDelegateMessage(team, "research competitors and source evidence"), true);
   assert.equal(shouldAutoDelegateMessage(team, "请团队实现多角色协作"), true);
+});
+
+test("isGroupRollCallMessage only catches broad team attendance pings", () => {
+  const team = { id: "x", title: "x", kind: "group" as const, teamMode: "team" as const, created_at: 0, updated_at: 0 };
+  const single = { ...team, teamMode: "single" as const };
+  assert.equal(isGroupRollCallMessage(team, "所有人在回个 1"), true);
+  assert.equal(isGroupRollCallMessage(team, "everyone roll call reply with 1"), true);
+  assert.equal(isGroupRollCallMessage(team, "@dev roll call reply"), false);
+  assert.equal(isGroupRollCallMessage(team, "hello"), false);
+  assert.equal(isGroupRollCallMessage(single, "所有人在回个 1"), false);
 });

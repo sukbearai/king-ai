@@ -244,6 +244,9 @@ export function roleTemplateForAgent(agent: KingAgentRoleLike): KingRoleTemplate
 
 export function requiredCapabilitiesForText(text: string): string[] {
   const value = text.toLowerCase();
+  if (/\b(everyone|everybody|all hands|team)\b/.test(value) && /\b(roll call|presence check|attendance check|reply with \d+)\b/.test(value)) return ["coordination"];
+  if (/(所有人|大家|全员).*(回个?|回复|报个?)\s*\d+/.test(text)) return ["coordination"];
+  if (/(有人|都|还).{0,6}(在吗|在不在)/.test(text)) return ["coordination"];
   if (/\b(test|verify|verification|regression|qa)\b/.test(value)) return ["testing", "verification"];
   if (/\b(release|deploy|queue|approval|audit|ops|devops)\b/.test(value)) return ["ops", "release", "audit"];
   if (/\b(research|compare|brief|market|source|evidence)\b/.test(value)) return ["research", "evidence"];

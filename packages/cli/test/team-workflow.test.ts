@@ -39,6 +39,8 @@ test("shared collaboration semantics classify agents and request capabilities", 
   assert.deepEqual(requiredCapabilitiesForText("research competitors and source evidence"), ["research", "evidence"]);
   assert.deepEqual(requiredCapabilitiesForText("prepare release approval and audit queue"), ["ops", "release", "audit"]);
   assert.deepEqual(requiredCapabilitiesForText("write docs and a summary"), ["documentation", "summary"]);
+  assert.deepEqual(requiredCapabilitiesForText("所有人在回个 1"), ["coordination"]);
+  assert.deepEqual(requiredCapabilitiesForText("everyone roll call reply with 1"), ["coordination"]);
   assert.deepEqual(requiredCapabilitiesForText("build the feature"), ["implementation", "code"]);
 });
 
