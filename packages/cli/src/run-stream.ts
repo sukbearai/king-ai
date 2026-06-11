@@ -6,6 +6,7 @@ export type RunStreamEvent =
   | { type: "tool_started"; id?: string; name: string; input?: string }
   | { type: "tool_delta"; id?: string; text: string }
   | { type: "tool_done"; id?: string; output?: string; error?: string }
+  | { type: "attempt"; attempt: number; status: "failed_retrying" | "failed_final"; message?: string }
   | { type: "done" }
   | { type: "error"; message: string }
   | { type: "interrupted" };
@@ -18,10 +19,17 @@ export interface RunStreamTool {
   status: "running" | "done" | "error";
 }
 
+export interface RunStreamAttempt {
+  attempt: number;
+  status: "failed_retrying" | "failed_final";
+  message?: string;
+}
+
 export interface RunStreamState {
   reasoning: string;
   message: string;
   tools: RunStreamTool[];
+  attempts?: RunStreamAttempt[];
   terminal: RunStreamTerminal;
   footer: RunStreamFooter;
   error?: string;
@@ -66,6 +74,13 @@ export function reduceRunStream(state: RunStreamState, event: RunStreamEvent): R
       status: event.error ? "error" : "done"
     }));
   }
+  if (event.type === "attempt") {
+    return {
+      ...state,
+      attempts: [...(state.attempts ?? []), { attempt: event.attempt, status: event.status, message: event.message }],
+      footer: event.status === "failed_retrying" ? "thinking" : state.footer
+    };
+  }
   if (event.type === "done") return { ...state, terminal: "done", footer: null };
   if (event.type === "error") return { ...state, terminal: "error", footer: null, error: event.message };
   return { ...state, terminal: "interrupted", footer: null };
@@ -78,6 +93,10 @@ export function renderRunStreamText(state: RunStreamState): string {
     const status = tool.status === "running" ? "running" : tool.status;
     const detail = tool.output ? ` - ${compact(tool.output, 300)}` : "";
     lines.push(`tool ${status}: ${tool.name}${detail}`);
+  }
+  for (const attempt of state.attempts ?? []) {
+    const label = attempt.status === "failed_retrying" ? "attempt failed, retrying" : "attempt failed";
+    lines.push(`${label}: #${attempt.attempt}${attempt.message ? ` - ${compact(attempt.message, 300)}` : ""}`);
   }
   if (state.message) lines.push(state.message.trimEnd());
   if (state.terminal === "error" && state.error) lines.push(`error: ${state.error}`);
@@ -109,6 +128,18 @@ export function renderRunStreamCard(state: RunStreamState): {
       title: `${tool.status}: ${tool.name}`,
       body: compact([tool.input, tool.output].filter(Boolean).join("\n"), 1500) || "(no output)",
       collapsed: tool.status !== "running"
+    });
+  }
+  const attempts = state.attempts ?? [];
+  if (attempts.length) {
+    sections.push({
+      kind: "status",
+      title: "Attempts",
+      body: attempts.map((attempt) => {
+        const label = attempt.status === "failed_retrying" ? "failed, retrying" : "failed";
+        return `#${attempt.attempt} ${label}${attempt.message ? `: ${compact(attempt.message, 500)}` : ""}`;
+      }).join("\n"),
+      collapsed: state.terminal === "running"
     });
   }
   if (state.message) sections.push({ kind: "message", title: "Reply", body: state.message, collapsed: false });

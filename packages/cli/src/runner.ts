@@ -42,6 +42,7 @@ const RECENT_WAKE_EVENT_LIMIT = 100;
 export const FAIL_OPEN_STREAK_LIMIT = 3;
 export const NO_STATE_ACTION_ACK_STREAK = 2;
 const WAKE_STREAM_HEALTH_FACTOR = 3;
+const ENGINE_NO_OUTPUT_RERUN_LIMIT = 1;
 const PREPARE_WORKTREES = process.env.KING_AI_PREPARE_WORKTREES === "1" || process.env.KING_AI_AGENT_PREPARE_WORKTREES === "1";
 const NESTED_ENV_BLOCKLIST = [
   "CODEX_CI",
@@ -347,6 +348,20 @@ export function sessionResetReason(error: string): string {
   return "engine session problem";
 }
 
+export function shouldRetryEngineNoOutputTurn(args: { error?: string; attempts: number; limit?: number }): boolean {
+  const limit = args.limit ?? ENGINE_NO_OUTPUT_RERUN_LIMIT;
+  return !!args.error && ENGINE_NO_OUTPUT_RE.test(args.error) && args.attempts < limit;
+}
+
+export function planEngineFailureAttempt(args: { error?: string; attempts: number; limit?: number }): { retry: boolean; publishFailureNotice: boolean; nextAttempts: number } {
+  const retry = shouldRetryEngineNoOutputTurn(args);
+  return {
+    retry,
+    publishFailureNotice: shouldPublishEngineFailureNotice(args.error) && !retry,
+    nextAttempts: retry ? args.attempts + 1 : args.attempts
+  };
+}
+
 export function swallowTurnRejection(task: Promise<void>, onError: (message: string) => void): void {
   void task.catch((err) => {
     onError(err instanceof Error ? err.message : String(err));
@@ -443,8 +458,8 @@ export function shouldFallbackAckAfterStreak(streak: number, limit = NO_STATE_AC
   return streak >= limit;
 }
 
-export function shouldContinuePendingRerun(args: { pendingRerun: boolean; hasRealUnread: boolean; hasAgendaWork: boolean; stopped: boolean }): boolean {
-  return args.pendingRerun && (args.hasRealUnread || args.hasAgendaWork) && !args.stopped;
+export function shouldContinuePendingRerun(args: { pendingRerun: boolean; hasRealUnread: boolean; hasAgendaWork: boolean; hasPinnedTask: boolean; stopped: boolean }): boolean {
+  return args.pendingRerun && (args.hasRealUnread || args.hasAgendaWork || args.hasPinnedTask) && !args.stopped;
 }
 
 export function nextFailOpenStreak(current: number, source?: string, handled = false): number {
@@ -497,6 +512,8 @@ export class AgentRunner {
   private failOpenBackoffTimer: NodeJS.Timeout | null = null;
   private noStateActionStreak = 0;
   private noStateActionUnreadKey = "";
+  private noOutputRerunKey = "";
+  private noOutputRerunAttempts = 0;
   private triageVerdictCache: { key: string; verdict: TriageVerdict; at: number } | null = null;
   private readonly recentWakeEvents = new Map<string, number>();
 
@@ -650,6 +667,8 @@ export class AgentRunner {
     this.tokenExpiresAt = 0;
     this.pendingRerun = false;
     this.lastWakeContract = null;
+    this.noOutputRerunKey = "";
+    this.noOutputRerunAttempts = 0;
     this.activeRunId = null;
     this.activeRunContract = null;
     this.lastSteeredMsgId = null;
@@ -916,6 +935,23 @@ export class AgentRunner {
         }, this.cfg.tenantId)
       )
     );
+  }
+
+  private async publishAttempt(args: { token: string; runId?: string; attempt: number; status: "failed_retrying" | "failed_final"; message?: string }): Promise<void> {
+    if (!args.runId) return;
+    await runtimePost(this.cfg.serverUrl, `/runs/${args.runId}/attempts`, args.token, {
+      attempt: args.attempt,
+      status: args.status,
+      message: args.message
+    }, this.cfg.tenantId).catch(() => undefined);
+    await runtimePost(this.cfg.serverUrl, `/runs/${args.runId}/heartbeat`, args.token, {
+      stream: {
+        type: "attempt",
+        attempt: args.attempt,
+        status: args.status,
+        message: args.message
+      }
+    }, this.cfg.tenantId);
   }
 
   private async publishEvent(kind: string, data: Record<string, unknown>, level = "info", title?: string): Promise<void> {
@@ -1323,8 +1359,47 @@ ${delta}`;
 
         if (error) {
           if (isRateLimited(error)) this.engineBackoffUntil = Date.now() + ENGINE_BACKOFF_MS;
-          if (shouldPublishEngineFailureNotice(error)) await this.publishEngineFailure({ token, runId: run?.runId, conversationId: typingConvo, error, exitCode });
+          const retryKey = activeContract?.taskId
+            ? `task:${activeContract.taskId}`
+            : `unread:${unreadBatchKey(seen)}`;
+          if (retryKey !== this.noOutputRerunKey) {
+            this.noOutputRerunKey = retryKey;
+            this.noOutputRerunAttempts = 0;
+          }
+          const attemptPlan = planEngineFailureAttempt({ error, attempts: this.noOutputRerunAttempts });
+          this.noOutputRerunAttempts = attemptPlan.nextAttempts;
+          if (attemptPlan.retry) {
+            this.pendingRerun = true;
+            if (!this.lastWakeContract) this.lastWakeContract = activeContract;
+            await this.publishAttempt({
+              token,
+              runId: run?.runId,
+              attempt: this.noOutputRerunAttempts,
+              status: "failed_retrying",
+              message: error
+            });
+            await this.publishEvent("turn.retry_scheduled", {
+              reason,
+              runId: run?.runId,
+              conversationId: typingConvo,
+              taskId: activeContract?.taskId ?? null,
+              cause: "engine produced no output",
+              attempt: this.noOutputRerunAttempts
+            }, "warn");
+          }
+          if (attemptPlan.publishFailureNotice) {
+            await this.publishAttempt({
+              token,
+              runId: run?.runId,
+              attempt: Math.max(1, this.noOutputRerunAttempts + 1),
+              status: "failed_final",
+              message: error
+            });
+            await this.publishEngineFailure({ token, runId: run?.runId, conversationId: typingConvo, error, exitCode });
+          }
         } else {
+          this.noOutputRerunKey = "";
+          this.noOutputRerunAttempts = 0;
           if (triage?.source === "fail-open") {
             this.failOpenStreak = nextFailOpenStreak(this.failOpenStreak, triage.source, true);
             this.clearFailOpenBackoff();
@@ -1392,6 +1467,7 @@ ${delta}`;
         this.lastTurnEndedAt = Date.now();
         if (this.pendingRerun && !this.stopped) {
           const fresh = await this.snapshotUnread(token).catch(() => null);
+          const hasPinnedTask = Boolean(this.lastWakeContract?.taskId?.trim());
           const agenda = fresh?.hasReal === true
             ? null
             : await runtimeGet<AgendaPayload>(this.cfg.serverUrl, "/agenda", token, this.cfg.tenantId).catch(() => null);
@@ -1399,6 +1475,7 @@ ${delta}`;
             pendingRerun: true,
             hasRealUnread: fresh?.hasReal === true,
             hasAgendaWork: agenda?.actionable === true,
+            hasPinnedTask,
             stopped: this.stopped
           })) {
             this.pendingRerun = false;

@@ -2033,7 +2033,7 @@ test("gui runtime clears messages without clearing paired engines", async () => 
     method: "POST"
   }), bindings));
 
-  const state = await json<{ availableEngines: string[]; messages: unknown[]; cliLog: unknown[]; runLog: unknown[]; runStreams: Record<string, unknown>; activeRunContracts: Record<string, unknown>; runActions: Record<string, unknown> }>(
+  const state = await json<{ availableEngines: string[]; messages: unknown[]; cliLog: unknown[]; runLog: unknown[]; runStreams: Record<string, unknown>; activeRunContracts: Record<string, unknown>; runActions: Record<string, unknown>; runAttempts: Record<string, unknown> }>(
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
   assert.deepEqual(state.availableEngines, ["claude", "codex"]);
@@ -2043,6 +2043,7 @@ test("gui runtime clears messages without clearing paired engines", async () => 
   assert.deepEqual(state.runStreams, {});
   assert.deepEqual(state.activeRunContracts, {});
   assert.deepEqual(state.runActions, {});
+  assert.deepEqual(state.runAttempts, {});
 });
 
 test("gui can clear only the active conversation window", async () => {
@@ -2185,6 +2186,7 @@ test("gui runtime exports, imports, and resets durable state snapshots", async (
     messages: unknown[];
     runStreams: Record<string, unknown>;
     activeRunContracts: Record<string, unknown>;
+    runAttempts: Record<string, unknown>;
     wakeLog?: { event: string; data: { resetState?: boolean } }[];
   }>(
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
@@ -2193,6 +2195,7 @@ test("gui runtime exports, imports, and resets durable state snapshots", async (
   assert.deepEqual(resetState.messages, []);
   assert.deepEqual(resetState.runStreams, {});
   assert.deepEqual(resetState.activeRunContracts, {});
+  assert.deepEqual(resetState.runAttempts, {});
   assert.equal(resetState.wakeLog?.some((row) => row.event === "wake" && row.data.resetState === true), true);
 
   await json<{ ok: true; messages: number }>(await worker.fetch(new Request("https://gui/gui/import-state", {
@@ -3284,6 +3287,8 @@ test("gui runtime records status, typing, thinking, events, and runs", async () 
   await worker.fetch(new Request("https://gui/runtime/triage", { method: "POST", headers: auth, body: JSON.stringify({ source: "byoa-codex", actionable: true }) }), bindings);
   const run = await json<{ runId: string }>(await worker.fetch(new Request("https://gui/runtime/runs", { method: "POST", headers: auth, body: JSON.stringify({ trigger: "test" }) }), bindings));
   await worker.fetch(new Request(`https://gui/runtime/runs/${run.runId}/heartbeat`, { method: "POST", headers: auth, body: JSON.stringify({ stream: { type: "tool_started", id: "tool-1", name: "shell", input: "pnpm test" } }) }), bindings);
+  await json<{ ok: true }>(await worker.fetch(new Request(`https://gui/runtime/runs/${run.runId}/attempts`, { method: "POST", headers: auth, body: JSON.stringify({ attempt: 1, status: "failed_retrying", message: "codex produced no output" }) }), bindings));
+  await worker.fetch(new Request(`https://gui/runtime/runs/${run.runId}/heartbeat`, { method: "POST", headers: auth, body: JSON.stringify({ stream: { type: "attempt", attempt: 1, status: "failed_retrying", message: "codex produced no output" } }) }), bindings);
   await worker.fetch(new Request(`https://gui/runtime/runs/${run.runId}/heartbeat`, { method: "POST", headers: auth, body: JSON.stringify({ stream: { type: "message_delta", text: "done" } }) }), bindings);
   await worker.fetch(new Request(`https://gui/runtime/runs/${run.runId}/heartbeat`, { method: "POST", headers: auth }), bindings);
   await worker.fetch(new Request(`https://gui/runtime/runs/${run.runId}/heartbeat`, { method: "POST", headers: auth, body: JSON.stringify({ agentId: "king-ai-ceo" }) }), bindings);
@@ -3299,7 +3304,8 @@ test("gui runtime records status, typing, thinking, events, and runs", async () 
     triageLog: { body: { source?: string } }[];
     runLog: { action: string; card?: { summary?: string; sections?: { kind: string; title: string }[] } }[];
     agentBeats?: Record<string, number>;
-    runStreams?: Record<string, { message?: string; tools?: { name: string }[] }>;
+    runStreams?: Record<string, { message?: string; tools?: { name: string }[]; attempts?: { status: string }[] }>;
+    runAttempts?: Record<string, { attempt: number; status: string; agentId: string }[]>;
   }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
   assert.equal(state.statusLog.at(-1)?.status, "thinking");
   assert.equal(state.typingLog.at(-1)?.conversationId, "king-ai-convo");
@@ -3307,12 +3313,16 @@ test("gui runtime records status, typing, thinking, events, and runs", async () 
   assert.equal(state.eventLog.at(-1)?.body.kind, "gui.event");
   assert.equal(state.noticeLog.at(-1)?.body.noticeKind, "byoa_engine_failed");
   assert.equal(state.triageLog.at(-1)?.body.source, "byoa-codex");
-  assert.deepEqual(state.runLog.map((row) => row.action), ["start", "stream", "heartbeat", "stream", "heartbeat", "finish"]);
+  assert.deepEqual(state.runLog.map((row) => row.action), ["start", "stream", "heartbeat", "stream", "heartbeat", "stream", "heartbeat", "finish"]);
   assert.equal(typeof state.agentBeats?.["king-ai-ceo"], "number");
   assert.equal(state.runStreams?.[run.runId]?.message, "done");
   assert.equal(state.runStreams?.[run.runId]?.tools?.[0]?.name, "shell");
+  assert.equal(state.runStreams?.[run.runId]?.attempts?.[0]?.status, "failed_retrying");
+  assert.equal(state.runAttempts?.[run.runId]?.[0]?.attempt, 1);
+  assert.equal(state.runAttempts?.[run.runId]?.[0]?.agentId, "king-ai-ceo");
   assert.equal(state.runLog.at(-1)?.card?.summary, "Completed");
   assert.equal(state.runLog.at(-1)?.card?.sections?.some((section) => section.kind === "tool"), true);
+  assert.equal(state.runLog.at(-1)?.card?.sections?.some((section) => section.title === "Attempts"), true);
 });
 
 test("gui runtime bounds persisted run stream state", async () => {
@@ -3333,16 +3343,24 @@ test("gui runtime bounds persisted run stream state", async () => {
       headers: auth,
       body: JSON.stringify({ trigger: { index } })
     }), bindings));
+    await json<{ ok: true }>(await worker.fetch(new Request(`https://gui/runtime/runs/${run.runId}/attempts`, {
+      method: "POST",
+      headers: auth,
+      body: JSON.stringify({ attempt: 1, status: "failed_retrying" })
+    }), bindings));
     if (index === 0) firstRunId = run.runId;
     lastRunId = run.runId;
   }
 
-  const state = await json<{ runStreams?: Record<string, unknown> }>(
+  const state = await json<{ runStreams?: Record<string, unknown>; runAttempts?: Record<string, unknown> }>(
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
   assert.equal(Object.keys(state.runStreams ?? {}).length, 100);
   assert.equal(firstRunId in (state.runStreams ?? {}), false);
   assert.equal(lastRunId in (state.runStreams ?? {}), true);
+  assert.equal(Object.keys(state.runAttempts ?? {}).length, 100);
+  assert.equal(firstRunId in (state.runAttempts ?? {}), false);
+  assert.equal(lastRunId in (state.runAttempts ?? {}), true);
 });
 
 test("gui runtime run contract rejects replies to the wrong conversation", async () => {

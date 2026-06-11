@@ -322,6 +322,19 @@ export type RunAction = {
   at: number;
 };
 
+export type RunAttemptRecord = {
+  runId: string;
+  agentId: string;
+  attempt: number;
+  status: "failed_retrying" | "failed_final";
+  conversationId?: string;
+  requestId?: string;
+  messageId?: string;
+  taskId?: string;
+  message?: string;
+  at: number;
+};
+
 export type RuntimeTokenMeta = {
   token: string;
   expiresAt: number;
@@ -562,6 +575,7 @@ export type State = {
   runStreams?: Record<string, RunStreamState>;
   activeRunContracts?: Record<string, RunContract>;
   runActions?: Record<string, RunAction[]>;
+  runAttempts?: Record<string, RunAttemptRecord[]>;
   agentBeats?: Record<string, number>;
   initiatives: Initiative[];
   tasks: Task[];
@@ -608,6 +622,7 @@ export type EntityStateKey =
   | "runStreams"
   | "activeRunContracts"
   | "runActions"
+  | "runAttempts"
   | "initiatives"
   | "tasks"
   | "taskEvents"
@@ -823,6 +838,7 @@ export const THINKING_LOG_CAPACITY = 200;
 export const EVENT_LOG_CAPACITY = 500;
 export const RUN_LOG_CAPACITY = 500;
 export const RUN_STREAM_CAPACITY = 100;
+export const RUN_ATTEMPT_CAPACITY = 100;
 export const CLI_LOG_CAPACITY = 500;
 export const NOTICE_LOG_CAPACITY = 200;
 export const TRIAGE_LOG_CAPACITY = 200;
@@ -849,6 +865,7 @@ export const GUI_ENTITY_STATE_KEYS: EntityStateKey[] = [
   "runStreams",
   "activeRunContracts",
   "runActions",
+  "runAttempts",
   "initiatives",
   "tasks",
   "taskEvents",

@@ -42,6 +42,7 @@ import {
   NOTICE_LOG_CAPACITY,
   REVIEW_COVERAGE_GATE,
   RUNTIME_TOKEN_TTL_MS,
+  RUN_ATTEMPT_CAPACITY,
   RUN_LOG_CAPACITY,
   RUN_STREAM_CAPACITY,
   SAFETY_ACTIONS,
@@ -98,6 +99,7 @@ import type {
   RemoteAssistGrant,
   ReviewRecord,
   RunAction,
+  RunAttemptRecord,
   RunContract,
   RunFeedback,
   RuntimeTokenMeta,
@@ -1791,6 +1793,29 @@ function pruneRunStreams(streams: Record<string, RunStreamState>): Record<string
   return Object.fromEntries(Object.entries(streams).slice(-RUN_STREAM_CAPACITY));
 }
 
+function normalizeRunAttempt(runId: string, body: unknown, agentId: string, contract?: RunContract): RunAttemptRecord | null {
+  if (!body || typeof body !== "object") return null;
+  const row = body as { attempt?: unknown; status?: unknown; message?: unknown; at?: unknown };
+  if (typeof row.attempt !== "number" || !Number.isFinite(row.attempt)) return null;
+  if (row.status !== "failed_retrying" && row.status !== "failed_final") return null;
+  return {
+    runId,
+    agentId,
+    attempt: Math.max(1, Math.floor(row.attempt)),
+    status: row.status,
+    conversationId: contract?.conversationId,
+    requestId: contract?.requestId,
+    messageId: contract?.messageId,
+    taskId: contract?.taskId,
+    message: typeof row.message === "string" && row.message.trim() ? row.message : undefined,
+    at: typeof row.at === "number" && Number.isFinite(row.at) ? row.at : Date.now()
+  };
+}
+
+function pruneRunAttempts(attempts: Record<string, RunAttemptRecord[]>): Record<string, RunAttemptRecord[]> {
+  return Object.fromEntries(Object.entries(attempts).slice(-RUN_ATTEMPT_CAPACITY).map(([runId, rows]) => [runId, rows.slice(-20)]));
+}
+
 function validateRunContractAction(state: State, contract: RunContract | undefined, actor: Agent, action: { command: "reply" | "task"; conversationId?: string; taskId?: string }): string | null {
   if (!contract) return null;
   if (contract.agentId && contract.agentId !== actor.id) return `run contract mismatch: actor ${actor.id} cannot act for ${contract.agentId}`;
@@ -1838,9 +1863,13 @@ function clearRunStateForConversation(state: State, conversationId: string): voi
   for (const [runId, actions] of Object.entries(state.runActions ?? {})) {
     if (actions.some((action) => action.conversationId === conversationId)) runIds.add(runId);
   }
+  for (const [runId, attempts] of Object.entries(state.runAttempts ?? {})) {
+    if (attempts.some((attempt) => attempt.conversationId === conversationId)) runIds.add(runId);
+  }
   if (!runIds.size) return;
   state.activeRunContracts = Object.fromEntries(Object.entries(state.activeRunContracts ?? {}).filter(([runId]) => !runIds.has(runId)));
   state.runActions = Object.fromEntries(Object.entries(state.runActions ?? {}).filter(([runId]) => !runIds.has(runId)));
+  state.runAttempts = Object.fromEntries(Object.entries(state.runAttempts ?? {}).filter(([runId]) => !runIds.has(runId)));
   state.runStreams = Object.fromEntries(Object.entries(state.runStreams ?? {}).filter(([runId]) => !runIds.has(runId)));
 }
 
@@ -1868,7 +1897,7 @@ function runtimeBodyEngine(body: unknown): string | undefined {
 
 function normalizeRunStreamEvent(value: unknown): RunStreamEvent | null {
   if (!value || typeof value !== "object") return null;
-  const row = value as { stream?: unknown; event?: unknown; type?: unknown; text?: unknown; name?: unknown; id?: unknown; input?: unknown; output?: unknown; error?: unknown; message?: unknown };
+  const row = value as { stream?: unknown; event?: unknown; type?: unknown; text?: unknown; name?: unknown; id?: unknown; input?: unknown; output?: unknown; error?: unknown; message?: unknown; attempt?: unknown; status?: unknown };
   const event = row.stream && typeof row.stream === "object"
     ? row.stream as typeof row
     : row.event && typeof row.event === "object"
@@ -1897,6 +1926,19 @@ function normalizeRunStreamEvent(value: unknown): RunStreamEvent | null {
       id: typeof event.id === "string" ? event.id : undefined,
       output: typeof event.output === "string" ? event.output : undefined,
       error: typeof event.error === "string" ? event.error : undefined
+    };
+  }
+  if (
+    event.type === "attempt" &&
+    typeof event.attempt === "number" &&
+    Number.isFinite(event.attempt) &&
+    (event.status === "failed_retrying" || event.status === "failed_final")
+  ) {
+    return {
+      type: "attempt",
+      attempt: Math.max(1, Math.floor(event.attempt)),
+      status: event.status,
+      message: typeof event.message === "string" ? event.message : undefined
     };
   }
   if (event.type === "done") return { type: "done" };
@@ -2942,6 +2984,8 @@ export {
   resolveRunContract,
   pruneActiveRunContracts,
   pruneRunStreams,
+  normalizeRunAttempt,
+  pruneRunAttempts,
   validateRunContractAction,
   recordRunAction,
   pruneRunActions,

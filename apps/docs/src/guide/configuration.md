@@ -57,7 +57,7 @@ king-ai agent computer --doctor
 
 to verify engine availability after PATH, login, or quota changes.
 
-Persistent engine sessions have a no-output watchdog. If a local CLI such as Codex gets stuck behind an interactive login, quota, billing, or credits prompt and produces no engine output, King AI aborts that turn, resets the affected session, posts a clear runtime failure notice, and backs off instead of waiting forever. Run the engine directly in a local terminal and then re-run `king-ai agent computer --doctor` before waking the agent again.
+Persistent engine sessions have a no-output watchdog. If a local CLI such as Codex gets stuck behind an interactive login, quota, billing, or credits prompt and produces no engine output, King AI aborts that attempt, resets the affected session, records the attempt in the run attempt ledger, shows it on the run stream card, and schedules one bounded retry for the same unread work or pinned task before backing off. If the retry also fails, King AI posts a clear runtime failure notice; run the engine directly in a local terminal and then re-run `king-ai agent computer --doctor` before waking the agent again.
 
 ## IELTS Coach Audio
 

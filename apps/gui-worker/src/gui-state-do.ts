@@ -262,6 +262,7 @@ export class GuiState implements DurableObject {
     if (path === "/runs") return this.authRuntime(request, async () => this.startRun(await request.json().catch(() => null)));
     if (path.startsWith("/runs/") && path.endsWith("/heartbeat")) return this.authRuntime(request, async (agentId) => this.runAction(path.split("/")[2] || "run", "heartbeat", await request.json().catch(() => null), agentId));
     if (path.startsWith("/runs/") && path.endsWith("/finish")) return this.authRuntime(request, async (agentId) => this.runAction(path.split("/")[2] || "run", "finish", await request.json().catch(() => null), agentId));
+    if (path.startsWith("/runs/") && path.endsWith("/attempts")) return this.authRuntime(request, async (agentId) => this.runAttempt(path.split("/")[2] || "run", await request.json().catch(() => null), agentId));
     if (path.startsWith("/runs/") && path.endsWith("/actions")) return this.authRuntime(request, async (agentId) => this.runActions(path.split("/")[2] || "run", agentId));
     if (path === "/gui-events") return this.guiEvents();
     if (path === "/gui-state") return json(await stateForGui(await this.get(), url.searchParams.get("redact") === "1"));
@@ -387,6 +388,7 @@ export class GuiState implements DurableObject {
       runStreams: {},
       activeRunContracts: {},
       runActions: {},
+      runAttempts: {},
       agentBeats: {},
       initiatives: [],
       tasks: [],
@@ -475,6 +477,7 @@ export class GuiState implements DurableObject {
     saved.runStreams = pruneRunStreams(saved.runStreams ?? {});
     saved.activeRunContracts = pruneActiveRunContracts(saved.activeRunContracts ?? {});
     saved.runActions = pruneRunActions(saved.runActions ?? {});
+    saved.runAttempts = pruneRunAttempts(saved.runAttempts ?? {});
     saved.agentBeats = normalizeAgentBeats(saved.agentBeats);
     saved.capabilities ??= { workspaces: [] };
     saved.availableEngines ??= [];
@@ -1400,6 +1403,18 @@ export class GuiState implements DurableObject {
     return json({ runId, actions: rows });
   }
 
+  private async runAttempt(runId: string, body: unknown, agentId: string): Promise<Response> {
+    const state = await this.get();
+    const attempt = normalizeRunAttempt(runId, body, agentId, state.activeRunContracts?.[runId]);
+    if (!attempt) return json({ error: "invalid run attempt" }, { status: 400 });
+    state.runAttempts = pruneRunAttempts({
+      ...(state.runAttempts ?? {}),
+      [runId]: [...(state.runAttempts?.[runId] ?? []), attempt]
+    });
+    await this.put(state);
+    return json({ ok: true, runId, attempt });
+  }
+
   private async markRead(payload: { conversationId?: string; upToMessageId?: string }, agentId = DEFAULT_AGENT.id): Promise<Response> {
     const state = await this.get();
     const conversationMessages = state.messages.filter((m) => m.conversation_id === payload.conversationId);
@@ -1897,6 +1912,7 @@ export class GuiState implements DurableObject {
     state.runStreams = {};
     state.activeRunContracts = {};
     state.runActions = {};
+    state.runAttempts = {};
     state.initiatives = [];
     state.tasks = [];
     state.taskEvents = [];
@@ -2088,9 +2104,11 @@ import {
   resolveRunContract,
   pruneActiveRunContracts,
   pruneRunStreams,
+  normalizeRunAttempt,
   validateRunContractAction,
   recordRunAction,
   pruneRunActions,
+  pruneRunAttempts,
   clearRunStateForConversation,
   isTaskMutationCommand,
   isCliUsageOrError,

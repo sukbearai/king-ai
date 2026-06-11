@@ -265,6 +265,11 @@ export function createGuiApp(deps: GuiRouteDeps): Hono<GuiEnv> {
     headers: await deps.forwardHeaders(c, { "Content-Type": "application/json" }),
     body: JSON.stringify(await c.req.json().catch(() => ({})))
   }));
+  app.post("/runtime/runs/:runId/attempts", async (c) => await (await deps.stateForRequest(c)).fetch(`https://state/runs/${c.req.param("runId")}/attempts`, {
+    method: "POST",
+    headers: await deps.forwardHeaders(c, { "Content-Type": "application/json" }),
+    body: JSON.stringify(await c.req.json().catch(() => ({})))
+  }));
   app.get("/runtime/runs/:runId/actions", async (c) => await (await deps.stateForRequest(c)).fetch(`https://state/runs/${c.req.param("runId")}/actions`, {
     headers: await deps.forwardHeaders(c)
   }));

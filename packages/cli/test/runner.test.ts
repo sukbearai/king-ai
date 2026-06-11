@@ -20,6 +20,7 @@ import {
   nextFailOpenStreak,
   nextNoStateActionStreak,
   parseWakeEventInfo,
+  planEngineFailureAttempt,
   selectSteerMessage,
   Semaphore,
   sessionResetReason,
@@ -33,6 +34,7 @@ import {
   shouldForceActionableTurn,
   shouldPreWarmEngineForWake,
   shouldPublishEngineFailureNotice,
+  shouldRetryEngineNoOutputTurn,
   shouldSkipPollWake,
   shouldStopEngineOnBeginStop,
   replaceWakeStreamController,
@@ -329,6 +331,24 @@ test("no-output engine failures reset persistent sessions", () => {
   const error = "local codex failed (exit 124): codex engine produced no output for 300s after session.send";
   assert.equal(mustResetSession(error, false), true);
   assert.equal(sessionResetReason(error), "engine produced no output");
+  assert.equal(shouldRetryEngineNoOutputTurn({ error, attempts: 0 }), true);
+  assert.equal(shouldRetryEngineNoOutputTurn({ error, attempts: 1 }), false);
+  assert.equal(shouldRetryEngineNoOutputTurn({ error: "not logged in", attempts: 0 }), false);
+  assert.deepEqual(planEngineFailureAttempt({ error, attempts: 0 }), {
+    retry: true,
+    publishFailureNotice: false,
+    nextAttempts: 1
+  });
+  assert.deepEqual(planEngineFailureAttempt({ error, attempts: 1 }), {
+    retry: false,
+    publishFailureNotice: true,
+    nextAttempts: 1
+  });
+  assert.deepEqual(planEngineFailureAttempt({ error: "not logged in", attempts: 0 }), {
+    retry: false,
+    publishFailureNotice: true,
+    nextAttempts: 0
+  });
 });
 
 test("runtime auth errors are detected from strict runtime failures", () => {
@@ -434,11 +454,12 @@ test("no-state-action streak grants a grace turn before fallback-acking unread",
 });
 
 test("pending reruns only continue when fresh unread work remains", () => {
-  assert.equal(shouldContinuePendingRerun({ pendingRerun: false, hasRealUnread: true, hasAgendaWork: false, stopped: false }), false);
-  assert.equal(shouldContinuePendingRerun({ pendingRerun: true, hasRealUnread: false, hasAgendaWork: false, stopped: false }), false);
-  assert.equal(shouldContinuePendingRerun({ pendingRerun: true, hasRealUnread: true, hasAgendaWork: false, stopped: true }), false);
-  assert.equal(shouldContinuePendingRerun({ pendingRerun: true, hasRealUnread: true, hasAgendaWork: false, stopped: false }), true);
-  assert.equal(shouldContinuePendingRerun({ pendingRerun: true, hasRealUnread: false, hasAgendaWork: true, stopped: false }), true);
+  assert.equal(shouldContinuePendingRerun({ pendingRerun: false, hasRealUnread: true, hasAgendaWork: false, hasPinnedTask: false, stopped: false }), false);
+  assert.equal(shouldContinuePendingRerun({ pendingRerun: true, hasRealUnread: false, hasAgendaWork: false, hasPinnedTask: false, stopped: false }), false);
+  assert.equal(shouldContinuePendingRerun({ pendingRerun: true, hasRealUnread: true, hasAgendaWork: false, hasPinnedTask: false, stopped: true }), false);
+  assert.equal(shouldContinuePendingRerun({ pendingRerun: true, hasRealUnread: true, hasAgendaWork: false, hasPinnedTask: false, stopped: false }), true);
+  assert.equal(shouldContinuePendingRerun({ pendingRerun: true, hasRealUnread: false, hasAgendaWork: true, hasPinnedTask: false, stopped: false }), true);
+  assert.equal(shouldContinuePendingRerun({ pendingRerun: true, hasRealUnread: false, hasAgendaWork: false, hasPinnedTask: true, stopped: false }), true);
 });
 
 test("unreadBatchKey changes when the unread batch changes", () => {
