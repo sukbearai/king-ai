@@ -794,6 +794,12 @@ export class GuiState implements DurableObject {
     const actor = findAgent(state, payload.agentId) ?? findAgent(state, payload.tokenAgentId) ?? defaultAgentFor(state);
     const authorEngine = activeRunEngine(state) ?? normalizeEngineId(payload.engine) ?? actor.engine ?? DEFAULT_AGENT.engine ?? "codex";
     const runContract = resolveRunContract(state, payload.runId, payload.contract);
+    // Snapshot task routing and message ids before the command mutates state, so we can push a
+    // targeted SSE wake to any agent that just gained routed work (e.g. a reviewer the actor handed
+    // off to via `task done`). Without this, agent->agent handoffs only surfaced on the recipient's
+    // inbox poll fallback (~5s by default), which is the main reason downstream agents responded slowly.
+    const taskRoutingBefore = new Map((state.tasks ?? []).map((task) => [task.id, { assignee: task.assignee, status: task.status as string }] as const));
+    const messageIdsBefore = new Set((state.messages ?? []).map((message) => message.id));
     const outcome = await dispatchRuntimeCli({
       argv,
       state,
@@ -884,7 +890,57 @@ export class GuiState implements DurableObject {
     if (outcome.kind === "reject") return this.cliRejected(state, actor, argv, outcome.result);
     state.cliLog.push({ at: Date.now(), agentId: actor.id, argv, result: outcome.result });
     await this.put(state);
+    await this.wakeRoutedWork(state, taskRoutingBefore, messageIdsBefore, actor.id);
     return json({ exitCode: 0, text: outcome.result });
+  }
+
+  // Push real-time wakes for work this CLI command routed to other agents. Mirrors the GUI task/
+  // message paths (which already broadcast) so handoffs land on the recipient's wake-stream instead
+  // of waiting for its next inbox poll. Only targets agents other than the actor to avoid self-loops.
+  private async wakeRoutedWork(
+    state: State,
+    taskRoutingBefore: Map<string, { assignee?: string; status: string }>,
+    messageIdsBefore: Set<string>,
+    actorId: string
+  ): Promise<void> {
+    const seen = new Set<string>();
+    const wakes: Array<Record<string, unknown>> = [];
+    for (const task of state.tasks ?? []) {
+      const prev = taskRoutingBefore.get(task.id);
+      const changed = !prev || prev.assignee !== task.assignee || prev.status !== task.status;
+      const assignee = normalizeAgentId(task.assignee);
+      if (!changed || !assignee || assignee === actorId) continue;
+      const wakeBase = {
+        agenda: true,
+        taskId: task.id,
+        agentId: assignee,
+        ...(task.conversationId ? { conversationId: task.conversationId } : {}),
+        at: Date.now()
+      };
+      if (task.status === "done") {
+        // Reviewer approval returns the task to the coordinator; wake loop-closing even though
+        // status is terminal (message wakes also fire, but task wakes carry the contract pin).
+        const key = `task-done:${task.id}:${assignee}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        wakes.push(wakeBase);
+        continue;
+      }
+      const key = `task:${task.id}:${assignee}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      wakes.push(wakeBase);
+    }
+    for (const message of state.messages ?? []) {
+      if (messageIdsBefore.has(message.id) || message.status === "pending") continue;
+      const target = normalizeAgentId(message.to_agent_id);
+      if (!target || target === actorId) continue;
+      const key = `msg:${target}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      wakes.push({ conversationId: message.conversation_id, messageId: message.id, agentId: target, at: Date.now() });
+    }
+    for (const data of wakes) await this.broadcast({ event: "wake", data });
   }
 
   private async cliRejected(state: State, actor: Agent, argv: string[], result: string): Promise<Response> {

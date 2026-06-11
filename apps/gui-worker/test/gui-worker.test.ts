@@ -120,13 +120,15 @@ function structuredWordCards(sentences: Array<{ text: string; clauses: Array<{ t
   })}`;
 }
 
-function cardJson(token: string, overrides: Partial<{ lemma: string; meaningZh: string; phonetic: string; syllables: string[] }> = {}): { token: string; lemma: string; meaningZh: string; phonetic: string; syllables: string[] } {
+function cardJson(token: string, overrides: Partial<{ lemma: string; meaningZh: string; phonetic: string; syllables: string[]; partOfSpeech: string; roots: string }> = {}): { token: string; lemma: string; meaningZh: string; phonetic: string; syllables: string[]; partOfSpeech?: string; roots?: string } {
   return {
     token,
     lemma: overrides.lemma ?? token,
     meaningZh: overrides.meaningZh ?? `${token} 的中文义`,
     phonetic: overrides.phonetic ?? `/${token.toLowerCase()}/`,
-    syllables: overrides.syllables ?? [token]
+    syllables: overrides.syllables ?? [token],
+    ...(overrides.partOfSpeech === undefined ? {} : { partOfSpeech: overrides.partOfSpeech }),
+    ...(overrides.roots === undefined ? {} : { roots: overrides.roots })
   };
 }
 
@@ -479,7 +481,7 @@ test("gui state renders IELTS learning annotations", async () => {
               }
             ],
             cards: ["I", "have", "been", "working", "for", "almost", "two", "weeks"].map((token) => cardJson(token)).concat([
-              cardJson("overtime", { meaningZh: "加班时间", phonetic: "/ˈoʊvərtaɪm/", syllables: ["o", "ver", "time"] })
+              cardJson("overtime", { meaningZh: "加班时间", phonetic: "/ˈoʊvərtaɪm/", syllables: ["o", "ver", "time"], partOfSpeech: "名词/副词", roots: "over- 超过 + time 时间" })
             ])
           })}`
         ].join("\n")
@@ -494,7 +496,49 @@ test("gui state renders IELTS learning annotations", async () => {
   const agent = state.messages.find((message) => message.author_kind === "agent");
   assert.match(agent?.body_html ?? "", /class="ielts-core">[\s\S]*data-word="I"[^>]*>I<\/span>[\s\S]*data-word="working"[^>]*>working<\/span>[\s\S]*<\/span>/);
   assert.match(agent?.body_html ?? "", /class="ielts-phrase">[\s\S]*data-word="for"[^>]*>for<\/span>[\s\S]*data-word="weeks"[^>]*>weeks<\/span>[\s\S]*<\/span>/);
-  assert.match(agent?.body_html ?? "", /class="ielts-word" data-word="overtime" data-meaning="加班时间" data-phonetic="\/ˈoʊvərtaɪm\/" data-syllables="o-ver-time">overtime<\/span>/);
+  assert.match(agent?.body_html ?? "", /class="ielts-word" data-word="overtime" data-meaning="加班时间" data-phonetic="\/ˈoʊvərtaɪm\/" data-syllables="o-ver-time" data-pos="名词\/副词" data-roots="over- 超过 \+ time 时间">overtime<\/span>/);
+});
+
+test("workflow room unread clears once its own responding agent reads, not just the default agent", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const room = await json<{ conversation: { id: string } }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({ title: "IELTS Unread", workflowId: "ielts-study", teamMode: "single" })
+    }), bindings)
+  );
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    body: JSON.stringify({ body: "早上好啊，老师", conversationId: room.conversation.id })
+  }), bindings);
+
+  const before = await json<{ conversations: { id: string; unread: number }[] }>(
+    await worker.fetch(new Request("https://gui/gui/summary"), bindings)
+  );
+  assert.equal(before.conversations.find((row) => row.id === room.conversation.id)?.unread, 1);
+
+  const state = await json<{ messages: { id: string; conversation_id: string; author_kind: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  const humanMessage = state.messages.find((message) => message.conversation_id === room.conversation.id && message.author_kind === "human");
+  const tokenRes = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/ielts-tutor/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  // The IELTS coach (not king-ai-ceo) reads the room; the human message is now handled.
+  await worker.fetch(new Request("https://gui/runtime/conversation/mark-read", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${tokenRes.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ conversationId: room.conversation.id, upToMessageId: humanMessage?.id })
+  }), bindings);
+
+  const after = await json<{ conversations: { id: string; unread: number }[] }>(
+    await worker.fetch(new Request("https://gui/gui/summary"), bindings)
+  );
+  assert.equal(after.conversations.find((row) => row.id === room.conversation.id)?.unread, 0);
 });
 
 test("gui state makes every IELTS coach English word clickable without explicit vocabulary markup", async () => {
@@ -671,8 +715,11 @@ test("gui state gives fallback IELTS word cards meaning phonetic and syllables",
   );
   const html = state.messages.find((message) => message.author_kind === "agent")?.body_html ?? "";
   for (const word of ["Hiring", "programmer", "company", "through", "university", "projects"]) {
-    assert.match(html, new RegExp(`data-word="${word}" data-meaning="[^"]+" data-phonetic="[^"]+" data-syllables="[^"]+"[^>]*>${word}<\\/span>`));
+    assert.match(html, new RegExp(`data-word="${word}" data-meaning="[^"]+" data-phonetic="[^"]+" data-syllables="[^"]+" data-pos="[^"]+"[^>]*>${word}<\\/span>`));
   }
+  assert.match(html, /data-word="Hiring" data-meaning="Hiring 的中文义"[^>]*data-pos="形容词"/);
+  assert.match(html, /data-word="programmer" data-meaning="programmer 的中文义"[^>]*data-pos="名词"/);
+  assert.match(html, /data-word="through" data-meaning="through 的中文义"[^>]*data-pos="介词"/);
 });
 
 test("gui state fills word cards from structured WordCards JSON and hides it", async () => {
@@ -1304,6 +1351,103 @@ test("gui wake events target the assigned collaborator", async () => {
   const wake = state.wakeLog?.find((row) => row.event === "wake" && row.data.taskId === created.task.id);
   assert.equal(wake?.data.agentId, "dev");
   assert.equal(wake?.data.agenda, true);
+});
+
+test("cli task done handoff broadcasts wake to the routed reviewer", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const devToken = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/dev/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    body: JSON.stringify({ body: "@dev roll call reply" })
+  }), bindings);
+
+  const beforeDone = await json<{
+    tasks: { id: string; assignee?: string; status: string }[];
+    wakeLog?: { event: string; data: { agentId?: string; taskId?: string; agenda?: boolean } }[];
+  }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
+  const task = beforeDone.tasks.find((row) => row.assignee === "dev" && row.status === "assigned");
+  assert.ok(task);
+
+  await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${devToken.token}` },
+    body: JSON.stringify({ argv: ["task", "done", task.id, "dev roll call ok"] })
+  }), bindings);
+
+  const afterDone = await json<{
+    tasks: { id: string; assignee?: string; status: string }[];
+    wakeLog?: { event: string; data: { agentId?: string; taskId?: string; agenda?: boolean } }[];
+  }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
+  const routed = afterDone.tasks.find((row) => row.id === task.id);
+  assert.equal(routed?.status, "review");
+  assert.equal(routed?.assignee, "reviewer");
+  assert.equal(afterDone.wakeLog?.some((row) =>
+    row.event === "wake" &&
+    row.data.agentId === "reviewer" &&
+    row.data.taskId === task.id &&
+    row.data.agenda === true
+  ), true);
+});
+
+test("cli reviewer approval broadcasts wake to the coordinator for loop closing", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const devToken = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/dev/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  const reviewerToken = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/reviewer/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    body: JSON.stringify({ body: "@dev ship the review handoff" })
+  }), bindings);
+
+  const assigned = await json<{ tasks: { id: string; assignee?: string; status: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  const task = assigned.tasks.find((row) => row.assignee === "dev" && row.status === "assigned");
+  assert.ok(task);
+
+  await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${devToken.token}` },
+    body: JSON.stringify({ argv: ["task", "done", task.id, "ready for review"] })
+  }), bindings);
+
+  await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${reviewerToken.token}` },
+    body: JSON.stringify({ argv: ["task", "done", task.id, "approved"] })
+  }), bindings);
+
+  const afterReview = await json<{
+    tasks: { id: string; assignee?: string; status: string }[];
+    wakeLog?: { event: string; data: { agentId?: string; taskId?: string; agenda?: boolean } }[];
+  }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
+  const doneTask = afterReview.tasks.find((row) => row.id === task.id);
+  assert.equal(doneTask?.status, "done");
+  assert.equal(doneTask?.assignee, "king-ai-ceo");
+  assert.equal(afterReview.wakeLog?.some((row) =>
+    row.event === "wake" &&
+    row.data.agentId === "king-ai-ceo" &&
+    row.data.taskId === task.id &&
+    row.data.agenda === true
+  ), true);
 });
 
 test("wake filtering resolves implicit card wake targets before checking visibility", () => {

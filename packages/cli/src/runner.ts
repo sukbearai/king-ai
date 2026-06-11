@@ -26,8 +26,8 @@ import { validateAgentConfig } from "./agent-config-validation.js";
 import type { AgentConfigWarning } from "./agent-config-validation.js";
 
 const TOKEN_REFRESH_SKEW_MS = 5 * 60 * 1000;
-const INBOX_POLL_MS = Number(process.env.KING_AI_INBOX_POLL_MS) || 20_000;
-const WAKE_DEBOUNCE_MS = Number(process.env.KING_AI_WAKE_DEBOUNCE_MS) || 300;
+const INBOX_POLL_MS = Number(process.env.KING_AI_INBOX_POLL_MS) || 5_000;
+const WAKE_DEBOUNCE_MS = Number(process.env.KING_AI_WAKE_DEBOUNCE_MS) || 100;
 const RUN_HEARTBEAT_MS = Number(process.env.KING_AI_RUN_HEARTBEAT_MS) || 5_000;
 const TRIAGE_TIMEOUT_MS = Number(process.env.KING_AI_TRIAGE_TIMEOUT_MS) || 30_000;
 const ENGINE_BACKOFF_MS = Number(process.env.KING_AI_ENGINE_BACKOFF_MS) || 60_000;
@@ -268,11 +268,22 @@ export function formatTriageNote(triage?: TriageVerdict | null): string {
   ].filter(Boolean).join("\n");
 }
 
+export function simpleTurnFastPathInstruction(triage?: TriageVerdict | null): string {
+  if (triage?.actionable !== true) return "";
+  if (triage.source !== "routed-task" && triage.responseMode !== "me") return "";
+  return [
+    "Fast path for simple routed work:",
+    "If the fetched context is just a roll-call, acknowledgement, direct confirmation, or other low-risk one-line reply, do one brief reply and immediately close the assigned task with king-ai task done.",
+    "Do not run king-ai inbox, messages, or task list just to rediscover the same context; use the already fetched unread digest and runtime preamble, with a single king-ai glance only when you need a live group-thread duplicate check before posting."
+  ].join("\n");
+}
+
 export function buildChatDelta(digest: string, memoryDigest: string, rosterDigest: string, triage?: TriageVerdict | null): string {
   const triageNote = formatTriageNote(triage);
+  const fastPath = simpleTurnFastPathInstruction(triage);
   return `You've been woken because there's new runtime activity, and local triage already decided whether you should respond. If triage marked it relevant, your job is to act, not re-litigate whether to wake.
 
-${triageNote ? `${triageNote}\n\n` : ""}Your unread messages (ALREADY FETCHED - no need to re-run king-ai inbox or messages just to reread these; do run king-ai glance before posting in a group to catch anything posted while you compose):
+${triageNote ? `${triageNote}\n\n` : ""}${fastPath ? `${fastPath}\n\n` : ""}Your unread messages (ALREADY FETCHED - no need to re-run king-ai inbox or messages just to reread these; do run king-ai glance before posting in a group to catch anything posted while you compose):
 ${digest || "(none)"}
 
 Your memory index (memory/MEMORY.md):
@@ -373,6 +384,25 @@ export function parseWakeEventInfo(rawData: string | undefined, now = Date.now()
 
 export function shouldHandleWakeEvent(info: WakeEventInfo, agentId: string): boolean {
   return !info.agentId || info.agentId === agentId;
+}
+
+// Task-routing SSE wakes carry a taskId contract. When the inbox snapshot is momentarily empty,
+// do not fall through to the slow agenda quiet-path — act on the pinned task immediately.
+export function shouldForceActionableTurn(args: { hasRealUnread: boolean; contract?: RuntimeRunContract | null }): boolean {
+  return !args.hasRealUnread && Boolean(args.contract?.taskId?.trim());
+}
+
+export function routedTaskTriageVerdict(taskId: string): TriageVerdict {
+  return {
+    actionable: true,
+    source: "routed-task",
+    reason: `SSE wake pinned task ${taskId}`,
+    promptNote: "This wake targeted an assigned task. Use king-ai glance in the routed conversation, complete the pinned task, and close with king-ai task done when finished."
+  };
+}
+
+export function shouldPreWarmEngineForWake(reason: string): boolean {
+  return reason === "reconnect-catchup" || reason.startsWith("sse-");
 }
 
 export function wakeEventKey(event: string, info: WakeEventInfo): string | null {
@@ -661,6 +691,7 @@ export class AgentRunner {
       if (conversationId) void this.maybeSteer(conversationId);
       return;
     }
+    if (shouldPreWarmEngineForWake(reason)) this.preWarmEngineSession();
     if (this.wakeDebounceTimer) return;
     this.wakeDebounceTimer = setTimeout(() => {
       this.wakeDebounceTimer = null;
@@ -1098,6 +1129,16 @@ ${delta}`;
     if (display) console.log(`[${this.agent.id}/${this.adapter.id}] ${display.slice(0, 500)}`);
   }
 
+  private preWarmEngineSession(): void {
+    if (this.stopped || this.engineSession?.alive) return;
+    try {
+      this.ensureEngineSession();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[${this.agent.id}/${this.adapter.id}] engine pre-warm failed: ${message}`);
+    }
+  }
+
   private ensureEngineSession(): EngineSession | null {
     if (this.engineSession && this.engineSession.alive) return this.engineSession;
     const resumeSessionId = this.sessionId;
@@ -1157,14 +1198,17 @@ ${delta}`;
           break;
         }
         const { seen, digest, hasReal, imagePaths } = snapshot;
-        if (!hasReal) {
+        const forceRoutedTask = shouldForceActionableTurn({ hasRealUnread: hasReal, contract: activeContract });
+        if (!hasReal && !forceRoutedTask) {
           await this.ackSeen(token, seen);
           await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" }, this.cfg.tenantId);
           await this.maybeAgendaTurn(token);
           continue;
         }
 
-        const triage = await this.inboxTriage(token);
+        const triage = forceRoutedTask && activeContract?.taskId
+          ? routedTaskTriageVerdict(activeContract.taskId)
+          : await this.inboxTriage(token);
         this.failOpenStreak = nextFailOpenStreak(this.failOpenStreak, triage?.source);
         if (triage?.source === "fail-open" && shouldDeferFailOpenTriage(this.failOpenStreak)) {
           const backoff = Math.min(TRIAGE_BACKOFF_MAX_MS, 60_000);

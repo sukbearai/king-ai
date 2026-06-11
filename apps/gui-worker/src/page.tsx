@@ -125,12 +125,20 @@ export function renderPage(styles: string): string {
               <span id="vocabMeaning" class="vocab-value"></span>
             </div>
             <div class="vocab-row">
+              <span id="vocabPosLabel" class="vocab-label">Part of speech</span>
+              <span id="vocabPos" class="vocab-value"></span>
+            </div>
+            <div class="vocab-row">
               <span id="vocabPhoneticLabel" class="vocab-label">Phonetic</span>
               <span id="vocabPhonetic" class="vocab-value"></span>
             </div>
             <div class="vocab-row">
               <span id="vocabSyllablesLabel" class="vocab-label">Syllables</span>
               <span id="vocabSyllables" class="vocab-value"></span>
+            </div>
+            <div class="vocab-row">
+              <span id="vocabRootsLabel" class="vocab-label">Roots &amp; affixes</span>
+              <span id="vocabRoots" class="vocab-value"></span>
             </div>
           </div>
         </dialog>

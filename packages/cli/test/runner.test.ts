@@ -23,11 +23,15 @@ import {
   selectSteerMessage,
   Semaphore,
   sessionResetReason,
+  simpleTurnFastPathInstruction,
+  routedTaskTriageVerdict,
   shouldDeferFailOpenTriage,
   shouldFallbackAckSeen,
   shouldFallbackAckAfterStreak,
   shouldHandleWakeEvent,
   shouldContinuePendingRerun,
+  shouldForceActionableTurn,
+  shouldPreWarmEngineForWake,
   shouldPublishEngineFailureNotice,
   shouldSkipPollWake,
   shouldStopEngineOnBeginStop,
@@ -83,6 +87,20 @@ test("shouldHandleWakeEvent keeps targeted wake events on the owning agent", () 
   assert.equal(shouldHandleWakeEvent(parseWakeEventInfo(JSON.stringify({ agentId: "dev" })), "dev"), true);
   assert.equal(shouldHandleWakeEvent(parseWakeEventInfo(JSON.stringify({ agentId: "reviewer" })), "dev"), false);
   assert.equal(shouldHandleWakeEvent(parseWakeEventInfo(JSON.stringify({ conversationId: "all" })), "dev"), true);
+});
+
+test("shouldForceActionableTurn fast-paths SSE task wakes when inbox snapshot is empty", () => {
+  assert.equal(shouldForceActionableTurn({ hasRealUnread: false, contract: { taskId: "task-1" } }), true);
+  assert.equal(shouldForceActionableTurn({ hasRealUnread: true, contract: { taskId: "task-1" } }), false);
+  assert.equal(shouldForceActionableTurn({ hasRealUnread: false, contract: { conversationId: "demo" } }), false);
+  assert.equal(routedTaskTriageVerdict("task-1").actionable, true);
+  assert.match(routedTaskTriageVerdict("task-1").reason ?? "", /task-1/);
+});
+
+test("shouldPreWarmEngineForWake only prewarms on SSE and reconnect wakes", () => {
+  assert.equal(shouldPreWarmEngineForWake("sse-wake"), true);
+  assert.equal(shouldPreWarmEngineForWake("reconnect-catchup"), true);
+  assert.equal(shouldPreWarmEngineForWake("poll"), false);
 });
 
 test("wakeEventKey dedupes stable routed events without suppressing anonymous wakes", () => {
@@ -243,6 +261,20 @@ test("buildChatDelta carries fetched inbox, roster, and response mode guidance",
   assert.match(delta, /coordinate with glance\/claims/);
   assert.match(delta, /trust over memory/);
   assert.match(delta, /demo-agent\tDemo Agent/);
+});
+
+test("buildChatDelta adds simple-turn fast path only for directed work", () => {
+  const routed = buildChatDelta("Human: 还有人在吗？", "memory", "dev\tDev", routedTaskTriageVerdict("task-1"));
+  assert.match(routed, /Fast path for simple routed work/);
+  assert.match(routed, /one brief reply and immediately close the assigned task/);
+  assert.match(routed, /Do not run king-ai inbox, messages, or task list/);
+
+  const directed = buildChatDelta("Human: ack?", "memory", "dev\tDev", { actionable: true, responseMode: "me" });
+  assert.match(directed, /Fast path for simple routed work/);
+
+  const shared = buildChatDelta("Human: any thoughts?", "memory", "dev\tDev", { actionable: true, responseMode: "one-of-us" });
+  assert.doesNotMatch(shared, /Fast path for simple routed work/);
+  assert.equal(simpleTurnFastPathInstruction({ actionable: false, responseMode: "me" }), "");
 });
 
 test("formatTriageNote explains all King AI response modes", () => {

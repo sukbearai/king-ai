@@ -278,7 +278,7 @@ function sanitizeSpanAttributes(rawAttrs: string): string {
   const classMatch = rawAttrs.match(/\sclass\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
   const className = decodeHtmlAttribute(classMatch?.[1] ?? classMatch?.[2] ?? classMatch?.[3] ?? "").trim();
   if (SAFE_MARK_CLASS_PATTERN.test(className)) attrs.push(` class="${className}"`);
-  for (const key of ["data-word", "data-meaning", "data-phonetic", "data-syllables"]) {
+  for (const key of ["data-word", "data-meaning", "data-phonetic", "data-syllables", "data-pos", "data-roots"]) {
     const pattern = new RegExp(`\\s${key}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i");
     const match = rawAttrs.match(pattern);
     const value = decodeHtmlAttribute(match?.[1] ?? match?.[2] ?? match?.[3] ?? "").trim();
@@ -307,7 +307,7 @@ function escapeHtmlAttribute(value: string): string {
 // Built-in fallback cards cover common grammar words plus high-frequency IELTS/job-writing
 // vocabulary. WordCards JSON remains the source for context-specific meanings, but this table
 // keeps imperfect replies usable when the model omitted a word.
-const COMMON_WORD_CARDS: Record<string, { meaning: string; phonetic: string; syllables: string }> = {
+const COMMON_WORD_CARDS: Record<string, { meaning: string; phonetic: string; syllables: string; pos?: string; roots?: string }> = {
   // articles
   a: { meaning: "一个（不定冠词）", phonetic: "/ə/", syllables: "" },
   an: { meaning: "一个（不定冠词）", phonetic: "/ən/", syllables: "" },
@@ -536,7 +536,61 @@ const COMMON_WORD_CARDS: Record<string, { meaning: string; phonetic: string; syl
   "i've": { meaning: "我已（I have）", phonetic: "/aɪv/", syllables: "" }
 };
 
-type IeltsCardDetails = { meaning: string; phonetic: string; syllables: string };
+function withPos(words: readonly string[], pos: string): Record<string, string> {
+  return Object.fromEntries(words.map((word) => [word, pos]));
+}
+
+// Part-of-speech labels for fallback cards (Chinese, matching the coach WordCards contract).
+const COMMON_WORD_POS: Record<string, string> = {
+  ...withPos(["a", "an", "the"], "限定词"),
+  ...withPos(["i", "you", "he", "she", "it", "we", "they", "me", "him", "her", "us", "them"], "代词"),
+  ...withPos(["my", "your", "his", "its", "our", "their"], "代词(物主限定词)"),
+  ...withPos(["mine", "yours"], "代词"),
+  ...withPos(["this", "that", "these", "those"], "限定词/代词"),
+  ...withPos(["who", "whom", "whose", "which", "what"], "代词"),
+  ...withPos(["when"], "副词/连词"),
+  ...withPos(["where", "why", "how"], "副词"),
+  ...withPos([
+    "to", "of", "in", "on", "at", "by", "for", "with", "from", "about", "as", "into", "through", "over",
+    "under", "between", "during", "before", "after", "since", "until", "without", "within", "around",
+    "toward", "off", "out", "up", "down", "near"
+  ], "介词"),
+  ...withPos(["like"], "介词/动词"),
+  ...withPos([
+    "and", "or", "but", "so", "if", "because", "while", "than", "though", "although", "unless", "whether",
+    "nor", "yet", "once"
+  ], "连词"),
+  ...withPos([
+    "am", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does", "did",
+    "write", "writing", "written", "apply", "developed", "solve", "enjoy", "improving", "believe", "make",
+    "discuss", "hope"
+  ], "动词"),
+  ...withPos(["will", "would", "can", "could", "shall", "should", "may", "might", "must"], "情态动词"),
+  ...withPos([
+    "not", "never", "very", "too", "also", "just", "only", "even", "still", "again", "then", "there", "here",
+    "now", "however", "always", "often", "really", "well", "yes", "carefully", "faithfully"
+  ], "副词"),
+  ...withPos(["no"], "限定词/副词"),
+  ...withPos(["more", "most", "much", "many", "some", "any", "all", "both", "each", "every", "few"], "限定词/代词"),
+  ...withPos(["little", "own", "same", "other", "another"], "形容词/代词"),
+  ...withPos([
+    "dear", "practical", "personal", "technical", "new", "basic", "useful", "natural", "hiring"
+  ], "形容词"),
+  ...withPos([
+    "manager", "programmer", "position", "company", "skill", "skills", "java", "python", "web", "development",
+    "university", "project", "projects", "problem", "problems", "team", "member", "members", "tool", "tools",
+    "code", "quality", "pressure", "enthusiasm", "experience", "opportunity", "application", "interview",
+    "word", "job", "letter", "phrase", "phrases", "tip"
+  ], "名词"),
+  ...withPos(["work", "practice", "learning", "english", "chinese", "request"], "名词/动词"),
+  ...withPos(["i'm", "it's", "don't", "can't", "that's", "you're", "i've"], "缩写")
+};
+
+function fallbackWordPos(key: string, dict?: { pos?: string }): string {
+  return dict?.pos ?? COMMON_WORD_POS[key] ?? "";
+}
+
+type IeltsCardDetails = { meaning: string; phonetic: string; syllables: string; partOfSpeech: string; roots: string };
 type IeltsCardIndex = { words: Map<string, IeltsCardDetails> };
 type IeltsClauseAnnotation = { text: string; core: string; phrases: string[] };
 type IeltsSentenceAnnotation = { text: string; clauses: IeltsClauseAnnotation[] };
@@ -556,10 +610,18 @@ function lookupWordCard(key: string, glossary?: IeltsCardIndex, displayWord = ke
     return {
       meaning: glossCard.meaning,
       phonetic: glossCard.phonetic || dict?.phonetic || "",
-      syllables: glossCard.syllables || dict?.syllables || syllabifyEnglishWord(displayWord)
+      syllables: glossCard.syllables || dict?.syllables || syllabifyEnglishWord(displayWord),
+      partOfSpeech: glossCard.partOfSpeech || fallbackWordPos(key, dict),
+      roots: glossCard.roots || dict?.roots || ""
     };
   }
-  if (dict) return { meaning: dict.meaning, phonetic: dict.phonetic, syllables: dict.syllables || syllabifyEnglishWord(displayWord) };
+  if (dict) return {
+    meaning: dict.meaning,
+    phonetic: dict.phonetic,
+    syllables: dict.syllables || syllabifyEnglishWord(displayWord),
+    partOfSpeech: fallbackWordPos(key, dict),
+    roots: dict.roots || ""
+  };
   return null;
 }
 
@@ -592,7 +654,9 @@ function clickableWordSpan(word: string, glossary?: IeltsCardIndex): string {
     ` data-word="${escapedWord}"` +
     ` data-meaning="${escapeHtmlAttribute(card.meaning)}"` +
     (card.phonetic ? ` data-phonetic="${escapeHtmlAttribute(card.phonetic)}"` : "") +
-    (card.syllables ? ` data-syllables="${escapeHtmlAttribute(card.syllables)}"` : "");
+    (card.syllables ? ` data-syllables="${escapeHtmlAttribute(card.syllables)}"` : "") +
+    (card.partOfSpeech ? ` data-pos="${escapeHtmlAttribute(card.partOfSpeech)}"` : "") +
+    (card.roots ? ` data-roots="${escapeHtmlAttribute(card.roots)}"` : "");
   return `<span class="ielts-word"${attrs}>${display}</span>`;
 }
 
@@ -604,6 +668,13 @@ function setIeltsCard(glossary: IeltsCardIndex, term: string, card: IeltsCardDet
 
 function normalizeIeltsCardSyllables(value: unknown): string {
   if (Array.isArray(value)) return value.map((part) => typeof part === "string" ? part.trim() : "").filter(Boolean).join("-");
+  return typeof value === "string" ? value.trim() : "";
+}
+
+// Roots and affixes may arrive as a ready string ("morn 词根 + -ing 后缀") or as an array of
+// morpheme parts; join arrays with " + " so the card shows a single readable breakdown.
+function normalizeIeltsCardRoots(value: unknown): string {
+  if (Array.isArray(value)) return value.map((part) => typeof part === "string" ? part.trim() : "").filter(Boolean).join(" + ");
   return typeof value === "string" ? value.trim() : "";
 }
 
@@ -680,7 +751,15 @@ function addIeltsWordCardsFromJson(glossary: IeltsCardIndex, parsed: unknown): v
         : typeof row.pronunciation === "string"
           ? row.pronunciation.trim()
           : "";
-    setIeltsCard(glossary, token, { meaning, phonetic, syllables: normalizeIeltsCardSyllables(row.syllables) });
+    const partOfSpeech = typeof row.partOfSpeech === "string"
+      ? row.partOfSpeech.trim()
+      : typeof row.pos === "string"
+        ? row.pos.trim()
+        : typeof row.posZh === "string"
+          ? row.posZh.trim()
+          : "";
+    const roots = normalizeIeltsCardRoots(row.roots ?? row.affixes ?? row.morphology ?? row.rootsZh);
+    setIeltsCard(glossary, token, { meaning, phonetic, syllables: normalizeIeltsCardSyllables(row.syllables), partOfSpeech, roots });
   }
 }
 
@@ -756,8 +835,11 @@ function extractIeltsCardData(body: string): { text: string; glossary: IeltsCard
 
 function renderIeltsAnnotations(markdown: string): string {
   return markdown
-    .replace(/\[word\s+([^\]\n|]+)\|([^\]\n|]+)\|([^\]\n|]+)\|([^\]\n|]+)\]/g, (_match, word: string, meaning: string, phonetic: string, syllables: string) =>
-      `<span class="ielts-word" data-word="${escapeHtmlAttribute(word.trim())}" data-meaning="${escapeHtmlAttribute(meaning.trim())}" data-phonetic="${escapeHtmlAttribute(phonetic.trim())}" data-syllables="${escapeHtmlAttribute(syllables.trim())}">${escapeHtml(word.trim())}</span>`
+    .replace(/\[word\s+([^\]\n|]+)\|([^\]\n|]+)\|([^\]\n|]+)\|([^\]\n|]+)(?:\|([^\]\n|]+))?(?:\|([^\]\n|]+))?\]/g, (_match, word: string, meaning: string, phonetic: string, syllables: string, pos?: string, roots?: string) =>
+      `<span class="ielts-word" data-word="${escapeHtmlAttribute(word.trim())}" data-meaning="${escapeHtmlAttribute(meaning.trim())}" data-phonetic="${escapeHtmlAttribute(phonetic.trim())}" data-syllables="${escapeHtmlAttribute(syllables.trim())}"` +
+      (pos && pos.trim() ? ` data-pos="${escapeHtmlAttribute(pos.trim())}"` : "") +
+      (roots && roots.trim() ? ` data-roots="${escapeHtmlAttribute(roots.trim())}"` : "") +
+      `>${escapeHtml(word.trim())}</span>`
     );
 }
 
@@ -1578,12 +1660,23 @@ function queueTaskCompletionMessage(state: State, task: Task, options: { fromNam
   conversation.updated_at = now;
 }
 
+// A room's "unread" count means human messages its own responding agents have not read yet, i.e.
+// work still waiting for that room. Resolve the responders from the conversation's coordinator and
+// team rather than the global default agent: workflow rooms (e.g. IELTS) are handled by their own
+// agent, so checking only king-ai-ceo left unread permanently >=1 and pinned the run indicator on.
+function conversationResponderIds(state: State, conversation: Conversation): string[] {
+  const ids = new Set<string>([coordinatorAgentFor(state, conversation).id]);
+  for (const agent of teamAgentsFor(state, conversation)) ids.add(agent.id);
+  return [...ids];
+}
+
 function conversationSummaries(state: State): Array<Conversation & { unread: number; messages: number }> {
   return state.conversations.slice().sort(compareConversations).map((conversation) => {
     const rows = state.messages.filter((message) => message.conversation_id === conversation.id && isRuntimeVisibleMessage(message));
+    const responderIds = conversationResponderIds(state, conversation);
     return {
       ...conversation,
-      unread: rows.filter((message) => !message.readBy.includes(DEFAULT_AGENT.id) && message.author_kind === "human").length,
+      unread: rows.filter((message) => message.author_kind === "human" && !responderIds.some((id) => message.readBy.includes(id))).length,
       messages: rows.length
     };
   });

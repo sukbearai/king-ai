@@ -130,8 +130,10 @@ const TRANSLATIONS = {
     vocabAudioStop: '停止单词发音',
     vocabAudioFailed: '单词发音失败',
     vocabMeaning: '词义',
+    vocabPos: '词性',
     vocabPhonetic: '音标',
     vocabSyllables: '音节',
+    vocabRoots: '词根词缀',
     vocabNoDetails: '词义待补充',
     agentStatusRunning: '运行中',
     agentStatusThinking: '思考中',
@@ -281,8 +283,10 @@ const TRANSLATIONS = {
     vocabAudioStop: 'Stop word audio',
     vocabAudioFailed: 'Word audio failed',
     vocabMeaning: 'Meaning',
+    vocabPos: 'Part of speech',
     vocabPhonetic: 'Phonetic',
     vocabSyllables: 'Syllables',
+    vocabRoots: 'Roots & affixes',
     vocabNoDetails: 'Meaning pending',
     agentStatusRunning: 'Running',
     agentStatusThinking: 'Thinking',
@@ -1269,9 +1273,11 @@ function openVocabDialog(node) {
   if (previousAudioButton) cancelTts(previousAudioButton.dataset.ttsId || '');
   const word = node.getAttribute('data-word') || node.textContent || '';
   const meaning = node.getAttribute('data-meaning') || '';
+  const pos = node.getAttribute('data-pos') || '';
   const phonetic = node.getAttribute('data-phonetic') || '';
   const syllables = node.getAttribute('data-syllables') || '';
-  const hasDetails = Boolean(meaning || phonetic || syllables);
+  const roots = node.getAttribute('data-roots') || '';
+  const hasDetails = Boolean(meaning || pos || phonetic || syllables || roots);
   document.getElementById('vocabWord').textContent = word;
   const audioButton = document.getElementById('vocabAudioButton');
   if (audioButton) {
@@ -1286,12 +1292,18 @@ function openVocabDialog(node) {
   }
   document.getElementById('vocabMeaningLabel').textContent = t('vocabMeaning');
   document.getElementById('vocabMeaning').textContent = meaning || t('vocabNoDetails');
+  document.getElementById('vocabPosLabel').textContent = t('vocabPos');
+  document.getElementById('vocabPos').textContent = pos;
+  document.getElementById('vocabPos').closest('.vocab-row').hidden = !hasDetails || !pos;
   document.getElementById('vocabPhoneticLabel').textContent = t('vocabPhonetic');
   document.getElementById('vocabPhonetic').textContent = phonetic;
   document.getElementById('vocabPhonetic').closest('.vocab-row').hidden = !hasDetails || !phonetic;
   document.getElementById('vocabSyllablesLabel').textContent = t('vocabSyllables');
   document.getElementById('vocabSyllables').textContent = syllables;
   document.getElementById('vocabSyllables').closest('.vocab-row').hidden = !hasDetails || !syllables;
+  document.getElementById('vocabRootsLabel').textContent = t('vocabRoots');
+  document.getElementById('vocabRoots').textContent = roots;
+  document.getElementById('vocabRoots').closest('.vocab-row').hidden = !hasDetails || !roots;
   if (!dialog.open) dialog.showModal();
 }
 function playVocabTts() {
