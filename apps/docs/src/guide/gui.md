@@ -51,6 +51,8 @@ The GUI exposes:
 - Run history and host command output.
 - Reset controls for development and test environments.
 
+In team conversations, casual greetings and broad roll-call messages stay with the coordinator instead of creating Dev or Reviewer tasks. Substantive work requests are still auto-delegated through the workflow task and review path.
+
 ## Deployment
 
 The worker package lives in `apps/gui-worker`. Local development uses Wrangler, but production publishing is handled by the repository release workflow after a version tag is pushed. Do not publish the CLI package or deploy the Worker manually as part of normal releases.

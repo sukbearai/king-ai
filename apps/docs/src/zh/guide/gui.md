@@ -51,6 +51,8 @@ GUI 提供：
 - 运行历史和 host command 输出。
 - 开发和测试环境使用的 reset 控制。
 
+在团队对话里，普通寒暄和面向全员的点名消息会留给协调者处理，不会自动创建 Dev 或 Reviewer 任务。明确的工作请求仍会按 workflow 任务和复核链路自动委派。
+
 ## 部署
 
 Worker package 位于 `apps/gui-worker`。本地开发使用 Wrangler，但生产发布由版本 tag 触发的 GitHub Actions 完成。正常发布流程中不要手动 npm publish，也不要直接部署 Worker。

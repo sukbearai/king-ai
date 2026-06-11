@@ -1755,7 +1755,60 @@ test("single-agent gui windows keep requests with King AI CEO", async () => {
   assert.deepEqual(reviewerInbox.rows, []);
 });
 
-test("team roll calls delegate without coordinator task contracts or review", async () => {
+test("casual team greetings stay with the coordinator without task handoff", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const ceoToken = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/king-ai-ceo/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  const devToken = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/dev/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    body: JSON.stringify({ body: "你好" })
+  }), bindings);
+
+  const state = await json<{
+    tasks: { requestMessageId?: string }[];
+    messages: { body: string; to_agent_id?: string; status?: string }[];
+    wakeLog?: { event: string; data: { agentId?: string; taskId?: string; agenda?: boolean } }[];
+  }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
+  assert.equal(state.tasks.length, 0);
+  assert.equal(state.messages.some((row) => row.to_agent_id === "dev" && row.body.includes("Task assigned")), false);
+  assert.equal(state.wakeLog?.some((row) =>
+    row.event === "wake" &&
+    row.data.agentId === "king-ai-ceo" &&
+    row.data.taskId === undefined
+  ), true);
+  assert.equal(state.wakeLog?.some((row) =>
+    row.event === "wake" &&
+    row.data.agentId === "dev" &&
+    row.data.agenda === true
+  ), false);
+
+  const ceoInbox = await json<{ rows: { body: string; to_agent_id?: string }[] }>(
+    await worker.fetch(new Request("https://gui/runtime/inbox", {
+      headers: { Authorization: `Bearer ${ceoToken.token}` }
+    }), bindings)
+  );
+  assert.equal(ceoInbox.rows.some((row) => row.body === "你好" && row.to_agent_id === "king-ai-ceo"), true);
+  const devInbox = await json<{ rows: { body: string }[] }>(
+    await worker.fetch(new Request("https://gui/runtime/inbox", {
+      headers: { Authorization: `Bearer ${devToken.token}` }
+    }), bindings)
+  );
+  assert.deepEqual(devInbox.rows, []);
+});
+
+test("team roll calls stay with the coordinator without task handoff", async () => {
   const bindings = env();
   await pairComputer(bindings, { engines: ["codex"] });
   const room = await json<{ conversation: { id: string } }>(
@@ -1776,9 +1829,8 @@ test("team roll calls delegate without coordinator task contracts or review", as
     wakeLog?: { event: string; data: { conversationId?: string; agentId?: string; taskId?: string; agenda?: boolean } }[];
   }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
   const task = state.tasks.find((row) => row.conversationId === room.conversation.id);
-  assert.equal(task?.assignee, "dev");
-  assert.equal(task?.reviewerAgentId, undefined);
-  assert.equal(state.messages.some((row) => row.conversation_id === room.conversation.id && row.to_agent_id === "dev" && row.body.includes("Task assigned")), true);
+  assert.equal(task, undefined);
+  assert.equal(state.messages.some((row) => row.conversation_id === room.conversation.id && row.to_agent_id === "dev" && row.body.includes("Task assigned")), false);
   assert.equal(state.messages.some((row) => row.conversation_id === room.conversation.id && row.to_agent_id === "reviewer" && row.body.includes("Task assigned")), false);
   assert.equal(state.wakeLog?.some((row) =>
     row.event === "wake" &&
@@ -1790,9 +1842,8 @@ test("team roll calls delegate without coordinator task contracts or review", as
     row.event === "wake" &&
     row.data.conversationId === room.conversation.id &&
     row.data.agentId === "dev" &&
-    row.data.taskId === task?.id &&
     row.data.agenda === true
-  ), true);
+  ), false);
 });
 
 test("custom gui windows can include dev without reviewer", async () => {
@@ -2378,14 +2429,14 @@ test("gui messages show a pending agent placeholder until runtime reply replaces
 
   await worker.fetch(new Request("https://gui/gui/message", {
     method: "POST",
-    body: JSON.stringify({ body: "hello" })
+    body: JSON.stringify({ body: "please implement the feature" })
   }), bindings);
 
   let state = await json<{ messages: { author_kind: string; author_engine?: string; body: string; status?: string }[] }>(
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
   assert.deepEqual(state.messages.filter((row) => row.author_kind !== "system").map((row) => [row.author_kind, row.author_engine, row.body, row.status]), [
-    ["human", undefined, "hello", undefined],
+    ["human", undefined, "please implement the feature", undefined],
     ["agent", "codex", "已委派给 dev 处理...", "pending"]
   ]);
 
@@ -2399,7 +2450,7 @@ test("gui messages show a pending agent placeholder until runtime reply replaces
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
   assert.deepEqual(state.messages.filter((row) => row.author_kind !== "system").map((row) => [row.author_kind, row.author_engine, row.body, row.status]), [
-    ["human", undefined, "hello", undefined],
+    ["human", undefined, "please implement the feature", undefined],
     ["agent", "claude", "done", "done"]
   ]);
 });
@@ -3598,7 +3649,7 @@ test("gui runtime does not wake peers for ordinary agent room chatter", async ()
       headers: { Authorization: `Bearer ${devToken.token}` }
     }), bindings)
   );
-  assert.equal(initialDevTriage.verdict.actionable, true);
+  assert.equal(initialDevTriage.verdict.actionable, false);
 
   await json<{ ok: boolean }>(await worker.fetch(new Request("https://gui/runtime/conversation/mark-read", {
     method: "POST",

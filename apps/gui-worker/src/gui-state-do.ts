@@ -1546,7 +1546,9 @@ export class GuiState implements DurableObject {
     conversation.updated_at = now;
     state.messages.push(message);
     state.messages.push(pendingReply);
-    autoDelegateMessage(state, conversation, message, targetAgent);
+    if (shouldAutoDelegateMessage(conversation, message.body)) {
+      autoDelegateMessage(state, conversation, message, targetAgent);
+    }
     const delegated = state.tasks.find((task) => task.requestMessageId === message.id);
     if (delegated?.assignee && delegated.assignee !== targetAgent.id) updatePendingForTask(state, delegated, `已委派给 ${delegated.assignee} 处理...`);
     await this.put(state);
