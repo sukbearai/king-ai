@@ -2987,7 +2987,8 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /blockedBy=/);
   assert.match(html, /acceptance/);
   assert.match(html, /class="composer-tools"/);
-  assert.match(html, /class="composer-tools"[\s\S]*data-i18n="backToBottom"[\s\S]*data-i18n="clearScreen"[\s\S]*data-i18n="refresh"/);
+  assert.match(html, /class="composer-tools"[\s\S]*data-i18n="backToBottom"[\s\S]*data-i18n="attachFile"[\s\S]*data-i18n="clearScreen"/);
+  assert.doesNotMatch(html, /<button onclick="refresh\(\)" data-i18n="refresh">Refresh<\/button>/);
   assert.match(html, /backToBottom: '↓ 回到底部'/);
   assert.match(html, /backToBottom: '↓ Back to bottom'/);
   assert.match(html, /\.composer-tools[\s\S]*position:\s*absolute/);

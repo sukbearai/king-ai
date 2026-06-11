@@ -83,7 +83,6 @@ export function renderPage(styles: string): string {
 	                    <button class="jump" onclick="scrollToBottom()" data-i18n="backToBottom">↓ Back to bottom</button>
 	                    <button onclick="openAttachmentPicker()" data-i18n="attachFile">Attach</button>
 	                    <button id="clearButton" onclick="clearMessages()" data-i18n="clearScreen">Clear</button>
-	                    <button onclick="refresh()" data-i18n="refresh">Refresh</button>
 	                  </div>
 	                  <div class="composer-main">
 	                    <div id="attachmentTray" class="attachment-tray"></div>
