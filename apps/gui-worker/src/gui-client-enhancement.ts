@@ -361,49 +361,6 @@ function setLanguage(lang) {
 const mobileQuery = window.matchMedia('(max-width: 820px)');
 function syncMobileLayout() {
   document.body.classList.toggle('mobile-layout', mobileQuery.matches);
-  syncComposerHeight();
-}
-const MOBILE_COMPOSER_BOTTOM_CLOSED = '16px';
-function resetMobilePageScroll() {
-  window.scrollTo(0, 0);
-  document.documentElement.scrollTop = 0;
-  document.body.scrollTop = 0;
-}
-function setComposerKeyboardOpen(open) {
-  if (!mobileQuery.matches) return;
-  document.body.classList.toggle('keyboard-open', open);
-  if (open) document.documentElement.style.removeProperty('--king-composer-bottom');
-  else document.documentElement.style.setProperty('--king-composer-bottom', MOBILE_COMPOSER_BOTTOM_CLOSED);
-}
-function syncComposerHeight() {
-  if (!mobileQuery.matches) {
-    document.documentElement.style.removeProperty('--king-composer-height');
-    document.documentElement.style.removeProperty('--king-composer-bottom');
-    document.body.classList.remove('keyboard-open');
-    return;
-  }
-  const composer = document.querySelector('.composer');
-  if (composer) {
-    const height = composer.getBoundingClientRect().height;
-    if (height > 0) document.documentElement.style.setProperty('--king-composer-height', Math.ceil(height) + 'px');
-  }
-}
-function restoreMobileChatViewport() {
-  if (!mobileQuery.matches) return;
-  resetMobilePageScroll();
-  syncComposerHeight();
-  if (shouldStickToBottom) scrollToBottom();
-  else updateBackToBottom();
-}
-function scheduleComposerHeightSync() {
-  syncComposerHeight();
-  requestAnimationFrame(syncComposerHeight);
-  window.setTimeout(syncComposerHeight, 120);
-}
-function scheduleMobileViewportRestore() {
-  scheduleComposerHeightSync();
-  window.setTimeout(restoreMobileChatViewport, 120);
-  window.setTimeout(restoreMobileChatViewport, 320);
 }
 const MOBILE_VIEWPORT_BASE = 'width=device-width, initial-scale=1, interactive-widget=overlays-content';
 const MOBILE_VIEWPORT_FOCUSED = MOBILE_VIEWPORT_BASE + ', maximum-scale=1';
@@ -418,20 +375,11 @@ function setViewportMeta(content) {
 }
 function onComposerFocus() {
   if (isMobileTouchDevice()) setViewportMeta(MOBILE_VIEWPORT_FOCUSED);
-  setComposerKeyboardOpen(true);
-  scheduleComposerHeightSync();
-  if (mobileQuery.matches) {
-    scrollToBottom();
-    requestAnimationFrame(scrollToBottom);
-  }
 }
 function onComposerBlur() {
-  setComposerKeyboardOpen(false);
-  scheduleMobileViewportRestore();
   if (isMobileTouchDevice()) {
     window.setTimeout(function() {
       setViewportMeta(MOBILE_VIEWPORT_BASE);
-      restoreMobileChatViewport();
     }, 0);
   }
 }
@@ -441,23 +389,40 @@ if (mobileQuery.addEventListener) {
 } else if (mobileQuery.addListener) {
   mobileQuery.addListener(syncMobileLayout);
 }
-window.addEventListener('resize', syncComposerHeight);
-window.addEventListener('orientationchange', syncComposerHeight);
 const composerBodyInput = document.getElementById('body');
 if (composerBodyInput) {
   composerBodyInput.addEventListener('focus', onComposerFocus);
   composerBodyInput.addEventListener('blur', onComposerBlur);
 }
 const workspaceEl = document.querySelector('.workspace');
+const chatWindowEl = document.getElementById('chatWindow');
 if (workspaceEl) workspaceEl.addEventListener('scroll', updateBackToBottom);
+if (chatWindowEl) chatWindowEl.addEventListener('scroll', updateBackToBottom);
 function shouldRenderChatMessage(message) {
   if (message.author_kind === 'system' && message.payload && message.payload.taskEventType) return false;
   if (message.status === 'pending') return false; // "agent thinking" placeholder bubbles are not shown
   return true;
 }
 function workspaceScroller() {
+  if (mobileQuery.matches) {
+    const chatPanel = document.getElementById('panel-chat');
+    if (chatPanel && chatPanel.classList.contains('active')) return document.getElementById('chatWindow');
+  }
   return document.querySelector('.workspace');
 }
+handleWorkspaceScroll = async function() {
+  updateBackToBottom();
+  const workspace = workspaceScroller();
+  if (!workspace) return;
+  if (loadingOlderMessages || workspace.scrollTop > 24 || visibleMessageCount >= lastMessageTotal) return;
+  loadingOlderMessages = true;
+  const beforeHeight = workspace.scrollHeight;
+  const beforeTop = workspace.scrollTop;
+  visibleMessageCount = Math.min(visibleMessageCount + 20, lastMessageTotal);
+  await refresh({ preserveScroll: true });
+  workspace.scrollTop = workspace.scrollHeight - beforeHeight + beforeTop;
+  loadingOlderMessages = false;
+};
 scrollToBottom = function() {
   const workspace = workspaceScroller();
   if (!workspace) return;
@@ -1956,9 +1921,8 @@ renderMessages = function(state, options) {
   const chatWindow = document.getElementById('chatWindow');
   chatWindow.classList.toggle('empty-state', !visibleRows.length);
   chatWindow.innerHTML = '<div class="system-line">' + olderLine + '</div>' + html;
-  syncComposerHeight();
   if (!visibleRows.length) {
-    const workspace = document.querySelector('.workspace');
+    const workspace = workspaceScroller();
     if (workspace) workspace.scrollTop = 0;
     shouldStickToBottom = true;
     updateBackToBottom();
