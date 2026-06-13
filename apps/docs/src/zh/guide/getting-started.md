@@ -1,12 +1,12 @@
 # 快速开始
 
-King AI 把远端 runtime server 连接到你本机的智能体引擎。完成一次配对后，只要本机 Claude Code 或 Codex 保持登录，就可以启动 computer daemon 执行智能体工作。
+King AI 把远端 runtime server 连接到你本机的智能体引擎。完成一次配对后，只要本机 Claude Code、Codex 或 Grok 保持登录，就可以启动 computer daemon 执行智能体工作。
 
 ## 前置条件
 
 - Node.js 20 或更新版本。
 - 用 `pnpm` 执行开发命令和一次性 `dlx` 命令。
-- 至少安装并登录一个本地引擎：`claude` 或 `codex`。
+- 至少安装并登录一个本地引擎：`claude`、`codex` 或 `grok`。
 - 可访问 `https://king-ai.congrongtech.cn` 上的 King AI GUI。
 
 ## 检查本地引擎

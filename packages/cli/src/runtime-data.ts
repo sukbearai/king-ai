@@ -75,6 +75,13 @@ export const PROVIDER_CAPABILITIES: ProviderCapability[] = [
     notes: ["King AI records Claude CLI usage fields when the engine returns them.", "Set KING_AI_USAGE_PRICING for estimated local cost."]
   },
   {
+    provider: "xAI",
+    engines: ["grok"],
+    usage: "local_tokens",
+    pricing: "env_pricing",
+    notes: ["King AI records Grok CLI usage fields when headless JSON returns them.", "Set KING_AI_USAGE_PRICING for estimated local cost."]
+  },
+  {
     provider: "OpenRouter",
     engines: ["openrouter"],
     usage: "unavailable",

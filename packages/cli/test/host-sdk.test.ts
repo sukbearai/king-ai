@@ -668,7 +668,7 @@ test("host SDK supports King AI adapter factories", async () => {
   interface ConcreteTakeoverOptions {
     projectPath: string;
     goalOverride?: string;
-    runtime: "claude" | "codex";
+    runtime: "claude" | "codex" | "grok";
     enableBrain: boolean;
   }
   const preparedPlan = { id: "plan-1" };

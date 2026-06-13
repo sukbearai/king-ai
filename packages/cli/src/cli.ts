@@ -18,6 +18,14 @@ import { scenarioTemplate } from "./team-workflow.js";
 import type { KingScenarioTemplate } from "./team-workflow.js";
 import type { EngineId } from "./types.js";
 
+const PREFERRED_ENGINES: EngineId[] = ["claude", "codex", "grok"];
+
+function assertPreferredEngine(engine: EngineId | undefined): void {
+  if (engine && !PREFERRED_ENGINES.includes(engine)) {
+    throw new Error("--engine must be claude, codex, or grok");
+  }
+}
+
 export function commandNameFromArgv(argv0?: string): CommandName {
   return normalizeCommandName(argv0);
 }
@@ -39,7 +47,7 @@ export function computerHelpText(defaultServer = DEFAULT_SERVER, commandName = "
     `${commandName} agent computer - run local BYOA agents on THIS machine`,
     "",
     "The daemon talks to a runtime server over HTTP and drives a local agent",
-    "engine (Claude Code or Codex). Pair once, then it can run in the background.",
+    "engine (Claude Code, Codex, or Grok). Pair once, then it can run in the background.",
     "",
     "Usage:",
     `  ${commandName} agent computer --pair <code> [--server <url>] [--engine <id>]`,
@@ -49,7 +57,7 @@ export function computerHelpText(defaultServer = DEFAULT_SERVER, commandName = "
     "  --pair <code>        pair this machine with the runtime",
     `  --server <url>       runtime server URL (default: ${defaultServer})`,
     "  --tenant <id>        runtime tenant id on multi-tenant GUI servers",
-    "  --engine <id>        force an engine: claude | codex",
+    "  --engine <id>        force an engine: claude | codex | grok",
     "",
     "Background service:",
     "  --install-service    install + start the background supervisor",
@@ -107,7 +115,7 @@ const computerCommand = command(
       },
       engine: {
         type: String,
-        description: "Preferred local engine: claude or codex"
+        description: "Preferred local engine: claude, codex, or grok"
       },
       installService: {
         type: Boolean,
@@ -151,7 +159,7 @@ const computerCommand = command(
       },
       doctor: {
         type: Boolean,
-        description: "Check local Claude/Codex availability"
+        description: "Check local Claude/Codex/Grok availability"
       },
       version: {
         type: Boolean,
@@ -169,7 +177,7 @@ const computerCommand = command(
     const serverUrl = selectedServer.replace(/\/+$/, "");
     const tenantId = typeof flags.tenant === "string" && flags.tenant.trim() ? flags.tenant.trim() : undefined;
     const engine = flags.engine as EngineId | undefined;
-    if (engine && engine !== "claude" && engine !== "codex") throw new Error("--engine must be claude or codex");
+    assertPreferredEngine(engine);
     if (flags.help) {
       console.log(computerHelpText(selectedServer, commandName));
       return;
@@ -613,7 +621,7 @@ const hostPlanRunCommand = command({
     },
     engine: {
       type: String,
-      description: "Preferred local engine: claude or codex"
+      description: "Preferred local engine: claude, codex, or grok"
     },
     model: {
       type: String,
@@ -647,7 +655,7 @@ const hostPlanRunCommand = command({
   }
 }, async (argv) => {
   const engine = argv.flags.engine as EngineId | undefined;
-  if (engine && engine !== "claude" && engine !== "codex") throw new Error("--engine must be claude or codex");
+  assertPreferredEngine(engine);
   const loops = Number.parseInt(argv.flags.loops, 10);
   if (!Number.isFinite(loops) || loops < 1) throw new Error("--loops must be a positive integer");
   const result = await runHostCommandFromCli({
@@ -690,7 +698,7 @@ const hostPreflightCommand = command({
     },
     engine: {
       type: String,
-      description: "Preferred local engine: claude or codex"
+      description: "Preferred local engine: claude, codex, or grok"
     },
     takeover: {
       type: Boolean,
@@ -706,7 +714,7 @@ const hostPreflightCommand = command({
   }
 }, async (argv) => {
   const engine = argv.flags.engine as EngineId | undefined;
-  if (engine && engine !== "claude" && engine !== "codex") throw new Error("--engine must be claude or codex");
+  assertPreferredEngine(engine);
   const result = await runHostCommandFromCli({
     command: "preflight",
     format: argv.flags.json ? "json" : "text",
@@ -741,7 +749,7 @@ const hostPrepareRunLayoutCommand = command({
     },
     engine: {
       type: String,
-      description: "Preferred local engine: claude or codex"
+      description: "Preferred local engine: claude, codex, or grok"
     },
     output: {
       type: String,
@@ -766,7 +774,7 @@ const hostPrepareRunLayoutCommand = command({
   }
 }, async (argv) => {
   const engine = argv.flags.engine as EngineId | undefined;
-  if (engine && engine !== "claude" && engine !== "codex") throw new Error("--engine must be claude or codex");
+  assertPreferredEngine(engine);
   const result = await runHostCommandFromCli({
     command: "prepare-run-layout",
     format: argv.flags.json ? "json" : "text",
@@ -806,7 +814,7 @@ const hostSubmitRunCommand = command({
     },
     engine: {
       type: String,
-      description: "Preferred local engine: claude or codex"
+      description: "Preferred local engine: claude, codex, or grok"
     },
     model: {
       type: String,
@@ -831,7 +839,7 @@ const hostSubmitRunCommand = command({
   }
 }, async (argv) => {
   const engine = argv.flags.engine as EngineId | undefined;
-  if (engine && engine !== "claude" && engine !== "codex") throw new Error("--engine must be claude or codex");
+  assertPreferredEngine(engine);
   const result = await runHostCommandFromCli({
     command: "submit-run",
     format: argv.flags.json ? "json" : "text",

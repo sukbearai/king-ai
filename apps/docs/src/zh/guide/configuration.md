@@ -49,7 +49,7 @@ KING_AI_CONFIG_DIR=/tmp/king-ai-dev king-ai agent computer --doctor
 
 ## 本地引擎
 
-King AI 会检测已安装的 `claude` 和 `codex` CLI。启动 daemon 前保持选中的引擎在本机已登录，然后运行：
+King AI 会检测已安装的 `claude`、`codex` 和 `grok` CLI。启动 daemon 前保持选中的引擎在本机已登录，然后运行：
 
 ```sh
 king-ai agent computer --doctor
@@ -57,7 +57,9 @@ king-ai agent computer --doctor
 
 来验证 PATH、登录或额度变化后的引擎可用性。
 
-持久引擎 session 会启用无输出 watchdog。如果 Codex 等本地 CLI 卡在交互式登录、额度、账单或 credits 提示后没有产生任何引擎输出，King AI 会中止当前 attempt、重置受影响的 session、把 attempt 记录进 run attempt ledger，并同步显示在 run stream card 上，再针对同一批未读消息或 pinned task 安排一次有上限的重试，然后才进入退避。如果重试仍失败，King AI 才发送明确的 runtime failure notice；此时先在本地终端直接运行对应引擎，再重新执行 `king-ai agent computer --doctor`，确认健康后再唤醒智能体。
+持久引擎 session 会启用无输出 watchdog。如果 Codex 或 Grok 等本地 CLI 卡在交互式登录、额度、账单或 credits 提示后没有产生任何引擎输出，King AI 会中止当前 attempt、重置受影响的 session、把 attempt 记录进 run attempt ledger，并同步显示在 run stream card 上，再针对同一批未读消息或 pinned task 安排一次有上限的重试，然后才进入退避。如果重试仍失败，King AI 才发送明确的 runtime failure notice；此时先在本地终端直接运行对应引擎，再重新执行 `king-ai agent computer --doctor`，确认健康后再唤醒智能体。
+
+Grok 通过 xAI CLI 的 headless 模式（`grok -p`）运行 turn，使用 `--output-format streaming-json`，并通过 `--resume <sessionId>` 复用 session。脚本化运行时 King AI 还会传入 `--no-auto-update` 和 `--always-approve`。可通过 `KING_AI_GROK_ARGS` 追加可选参数。
 
 ## IELTS 教练语音
 

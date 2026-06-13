@@ -28,6 +28,7 @@ import { createHostLaunchPlan, toJsonSafeHostLaunchPlan } from "./host-run-spec.
 import type { HostRunSpecInput } from "./host-run-spec.js";
 import { formatHostRunRequestSummary, formatHostRunRequests, getHostRunRequest, listHostRunRequests, submitHostRunRequest, updateHostRunRequest } from "./host-runs.js";
 import type { HostRunGetInput, HostRunListInput, HostRunRequest, HostRunSubmitInput, HostRunUpdateInput } from "./host-runs.js";
+import type { EngineId } from "./types.js";
 import { appendHostTimelineEvent, formatHostTimeline, previewText, readHostTimeline, summarizeHostCommandJson } from "./host-timeline.js";
 import { readRunningState } from "./service.js";
 import type { RunningEvent, RunningState } from "./service.js";
@@ -1360,7 +1361,7 @@ function dropUndefined<T extends Record<string, unknown>>(value: T): T {
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
 }
 
-function normalizeAvailableEngines(value: unknown): Array<"claude" | "codex"> | undefined {
+function normalizeAvailableEngines(value: unknown): EngineId[] | undefined {
   if (!Array.isArray(value)) return undefined;
-  return value.filter((entry): entry is "claude" | "codex" => entry === "claude" || entry === "codex");
+  return value.filter((entry): entry is EngineId => entry === "claude" || entry === "codex" || entry === "grok");
 }

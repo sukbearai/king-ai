@@ -21,7 +21,7 @@ king-ai agent computer --pair <code>
 
 选项：
 
-- `--engine claude|codex`：优先使用一个已安装引擎。
+- `--engine claude|codex|grok`：优先使用一个已安装引擎。
 - `--tenant <id>`：选择多租户 GUI server 上的 tenant。
 - `--server <url>`：覆盖默认 runtime server URL。生产环境默认值是 `https://king-ai.congrongtech.cn`。
 

@@ -1,12 +1,12 @@
 # Getting Started
 
-King AI connects a remote runtime server to local agent engines on your machine. Pair once, keep Claude Code or Codex signed in locally, then run the computer daemon whenever you want agents to work.
+King AI connects a remote runtime server to local agent engines on your machine. Pair once, keep Claude Code, Codex, or Grok signed in locally, then run the computer daemon whenever you want agents to work.
 
 ## Prerequisites
 
 - Node.js 20 or newer.
 - `pnpm` for development commands and one-off `dlx` runs.
-- At least one supported local engine installed and authenticated: `claude` or `codex`.
+- At least one supported local engine installed and authenticated: `claude`, `codex`, or `grok`.
 - Access to the King AI GUI at `https://king-ai.congrongtech.cn`.
 
 ## Check Local Engines

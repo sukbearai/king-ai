@@ -1,4 +1,4 @@
-export type EngineId = "claude" | "codex";
+export type EngineId = "claude" | "codex" | "grok";
 export type AgentLifecycle = "on-demand" | "24/7" | "idle_cached" | "disabled";
 
 export interface ComputerConfig {

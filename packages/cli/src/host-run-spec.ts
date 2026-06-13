@@ -69,7 +69,7 @@ export interface HostLaunchIssue {
   message: string;
 }
 
-export type HostRunLlmModeLabel = "hybrid-worker" | "codex-cli" | "claude-cli" | "runtime-default";
+export type HostRunLlmModeLabel = "hybrid-worker" | "codex-cli" | "claude-cli" | "grok-cli" | "runtime-default";
 
 export interface HostRunSessionPlan {
   runId: string;
@@ -230,7 +230,7 @@ export function createHostLaunchPlan(
     issues.push({
       severity: "error",
       code: "no-engine",
-      message: "No supported local engine is available on PATH. Install and sign in to Claude Code or Codex."
+      message: "No supported local engine is available on PATH. Install and sign in to Claude Code, Codex, or Grok."
     });
   } else if (plan.options.engine && !availableEngines.includes(plan.options.engine)) {
     issues.push({
@@ -516,7 +516,9 @@ export function createHostRunSessionPlan(plan: HostRunPlan, effectiveEngine?: En
       ? "codex-cli"
       : runtimeLabel === "claude"
         ? "claude-cli"
-        : "runtime-default";
+        : runtimeLabel === "grok"
+          ? "grok-cli"
+          : "runtime-default";
   const shouldShowCodexConfig = runtimeLabel === "codex" || runtimeOverride === "codex";
   return {
     runId: plan.runId,
@@ -577,6 +579,7 @@ export function detectAvailableHostEngines(env: NodeJS.ProcessEnv = process.env)
   const engines: EngineId[] = [];
   if (commandExists("claude", env)) engines.push("claude");
   if (commandExists("codex", env)) engines.push("codex");
+  if (commandExists("grok", env)) engines.push("grok");
   return engines;
 }
 

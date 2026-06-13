@@ -87,6 +87,7 @@ test("missingEngineMessage gives actionable install guidance", () => {
   const message = missingEngineMessage();
   assert.match(message, /Claude Code/);
   assert.match(message, /Codex/);
+  assert.match(message, /Grok/);
   assert.match(message, /king-ai agent computer --pair <code>/);
 });
 

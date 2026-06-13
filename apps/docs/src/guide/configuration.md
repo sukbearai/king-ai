@@ -49,7 +49,7 @@ Treat this directory as sensitive because it contains runtime tokens and local e
 
 ## Local Engines
 
-King AI detects installed `claude` and `codex` CLIs. Keep the selected engine signed in locally before starting the daemon, then use:
+King AI detects installed `claude`, `codex`, and `grok` CLIs. Keep the selected engine signed in locally before starting the daemon, then use:
 
 ```sh
 king-ai agent computer --doctor
@@ -57,7 +57,9 @@ king-ai agent computer --doctor
 
 to verify engine availability after PATH, login, or quota changes.
 
-Persistent engine sessions have a no-output watchdog. If a local CLI such as Codex gets stuck behind an interactive login, quota, billing, or credits prompt and produces no engine output, King AI aborts that attempt, resets the affected session, records the attempt in the run attempt ledger, shows it on the run stream card, and schedules one bounded retry for the same unread work or pinned task before backing off. If the retry also fails, King AI posts a clear runtime failure notice; run the engine directly in a local terminal and then re-run `king-ai agent computer --doctor` before waking the agent again.
+Persistent engine sessions have a no-output watchdog. If a local CLI such as Codex or Grok gets stuck behind an interactive login, quota, billing, or credits prompt and produces no engine output, King AI aborts that attempt, resets the affected session, records the attempt in the run attempt ledger, shows it on the run stream card, and schedules one bounded retry for the same unread work or pinned task before backing off. If the retry also fails, King AI posts a clear runtime failure notice; run the engine directly in a local terminal and then re-run `king-ai agent computer --doctor` before waking the agent again.
+
+Grok uses the xAI CLI headless mode (`grok -p`) with `--output-format streaming-json` for turns and `--resume <sessionId>` for session reuse. In scripted runs King AI also passes `--no-auto-update` and `--always-approve`. Optional extra flags can be supplied with `KING_AI_GROK_ARGS`.
 
 ## IELTS Coach Audio
 

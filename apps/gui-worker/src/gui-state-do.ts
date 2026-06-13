@@ -1955,7 +1955,7 @@ export class GuiState implements DurableObject {
     // Engine / model / fastModel / lifecycle are runtime (local CLI) settings that should apply to
     // the whole team hosted on this computer, so propagate them to every agent. Name / role are
     // coordinator-specific and only update the default operator agent.
-    const nextEngine = engine === "claude" || engine === "codex" ? engine : DEFAULT_AGENT.engine;
+    const nextEngine = engine === "claude" || engine === "codex" || engine === "grok" ? engine : DEFAULT_AGENT.engine;
     const nextModel = model || undefined;
     const nextFastModel = fastModel || undefined;
     const agents = normalizeAgents(state.agents);

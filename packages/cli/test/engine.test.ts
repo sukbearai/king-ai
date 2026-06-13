@@ -92,6 +92,13 @@ test("formatEngineLogLine drops noisy engine JSON", () => {
   assert.equal(formatEngineLogLine("codex", '{"method":"thread/started","params":{"thread":{"id":"t1"}}}'), null);
 });
 
+test("formatEngineLogLine summarizes Grok streaming JSON", () => {
+  assert.equal(formatEngineLogLine("grok", '{"type":"text","data":"hello there"}'), "[grok] hello there");
+  assert.equal(formatEngineLogLine("grok", '{"type":"end","stopReason":"EndTurn"}'), "[grok] turn completed");
+  assert.equal(formatEngineLogLine("grok", '{"type":"error","message":"Session does not exist"}'), "[grok] failed: Session does not exist");
+  assert.equal(formatEngineLogLine("grok", '{"type":"thought","data":"hidden"}'), null);
+});
+
 test("formatEngineLogLine summarizes Codex app-server events", () => {
   assert.equal(
     formatEngineLogLine("codex", '{"method":"item/started","params":{"item":{"type":"commandExecution","command":"king-ai reply demo hi"}}}'),
@@ -393,6 +400,59 @@ test("codex seedHome refreshes generated persona files", async () => {
     await adapter.seedHome(home, { id: "ielts-tutor", name: "IELTS Reading & Writing Coach", role: "New compact role" });
     const text = await readFile(join(home, "AGENTS.md"), "utf8");
     assert.match(text, /New compact role/);
+    assert.doesNotMatch(text, /Old role/);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("Grok headless session resumes after a stale session id", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-grok-session-"));
+  const binDir = join(dir, "bin");
+  await mkdir(binDir);
+  const grok = join(binDir, "grok");
+  await writeFile(
+    grok,
+    `#!/usr/bin/env node
+const prompt = process.argv[process.argv.indexOf("-p") + 1] ?? "";
+const resume = process.argv.includes("--resume");
+if (resume) {
+  process.stdout.write(JSON.stringify({ type: "error", message: "Couldn't create session: Session does not exist" }) + "\\n");
+  process.exit(1);
+}
+process.stdout.write(JSON.stringify({ type: "text", data: "ok" }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "end", stopReason: "EndTurn", sessionId: "fresh-grok-session" }) + "\\n");
+`,
+    "utf8"
+  );
+  await chmod(grok, 0o755);
+
+  const logs: string[] = [];
+  const session = getAdapter("grok").startSession?.({
+    home: dir,
+    env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` },
+    resumeSessionId: "stale-grok-session",
+    standingPrompt: "standing",
+    onLog: (line) => logs.push(line)
+  });
+  assert.ok(session);
+  const result = await session.send("hello");
+  session.stop();
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.sessionId, "fresh-grok-session");
+  assert.match(logs.join("\n"), /starting a fresh session/);
+  await rm(dir, { recursive: true, force: true });
+});
+
+test("grok seedHome refreshes generated persona files", async () => {
+  const home = await mkdtemp(join(tmpdir(), "king-ai-grok-home-"));
+  try {
+    const adapter = getAdapter("grok");
+    await adapter.seedHome(home, { id: "demo", name: "Demo Agent", role: "Old role" });
+    await adapter.seedHome(home, { id: "demo", name: "Demo Agent", role: "New role" });
+    const text = await readFile(join(home, "AGENTS.md"), "utf8");
+    assert.match(text, /New role/);
     assert.doesNotMatch(text, /Old role/);
   } finally {
     await rm(home, { recursive: true, force: true });

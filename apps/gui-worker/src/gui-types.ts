@@ -43,7 +43,7 @@ export type Agent = {
   id: string;
   name: string;
   role: string;
-  engine?: "claude" | "codex";
+  engine?: "claude" | "codex" | "grok";
   lifecycle?: "on-demand" | "24/7" | "idle_cached" | "disabled";
   model?: string;
   fastModel?: string;

@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { execFile } from "node:child_process";
 import { api, tenantHeader } from "./api.js";
 import { loadConfig, saveConfig } from "./config.js";
-import { detectEngines, getAdapter } from "./engine.js";
+import { ADAPTERS, detectEngines, getAdapter } from "./engine.js";
 import { AGENTS_ROOT, CURRENT_VERSION, HEARTBEAT_PATH, RUNNING_STATE_PATH, SESSIONS_DIR, TRIAGE_DIR } from "./paths.js";
 import { checkForUpdate, recordRunningState, rotateLogsIfNeeded, writeRunningState } from "./service.js";
 import type { RunningAgentState } from "./service.js";
@@ -98,6 +98,7 @@ export function missingEngineMessage(): string {
     "Install and sign in to at least one of:",
     "  - Claude Code: install the `claude` CLI, then run `claude` once to sign in",
     "  - Codex: install the `codex` CLI, then run `codex` once to sign in",
+    "  - Grok: install the `grok` CLI, then run `grok login` (or set XAI_API_KEY)",
     "",
     "After that, rerun:",
     "  king-ai agent computer --pair <code>"
@@ -180,7 +181,7 @@ export function formatDoctorReport(results: DoctorResult[], version = CURRENT_VE
 export async function collectDoctorResults(): Promise<DoctorResult[]> {
   const engines = await detectEngines();
   const results: DoctorResult[] = [];
-  for (const id of ["claude", "codex"] as EngineId[]) {
+  for (const id of Object.keys(ADAPTERS) as EngineId[]) {
     if (!engines.includes(id)) {
       results.push({ id, installed: false });
       continue;

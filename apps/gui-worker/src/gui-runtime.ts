@@ -1174,7 +1174,7 @@ function normalizeWorkflowAgentDefinition(value: unknown): Agent | undefined {
     id,
     name,
     role,
-    engine: row.engine === "claude" || row.engine === "codex" ? row.engine : "codex",
+    engine: row.engine === "claude" || row.engine === "codex" || row.engine === "grok" ? row.engine : "codex",
     lifecycle: isAgentLifecycle(row.lifecycle) ? row.lifecycle : "on-demand",
     model: typeof row.model === "string" && row.model.trim() ? row.model.trim() : undefined,
     fastModel: typeof row.fastModel === "string" && row.fastModel.trim() ? row.fastModel.trim() : undefined,
@@ -1985,7 +1985,7 @@ function pruneUploads(uploads: Record<string, UploadedAttachment>): Record<strin
 }
 
 function normalizeEngineId(value: unknown): Agent["engine"] | undefined {
-  return value === "claude" || value === "codex" ? value : undefined;
+  return value === "claude" || value === "codex" || value === "grok" ? value : undefined;
 }
 
 function activeRunEngine(state: State): Agent["engine"] | undefined {

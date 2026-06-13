@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { HOST_RUNS_PATH } from "./paths.js";
 import type { HostRunSpecInput, JsonSafeHostLaunchPlan } from "./host-run-spec.js";
+import type { EngineId } from "./types.js";
 import { createHostLaunchPlan, formatHostLaunchPlanSummary, toJsonSafeHostLaunchPlan } from "./host-run-spec.js";
 
 export type HostRunRequestStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
@@ -38,7 +39,7 @@ export interface HostRunRequest {
   updatedAt?: string;
   spec: HostRunSpecInput;
   ready: boolean;
-  effectiveEngine?: "claude" | "codex";
+  effectiveEngine?: EngineId;
   summary: string;
   detail?: string;
   executor?: HostRunExecutorSpec;
@@ -82,7 +83,7 @@ export async function submitHostRunRequest(
   options: {
     path?: string;
     env?: NodeJS.ProcessEnv;
-    availableEngines?: Array<"claude" | "codex">;
+    availableEngines?: EngineId[];
     now?: () => Date;
   } = {}
 ): Promise<HostRunSubmitResult> {

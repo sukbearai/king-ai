@@ -32,12 +32,12 @@ export function validateAgentConfig(agent: AgentConfig, effectiveEngine: EngineI
       detail: `The daemon will use ${effectiveEngine || "the first available engine"} until ${agent.engine} is available.`
     });
   }
-  if (lifecycle === "idle_cached" && effectiveEngine !== "claude") {
+  if (lifecycle === "idle_cached" && effectiveEngine !== "claude" && effectiveEngine !== "grok") {
     warnings.push({
       code: "idle-cached-without-resume",
       severity: "warning",
       summary: "idle_cached has engine-specific resume semantics",
-      detail: "Claude uses CLI session resume. Codex may reuse an app-server thread when available, but the daemon treats it as best-effort and falls back to a fresh thread."
+      detail: "Claude and Grok use CLI session resume. Codex may reuse an app-server thread when available, but the daemon treats it as best-effort and falls back to a fresh thread."
     });
   }
   return warnings;

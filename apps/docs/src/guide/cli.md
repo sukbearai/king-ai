@@ -21,7 +21,7 @@ Pair this machine with a runtime server. The GUI normally gives a full `king-ai:
 
 Options:
 
-- `--engine claude|codex`: prefer one installed engine.
+- `--engine claude|codex|grok`: prefer one installed engine.
 - `--tenant <id>`: select a tenant on multi-tenant GUI servers.
 - `--server <url>`: override the default runtime server URL. The production default is `https://king-ai.congrongtech.cn`.
 

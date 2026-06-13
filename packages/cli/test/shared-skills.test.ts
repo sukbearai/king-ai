@@ -51,6 +51,7 @@ test("installSharedSkills copies shared skills into Claude and Codex homes", asy
     assert.equal(await readFile(join(result.snapshot.root, "takeover-context", "SKILL.md"), "utf8"), "# Takeover\n");
     assert.equal(await readFile(join(home, ".claude", "skills", "takeover-context", "SKILL.md"), "utf8"), "# Takeover\n");
     assert.equal(await readFile(join(home, ".codex", "skills", "takeover-context", "notes.md"), "utf8"), "extra\n");
+    assert.equal(await readFile(join(home, ".grok", "skills", "takeover-context", "SKILL.md"), "utf8"), "# Takeover\n");
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(home, { recursive: true, force: true });

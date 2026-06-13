@@ -361,7 +361,7 @@ test("runHostCommand returns status, usage, events, and doctor results", async (
   assert.deepEqual((usage.json as { totalTokens?: number }).totalTokens, 15);
   assert.equal((usage.json as { cost?: { amount?: number } }).cost?.amount, 0.00007);
   assert.equal((usage.json as { runtimeData?: { schemaVersion?: number } }).runtimeData?.schemaVersion, 1);
-  assert.equal((usage.json as { runtimeData?: { providerCapabilities?: unknown[] } }).runtimeData?.providerCapabilities?.length, 3);
+  assert.equal((usage.json as { runtimeData?: { providerCapabilities?: unknown[] } }).runtimeData?.providerCapabilities?.length, 4);
 
   const expenses = await runHostCommand({ command: "expenses" }, { readState, tokenBudget: () => 100, usagePricing });
   assert.equal(expenses.ok, true);

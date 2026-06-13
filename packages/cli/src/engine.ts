@@ -157,6 +157,21 @@ export function formatEngineLogLine(engine: EngineId, line: string): string | nu
       if (method === "turn/completed") return "[codex] turn completed";
       return null;
     }
+    if (engine === "grok") {
+      if (obj.type === "text" && typeof obj.data === "string" && obj.data.trim()) {
+        return `[grok] ${obj.data.replace(/\s+/g, " ").slice(0, 500)}`;
+      }
+      if (obj.type === "end") return "[grok] turn completed";
+      if (obj.type === "error") return `[grok] failed: ${String(obj.message ?? "error").slice(0, 500)}`;
+      const update = (obj.params as { update?: { sessionUpdate?: unknown; rawInput?: { command?: unknown }; title?: unknown } } | undefined)?.update;
+      if (update?.sessionUpdate === "tool_call" && update.rawInput && typeof update.rawInput.command === "string") {
+        return `[grok] $ ${update.rawInput.command.replace(/\s+/g, " ").slice(0, 500)}`;
+      }
+      if (update?.sessionUpdate === "tool_call_update" && typeof update.title === "string" && update.title.trim()) {
+        return `[grok] ${update.title.replace(/\s+/g, " ").slice(0, 500)}`;
+      }
+      return null;
+    }
   } catch {
     return cleaned;
   }
@@ -1108,9 +1123,340 @@ class CodexAdapter implements EngineAdapter {
   }
 }
 
+const GROK_SMALL_MODEL = "grok-composer-2.5-fast";
+
+function grokUsageFromMeta(meta: Record<string, unknown> | undefined): EngineUsage | undefined {
+  if (!meta) return undefined;
+  const num = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+  const inputTokens = num(meta.inputTokens);
+  const cached = num(meta.cachedReadTokens);
+  const output = num(meta.outputTokens) + num(meta.reasoningTokens);
+  if (!inputTokens && !cached && !output) return undefined;
+  return {
+    input_tokens: Math.max(0, inputTokens - cached),
+    cache_read_input_tokens: cached,
+    output_tokens: output
+  };
+}
+
+function grokHeadlessArgv(args: {
+  home: string;
+  prompt: string;
+  model?: string;
+  resumeSessionId?: string | null;
+  standingPrompt?: string;
+  outputFormat: "json" | "streaming-json" | "plain";
+}): string[] {
+  const extra = envExtraArgs("KING_AI_GROK_ARGS");
+  const model = args.model ? ["-m", args.model] : [];
+  const resume = args.resumeSessionId ? ["--resume", args.resumeSessionId] : [];
+  const rules = args.standingPrompt && !args.resumeSessionId ? ["--rules", args.standingPrompt] : [];
+  return [
+    "--no-auto-update",
+    "--always-approve",
+    "--no-alt-screen",
+    "--cwd",
+    args.home,
+    ...model,
+    ...extra,
+    ...rules,
+    ...resume,
+    "-p",
+    args.prompt,
+    "--output-format",
+    args.outputFormat
+  ];
+}
+
+function grokTurnFromStdout(stdout: string, model?: string | null): EngineResult {
+  let sessionId: string | null = null;
+  let usage: EngineUsage | undefined;
+  let resolvedModel = model ?? null;
+  let error: string | undefined;
+  for (const raw of stdout.split("\n")) {
+    const line = cleanLine(raw);
+    if (!line.startsWith("{")) continue;
+    try {
+      const obj = JSON.parse(line) as Record<string, unknown>;
+      if (obj.type === "error") {
+        error = String(obj.message ?? "grok turn failed").slice(0, MAX_FAILURE_CHARS);
+        continue;
+      }
+      if (obj.type === "end") {
+        if (typeof obj.sessionId === "string") sessionId = obj.sessionId;
+        if (!error && typeof obj.stopReason === "string" && obj.stopReason.toLowerCase().includes("error")) {
+          error = `grok turn failed: ${obj.stopReason}`;
+        }
+        continue;
+      }
+      const meta = obj._meta as Record<string, unknown> | undefined;
+      if (meta) {
+        if (typeof meta.sessionId === "string") sessionId = meta.sessionId;
+        if (typeof meta.modelId === "string") resolvedModel = meta.modelId;
+        usage = grokUsageFromMeta(meta) ?? usage;
+      }
+      if (typeof obj.sessionId === "string") sessionId = obj.sessionId;
+      if (typeof obj.modelId === "string") resolvedModel = obj.modelId;
+    } catch {
+      // Ignore malformed event JSON.
+    }
+  }
+  if (!error && !sessionId && !stdout.trim()) error = "grok produced no output";
+  return {
+    exitCode: error ? 1 : 0,
+    error,
+    sessionId,
+    usage,
+    model: resolvedModel
+  };
+}
+
+function spawnGrokTurn(
+  bin: string,
+  argv: string[],
+  opts: { home: string; env: NodeJS.ProcessEnv; signal: AbortSignal; onLog: (line: string) => void; shell?: boolean; model?: string | null }
+): Promise<EngineResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(bin, argv, {
+      cwd: opts.home,
+      env: opts.env,
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: opts.shell ?? false
+    });
+    const stderr: string[] = [];
+    const stdout: string[] = [];
+    let timer: NodeJS.Timeout | null = null;
+    const onAbort = () => child.kill("SIGTERM");
+    opts.signal.addEventListener("abort", onAbort, { once: true });
+    const timeoutMs = turnTimeoutMs();
+    if (timeoutMs > 0) timer = setTimeout(onAbort, timeoutMs);
+
+    child.stdout?.on("data", (buf) => {
+      const text = buf.toString("utf8");
+      stdout.push(text);
+      for (const raw of text.split("\n")) {
+        const line = cleanLine(raw);
+        if (!line) continue;
+        const display = formatEngineLogLine("grok", line);
+        if (display) opts.onLog(display);
+      }
+    });
+    child.stderr?.on("data", (buf) => {
+      for (const raw of buf.toString("utf8").split("\n")) {
+        const line = cleanLine(raw);
+        if (line) stderr.push(line);
+      }
+    });
+    child.on("error", reject);
+    child.on("close", (code, signalName) => {
+      if (timer) clearTimeout(timer);
+      opts.signal.removeEventListener("abort", onAbort);
+      const exitCode = code ?? (signalName ? 128 : 1);
+      const merged = stdout.join("");
+      const parsed = grokTurnFromStdout(merged, opts.model);
+      if (exitCode !== 0 && !parsed.error) {
+        parsed.exitCode = exitCode;
+        parsed.error = failurePreview(exitCode, signalName, stderr, merged.split("\n").map(cleanLine).filter(Boolean));
+      }
+      resolve(parsed);
+    });
+  });
+}
+
+class GrokSession implements EngineSession {
+  private pending: Promise<EngineResult> | null = null;
+  private exited = false;
+  private sid: string | null;
+  readonly carriesStandingPrompt: boolean;
+
+  constructor(
+    private readonly bin: string,
+    private readonly opts: Omit<EngineRunArgs, "prompt" | "signal">,
+    standingPrompt?: string
+  ) {
+    this.sid = opts.resumeSessionId ?? null;
+    this.carriesStandingPrompt = !!standingPrompt;
+    this.opts = { ...opts, standingPrompt };
+  }
+
+  get alive(): boolean {
+    return !this.exited;
+  }
+
+  get sessionId(): string | null {
+    return this.sid;
+  }
+
+  send(prompt: string): Promise<EngineResult> {
+    if (this.pending) return Promise.resolve({ exitCode: 1, error: "engine session is already running a turn", sessionId: this.sid });
+    if (!this.alive) return Promise.resolve({ exitCode: 1, error: "engine session is not alive", sessionId: this.sid });
+    const controller = new AbortController();
+    const timeoutMs = sessionTimeoutMs();
+    const timer = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    timer?.unref?.();
+    const noOutputMs = sessionNoOutputTimeoutMs();
+    let noOutputTimer: NodeJS.Timeout | null = null;
+    let sawOutput = false;
+    const resetNoOutputTimer = () => {
+      if (noOutputTimer) clearTimeout(noOutputTimer);
+      if (noOutputMs <= 0 || sawOutput) {
+        noOutputTimer = null;
+        return;
+      }
+      noOutputTimer = setTimeout(() => controller.abort(), noOutputMs);
+      noOutputTimer.unref?.();
+    };
+
+    const runOnce = async (resumeSessionId: string | null, standingPrompt?: string): Promise<EngineResult> => {
+      const { command, shell } = resolveSpawn(this.bin);
+      const argv = grokHeadlessArgv({
+        home: this.opts.home,
+        prompt,
+        model: this.opts.model,
+        resumeSessionId,
+        standingPrompt,
+        outputFormat: "streaming-json"
+      });
+      return spawnGrokTurn(command, argv, {
+        home: this.opts.home,
+        env: this.opts.env,
+        signal: controller.signal,
+        shell,
+        model: this.opts.model ?? null,
+        onLog: (line) => {
+          sawOutput = true;
+          if (noOutputTimer) {
+            clearTimeout(noOutputTimer);
+            noOutputTimer = null;
+          }
+          this.opts.onLog(line);
+        }
+      });
+    };
+
+    this.pending = (async () => {
+      resetNoOutputTimer();
+      let result = await runOnce(this.sid, this.carriesStandingPrompt ? this.opts.standingPrompt : undefined);
+      if (result.error && this.sid && /session does not exist/i.test(result.error)) {
+        this.opts.onLog(`[grok] session/resume failed (${result.error}) - starting a fresh session`);
+        this.sid = null;
+        result = await runOnce(null, this.carriesStandingPrompt ? this.opts.standingPrompt : undefined);
+      }
+      if (result.sessionId) this.sid = result.sessionId;
+      if (!sawOutput && !result.error) {
+        result = {
+          exitCode: 124,
+          error: engineNoOutputError("grok", noOutputMs),
+          sessionId: this.sid
+        };
+        this.exited = true;
+      }
+      return result;
+    })().finally(() => {
+      if (timer) clearTimeout(timer);
+      if (noOutputTimer) clearTimeout(noOutputTimer);
+      this.pending = null;
+    });
+    return this.pending;
+  }
+
+  steer(_text: string): void {
+    // Grok headless sessions do not expose mid-turn steering.
+  }
+
+  stop(): void {
+    this.exited = true;
+  }
+}
+
+class GrokAdapter implements EngineAdapter {
+  id: EngineId = "grok";
+  bin = "grok";
+
+  async seedHome(home: string, persona: { id: string; name: string; role?: string }): Promise<void> {
+    await ensureCommonHome(home);
+    await mkdir(join(home, ".grok", "skills"), { recursive: true });
+    await seedPersonaFile(join(home, "AGENTS.md"), persona);
+  }
+
+  async classify(args: EngineClassifyArgs): Promise<{ text: string; error?: string; usage?: EngineUsage }> {
+    const { command, shell } = resolveSpawn(this.bin);
+    const argv = grokHeadlessArgv({
+      home: args.cwd,
+      prompt: args.prompt,
+      model: args.model || GROK_SMALL_MODEL,
+      outputFormat: "json"
+    });
+    const res = await spawnCapture(command, argv, {
+      cwd: args.cwd,
+      env: args.env,
+      signal: args.signal,
+      shell,
+      onLog: args.onLog
+    });
+    if (res.error) return res;
+    try {
+      const parsed = JSON.parse(res.text) as { text?: string; _meta?: Record<string, unknown> };
+      return { text: parsed.text ?? res.text, usage: grokUsageFromMeta(parsed._meta) };
+    } catch {
+      return res;
+    }
+  }
+
+  probe(args: EngineProbeArgs): Promise<{ text: string; error?: string }> {
+    const model = args.tier === "small" ? ["-m", GROK_SMALL_MODEL] : [];
+    const { command, shell } = resolveSpawn(this.bin);
+    const argv = [
+      "--no-auto-update",
+      "--always-approve",
+      "--no-alt-screen",
+      "--cwd",
+      args.cwd,
+      ...model,
+      ...envExtraArgs("KING_AI_GROK_ARGS"),
+      "-p",
+      DOCTOR_PROMPT,
+      "--output-format",
+      "plain"
+    ];
+    return spawnCapture(command, argv, {
+      cwd: args.cwd,
+      env: args.env,
+      signal: args.signal,
+      shell
+    });
+  }
+
+  run(args: EngineRunArgs): Promise<EngineResult> {
+    const { command, shell } = resolveSpawn(this.bin);
+    const argv = grokHeadlessArgv({
+      home: args.home,
+      prompt: args.prompt,
+      model: args.model,
+      resumeSessionId: args.resumeSessionId,
+      standingPrompt: args.standingPrompt,
+      outputFormat: "streaming-json"
+    });
+    return spawnGrokTurn(command, argv, {
+      home: args.home,
+      env: args.env,
+      signal: args.signal,
+      shell,
+      model: args.model ?? null,
+      onLog: args.onLog
+    });
+  }
+
+  startSession(args: Omit<EngineRunArgs, "prompt" | "signal">): EngineSession | null {
+    if (envExtraArgs("KING_AI_GROK_ARGS").length) return null;
+    return new GrokSession(this.bin, args, args.standingPrompt);
+  }
+}
+
 export const ADAPTERS: Record<EngineId, EngineAdapter> = {
   claude: new ClaudeAdapter(),
-  codex: new CodexAdapter()
+  codex: new CodexAdapter(),
+  grok: new GrokAdapter()
 };
 
 export function getAdapter(id: EngineId): EngineAdapter {

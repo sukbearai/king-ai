@@ -5,6 +5,7 @@ import { HOST_LOOP_RESULTS_HEADER } from "./host-loop-events.js";
 import { writeHostRunHeartbeat } from "./host-run-heartbeat.js";
 import { defaultTeamSpec } from "./team-workflow.js";
 import type { HostLaunchPlan, HostRunSpecInput } from "./host-run-spec.js";
+import type { EngineId } from "./types.js";
 import { createHostLaunchPlan, formatHostLaunchPlanSummary, toJsonSafeHostLaunchPlan } from "./host-run-spec.js";
 import { commandText, planAgentWorktrees } from "./worktree.js";
 
@@ -23,7 +24,7 @@ export async function prepareHostRunLayout(
   input: HostRunLayoutInput,
   options: {
     env?: NodeJS.ProcessEnv;
-    availableEngines?: Array<"claude" | "codex">;
+    availableEngines?: EngineId[];
   } = {}
 ): Promise<HostRunLayoutResult> {
   const launchPlan = createHostLaunchPlan(input, options.env ?? process.env, options.availableEngines);

@@ -70,7 +70,7 @@ export async function installSharedSkills(
   env: NodeJS.ProcessEnv = process.env
 ): Promise<SharedSkillInstallResult> {
   const skills = await listSharedSkills(sourceRoots);
-  const targets = [join(agentHome, ".claude", "skills"), join(agentHome, ".codex", "skills")];
+  const targets = [join(agentHome, ".claude", "skills"), join(agentHome, ".codex", "skills"), join(agentHome, ".grok", "skills")];
   const snapshot = await createSharedSkillSnapshot(agentHome, skills, env);
   for (const target of targets) await mkdir(target, { recursive: true });
   for (const skill of skills) {
