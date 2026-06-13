@@ -446,6 +446,10 @@ export const guiPageStyles = `    :root {
       border: 0;
       padding: 6px;
     }
+    .composer textarea:focus {
+      outline: none;
+      box-shadow: none;
+    }
     .composer button:disabled {
       opacity: 0.62;
       cursor: wait;
@@ -680,6 +684,20 @@ export const guiPageStyles = `    :root {
       background: #edf5df;
       color: var(--muted);
       cursor: default;
+    }
+    @media (max-width: 820px) {
+      html {
+        -webkit-text-size-adjust: 100%;
+        text-size-adjust: 100%;
+      }
+      body {
+        touch-action: manipulation;
+      }
+      .composer textarea,
+      #body {
+        font-size: 16px;
+        line-height: 1.4;
+      }
     }
     @media (max-width: 760px) {
       .app { grid-template-columns: 36px 132px minmax(0, 1fr); }

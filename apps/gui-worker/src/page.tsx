@@ -7,7 +7,7 @@ export function renderPage(styles: string): string {
     <html>
       <head>
         <meta charset="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=overlays-content" />
         <title>King AI Chat</title>
         <style dangerouslySetInnerHTML={{ __html: styles }} />
         <style dangerouslySetInnerHTML={{ __html: guiPageEnhancementStyles }} />
@@ -88,7 +88,7 @@ export function renderPage(styles: string): string {
 	                  </div>
 	                  <div class="composer-main">
 	                    <div id="attachmentTray" class="attachment-tray"></div>
-	                    <textarea id="body" placeholder="Message #all"></textarea>
+	                    <textarea id="body" name="message" placeholder="Message #all" autocomplete="off" autocapitalize="sentences" enterKeyHint="send" spellCheck={true}></textarea>
 	                  </div>
 	                  <input id="attachmentInput" class="composer-file-input" type="file" multiple onchange="handleAttachmentFiles(this)" />
 	                  <button id="sendButton" class="primary" onclick="sendMessage()">Send</button>

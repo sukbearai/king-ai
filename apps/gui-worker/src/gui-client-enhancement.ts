@@ -363,18 +363,58 @@ function syncMobileLayout() {
   document.body.classList.toggle('mobile-layout', mobileQuery.matches);
   syncMobileViewport();
 }
+function mobileKeyboardInset() {
+  const vv = window.visualViewport;
+  if (!vv) return 0;
+  return Math.max(0, Math.round(window.innerHeight - vv.offsetTop - vv.height));
+}
 function syncMobileViewport() {
   if (!mobileQuery.matches) {
     document.documentElement.style.removeProperty('--king-visual-height');
     document.documentElement.style.removeProperty('--king-composer-height');
+    document.documentElement.style.removeProperty('--king-composer-bottom');
+    document.body.classList.remove('keyboard-open');
     return;
   }
-  const visualHeight = window.visualViewport && window.visualViewport.height ? window.visualViewport.height : window.innerHeight;
+  const vv = window.visualViewport;
+  const visualHeight = vv && vv.height ? vv.height : window.innerHeight;
   if (visualHeight > 0) document.documentElement.style.setProperty('--king-visual-height', Math.round(visualHeight) + 'px');
+  const keyboardInset = mobileKeyboardInset();
+  const composerBottom = keyboardInset > 0 ? keyboardInset + 8 : 16;
+  document.documentElement.style.setProperty('--king-composer-bottom', composerBottom + 'px');
+  document.body.classList.toggle('keyboard-open', keyboardInset > 0);
   const composer = document.querySelector('.composer');
   if (composer) {
     const height = composer.getBoundingClientRect().height;
     if (height > 0) document.documentElement.style.setProperty('--king-composer-height', Math.ceil(height) + 'px');
+  }
+}
+function scheduleMobileViewportSync() {
+  syncMobileViewport();
+  requestAnimationFrame(syncMobileViewport);
+  window.setTimeout(syncMobileViewport, 120);
+}
+const MOBILE_VIEWPORT_BASE = 'width=device-width, initial-scale=1, interactive-widget=overlays-content';
+const MOBILE_VIEWPORT_FOCUSED = MOBILE_VIEWPORT_BASE + ', maximum-scale=1';
+function isMobileTouchDevice() {
+  if (!mobileQuery.matches) return false;
+  const ua = navigator.userAgent || '';
+  return /iP(hone|ad|od)/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) || navigator.maxTouchPoints > 0;
+}
+function setViewportMeta(content) {
+  const meta = document.querySelector('meta[name="viewport"]');
+  if (meta) meta.setAttribute('content', content);
+}
+function onComposerFocus() {
+  if (isMobileTouchDevice()) setViewportMeta(MOBILE_VIEWPORT_FOCUSED);
+  scheduleMobileViewportSync();
+}
+function onComposerBlur() {
+  scheduleMobileViewportSync();
+  if (isMobileTouchDevice()) {
+    window.setTimeout(function() {
+      setViewportMeta(MOBILE_VIEWPORT_BASE);
+    }, 0);
   }
 }
 syncMobileLayout();
@@ -388,6 +428,11 @@ window.addEventListener('orientationchange', syncMobileViewport);
 if (window.visualViewport) {
   window.visualViewport.addEventListener('resize', syncMobileViewport);
   window.visualViewport.addEventListener('scroll', syncMobileViewport);
+}
+const composerBodyInput = document.getElementById('body');
+if (composerBodyInput) {
+  composerBodyInput.addEventListener('focus', onComposerFocus);
+  composerBodyInput.addEventListener('blur', onComposerBlur);
 }
 const workspaceEl = document.querySelector('.workspace');
 if (workspaceEl) workspaceEl.addEventListener('scroll', updateBackToBottom);

@@ -968,7 +968,7 @@ export const guiPageEnhancementStyles = `
     body.mobile-layout .composer {
       left: 8px;
       right: 8px;
-      bottom: 16px;
+      bottom: max(var(--king-composer-bottom, 16px), env(safe-area-inset-bottom, 0px));
       grid-template-columns: minmax(0, 1fr) auto;
       grid-template-areas:
         "tools tools"
@@ -976,11 +976,7 @@ export const guiPageEnhancementStyles = `
       align-items: stretch;
       gap: 8px;
       padding: 10px;
-    }
-    @supports (bottom: env(safe-area-inset-bottom)) {
-      body.mobile-layout .composer {
-        bottom: max(8px, env(safe-area-inset-bottom));
-      }
+      max-width: calc(100vw - 16px);
     }
     body.mobile-layout .composer-tools {
       position: static;
@@ -1365,7 +1361,13 @@ export const guiPageEnhancementStyles = `
       min-height: 52px;
       max-height: 90px;
       padding: 8px 6px;
-      font-size: 14px;
+      font-size: 16px;
+      outline: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    body.mobile-layout .composer textarea:focus {
+      outline: none;
+      box-shadow: none;
     }
     body.mobile-layout .composer button {
       min-width: 54px;
@@ -1373,9 +1375,13 @@ export const guiPageEnhancementStyles = `
     }
     body.mobile-layout #sendButton {
       grid-area: send;
+      width: auto;
+      min-width: 68px;
       height: 54px;
       min-height: 54px;
-      padding: 0 8px;
+      padding: 0 12px;
+      white-space: nowrap;
+      flex-shrink: 0;
     }
     body.mobile-layout .composer-tools button {
       min-height: 28px;
