@@ -2365,6 +2365,31 @@ applyNewConversationOptimistic = function(conversation) {
   const state = window.__lastState;
   if (state) renderDecisions(state, window.__lastHostDecisions || { configured: false, cards: [] });
 };
+const baseApplyDeleteConversationOptimistic = applyDeleteConversationOptimistic;
+applyDeleteConversationOptimistic = function(id) {
+  baseApplyDeleteConversationOptimistic(id);
+  const state = window.__lastState;
+  if (state) renderDecisions(state, window.__lastHostDecisions || { configured: false, cards: [] });
+};
+deleteConversation = async function(event, id) {
+  event.stopPropagation();
+  if (!id || id === 'king-ai-convo') return;
+  applyDeleteConversationOptimistic(id);
+  try {
+    await request('/gui/conversations/' + encodeURIComponent(id) + '/delete', { method: 'POST' });
+  } catch (error) {
+    await refresh();
+    return;
+  }
+  const switchToken = ++conversationSwitchToken;
+  void loadGuiPayload({ conversationSwitch: true, switchToken: switchToken }).then(function(payload) {
+    if (!payload) return;
+    renderSummary(payload.summary);
+    renderMessages(payload.state);
+    renderTasks(payload.state);
+    renderDecisions(payload.state, window.__lastHostDecisions || { configured: false, cards: [] });
+  }).catch(function() {});
+};
 selectConversation = function(id) {
   activeConversationId = id || 'king-ai-convo';
   localStorage.setItem('king-ai:activeConversationId', activeConversationId);

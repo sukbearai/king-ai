@@ -267,6 +267,30 @@ function applyNewConversationOptimistic(conversation) {
   lastMessageTotal = 0;
   applyConversationSwitchOptimistic();
 }
+function applyDeleteConversationOptimistic(id) {
+  const summary = window.__lastSummary;
+  const state = window.__lastState;
+  if (summary) {
+    const conversations = (summary.conversations || []).filter(function(row) { return row.id !== id; });
+    window.__lastSummary = Object.assign({}, summary, { conversations: conversations });
+  }
+  if (state) {
+    const messages = (state.messages || []).filter(function(row) { return row.conversation_id !== id; });
+    window.__lastState = Object.assign({}, state, { messages: messages });
+  }
+  optimisticMessages = optimisticMessages.filter(function(row) { return row.conversation_id !== id; });
+  const switchingAway = activeConversationId === id;
+  if (switchingAway) {
+    activeConversationId = 'king-ai-convo';
+    localStorage.setItem('king-ai:activeConversationId', activeConversationId);
+    visibleMessageCount = 20;
+    shouldStickToBottom = true;
+    lastMessageTotal = 0;
+    applyConversationSwitchOptimistic();
+  } else if (window.__lastSummary) {
+    renderConversations(Object.assign({}, window.__lastSummary, { state: window.__lastState || {} }));
+  }
+}
 function loadActiveConversationInBackground() {
   const switchToken = ++conversationSwitchToken;
   void loadGuiPayload({ conversationSwitch: true, switchToken: switchToken }).then(function(payload) {
@@ -372,14 +396,21 @@ function renderConversations(summary) {
 }
 async function deleteConversation(event, id) {
   event.stopPropagation();
-  await request('/gui/conversations/' + encodeURIComponent(id) + '/delete', { method: 'POST' });
-  if (activeConversationId === id) {
-    activeConversationId = 'king-ai-convo';
-    localStorage.setItem('king-ai:activeConversationId', activeConversationId);
+  if (!id || id === 'king-ai-convo') return;
+  applyDeleteConversationOptimistic(id);
+  try {
+    await request('/gui/conversations/' + encodeURIComponent(id) + '/delete', { method: 'POST' });
+  } catch (error) {
+    await refresh();
+    return;
   }
-  visibleMessageCount = 20;
-  shouldStickToBottom = true;
-  await refresh();
+  const switchToken = ++conversationSwitchToken;
+  void loadGuiPayload({ conversationSwitch: true, switchToken: switchToken }).then(function(payload) {
+    if (!payload) return;
+    renderSummary(payload.summary);
+    renderMessages(payload.state);
+    renderTasks(payload.state);
+  }).catch(function() {});
 }
 function renderTasks(state) {
   const tasks = state.tasks || [];
