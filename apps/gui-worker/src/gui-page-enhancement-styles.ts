@@ -886,7 +886,7 @@ export const guiPageEnhancementStyles = `
       padding: 4px 12px;
     }
     body.mobile-layout .chat-panel {
-      padding: 10px 0 156px;
+      padding: 10px 0 196px;
     }
     body.mobile-layout .message-list {
       padding: 0 10px;
@@ -922,16 +922,34 @@ export const guiPageEnhancementStyles = `
       right: 8px;
       bottom: 16px;
       grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas:
+        "tools tools"
+        "main send";
       align-items: stretch;
       gap: 8px;
       padding: 10px;
     }
     body.mobile-layout .composer-tools {
-      position: absolute;
-      bottom: calc(100% + 8px);
-      right: 0;
-      justify-content: flex-end;
-      background: var(--canvas);
+      position: static;
+      grid-area: tools;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 6px 8px;
+      align-items: center;
+      padding-bottom: 8px;
+      margin-bottom: 2px;
+      border-bottom: 1px solid var(--line);
+      background: transparent;
+    }
+    body.mobile-layout .composer-main {
+      grid-area: main;
+    }
+    body.mobile-layout .composer-tools .jump.visible {
+      grid-column: 1 / -1;
+      justify-content: center;
+    }
+    body.mobile-layout .run-indicator .run-label {
+      display: none;
     }
     #panel-tasks.tab-panel,
     #panel-files.tab-panel,
@@ -1298,6 +1316,7 @@ export const guiPageEnhancementStyles = `
       padding: 6px 10px;
     }
     body.mobile-layout #sendButton {
+      grid-area: send;
       height: 54px;
       min-height: 54px;
       padding: 0 8px;

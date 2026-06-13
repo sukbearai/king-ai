@@ -3070,12 +3070,13 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /\.composer-tools[\s\S]*background:\s*var\(--canvas\)/);
   assert.match(html, /\.composer-tools \.jump[\s\S]*position:\s*static/);
   assert.match(html, /\.composer-tools \.jump\.visible[\s\S]*display:\s*inline-flex/);
-  assert.match(html, /body\.mobile-layout \.chat-panel[\s\S]*padding:\s*10px 0 156px/);
+  assert.match(html, /body\.mobile-layout \.chat-panel[\s\S]*padding:\s*10px 0 196px/);
   assert.match(html, /body\.mobile-layout \.composer[\s\S]*bottom:\s*16px/);
+  assert.match(html, /body\.mobile-layout \.composer[\s\S]*grid-template-areas/);
   assert.match(html, /body\.mobile-layout #sendButton[\s\S]*height:\s*54px/);
-  assert.match(html, /body\.mobile-layout \.composer-tools[\s\S]*position:\s*absolute/);
-  assert.match(html, /body\.mobile-layout \.composer-tools[\s\S]*bottom:\s*calc\(100% \+ 8px\)/);
-  assert.doesNotMatch(html, /body\.mobile-layout \.composer-tools[\s\S]*position:\s*static/);
+  assert.match(html, /body\.mobile-layout \.composer-tools\s*\{[^}]*position:\s*static/);
+  assert.match(html, /body\.mobile-layout \.composer-tools\s*\{[^}]*grid-area:\s*tools/);
+  assert.match(html, /body\.mobile-layout \.composer-tools \.jump\.visible\s*\{[^}]*grid-column:\s*1 \/ -1/);
   assert.doesNotMatch(html, /let shouldStickToBottom = true;[\s\S]*let shouldStickToBottom = true;/);
   assert.match(html, /activeConversationStatus = function/);
   assert.doesNotMatch(html, /defaultTeamDesc: '7 个 agent'/);
