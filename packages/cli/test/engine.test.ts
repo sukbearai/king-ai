@@ -406,6 +406,49 @@ test("codex seedHome refreshes generated persona files", async () => {
   }
 });
 
+test("Grok headless run passes images via --prompt-json", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-grok-image-"));
+  const binDir = join(dir, "bin");
+  const imagePath = join(dir, "photo.png");
+  await mkdir(binDir);
+  await writeFile(imagePath, Buffer.from("89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de0000000c49444154789c63000100000500010d0a2db40000000049454e44ae426082", "hex"));
+  const seenFile = join(dir, "seen.json");
+  const grok = join(binDir, "grok");
+  await writeFile(
+    grok,
+    `#!/usr/bin/env node
+const idx = process.argv.indexOf("--prompt-json");
+const blocks = idx >= 0 ? JSON.parse(process.argv[idx + 1]) : null;
+require("node:fs").writeFileSync(process.env.SEEN_FILE, JSON.stringify({ blocks }, null, 2));
+process.stdout.write(JSON.stringify({ type: "text", data: "ok" }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "end", stopReason: "EndTurn", sessionId: "grok-image-session" }) + "\\n");
+`,
+    "utf8"
+  );
+  await chmod(grok, 0o755);
+
+  const result = await getAdapter("grok").run({
+    home: dir,
+    prompt: "describe this",
+    env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}`, SEEN_FILE: seenFile },
+    imagePaths: [imagePath],
+    signal: AbortSignal.timeout(5000),
+    onLog: () => {}
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.sessionId, "grok-image-session");
+  const seen = JSON.parse(await readFile(seenFile, "utf8")) as {
+    blocks: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+  };
+  assert.equal(seen.blocks.length, 2);
+  assert.equal(seen.blocks[0]?.type, "image");
+  assert.equal(seen.blocks[0]?.mimeType, "image/png");
+  assert.match(seen.blocks[0]?.data ?? "", /^iVBOR/);
+  assert.deepEqual(seen.blocks[1], { type: "text", text: "describe this" });
+  await rm(dir, { recursive: true, force: true });
+});
+
 test("Grok headless session resumes after a stale session id", async () => {
   const dir = await mkdtemp(join(tmpdir(), "king-ai-grok-session-"));
   const binDir = join(dir, "bin");

@@ -340,7 +340,7 @@ function renderSummary(summary) {
     document.getElementById('model').value = agent.model === 'default' ? '' : (agent.model || '');
     document.getElementById('fastModel').value = agent.fastModel === 'default' ? '' : (agent.fastModel || '');
   }
-  const modelRows = ['claude', 'codex'].map(function(engine) {
+  const modelRows = ['claude', 'codex', 'grok'].map(function(engine) {
     const available = engines.includes(engine);
     const active = agent.engine === engine;
     const label = active && !available ? '当前配置，未检测到本机' : available ? '可用' : '未检测到';

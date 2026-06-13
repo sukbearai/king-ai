@@ -1139,19 +1139,43 @@ function grokUsageFromMeta(meta: Record<string, unknown> | undefined): EngineUsa
   };
 }
 
-function grokHeadlessArgv(args: {
+type GrokPromptBlock = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
+
+function grokImageMimeType(path: string): string {
+  const ext = path.split(".").pop()?.toLowerCase();
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "webp") return "image/webp";
+  if (ext === "gif") return "image/gif";
+  return "image/png";
+}
+
+async function grokImageBlocks(imagePaths: readonly string[]): Promise<GrokPromptBlock[]> {
+  const blocks: GrokPromptBlock[] = [];
+  for (const rawPath of imagePaths.filter((path) => path.trim())) {
+    const bytes = await readFile(rawPath);
+    blocks.push({
+      type: "image",
+      data: bytes.toString("base64"),
+      mimeType: grokImageMimeType(rawPath)
+    });
+  }
+  return blocks;
+}
+
+async function grokHeadlessArgv(args: {
   home: string;
   prompt: string;
   model?: string;
   resumeSessionId?: string | null;
   standingPrompt?: string;
   outputFormat: "json" | "streaming-json" | "plain";
-}): string[] {
+  imagePaths?: readonly string[];
+}): Promise<string[]> {
   const extra = envExtraArgs("KING_AI_GROK_ARGS");
   const model = args.model ? ["-m", args.model] : [];
   const resume = args.resumeSessionId ? ["--resume", args.resumeSessionId] : [];
   const rules = args.standingPrompt && !args.resumeSessionId ? ["--rules", args.standingPrompt] : [];
-  return [
+  const base = [
     "--no-auto-update",
     "--always-approve",
     "--no-alt-screen",
@@ -1160,12 +1184,17 @@ function grokHeadlessArgv(args: {
     ...model,
     ...extra,
     ...rules,
-    ...resume,
-    "-p",
-    args.prompt,
-    "--output-format",
-    args.outputFormat
+    ...resume
   ];
+  const imagePaths = (args.imagePaths ?? []).filter((path) => path.trim());
+  if (imagePaths.length > 0) {
+    const blocks: GrokPromptBlock[] = [
+      ...await grokImageBlocks(imagePaths),
+      { type: "text", text: stripLoneSurrogates(args.prompt) }
+    ];
+    return [...base, "--prompt-json", JSON.stringify(blocks), "--output-format", args.outputFormat];
+  }
+  return [...base, "-p", args.prompt, "--output-format", args.outputFormat];
 }
 
 function grokTurnFromStdout(stdout: string, model?: string | null): EngineResult {
@@ -1287,7 +1316,7 @@ class GrokSession implements EngineSession {
     return this.sid;
   }
 
-  send(prompt: string): Promise<EngineResult> {
+  send(prompt: string, options?: EngineTurnOptions): Promise<EngineResult> {
     if (this.pending) return Promise.resolve({ exitCode: 1, error: "engine session is already running a turn", sessionId: this.sid });
     if (!this.alive) return Promise.resolve({ exitCode: 1, error: "engine session is not alive", sessionId: this.sid });
     const controller = new AbortController();
@@ -1309,13 +1338,14 @@ class GrokSession implements EngineSession {
 
     const runOnce = async (resumeSessionId: string | null, standingPrompt?: string): Promise<EngineResult> => {
       const { command, shell } = resolveSpawn(this.bin);
-      const argv = grokHeadlessArgv({
+      const argv = await grokHeadlessArgv({
         home: this.opts.home,
         prompt,
         model: this.opts.model,
         resumeSessionId,
         standingPrompt,
-        outputFormat: "streaming-json"
+        outputFormat: "streaming-json",
+        imagePaths: options?.imagePaths
       });
       return spawnGrokTurn(command, argv, {
         home: this.opts.home,
@@ -1381,7 +1411,7 @@ class GrokAdapter implements EngineAdapter {
 
   async classify(args: EngineClassifyArgs): Promise<{ text: string; error?: string; usage?: EngineUsage }> {
     const { command, shell } = resolveSpawn(this.bin);
-    const argv = grokHeadlessArgv({
+    const argv = await grokHeadlessArgv({
       home: args.cwd,
       prompt: args.prompt,
       model: args.model || GROK_SMALL_MODEL,
@@ -1427,15 +1457,16 @@ class GrokAdapter implements EngineAdapter {
     });
   }
 
-  run(args: EngineRunArgs): Promise<EngineResult> {
+  async run(args: EngineRunArgs): Promise<EngineResult> {
     const { command, shell } = resolveSpawn(this.bin);
-    const argv = grokHeadlessArgv({
+    const argv = await grokHeadlessArgv({
       home: args.home,
       prompt: args.prompt,
       model: args.model,
       resumeSessionId: args.resumeSessionId,
       standingPrompt: args.standingPrompt,
-      outputFormat: "streaming-json"
+      outputFormat: "streaming-json",
+      imagePaths: args.imagePaths
     });
     return spawnGrokTurn(command, argv, {
       home: args.home,
