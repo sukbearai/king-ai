@@ -361,29 +361,27 @@ function setLanguage(lang) {
 const mobileQuery = window.matchMedia('(max-width: 820px)');
 function syncMobileLayout() {
   document.body.classList.toggle('mobile-layout', mobileQuery.matches);
-  syncMobileViewport();
+  syncComposerHeight();
 }
-function mobileKeyboardInset() {
-  const vv = window.visualViewport;
-  if (!vv) return 0;
-  return Math.max(0, Math.round(window.innerHeight - vv.offsetTop - vv.height));
-}
+const MOBILE_COMPOSER_BOTTOM_CLOSED = '16px';
+const MOBILE_COMPOSER_BOTTOM_OPEN = '0px';
 function resetMobilePageScroll() {
   window.scrollTo(0, 0);
   document.documentElement.scrollTop = 0;
   document.body.scrollTop = 0;
 }
-function syncMobileViewport() {
+function setComposerKeyboardOpen(open) {
+  if (!mobileQuery.matches) return;
+  document.body.classList.toggle('keyboard-open', open);
+  document.documentElement.style.setProperty('--king-composer-bottom', open ? MOBILE_COMPOSER_BOTTOM_OPEN : MOBILE_COMPOSER_BOTTOM_CLOSED);
+}
+function syncComposerHeight() {
   if (!mobileQuery.matches) {
     document.documentElement.style.removeProperty('--king-composer-height');
     document.documentElement.style.removeProperty('--king-composer-bottom');
     document.body.classList.remove('keyboard-open');
     return;
   }
-  const keyboardInset = mobileKeyboardInset();
-  const composerBottom = keyboardInset > 0 ? keyboardInset + 8 : 16;
-  document.documentElement.style.setProperty('--king-composer-bottom', composerBottom + 'px');
-  document.body.classList.toggle('keyboard-open', keyboardInset > 0);
   const composer = document.querySelector('.composer');
   if (composer) {
     const height = composer.getBoundingClientRect().height;
@@ -393,17 +391,17 @@ function syncMobileViewport() {
 function restoreMobileChatViewport() {
   if (!mobileQuery.matches) return;
   resetMobilePageScroll();
-  syncMobileViewport();
+  syncComposerHeight();
   if (shouldStickToBottom) scrollToBottom();
   else updateBackToBottom();
 }
-function scheduleMobileViewportSync() {
-  syncMobileViewport();
-  requestAnimationFrame(syncMobileViewport);
-  window.setTimeout(syncMobileViewport, 120);
+function scheduleComposerHeightSync() {
+  syncComposerHeight();
+  requestAnimationFrame(syncComposerHeight);
+  window.setTimeout(syncComposerHeight, 120);
 }
 function scheduleMobileViewportRestore() {
-  scheduleMobileViewportSync();
+  scheduleComposerHeightSync();
   window.setTimeout(restoreMobileChatViewport, 120);
   window.setTimeout(restoreMobileChatViewport, 320);
 }
@@ -420,9 +418,11 @@ function setViewportMeta(content) {
 }
 function onComposerFocus() {
   if (isMobileTouchDevice()) setViewportMeta(MOBILE_VIEWPORT_FOCUSED);
-  scheduleMobileViewportSync();
+  setComposerKeyboardOpen(true);
+  scheduleComposerHeightSync();
 }
 function onComposerBlur() {
+  setComposerKeyboardOpen(false);
   scheduleMobileViewportRestore();
   if (isMobileTouchDevice()) {
     window.setTimeout(function() {
@@ -437,12 +437,8 @@ if (mobileQuery.addEventListener) {
 } else if (mobileQuery.addListener) {
   mobileQuery.addListener(syncMobileLayout);
 }
-window.addEventListener('resize', syncMobileViewport);
-window.addEventListener('orientationchange', syncMobileViewport);
-if (window.visualViewport) {
-  window.visualViewport.addEventListener('resize', syncMobileViewport);
-  window.visualViewport.addEventListener('scroll', syncMobileViewport);
-}
+window.addEventListener('resize', syncComposerHeight);
+window.addEventListener('orientationchange', syncComposerHeight);
 const composerBodyInput = document.getElementById('body');
 if (composerBodyInput) {
   composerBodyInput.addEventListener('focus', onComposerFocus);
@@ -1956,7 +1952,7 @@ renderMessages = function(state, options) {
   const chatWindow = document.getElementById('chatWindow');
   chatWindow.classList.toggle('empty-state', !visibleRows.length);
   chatWindow.innerHTML = '<div class="system-line">' + olderLine + '</div>' + html;
-  syncMobileViewport();
+  syncComposerHeight();
   if (!visibleRows.length) {
     const workspace = document.querySelector('.workspace');
     if (workspace) workspace.scrollTop = 0;

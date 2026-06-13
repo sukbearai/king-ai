@@ -981,6 +981,9 @@ export const guiPageEnhancementStyles = `
       padding: 10px;
       max-width: calc(100vw - 16px);
     }
+    body.mobile-layout.keyboard-open .composer {
+      bottom: 0;
+    }
     body.mobile-layout .composer-tools {
       position: static;
       grid-area: tools;
