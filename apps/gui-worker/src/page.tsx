@@ -65,7 +65,9 @@ export function renderPage(styles: string): string {
               </div>
             </header>
 
+            {/* Agent team strip hidden — no longer needed
             <div id="teamStrip" class="team-strip" aria-label="Agent team"></div>
+            */}
 
             <nav class="tabs" aria-label="Channel views">
               <button class="tab active" data-panel="chat" onclick="showPanel('chat')" data-i18n="chat">Chat</button>

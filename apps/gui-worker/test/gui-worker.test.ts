@@ -3045,7 +3045,7 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /function updateBackToBottom/);
   assert.match(html, /summary\.pairingCode/);
   assert.match(html, /summary\.pairingLocator/);
-  assert.match(html, /id="teamStrip"/);
+  // assert.match(html, /id="teamStrip"/); // team strip hidden
   assert.match(html, /class="team-agent"/);
   assert.match(html, /function renderTeamStrip/);
   assert.match(html, /function teamActivityTitle/);

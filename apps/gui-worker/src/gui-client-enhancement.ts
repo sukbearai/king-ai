@@ -2157,7 +2157,7 @@ const baseRenderSummary = renderSummary;
 renderSummary = function(summary) {
   window.__lastSummary = summary;
   baseRenderSummary(summary);
-  renderTeamStrip(summary);
+  // renderTeamStrip(summary); // agent team strip hidden
   renderRemoteAssist(summary);
   if (summary.pairingLocator) {
     pairCommandPrimary = npxKingAiCommand('agent computer --pair ' + shellQuote(summary.pairingLocator));
