@@ -954,8 +954,16 @@ async function renderMessageMarkdown(message: Message): Promise<Message> {
   }
 }
 
+function sortMessagesChronologically(messages: Message[]): Message[] {
+  return messages.slice().sort((a, b) => {
+    const byTime = (a.created_at ?? 0) - (b.created_at ?? 0);
+    if (byTime !== 0) return byTime;
+    return (a.id ?? "").localeCompare(b.id ?? "");
+  });
+}
+
 async function messagesForGuiConversation(state: State, conversationId: string): Promise<Message[]> {
-  const rows = state.messages.filter((message) => message.conversation_id === conversationId);
+  const rows = sortMessagesChronologically(state.messages.filter((message) => message.conversation_id === conversationId));
   return Promise.all(rows.map((message) => renderMessageMarkdown(message)));
 }
 
@@ -3022,6 +3030,7 @@ export {
   isAgentLifecycle,
   normalizeMessages,
   stateForGui,
+  sortMessagesChronologically,
   messagesForGuiConversation,
   renderMessageMarkdown,
   normalizeTasks,

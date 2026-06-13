@@ -1560,6 +1560,16 @@ test("gui messages endpoint returns one conversation and caches rendered markdow
   assert.ok(fullState.messages.length >= 2);
 });
 
+test("sortMessagesChronologically orders chat rows by created_at", async () => {
+  const { sortMessagesChronologically } = await import("../src/gui-runtime.js");
+  const ordered = sortMessagesChronologically([
+    { id: "msg-ceo", conversation_id: "king-ai-convo", created_at: 3_000_000, body: "ceo" },
+    { id: "msg-dev", conversation_id: "king-ai-convo", created_at: 2_000_000, body: "dev" },
+    { id: "msg-human", conversation_id: "king-ai-convo", created_at: 1_000_000, body: "human" }
+  ] as import("../src/gui-types.js").Message[]);
+  assert.deepEqual(ordered.map((row) => row.id), ["msg-human", "msg-dev", "msg-ceo"]);
+});
+
 test("gui windows can choose single and custom collaboration teams", async () => {
   const bindings = env();
   await pairComputer(bindings, { engines: ["codex"] });
@@ -2787,6 +2797,7 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /\.agent-check input\s*\{[\s\S]*width:\s*16px/);
   assert.match(html, /function syncNewWindowMode/);
   assert.match(html, /function submitConversation/);
+  assert.match(html, /function sortMessagesChronologically/);
   assert.match(html, /function applyNewConversationOptimistic/);
   assert.match(html, /applyNewConversationOptimistic\(result\.conversation\)/);
   assert.doesNotMatch(html, /submitConversation[\s\S]{0,900}await refresh\(\)/);

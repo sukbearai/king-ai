@@ -201,8 +201,15 @@ async function saveAgentConfig() {
   });
   await refresh();
 }
+function sortMessagesChronologically(rows) {
+  return rows.slice().sort(function(a, b) {
+    const delta = (a.created_at || 0) - (b.created_at || 0);
+    if (delta) return delta;
+    return String(a.id || '').localeCompare(String(b.id || ''));
+  });
+}
 function renderMessages(state, options) {
-  const allRows = (state.messages || []).filter(function(message) { return message.conversation_id === activeConversationId; });
+  const allRows = sortMessagesChronologically((state.messages || []).filter(function(message) { return message.conversation_id === activeConversationId; }));
   if (allRows.length > lastMessageTotal) visibleMessageCount = 20;
   lastMessageTotal = allRows.length;
   visibleMessageCount = Math.min(Math.max(visibleMessageCount, 20), Math.max(lastMessageTotal, 20));

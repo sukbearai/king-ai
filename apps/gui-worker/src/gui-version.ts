@@ -10,6 +10,7 @@ export const WORKER_RUNTIME_FEATURES = [
   "markdown-render-cache",
   "optimistic-conversation-switch",
   "optimistic-new-window",
+  "chronological-chat",
   "lightweight-coordination",
   "sequential-coordination",
   "task-inbox-settle"

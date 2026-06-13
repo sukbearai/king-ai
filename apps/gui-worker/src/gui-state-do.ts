@@ -585,7 +585,7 @@ export class GuiState implements DurableObject {
       messages.push(rendered);
     }
     if (dirty) await this.put(state);
-    return json({ conversationId, messages });
+    return json({ conversationId, messages: sortMessagesChronologically(messages) });
   }
 
   private async guiSummary(request: Request): Promise<Response> {
@@ -2134,6 +2134,7 @@ import {
   normalizeMessages,
   stateForGui,
   renderMessageMarkdown,
+  sortMessagesChronologically,
   normalizeTasks,
   normalizeTaskEvents,
   normalizeCards,

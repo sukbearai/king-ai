@@ -451,10 +451,11 @@ function updateBackToBottom() {
 	  });
 	}
 	function mergeOptimistic(serverRows) {
-	  if (!optimisticMessages.length) return serverRows.slice();
+	  const sorted = sortMessagesChronologically(serverRows);
+	  if (!optimisticMessages.length) return sorted;
 	  const visible = optimisticMessages.filter(function(opt) { return opt.conversation_id === activeConversationId; });
-	  if (!visible.length) return serverRows.slice();
-	  return serverRows.concat(visible).sort(function(a, b) { return (a.created_at || 0) - (b.created_at || 0); });
+	  if (!visible.length) return sorted;
+	  return sortMessagesChronologically(sorted.concat(visible));
 	}
 	let pendingAttachments = [];
 	function formatBytes(value) {
@@ -1639,7 +1640,7 @@ clearMessages = async function() {
   }
 };
 renderMessages = function(state, options) {
-  const serverRows = (state.messages || []).filter(function(message) { return message.conversation_id === activeConversationId; });
+  const serverRows = sortMessagesChronologically((state.messages || []).filter(function(message) { return message.conversation_id === activeConversationId; }));
   reconcileOptimistic(serverRows);
   const allRows = mergeOptimistic(serverRows);
   if (allRows.length > lastMessageTotal) visibleMessageCount = 20;
