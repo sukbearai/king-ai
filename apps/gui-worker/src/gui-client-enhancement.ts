@@ -535,14 +535,45 @@ function renderAttachmentTray() {
 	  }
 	  return uploaded;
 	}
+function isImageAttachment(attachment) {
+	  const mime = String(attachment && attachment.mime || '').toLowerCase();
+	  if (mime.indexOf('image/') === 0) return true;
+	  if (attachment && attachment.kind === 'image') return true;
+	  const name = String(attachment && attachment.name || '').toLowerCase();
+	  return /\.(jpe?g|png|gif|webp|bmp|svg|avif|heic|heif)$/i.test(name);
+	}
+	function attachmentFileTokenHtml(attachment) {
+	  const name = attachment.name || 'attachment';
+	  const href = attachment.url ? ' href="' + escapeHtml(attachment.url) + '" target="_blank" rel="noreferrer noopener"' : '';
+	  return '<a class="attachment-token"' + href + ' title="' + escapeHtml(name) + '"><span>[' + escapeHtml(name) + ']</span><span class="attachment-size">' + escapeHtml(formatBytes(attachment.size)) + '</span></a>';
+	}
+	function attachmentImagePreviewHtml(attachment) {
+	  const name = attachment.name || 'image';
+	  const url = attachment.url ? escapeHtml(attachment.url) : '';
+	  if (!url) return attachmentFileTokenHtml(attachment);
+	  return '<figure class="attachment-preview">' +
+	    '<a class="attachment-preview-link" href="' + url + '" target="_blank" rel="noreferrer noopener" title="' + escapeHtml(name) + '">' +
+	    '<img class="attachment-preview-image" src="' + url + '" alt="' + escapeHtml(name) + '" loading="lazy" decoding="async" />' +
+	    '</a>' +
+	    '<figcaption class="attachment-preview-meta">' +
+	    '<span class="attachment-preview-name">' + escapeHtml(name) + '</span>' +
+	    '<span class="attachment-preview-size">' + escapeHtml(formatBytes(attachment.size)) + '</span>' +
+	    '</figcaption></figure>';
+	}
 function attachmentListHtml(attachments) {
 	  const rows = Array.isArray(attachments) ? attachments : [];
   if (!rows.length) return '';
-  return '<div class="message-attachments" aria-label="' + escapeHtml(t('attachments')) + '">' + rows.map(function(attachment) {
-    const name = attachment.name || 'attachment';
-    const href = attachment.url ? ' href="' + escapeHtml(attachment.url) + '" target="_blank" rel="noreferrer noopener"' : '';
-    return '<a class="attachment-token"' + href + ' title="' + escapeHtml(name) + '"><span>[' + escapeHtml(name) + ']</span><span class="attachment-size">' + escapeHtml(formatBytes(attachment.size)) + '</span></a>';
-  }).join('') + '</div>';
+  const images = [];
+  const files = [];
+  rows.forEach(function(attachment) {
+    if (isImageAttachment(attachment)) images.push(attachment);
+    else files.push(attachment);
+  });
+  let html = '<div class="message-attachments" aria-label="' + escapeHtml(t('attachments')) + '">';
+  if (images.length) html += '<div class="attachment-previews">' + images.map(attachmentImagePreviewHtml).join('') + '</div>';
+  if (files.length) html += '<div class="attachment-files">' + files.map(attachmentFileTokenHtml).join('') + '</div>';
+  html += '</div>';
+  return html;
 }
 window.__messageAudioText = window.__messageAudioText || {};
 const ttsAudioCache = new Map();

@@ -479,20 +479,77 @@ export const guiPageEnhancementStyles = `
 	      gap: 6px;
 	      min-width: 0;
 	    }
-	    .attachment-tray,
-	    .message-attachments {
+	    .attachment-tray {
 	      display: inline-flex;
 	      align-items: baseline;
 	      gap: 5px;
 	      flex-wrap: wrap;
 	      min-width: 0;
 	    }
-	    .attachment-tray:empty,
-	    .message-attachments:empty {
+	    .attachment-tray:empty {
 	      display: none;
 	    }
 	    .message-attachments {
-	      margin-top: 2px;
+	      display: flex;
+	      flex-direction: column;
+	      align-items: flex-start;
+	      gap: 8px;
+	      margin-top: 8px;
+	      min-width: 0;
+	      max-width: 100%;
+	    }
+	    .message-attachments:empty {
+	      display: none;
+	    }
+	    .attachment-previews {
+	      display: flex;
+	      flex-wrap: wrap;
+	      gap: 8px;
+	      max-width: 100%;
+	    }
+	    .attachment-preview {
+	      margin: 0;
+	      max-width: min(360px, 100%);
+	    }
+	    .attachment-preview-link {
+	      display: block;
+	      border: 1px solid var(--line);
+	      background: var(--panel);
+	      line-height: 0;
+	      overflow: hidden;
+	    }
+	    .attachment-preview-image {
+	      display: block;
+	      max-width: 100%;
+	      max-height: 280px;
+	      width: auto;
+	      height: auto;
+	      object-fit: contain;
+	      background: var(--canvas);
+	    }
+	    .attachment-preview-meta {
+	      display: flex;
+	      align-items: baseline;
+	      gap: 6px;
+	      margin-top: 4px;
+	      font-size: 11px;
+	      color: var(--muted);
+	      line-height: 1.35;
+	    }
+	    .attachment-preview-name {
+	      overflow: hidden;
+	      text-overflow: ellipsis;
+	      white-space: nowrap;
+	      max-width: 220px;
+	      font-weight: 700;
+	      color: var(--ink);
+	    }
+	    .attachment-files {
+	      display: inline-flex;
+	      align-items: baseline;
+	      gap: 5px;
+	      flex-wrap: wrap;
+	      min-width: 0;
 	    }
 	    .attachment-token {
 	      display: inline-flex;

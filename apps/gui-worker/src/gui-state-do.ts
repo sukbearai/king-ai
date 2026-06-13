@@ -1642,11 +1642,15 @@ export class GuiState implements DurableObject {
 	    const bytesBase64 = await this.readUploadBytes(upload);
 	    if (!bytesBase64) return json({ error: "attachment not found" }, { status: 404 });
 	    const bytes = base64ToBytes(bytesBase64);
+	    const safeName = upload.name.replace(/["\r\n]/g, "_");
+	    const disposition = upload.mime.toLowerCase().startsWith("image/")
+	      ? `inline; filename="${safeName}"`
+	      : `attachment; filename="${safeName}"`;
 	    return new Response(bytes, {
 	      headers: {
 	        "Content-Type": upload.mime,
 	        "Content-Length": String(bytes.byteLength),
-	        "Content-Disposition": `attachment; filename="${upload.name.replace(/["\r\n]/g, "_")}"`
+	        "Content-Disposition": disposition
 	      }
 	    });
 	  }

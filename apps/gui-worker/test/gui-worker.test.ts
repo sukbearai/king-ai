@@ -228,6 +228,8 @@ test("gui page exposes attachment controls in the composer", async () => {
   assert.match(body, /openAttachmentPicker\(\)/);
   assert.match(body, /data-i18n="attachFile"/);
   assert.match(body, /\.attachment-token/);
+  assert.match(body, /function isImageAttachment/);
+  assert.match(body, /attachment-preview-image/);
   assert.match(body, /\[' \+ escapeHtml\(file\.name\) \+ '\]/);
 });
 
@@ -1066,6 +1068,7 @@ test("gui messages preserve attachment metadata for runtime prompts", async () =
   assert.match(upload.attachment.url, /\/gui\/attachments\/att-/);
   const download = await worker.fetch(new Request(upload.attachment.url), bindings);
   assert.equal(download.status, 200);
+  assert.match(download.headers.get("Content-Disposition") ?? "", /inline/);
   assert.equal(await download.text(), "pong");
   await worker.fetch(new Request("https://gui/gui/message", {
     method: "POST",
