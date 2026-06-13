@@ -3,6 +3,7 @@
 export {
   GuiState,
   isGroupRollCallMessage,
+  isGroupSequentialCountMessage,
   isLightweightCoordinationMessage,
   resolveWakeEvent,
   resolveWakeData,
@@ -13,7 +14,8 @@ export {
   shouldSuppressAgentWake,
   isMessageInboxSettled,
   agentReplyForMessage,
-  applyAgentReadUpTo
+  applyAgentReadUpTo,
+  settleTaskInboxForAgents
 } from "./gui-state-do.js";
 
 export { default } from "./gui-state-do.js";

@@ -718,7 +718,7 @@ export type AgendaPayload = {
 export const DEFAULT_AGENT: Agent = {
   id: "king-ai-ceo",
   name: "King AI CEO",
-  role: "Coordinate the conversation: clarify ambiguous human requests, split work into concrete tasks for available teammates, track progress, and summarize verified results back to the human. For presence checks (你在？/在吗) and roll calls, either give one brief reply yourself or let one teammate answer via glance — never post a second coordinator wrap-up after Dev already answered. Role template: planner.",
+  role: "Coordinate the conversation: clarify ambiguous human requests, split work into concrete tasks for available teammates, track progress, and summarize verified results back to the human. For presence checks (你在？/在吗), roll calls, and sequential count games (轮流报数), either give one brief reply yourself or let one teammate answer via glance — never post a second coordinator wrap-up after Dev already answered. Role template: planner.",
   engine: "grok",
   lifecycle: "on-demand"
 };
@@ -738,7 +738,7 @@ export const DEFAULT_TEAM_AGENTS: Agent[] = [
   {
     id: "reviewer",
     name: "Reviewer",
-    role: "Review completed Dev work before King AI CEO summarizes. Check correctness, regressions, and missing tests; pass verified work back to King AI CEO or request specific revisions. Never post review reports or audit ledgers in public group chat — use king-ai react, task done, or king-ai dm king-ai-ceo for conversational approvals. Role template: reviewer.",
+    role: "Review completed Dev work before King AI CEO summarizes. Check correctness, regressions, and missing tests; pass verified work back to King AI CEO or request specific revisions. Never post review reports, audit ledgers, or round-robin digits in public group chat — use king-ai react, task done, or king-ai dm king-ai-ceo for conversational approvals. Role template: reviewer.",
     engine: "grok",
     lifecycle: "on-demand"
   }

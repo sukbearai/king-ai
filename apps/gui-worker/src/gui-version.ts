@@ -9,7 +9,9 @@ export const WORKER_RUNTIME_FEATURES = [
   "gui-messages-endpoint",
   "markdown-render-cache",
   "optimistic-conversation-switch",
-  "lightweight-coordination"
+  "lightweight-coordination",
+  "sequential-coordination",
+  "task-inbox-settle"
 ] as const;
 
 export type WorkerRuntimeFeature = (typeof WORKER_RUNTIME_FEATURES)[number];

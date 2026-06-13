@@ -121,6 +121,7 @@ import {
   resolveWakeEvent,
   resolveWakeData,
   isGroupRollCallMessage,
+  isGroupSequentialCountMessage,
   isLightweightCoordinationMessage,
   shouldAutoDelegateMessage,
   triageResponseMode,
@@ -128,7 +129,8 @@ import {
   shouldSuppressAgentWake,
   isMessageInboxSettled,
   agentReplyForMessage,
-  applyAgentReadUpTo
+  applyAgentReadUpTo,
+  settleTaskInboxForAgents
 } from "./runtime-helpers.js";
 import {
   addGuiTaskToState as workflowAddGuiTaskToState,
@@ -2280,6 +2282,7 @@ export {
   resolveWakeEvent,
   resolveWakeData,
   isGroupRollCallMessage,
+  isGroupSequentialCountMessage,
   isLightweightCoordinationMessage,
   shouldAutoDelegateMessage,
   triageResponseMode,
@@ -2288,7 +2291,8 @@ export {
   shouldSuppressAgentWake,
   isMessageInboxSettled,
   agentReplyForMessage,
-  applyAgentReadUpTo
+  applyAgentReadUpTo,
+  settleTaskInboxForAgents
 };
 
 export default app;

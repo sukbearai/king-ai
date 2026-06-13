@@ -49,9 +49,24 @@ export function isGroupRollCallMessage(conversation: ConversationTeamLike, messa
   return false;
 }
 
+/** Sequential count / round-robin games — chat-only coordination, no task review loop. */
+export function isGroupSequentialCountMessage(conversation: ConversationTeamLike, messageBody = ""): boolean {
+  const mode = conversation.teamMode ?? "team";
+  if (mode === "single") return false;
+  const body = messageBody.trim();
+  if (!body) return false;
+  if (/轮流报数|按顺序报数?|接龙报数|顺序报数|依次报数/.test(body)) return true;
+  if (/(轮流|按顺序|依次|接龙).{0,8}(报数|报个?数|数数)/.test(body)) return true;
+  if (/(大家|所有人|全员).{0,8}(轮流|按顺序|依次).{0,8}(报|回|回复)/.test(body)) return true;
+  if (/\b(round[- ]?robin|count in order|sequential count|take turns)\b/i.test(body) && /\b(count|number|reply|say)\b/i.test(body)) return true;
+  if (/\b(everyone|everybody|team)\b/i.test(body) && /\b(count|number)\b/i.test(body) && /\b(order|sequence|turns?)\b/i.test(body)) return true;
+  return false;
+}
+
 /** Team-room presence pings and roll calls — one brief reply, no review loop or CEO summary. */
 export function isLightweightCoordinationMessage(conversation: ConversationTeamLike, messageBody = ""): boolean {
   if (isGroupRollCallMessage(conversation, messageBody)) return true;
+  if (isGroupSequentialCountMessage(conversation, messageBody)) return true;
   const mode = conversation.teamMode ?? "team";
   if (mode === "single") return false;
   const body = messageBody.trim();
@@ -284,5 +299,25 @@ export function applyAgentReadUpTo(
   const readable = cutoffIndex >= 0 ? conversationMessages.slice(0, cutoffIndex + 1) : conversationMessages;
   for (const message of readable) {
     if (!message.readBy.includes(spec.agentId)) message.readBy.push(spec.agentId);
+  }
+}
+
+/** After a task reaches a terminal state, clear steer inbox noise for everyone who was routed on it. */
+export function settleTaskInboxForAgents(
+  messages: WakeDedupMessage[],
+  spec: { conversationId?: string; agentIds: string[] }
+): void {
+  const conversationId = spec.conversationId?.trim();
+  if (!conversationId) return;
+  const agentIds = [...new Set(spec.agentIds.map((id) => id.trim()).filter(Boolean))];
+  if (!agentIds.length) return;
+  const conversationMessages = messages
+    .filter((row) => row.conversation_id === conversationId)
+    .sort((a, b) => a.created_at - b.created_at);
+  if (!conversationMessages.length) return;
+  const upToMessageId = conversationMessages[conversationMessages.length - 1].id;
+  const ctx: WakeDedupContext = { messages, tasks: [], conversations: [] };
+  for (const agentId of agentIds) {
+    applyAgentReadUpTo(ctx, { conversationId, messageId: upToMessageId, agentId });
   }
 }

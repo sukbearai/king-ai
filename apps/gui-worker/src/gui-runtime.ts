@@ -7,7 +7,7 @@ import { selectOwnerRole } from "@suwujs/king-ai/team-routing";
 import { defaultTeamSpec, requiredCapabilitiesForText, roleTemplateForAgent } from "@suwujs/king-ai/team-workflow";
 import { taskDoneTransition, workflowCardFromTask, workflowReadiness } from "@suwujs/king-ai/workflow-core";
 import { sanitizeTenantId, displayNameForAuthUser } from "./gui-auth.js";
-import { isLightweightCoordinationMessage, isMessageInboxSettled } from "./runtime-helpers.js";
+import { isLightweightCoordinationMessage, isMessageInboxSettled, settleTaskInboxForAgents } from "./runtime-helpers.js";
 import {
   artifactCandidateFromArgs as artifactCandidateFromArgsHelper,
   checkArtifactQuality,
@@ -1463,6 +1463,22 @@ function autoDelegateMessage(state: State, conversation: Conversation, message: 
   return task;
 }
 
+function settleTaskParticipantInboxes(state: State, task: Task): void {
+  if (!task.conversationId) return;
+  const coordinatorId = task.coordinatorAgentId ?? defaultAgentFor(state).id;
+  const routedFromSteers = state.messages
+    .filter((row) =>
+      row.conversation_id === task.conversationId &&
+      row.priority === "steer" &&
+      row.body.includes(task.id) &&
+      row.body.startsWith("Task assigned")
+    )
+    .map((row) => row.to_agent_id)
+    .filter((id): id is string => Boolean(id));
+  const agentIds = [...new Set([...routedFromSteers, task.reviewerAgentId, coordinatorId].filter((id): id is string => Boolean(id)))];
+  settleTaskInboxForAgents(state.messages, { conversationId: task.conversationId, agentIds });
+}
+
 function advanceTaskDone(state: State, task: Task, actor: Agent, resultText?: string): string {
   const previousStatus = task.status;
   if (resultText?.trim()) task.result = resultText.trim();
@@ -1472,6 +1488,7 @@ function advanceTaskDone(state: State, task: Task, actor: Agent, resultText?: st
     task.reviewerAgentId = undefined;
     task.updated_at = Date.now();
     if (previousStatus !== task.status) pushTaskTransition(state, task, previousStatus);
+    settleTaskParticipantInboxes(state, task);
     return `Task ${task.id} marked done.`;
   }
   const reviewer = task.reviewerAgentId ? findAgent(state, task.reviewerAgentId) ?? reviewerAgentFor(state) : undefined;
@@ -1494,6 +1511,7 @@ function advanceTaskDone(state: State, task: Task, actor: Agent, resultText?: st
     queueTaskReviewMessage(state, task, actor.id);
     return `Task ${task.id} submitted for review by ${task.assignee}.`;
   }
+  settleTaskParticipantInboxes(state, task);
   if (task.conversationId) {
     queueTaskCompletionMessage(state, task, { fromName: actor.name, actorAgentId: actor.id });
     return `Task ${task.id} marked done and returned to ${task.assignee}.`;

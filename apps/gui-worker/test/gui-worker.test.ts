@@ -6,6 +6,7 @@ import { test } from "node:test";
 import worker, {
   GuiState,
   isGroupRollCallMessage,
+  isGroupSequentialCountMessage,
   isLightweightCoordinationMessage,
   resolveWakeEvent,
   resolveWakeData,
@@ -16,7 +17,8 @@ import worker, {
   shouldSuppressAgentWake,
   isMessageInboxSettled,
   agentReplyForMessage,
-  applyAgentReadUpTo
+  applyAgentReadUpTo,
+  settleTaskInboxForAgents
 } from "../src/index.js";
 import { createFakeSql } from "./fake-sql.js";
 
@@ -5419,6 +5421,7 @@ test("shouldAutoDelegateMessage keeps single-mode tracking and gates casual team
   assert.equal(shouldAutoDelegateMessage(team, "所有人在回个 1"), false);
   assert.equal(shouldAutoDelegateMessage(team, "everyone roll call reply with 1"), false);
   assert.equal(shouldAutoDelegateMessage(team, "你在？"), false);
+  assert.equal(shouldAutoDelegateMessage(team, "轮流报数"), false);
   assert.equal(shouldAutoDelegateMessage(team, "@dev roll call reply"), true);
   assert.equal(shouldAutoDelegateMessage(team, "research competitors and source evidence"), true);
   assert.equal(shouldAutoDelegateMessage(team, "请团队实现多角色协作"), true);
@@ -5464,4 +5467,107 @@ test("isGroupRollCallMessage only catches broad team attendance pings", () => {
   assert.equal(isGroupRollCallMessage(team, "@dev roll call reply"), false);
   assert.equal(isGroupRollCallMessage(team, "hello"), false);
   assert.equal(isGroupRollCallMessage(single, "所有人在回个 1"), false);
+});
+
+test("isGroupSequentialCountMessage catches round-robin count games", () => {
+  const team = { id: "x", title: "x", kind: "group" as const, teamMode: "team" as const };
+  assert.equal(isGroupSequentialCountMessage(team, "轮流报数"), true);
+  assert.equal(isGroupSequentialCountMessage(team, "大家按顺序报数"), true);
+  assert.equal(isGroupSequentialCountMessage(team, "team count in order reply with number"), true);
+  assert.equal(isGroupSequentialCountMessage(team, "@dev fix the login bug"), false);
+  assert.equal(isLightweightCoordinationMessage(team, "轮流报数"), true);
+});
+
+test("settleTaskInboxForAgents marks conversation steers read for routed agents", () => {
+  const messages = [
+    { id: "m1", conversation_id: "c1", author_kind: "human", created_at: 1, readBy: [] as string[] },
+    { id: "m2", conversation_id: "c1", author_kind: "system", created_at: 2, readBy: [] as string[] }
+  ];
+  settleTaskInboxForAgents(messages, { conversationId: "c1", agentIds: ["dev", "reviewer"] });
+  assert.deepEqual(messages[0].readBy, ["dev", "reviewer"]);
+  assert.deepEqual(messages[1].readBy, ["dev", "reviewer"]);
+});
+
+test("sequential count games in #all do not spawn reviewer tasks", async () => {
+  const bindings = env();
+  await pairComputer(bindings, { engines: ["grok"] });
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    body: JSON.stringify({ conversationId: "king-ai-convo", body: "轮流报数" })
+  }), bindings);
+
+  const state = await json<{
+    tasks: { requestMessageId?: string; assignee?: string; reviewerAgentId?: string }[];
+    messages: { id: string; body: string; to_agent_id?: string; author_kind: string }[];
+    wakeLog?: { event: string; data: { agentId?: string; taskId?: string; agenda?: boolean } }[];
+  }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
+  const human = state.messages.find((row) => row.author_kind === "human" && row.body === "轮流报数");
+  assert.equal(state.tasks.some((row) => row.requestMessageId === human?.id), false);
+  assert.equal(state.messages.some((row) => row.to_agent_id === "reviewer" && row.body.includes("Task assigned")), false);
+  assert.equal(state.wakeLog?.some((row) =>
+    row.event === "wake" &&
+    row.data.agentId === "king-ai-ceo" &&
+    row.data.taskId === undefined &&
+    row.data.agenda !== true
+  ), true);
+});
+
+test("task done settles steer inbox for assignee reviewer and coordinator", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const devToken = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/dev/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+  const reviewerToken = await json<{ token: string }>(
+    await worker.fetch(new Request("https://gui/api/agents/reviewer/runtime-token", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paired.deviceToken}` }
+    }), bindings)
+  );
+
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    body: JSON.stringify({ body: "@dev ship the inbox settle check" })
+  }), bindings);
+
+  const assigned = await json<{ tasks: { id: string; assignee?: string; status: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  const task = assigned.tasks.find((row) => row.assignee === "dev" && row.status === "assigned");
+  assert.ok(task);
+
+  await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${devToken.token}` },
+    body: JSON.stringify({ argv: ["task", "done", task.id, "done"] })
+  }), bindings);
+
+  await worker.fetch(new Request("https://gui/runtime/cli", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${reviewerToken.token}` },
+    body: JSON.stringify({ argv: ["task", "done", task.id, "--review", "approved"] })
+  }), bindings);
+
+  const state = await json<{
+    messages: { id: string; body: string; readBy: string[]; priority?: string; to_agent_id?: string }[];
+  }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
+  const steers = state.messages.filter((row) =>
+    row.priority === "steer" &&
+    row.body.includes(task.id) &&
+    row.body.startsWith("Task assigned")
+  );
+  assert.equal(steers.length >= 2, true);
+  for (const steer of steers) {
+    assert.equal(steer.readBy.includes("dev"), true, steer.body);
+    assert.equal(steer.readBy.includes("reviewer"), true, steer.body);
+    assert.equal(steer.readBy.includes("king-ai-ceo"), true, steer.body);
+  }
+  const completionSteer = state.messages.find((row) =>
+    row.priority === "steer" && row.body.includes(task.id) && row.body.startsWith("Task completed")
+  );
+  assert.ok(completionSteer);
+  assert.equal(completionSteer.readBy.includes("king-ai-ceo"), false);
 });

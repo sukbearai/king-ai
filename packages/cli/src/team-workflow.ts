@@ -248,6 +248,11 @@ export function requiredCapabilitiesForText(text: string): string[] {
   if (/(所有人|大家|全员).*(回个?|回复|报个?)\s*\d+/.test(text)) return ["coordination"];
   if (/(有人|都|还).{0,6}(在吗|在不在)/.test(text)) return ["coordination"];
   if (/^(你在[吗么]?|在吗|在不在)[?.!？!]*$/u.test(text.trim())) return ["coordination"];
+  if (/轮流报数|按顺序报数?|接龙报数|顺序报数|依次报数/.test(text)) return ["coordination"];
+  if (/(轮流|按顺序|依次|接龙).{0,8}(报数|报个?数|数数)/.test(text)) return ["coordination"];
+  if (/(大家|所有人|全员).{0,8}(轮流|按顺序|依次).{0,8}(报|回|回复)/.test(text)) return ["coordination"];
+  if (/\b(round[- ]?robin|count in order|sequential count|take turns)\b/i.test(value) && /\b(count|number|reply|say)\b/i.test(value)) return ["coordination"];
+  if (/\b(everyone|everybody|team)\b/i.test(value) && /\b(count|number)\b/i.test(value) && /\b(order|sequence|turns?)\b/i.test(value)) return ["coordination"];
   if (/\b(test|verify|verification|regression|qa)\b/.test(value)) return ["testing", "verification"];
   if (/\b(release|deploy|queue|approval|audit|ops|devops)\b/.test(value)) return ["ops", "release", "audit"];
   if (/\b(research|compare|brief|market|source|evidence)\b/.test(value)) return ["research", "evidence"];

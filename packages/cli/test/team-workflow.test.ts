@@ -42,6 +42,8 @@ test("shared collaboration semantics classify agents and request capabilities", 
   assert.deepEqual(requiredCapabilitiesForText("所有人在回个 1"), ["coordination"]);
   assert.deepEqual(requiredCapabilitiesForText("everyone roll call reply with 1"), ["coordination"]);
   assert.deepEqual(requiredCapabilitiesForText("你在？"), ["coordination"]);
+  assert.deepEqual(requiredCapabilitiesForText("轮流报数"), ["coordination"]);
+  assert.deepEqual(requiredCapabilitiesForText("team count in order"), ["coordination"]);
   assert.deepEqual(requiredCapabilitiesForText("build the feature"), ["implementation", "code"]);
 });
 
