@@ -95,7 +95,7 @@ king-ai trade alert run tm --once --push-tg
 | `t` | Celebrity tweet alpha (Trump/Musk/CZ by default) |
 | `tm` | Twitter ticker mention velocity |
 | `u` | BTC ETF flows (also scheduled daily at 22:00) |
-| `discord_wba` | Discord WBA channel (requires `opencli` browser) |
+| `discord_wba` | Discord WBA channel (requires Chrome CDP; see below) |
 
 Info-level alerts are written to JSONL; Telegram pushes default to `warning` and above.
 
@@ -144,11 +144,21 @@ king-ai trade watchdog --kill
 king-ai trade weekly-review --push-tg
 ```
 
+## Chrome CDP (replaces opencli)
+
+Twitter timeline, Xueqiu A-shares, and Discord browser scraping use **Chrome DevTools Protocol** against your logged-in Chrome:
+
+```sh
+# macOS: quit Chrome fully, then restart your daily profile with debugging
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
+```
+
+Set `KING_AI_CHROME_CDP_URL` (default `http://127.0.0.1:9222`) or `data_sources.chrome.cdp_url` in `trade_config.json`. The trade daemon **attaches to open tabs** in that Chrome (preferring existing x.com / xueqiu.com / discord.com pages) and reuses your logged-in session.
+
 ## External Dependencies
 
 Trade rules call local CLIs when available:
 
-- `opencli` — Twitter timeline, Xueqiu stocks, Discord browser
 - `onchainos` — on-chain data
 - `surf` — market tickers, funding, options
 - `tg` — Telegram channel reads

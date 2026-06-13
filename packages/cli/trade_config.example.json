@@ -28,6 +28,9 @@
     "push_telegram": false
   },
   "data_sources": {
+    "chrome": {
+      "cdp_url": "http://127.0.0.1:9222"
+    },
     "market": {
       "instruments": ["BTC-USDT", "ETH-USDT", "SOL-USDT"],
       "show_funding_rate": true,

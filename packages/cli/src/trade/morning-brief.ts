@@ -123,7 +123,7 @@ async function fetchTwitterSummary(hours: number): Promise<string> {
   }
 
   if (!tweets.length) {
-    lines.push("暂无推文（需运行 twitter-collector 或检查 opencli 登录状态）");
+    lines.push("暂无推文（需运行 twitter-collector 或检查 Chrome CDP 登录状态）");
     return lines.join("\n");
   }
 

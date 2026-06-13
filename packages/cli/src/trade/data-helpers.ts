@@ -102,16 +102,6 @@ export async function runGmgn(args: string[], timeoutMs = 30_000): Promise<unkno
   }
 }
 
-export async function runOpencli(args: string[], timeoutMs = 90_000): Promise<unknown[]> {
-  try {
-    const out = await runCli("opencli", args, timeoutMs);
-    const parsed = parseCliJson(out);
-    return Array.isArray(parsed) ? parsed : parsed && typeof parsed === "object" ? [parsed] : [];
-  } catch {
-    return [];
-  }
-}
-
 export async function runSurf(args: string[], timeoutMs = 30_000): Promise<unknown> {
   try {
     const out = await runCli("surf", args, timeoutMs);

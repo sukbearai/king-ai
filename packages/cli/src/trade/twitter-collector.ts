@@ -2,7 +2,8 @@ import { appendFile, readFile, writeFile } from "node:fs/promises";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { dotGet, loadTradeConfig } from "./config.js";
-import { runLast30days, runOpencli } from "./data-helpers.js";
+import { runLast30days } from "./data-helpers.js";
+import { chromeTwitterTimeline } from "./chrome-cdp.js";
 import { recordTickerMentions, textHash } from "./ticker-mentions.js";
 import {
   defaultTwitterCachePath,
@@ -33,10 +34,7 @@ async function fetchTimelineRows(): Promise<TwitterCacheEntry[]> {
   const limit = Number(ds.limit) || 500;
   const tlType = String(ds.type ?? "following");
 
-  const rows = await runOpencli(
-    ["twitter", "timeline", "--limit", String(limit), "--type", tlType, "--format", "json"],
-    300_000
-  );
+  const rows = await chromeTwitterTimeline({ limit, type: tlType });
   if (rows.length) {
     return rows
       .map((r) => normalizeTweet(r as Record<string, unknown>))

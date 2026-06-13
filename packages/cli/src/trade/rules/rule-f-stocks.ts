@@ -1,6 +1,7 @@
 import { createAlert, type Alert, type AlertRule, type AlertState } from "../alert-rule.js";
 import { dotGet, loadTradeConfig } from "../config.js";
-import { nowDisplay, runOpencli, stockQuote, yahooFinanceQuote } from "../data-helpers.js";
+import { chromeXueqiuStock } from "../chrome-cdp.js";
+import { nowDisplay, stockQuote, yahooFinanceQuote } from "../data-helpers.js";
 
 const DEFAULT_WATCHLIST: Record<string, string> = {
   CRCL: "Circle",
@@ -45,14 +46,10 @@ function yahooSymbol(symbol: string): string {
 }
 
 async function ashareQuote(symbol: string): Promise<{ price: number; change_pct: number } | null> {
-  const rows = await runOpencli(["xueqiu", "stock", symbol], 60_000);
-  if (rows.length) {
-    const row = rows[0] as Record<string, unknown>;
-    const priceStr = row.Price ?? row.price ?? row.current ?? "";
-    const changeRaw = row.ChangePercent ?? row.ChangePct ?? row.changePercent ?? row.changePct ?? row.percent ?? row.change_pct ?? "0";
-    const changeStr = String(changeRaw).replace(/%/g, "").replace(/\+/g, "").trim();
-    const price = Number.parseFloat(String(priceStr));
-    const changePct = Number.parseFloat(changeStr);
+  const row = await chromeXueqiuStock(symbol);
+  if (row) {
+    const price = Number(row.price ?? row.Price);
+    const changePct = Number(row.change_pct ?? row.ChangePercent ?? 0);
     if (Number.isFinite(price) && price > 0) {
       return { price, change_pct: Number.isFinite(changePct) ? changePct : 0 };
     }
