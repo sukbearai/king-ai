@@ -693,8 +693,11 @@ export const guiPageStyles = `    :root {
       body {
         touch-action: manipulation;
       }
-      .composer textarea,
-      #body {
+      /* iOS Safari zooms when focused inputs are <16px — apply to all text fields */
+      #body,
+      textarea,
+      select,
+      input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="hidden"]):not([type="image"]) {
         font-size: 16px;
         line-height: 1.4;
       }

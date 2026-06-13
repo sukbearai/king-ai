@@ -1393,11 +1393,17 @@ export const guiPageEnhancementStyles = `
     .task-card.decision-host {
       border-left: 3px solid #7a8cff;
     }
+    /* iOS Safari zoom-on-focus: keep all mobile text fields >=16px */
+    body.mobile-layout textarea,
+    body.mobile-layout select,
+    body.mobile-layout input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="hidden"]):not([type="image"]) {
+      font-size: 16px;
+      line-height: 1.4;
+    }
     body.mobile-layout .composer textarea {
       min-height: 52px;
       max-height: 90px;
       padding: 8px 6px;
-      font-size: 16px;
       outline: none;
       -webkit-tap-highlight-color: transparent;
     }
