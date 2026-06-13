@@ -7,7 +7,7 @@ import { selectOwnerRole } from "@suwujs/king-ai/team-routing";
 import { defaultTeamSpec, requiredCapabilitiesForText, roleTemplateForAgent } from "@suwujs/king-ai/team-workflow";
 import { taskDoneTransition, workflowCardFromTask, workflowReadiness } from "@suwujs/king-ai/workflow-core";
 import { sanitizeTenantId, displayNameForAuthUser } from "./gui-auth.js";
-import { isGroupRollCallMessage } from "./runtime-helpers.js";
+import { isGroupRollCallMessage, isMessageInboxSettled } from "./runtime-helpers.js";
 import {
   artifactCandidateFromArgs as artifactCandidateFromArgsHelper,
   checkArtifactQuality,
@@ -216,11 +216,17 @@ function remoteAssistSummary(grant: RemoteAssistGrant): { active: boolean; token
 }
 
 function normalizeMessages(messages: Message[]): Message[] {
-  return messages.map(({ body_html: _bodyHtml, ...message }) => ({
-    ...message,
-    to_agent_id: normalizeAgentId(message.to_agent_id),
-    readBy: [...new Set((message.readBy ?? []).map(normalizeAgentId).filter((id): id is string => Boolean(id)))]
-  }));
+  return messages.map((message) => {
+    const keepRendered = message.body_html && message.body_render_key === message.body
+      ? { body_html: message.body_html, body_render_key: message.body_render_key }
+      : {};
+    return {
+      ...message,
+      ...keepRendered,
+      to_agent_id: normalizeAgentId(message.to_agent_id),
+      readBy: [...new Set((message.readBy ?? []).map(normalizeAgentId).filter((id): id is string => Boolean(id)))]
+    };
+  });
 }
 
 const SAFE_MARKDOWN_TAGS = new Set([
@@ -931,6 +937,7 @@ function shouldRenderIeltsClickableWords(message: Message): boolean {
 
 async function renderMessageMarkdown(message: Message): Promise<Message> {
   if (message.status === "pending" || message.kind === "system") return { ...message };
+  if (message.body_html && message.body_render_key === message.body) return message;
   try {
     const isIelts = shouldRenderIeltsClickableWords(message);
     const { text, glossary, spans } = isIelts
@@ -941,10 +948,15 @@ async function renderMessageMarkdown(message: Message): Promise<Message> {
     const body_html = isIelts
       ? renderFallbackClickableWords(highlightIeltsSpansInHtml(sanitized, spans), glossary)
       : sanitized;
-    return { ...message, body_html };
+    return { ...message, body_html, body_render_key: message.body };
   } catch {
     return { ...message };
   }
+}
+
+async function messagesForGuiConversation(state: State, conversationId: string): Promise<Message[]> {
+  const rows = state.messages.filter((message) => message.conversation_id === conversationId);
+  return Promise.all(rows.map((message) => renderMessageMarkdown(message)));
 }
 
 type GuiStateResponse = State | Omit<State, "deviceToken" | "runtimeToken" | "runtimeTokens" | "runtimeTokenMeta" | "pairingCode" | "remoteAssist">;
@@ -1709,13 +1721,23 @@ function isRuntimeVisibleMessage(message: Message): boolean {
   return message.status !== "pending";
 }
 
+function wakeDedupContext(state: State) {
+  return {
+    messages: state.messages,
+    tasks: state.tasks,
+    conversations: state.conversations
+  };
+}
+
 function unreadMessagesFor(state: State, agentId: string): Message[] {
+  const dedup = wakeDedupContext(state);
   return state.messages.filter((message) =>
     isRuntimeVisibleMessage(message) &&
     messageVisibleToAgentInConversation(state, message, agentId) &&
     messageActionableForAgent(state, message, agentId) &&
     (!message.to_agent_id || message.to_agent_id === agentId) &&
-    !message.readBy.includes(agentId)
+    !message.readBy.includes(agentId) &&
+    !isMessageInboxSettled(dedup, message.id, agentId)
   );
 }
 
@@ -2063,6 +2085,32 @@ function formatRosterAgent(agent: AgentStateSummary): string {
   ].join("\t");
 }
 
+function buildConversationGlanceSection(state: State, conversationId: string, agentId: string): string {
+  const rows = state.messages
+    .filter((message) => message.conversation_id === conversationId && isRuntimeVisibleMessage(message))
+    .slice(-10);
+  const now = Date.now();
+  const composing = (state.composing ?? [])
+    .filter((claim) => claim.expires_at > now && claim.conversationId === conversationId)
+    .sort((a, b) => a.claimed_at - b.claimed_at)
+    .map((claim) => `Composing: ${claim.agentName} (${Math.max(0, (now - claim.claimed_at) / 1000).toFixed(1)}s ago)`);
+  const claims = (state.claims ?? [])
+    .filter((claim) => claim.conversationId === conversationId)
+    .map((claim) => `Claim: ${claim.name} by ${claim.owner}`);
+  if (!rows.length && !composing.length && !claims.length) return "";
+  const messageLines = rows.map((message) => {
+    const self = message.author_agent_id === agentId ? " ▸ME" : "";
+    const body = (message.body || "").replace(/\s+/g, " ").slice(0, 200);
+    return `[${message.id}] ${message.author_name}${message.author_kind === "agent" ? self : ""}: ${body}`;
+  });
+  return [
+    "### Conversation Glance (live snapshot — skip king-ai glance for this pinned conversation unless you need a fresher group-thread check)",
+    ...messageLines,
+    ...composing,
+    ...claims
+  ].join("\n");
+}
+
 function buildRuntimePreamble(
   state: State,
   options: { agentId: string; reason: string; runId?: string; steerReason?: string }
@@ -2089,6 +2137,13 @@ function buildRuntimePreamble(
     if (runContract.taskId) {
       lines.push(`- task: ${runContract.taskId}`);
       lines.push(`- close with: king-ai task done ${runContract.taskId}`);
+    }
+    if (runContract.conversationId) {
+      const glance = buildConversationGlanceSection(state, runContract.conversationId, agent.id);
+      if (glance) {
+        lines.push("");
+        lines.push(glance);
+      }
     }
   }
   const tasks = state.tasks
@@ -2940,6 +2995,8 @@ export {
   isAgentLifecycle,
   normalizeMessages,
   stateForGui,
+  messagesForGuiConversation,
+  renderMessageMarkdown,
   normalizeTasks,
   normalizeTaskEvents,
   normalizeCards,

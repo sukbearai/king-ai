@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
-import { claudeStreamUserMessage, formatEngineLogLine, getAdapter, parseTriage, personaHeader, reduceCodexAppEvent, splitExtraArgs } from "../src/engine.js";
+import { claudeStreamUserMessage, createGrokLogSink, ENGINE_PREFERENCE_ORDER, formatEngineLogLine, getAdapter, parseTriage, personaHeader, reduceCodexAppEvent, splitExtraArgs } from "../src/engine.js";
 import { writeShim } from "../src/shim.js";
 import { authFailureHint, hashText, isRateLimited } from "../src/text.js";
 
@@ -97,6 +97,20 @@ test("formatEngineLogLine summarizes Grok streaming JSON", () => {
   assert.equal(formatEngineLogLine("grok", '{"type":"end","stopReason":"EndTurn"}'), "[grok] turn completed");
   assert.equal(formatEngineLogLine("grok", '{"type":"error","message":"Session does not exist"}'), "[grok] failed: Session does not exist");
   assert.equal(formatEngineLogLine("grok", '{"type":"thought","data":"hidden"}'), null);
+});
+
+test("createGrokLogSink buffers streaming text deltas into one line", () => {
+  const lines: string[] = [];
+  const sink = createGrokLogSink((line) => lines.push(line));
+  sink('{"type":"text","data":"hello"}');
+  sink('{"type":"text","data":" there"}');
+  assert.deepEqual(lines, []);
+  sink('{"type":"end","stopReason":"EndTurn"}');
+  assert.deepEqual(lines, ["[grok] hello there", "[grok] turn completed"]);
+});
+
+test("ENGINE_PREFERENCE_ORDER prefers grok before claude and codex", () => {
+  assert.deepEqual(ENGINE_PREFERENCE_ORDER, ["grok", "claude", "codex"]);
 });
 
 test("formatEngineLogLine summarizes Codex app-server events", () => {

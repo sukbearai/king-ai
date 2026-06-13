@@ -25,6 +25,7 @@ import {
   Semaphore,
   sessionResetReason,
   simpleTurnFastPathInstruction,
+  engineTurnToolHint,
   routedTaskTriageVerdict,
   shouldDeferFailOpenTriage,
   shouldFallbackAckSeen,
@@ -270,6 +271,8 @@ test("buildChatDelta adds simple-turn fast path only for directed work", () => {
   assert.match(routed, /Fast path for simple routed work/);
   assert.match(routed, /one brief reply and immediately close the assigned task/);
   assert.match(routed, /Do not run king-ai inbox, messages, or task list/);
+  assert.match(routed, /Conversation Glance snapshot/);
+  assert.match(routed, /king-ai reply <conversationId>.*king-ai task done/);
 
   const directed = buildChatDelta("Human: ack?", "memory", "dev\tDev", { actionable: true, responseMode: "me" });
   assert.match(directed, /Fast path for simple routed work/);
@@ -277,6 +280,15 @@ test("buildChatDelta adds simple-turn fast path only for directed work", () => {
   const shared = buildChatDelta("Human: any thoughts?", "memory", "dev\tDev", { actionable: true, responseMode: "one-of-us" });
   assert.doesNotMatch(shared, /Fast path for simple routed work/);
   assert.equal(simpleTurnFastPathInstruction({ actionable: false, responseMode: "me" }), "");
+});
+
+test("engineTurnToolHint tells codex to skip glance and chain reply with task done", () => {
+  const triage = routedTaskTriageVerdict("task-1");
+  const codex = engineTurnToolHint("codex", triage);
+  assert.match(codex, /do NOT run king-ai glance first/i);
+  assert.match(codex, /king-ai reply <conversationId>.*king-ai task done <taskId>/);
+  assert.equal(engineTurnToolHint("claude", { actionable: true, responseMode: "one-of-us" }), "");
+  assert.match(engineTurnToolHint("claude", triage), /Conversation Glance snapshot/);
 });
 
 test("formatTriageNote explains all King AI response modes", () => {

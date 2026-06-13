@@ -4,12 +4,19 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { anyRunnerBusy, clearLocalRuntimeState, doctorExitCode, formatDoctorReport, installLogTimestamps, missingEngineMessage, parsePairLocator, resolveHostName, shouldExitForUpdate } from "../src/daemon.js";
+import { anyRunnerBusy, clearLocalRuntimeState, doctorExitCode, formatDoctorReport, installLogTimestamps, missingEngineMessage, parsePairLocator, resolveHostName, shouldExitForUpdate, waitForRunnerIdle } from "../src/daemon.js";
 
 test("anyRunnerBusy reports whether any runner is active", () => {
   assert.equal(anyRunnerBusy([]), false);
   assert.equal(anyRunnerBusy([{ isBusy: false }, { isBusy: false }]), false);
   assert.equal(anyRunnerBusy([{ isBusy: false }, { isBusy: true }]), true);
+});
+
+test("waitForRunnerIdle returns when runner becomes idle", async () => {
+  let busy = true;
+  setTimeout(() => { busy = false; }, 50);
+  const idle = await waitForRunnerIdle({ get isBusy() { return busy; } }, 500, 10);
+  assert.equal(idle, true);
 });
 
 test("installLogTimestamps prefixes daemon log lines with an ISO wall-clock time", () => {

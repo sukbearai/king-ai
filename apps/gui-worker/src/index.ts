@@ -8,7 +8,11 @@ export {
   shouldAutoDelegateMessage,
   triageResponseMode,
   wakeEventVisibleToAgent,
-  wakeResolveContextFromState
+  wakeResolveContextFromState,
+  shouldSuppressAgentWake,
+  isMessageInboxSettled,
+  agentReplyForMessage,
+  applyAgentReadUpTo
 } from "./gui-state-do.js";
 
 export { default } from "./gui-state-do.js";

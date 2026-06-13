@@ -1541,11 +1541,17 @@ saveAgentConfig = async function() {
   }
   if (status) status.textContent = t('saving');
   try {
+    const engine = document.getElementById('engine').value;
+    const savedEngine = ((window.__lastState && window.__lastState.agents) || []).find(function(agent) { return agent.id === 'king-ai-ceo'; });
+    if (savedEngine && savedEngine.engine && engine && engine !== savedEngine.engine) {
+      const ok = confirm(t('engineSwitchConfirm') || 'Switching engine restarts all local agents and may take up to a minute. Continue?');
+      if (!ok) return;
+    }
     await request('/gui/agent-config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        engine: document.getElementById('engine').value,
+        engine: engine,
         lifecycle: 'on-demand',
         model: document.getElementById('model').value,
         fastModel: document.getElementById('fastModel').value
@@ -2045,19 +2051,43 @@ showPanel = function(name) {
   const workspace = document.querySelector('.workspace');
   if (workspace) workspace.scrollTop = 0;
   updateBackToBottom();
+  if (needsFullStateRefresh(name)) {
+    void refresh({ full: true, panel: name });
+  }
 };
 refresh = async function(options) {
-  const results = await Promise.all([
-    request('/gui/summary?conversationId=' + encodeURIComponent(activeConversationId)),
-    request('/gui/state'),
-    request('/gui/host-decisions').catch(function() { return { configured: false, cards: [] }; })
-  ]);
-  window.__lastState = results[1];
-  window.__lastHostDecisions = results[2] || { cards: [] };
-  renderSummary(results[0]);
-  renderMessages(results[1], options || {});
-  renderTasks(results[1]);
-  renderDecisions(results[1], window.__lastHostDecisions);
+  const panel = (options && options.panel) || activePanelName();
+  const includeDecisions = needsFullStateRefresh(panel) || !(options && options.conversationSwitch);
+  const payload = await loadGuiPayload(options || {});
+  if (!payload) return;
+  if (includeDecisions) {
+    window.__lastHostDecisions = await request('/gui/host-decisions').catch(function() { return { configured: false, cards: [] }; });
+  }
+  renderSummary(payload.summary);
+  renderMessages(payload.state, options || {});
+  renderTasks(payload.state);
+  if (includeDecisions) renderDecisions(payload.state, window.__lastHostDecisions);
+};
+const baseApplyConversationSwitchOptimistic = applyConversationSwitchOptimistic;
+applyConversationSwitchOptimistic = function() {
+  baseApplyConversationSwitchOptimistic();
+  const state = window.__lastState;
+  if (state) renderDecisions(state, window.__lastHostDecisions || { configured: false, cards: [] });
+};
+selectConversation = function(id) {
+  activeConversationId = id || 'king-ai-convo';
+  localStorage.setItem('king-ai:activeConversationId', activeConversationId);
+  visibleMessageCount = 20;
+  shouldStickToBottom = true;
+  applyConversationSwitchOptimistic();
+  const switchToken = ++conversationSwitchToken;
+  void loadGuiPayload({ conversationSwitch: true, switchToken: switchToken }).then(function(payload) {
+    if (!payload) return;
+    renderSummary(payload.summary);
+    renderMessages(payload.state);
+    renderTasks(payload.state);
+    renderDecisions(payload.state, window.__lastHostDecisions || { configured: false, cards: [] });
+  }).catch(function() {});
 };
 applyLanguage();
 refresh();

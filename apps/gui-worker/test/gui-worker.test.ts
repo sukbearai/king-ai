@@ -11,7 +11,11 @@ import worker, {
   shouldAutoDelegateMessage,
   triageResponseMode,
   wakeEventVisibleToAgent,
-  wakeResolveContextFromState
+  wakeResolveContextFromState,
+  shouldSuppressAgentWake,
+  isMessageInboxSettled,
+  agentReplyForMessage,
+  applyAgentReadUpTo
 } from "../src/index.js";
 import { createFakeSql } from "./fake-sql.js";
 
@@ -1514,6 +1518,45 @@ test("new gui windows carry a collaboration team", async () => {
   assert.deepEqual(summary.activeAgents.map((agent) => agent.id), defaultTeamAgentIds);
 });
 
+test("gui messages endpoint returns one conversation and caches rendered markdown", async () => {
+  const bindings = env();
+  await pairComputer(bindings, { engines: ["codex"] });
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    body: JSON.stringify({ body: "hello from all", conversationId: "king-ai-convo" })
+  }), bindings);
+  const created = await json<{ conversation: { id: string } }>(
+    await worker.fetch(new Request("https://gui/gui/conversations", {
+      method: "POST",
+      body: JSON.stringify({ title: "IELTS", workflowId: "ielts-study" })
+    }), bindings)
+  );
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    body: JSON.stringify({ body: "hello from ielts", conversationId: created.conversation.id })
+  }), bindings);
+
+  const allMessages = await json<{ conversationId: string; messages: { conversation_id: string; body: string; body_render_key?: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/messages?conversationId=king-ai-convo"), bindings)
+  );
+  assert.equal(allMessages.conversationId, "king-ai-convo");
+  assert.ok(allMessages.messages.some((row) => row.body === "hello from all"));
+  assert.equal(allMessages.messages.every((row) => row.conversation_id === "king-ai-convo"), true);
+  assert.ok(allMessages.messages.some((row) => row.body_render_key === "hello from all"));
+
+  const ieltsMessages = await json<{ messages: { body: string; conversation_id: string }[] }>(
+    await worker.fetch(new Request(`https://gui/gui/messages?conversationId=${created.conversation.id}`), bindings)
+  );
+  assert.ok(ieltsMessages.messages.length >= 1);
+  assert.ok(ieltsMessages.messages.some((row) => row.body === "hello from ielts"));
+  assert.equal(ieltsMessages.messages.every((row) => row.conversation_id === created.conversation.id), true);
+
+  const fullState = await json<{ messages: { conversation_id: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings)
+  );
+  assert.ok(fullState.messages.length >= 2);
+});
+
 test("gui windows can choose single and custom collaboration teams", async () => {
   const bindings = env();
   await pairComputer(bindings, { engines: ["codex"] });
@@ -2338,6 +2381,9 @@ test("gui king-ai state command exports, imports, and resets state snapshots", a
 });
 
 test("gui runtime lets the page choose agent engine and models", async () => {
+  const oldGrace = process.env.KING_AI_RUNTIME_TOKEN_INVALIDATION_GRACE_MS;
+  process.env.KING_AI_RUNTIME_TOKEN_INVALIDATION_GRACE_MS = "0";
+  try {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["claude", "codex"] });
   const beforeToken = await json<{ token: string }>(await worker.fetch(new Request("https://gui/api/agents/king-ai-ceo/runtime-token", {
@@ -2392,6 +2438,10 @@ test("gui runtime lets the page choose agent engine and models", async () => {
     headers: { Authorization: `Bearer ${paired.deviceToken}` }
   }), bindings));
   assert.notEqual(afterToken.token, beforeToken.token);
+  } finally {
+    if (oldGrace === undefined) delete process.env.KING_AI_RUNTIME_TOKEN_INVALIDATION_GRACE_MS;
+    else process.env.KING_AI_RUNTIME_TOKEN_INVALIDATION_GRACE_MS = oldGrace;
+  }
 });
 
 test("gui runtime rejects expired runtime tokens server-side", async () => {
@@ -2437,7 +2487,7 @@ test("gui messages show a pending agent placeholder until runtime reply replaces
   );
   assert.deepEqual(state.messages.filter((row) => row.author_kind !== "system").map((row) => [row.author_kind, row.author_engine, row.body, row.status]), [
     ["human", undefined, "please implement the feature", undefined],
-    ["agent", "codex", "已委派给 dev 处理...", "pending"]
+    ["agent", "grok", "已委派给 dev 处理...", "pending"]
   ]);
 
   await json<{ text: string }>(await worker.fetch(new Request("https://gui/runtime/cli", {
@@ -2626,7 +2676,7 @@ test("runtime replies fall back to the default agent for unknown agent ids", asy
     await worker.fetch(new Request("https://gui/gui/state"), bindings)
   );
   assert.equal(state.messages[0]?.author_name, "King AI CEO");
-  assert.equal(state.messages[0]?.author_engine, "codex");
+  assert.equal(state.messages[0]?.author_engine, "grok");
 });
 
 test("gui runtime records computer capabilities from pair and heartbeat", async () => {
@@ -3233,10 +3283,10 @@ test("gui runtime supports broader king-ai CLI commands", async () => {
   assert.match((await callCli(["messages", "king-ai-convo", "--tail", "1"])).text, /hello/);
   assert.match((await callCli(["glance", "king-ai-convo"])).text, /King AI Human: hello/);
   assert.match((await callCli(["agents"])).text, /Agent Matrix:/);
-  assert.match((await callCli(["agents"])).text, /king-ai-ceo\s+idle\s+on-demand\s+codex/);
+  assert.match((await callCli(["agents"])).text, /king-ai-ceo\s+idle\s+on-demand\s+grok/);
   assert.match((await callCli(["agents", "spawn", "king-ai-ceo", "king-ai-ceo-2"])).text, /not supported/);
   assert.match((await callCli(["roster"])).text, /king-ai-ceo\tKing AI CEO\tCoordinate the conversation: clarify ambiguous human requests/);
-  assert.match((await callCli(["roster"])).text, /engine=codex\tlifecycle=on-demand\tstatus=idle/);
+  assert.match((await callCli(["roster"])).text, /engine=grok\tlifecycle=on-demand\tstatus=idle/);
   assert.match((await callCli(["participants"])).text, /unread=1/);
   assert.match((await callCli(["contacts", "operator"])).text, /gui-human\tKing AI Human\thuman\tRuntime operator/);
   assert.match((await callCli(["whoami"])).text, /"status": "idle"/);
@@ -4042,7 +4092,7 @@ test("gui runtime supports board, calendar, claims, roster, and agenda", async (
   assert.equal(roster.agentStates[0]?.id, "king-ai-ceo");
   assert.equal(roster.agentStates[0]?.status, "thinking");
   assert.equal(roster.agentStates[0]?.lifecycle, "on-demand");
-  assert.equal(roster.agentStates[0]?.engine, "codex");
+  assert.equal(roster.agentStates[0]?.engine, "grok");
 });
 
 test("gui agent status expires a stale thinking heartbeat back to idle", async () => {
@@ -5155,6 +5205,108 @@ test("root dev helper strips package-manager argument separators", () => {
   assert.equal(result.status, 0, result.stderr);
   const payload = JSON.parse(result.stdout) as { cliArgs: string[] };
   assert.deepEqual(payload.cliArgs, ["--filter", "@suwujs/king-ai", "dev", "host", "status", "--json"]);
+});
+
+test("shouldSuppressAgentWake skips settled message and task repeats", () => {
+  const conversationId = "convo-ielts";
+  const humanId = "msg-human-1";
+  const replyId = "msg-agent-1";
+  const taskId = "task-1";
+  const base = {
+    conversations: [{ id: conversationId, teamMode: "single" as const, kind: "group" as const }],
+    messages: [
+      { id: humanId, conversation_id: conversationId, author_kind: "human", created_at: 1, readBy: [] as string[] },
+      {
+        id: replyId,
+        conversation_id: conversationId,
+        author_kind: "agent",
+        author_agent_id: "ielts-tutor",
+        quoted_message_id: humanId,
+        status: "done",
+        created_at: 2,
+        readBy: ["ielts-tutor"]
+      }
+    ],
+    tasks: [{
+      id: taskId,
+      status: "done",
+      assignee: "ielts-tutor",
+      requestMessageId: humanId,
+      conversationId
+    }]
+  };
+
+  assert.equal(agentReplyForMessage(base, humanId, "ielts-tutor"), true);
+  assert.equal(isMessageInboxSettled(base, humanId, "ielts-tutor"), true);
+
+  const settled = shouldSuppressAgentWake(base, {
+    agentId: "ielts-tutor",
+    conversationId,
+    messageId: humanId,
+    taskId
+  });
+  assert.equal(settled.suppress, true);
+  assert.match(settled.reason || "", /settled|answered/i);
+
+  const openTask = {
+    ...base,
+    tasks: [{ ...base.tasks[0], status: "assigned" }]
+  };
+  assert.equal(shouldSuppressAgentWake(openTask, {
+    agentId: "ielts-tutor",
+    conversationId,
+    messageId: humanId,
+    taskId
+  }).suppress, false);
+
+  assert.equal(shouldSuppressAgentWake(base, { config: true, agentId: "ielts-tutor", messageId: humanId }).suppress, false);
+
+  const readCtx = {
+    ...base,
+    messages: base.messages.map((row) => ({ ...row, readBy: [...row.readBy] }))
+  };
+  applyAgentReadUpTo(readCtx, { conversationId, messageId: humanId, agentId: "ielts-tutor" });
+  assert.equal(readCtx.messages.find((row) => row.id === humanId)?.readBy.includes("ielts-tutor"), true);
+});
+
+test("shouldSuppressAgentWake still wakes coordinator for loop-closing task", () => {
+  const conversationId = "convo-ielts";
+  const humanId = "msg-human-1";
+  const base = {
+    conversations: [{ id: conversationId, teamMode: "single" as const, kind: "group" as const }],
+    messages: [
+      { id: humanId, conversation_id: conversationId, author_kind: "human", created_at: 1, readBy: [] as string[] },
+      {
+        id: "msg-agent-1",
+        conversation_id: conversationId,
+        author_kind: "agent",
+        author_agent_id: "ielts-tutor",
+        quoted_message_id: humanId,
+        status: "done",
+        created_at: 2,
+        readBy: ["ielts-tutor"]
+      }
+    ],
+    tasks: [{
+      id: "task-1",
+      status: "done",
+      assignee: "king-ai-ceo",
+      requestMessageId: humanId,
+      conversationId
+    }]
+  };
+  assert.equal(shouldSuppressAgentWake(base, {
+    agentId: "king-ai-ceo",
+    conversationId,
+    taskId: "task-1",
+    agenda: true
+  }).suppress, false);
+  assert.equal(shouldSuppressAgentWake(base, {
+    agentId: "ielts-tutor",
+    conversationId,
+    messageId: humanId,
+    taskId: "task-1"
+  }).suppress, true);
 });
 
 test("wakeEventVisibleToAgent only broadcasts undirected wakes for global reset/import", () => {

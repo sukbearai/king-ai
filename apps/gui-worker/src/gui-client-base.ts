@@ -14,6 +14,8 @@ let shouldStickToBottom = true;
 // then dropped once the server's canonical copies arrive on the next refresh.
 let optimisticMessages = [];
 let activeConversationId = localStorage.getItem('king-ai:activeConversationId') || 'king-ai-convo';
+let refreshPollCount = 0;
+let conversationSwitchToken = 0;
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, function(ch) {
@@ -181,6 +183,12 @@ async function clearMessages() {
   await refresh();
 }
 async function saveAgentConfig() {
+  const engine = document.getElementById('engine').value;
+  const savedEngine = ((window.__lastState && window.__lastState.agents) || []).find(function(agent) { return agent.id === 'king-ai-ceo'; });
+  if (savedEngine && savedEngine.engine && engine && engine !== savedEngine.engine) {
+    const ok = confirm('Switching engine restarts all local agents and may take up to a minute. Continue?');
+    if (!ok) return;
+  }
   await request('/gui/agent-config', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -216,12 +224,62 @@ function renderMessages(state, options) {
   else if (shouldStickToBottom) scrollToBottom();
   else updateBackToBottom();
 }
+function activePanelName() {
+  const tab = document.querySelector('.tab.active');
+  return tab ? tab.getAttribute('data-panel') || 'chat' : 'chat';
+}
+function needsFullStateRefresh(panel) {
+  return panel === 'tasks' || panel === 'files' || panel === 'decisions';
+}
+function mergeConversationMessages(state, conversationId, messages) {
+  const others = (state.messages || []).filter(function(row) { return row.conversation_id !== conversationId; });
+  return Object.assign({}, state, { messages: others.concat(messages || []) });
+}
+function applyConversationSwitchOptimistic() {
+  const summary = window.__lastSummary;
+  const state = window.__lastState;
+  if (summary) renderConversations(Object.assign({}, summary, { state: state || {} }));
+  if (state) {
+    renderMessages(state);
+    renderTasks(state);
+  }
+}
+async function loadGuiPayload(options) {
+  options = options || {};
+  const conversationId = activeConversationId;
+  const panel = options.panel || activePanelName();
+  const full = Boolean(
+    options.full ||
+    (!options.conversationSwitch && needsFullStateRefresh(panel)) ||
+    (!options.conversationSwitch && refreshPollCount++ % 6 === 0)
+  );
+  const summary = await request('/gui/summary?conversationId=' + encodeURIComponent(conversationId));
+  let state;
+  if (full) {
+    state = await request('/gui/state');
+  } else {
+    const messagesPayload = await request('/gui/messages?conversationId=' + encodeURIComponent(conversationId));
+    const baseState = window.__lastState || { messages: [], tasks: [], artifacts: [], approvals: [], workflowCards: [] };
+    state = mergeConversationMessages(baseState, conversationId, messagesPayload.messages || []);
+  }
+  if (options.switchToken && options.switchToken !== conversationSwitchToken) return null;
+  window.__lastState = state;
+  window.__lastSummary = summary;
+  return { summary: summary, state: state, full: full };
+}
 function selectConversation(id) {
   activeConversationId = id || 'king-ai-convo';
   localStorage.setItem('king-ai:activeConversationId', activeConversationId);
   visibleMessageCount = 20;
   shouldStickToBottom = true;
-  refresh();
+  applyConversationSwitchOptimistic();
+  const switchToken = ++conversationSwitchToken;
+  void loadGuiPayload({ conversationSwitch: true, switchToken: switchToken }).then(function(payload) {
+    if (!payload) return;
+    renderSummary(payload.summary);
+    renderMessages(payload.state);
+    renderTasks(payload.state);
+  }).catch(function() {});
 }
 function createConversation() {
   const input = document.getElementById('newWindowTitle');
@@ -349,14 +407,11 @@ function renderSummary(summary) {
   document.getElementById('modelStatus').innerHTML = modelRows + '<div class="model-row"><span>运行模式</span><span>' + lifecycleLabel(agent.lifecycle) + '</span></div>';
 }
 async function refresh(options) {
-  const results = await Promise.all([
-    request('/gui/summary?conversationId=' + encodeURIComponent(activeConversationId)),
-    request('/gui/state')
-  ]);
-  window.__lastState = results[1];
-  renderSummary(results[0]);
-  renderMessages(results[1], options || {});
-  renderTasks(results[1]);
+  const payload = await loadGuiPayload(options || {});
+  if (!payload) return;
+  renderSummary(payload.summary);
+  renderMessages(payload.state, options || {});
+  renderTasks(payload.state);
 }
 refresh();
 document.querySelector('.workspace').addEventListener('scroll', handleWorkspaceScroll);

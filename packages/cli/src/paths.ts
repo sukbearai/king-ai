@@ -50,5 +50,5 @@ export const SIGNAL_OUTPUT_DIR = process.env.KING_AI_SIGNAL_OUTPUT_DIR || TRADE_
 export const SERVICE_LABEL = "dev.king-ai";
 /** LaunchAgent label for `king-ai trade daemon` background supervisor. */
 export const TRADE_SERVICE_LABEL = "dev.king-ai-trade";
-export const CURRENT_VERSION = "0.2.59";
+export const CURRENT_VERSION = "0.2.60";
 export const DEFAULT_SERVER = process.env.KING_AI_SERVER_URL || "https://king-ai.congrongtech.cn";

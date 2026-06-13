@@ -275,16 +275,41 @@ export function simpleTurnFastPathInstruction(triage?: TriageVerdict | null): st
   return [
     "Fast path for simple routed work:",
     "If the fetched context is just a roll-call, acknowledgement, direct confirmation, or other low-risk one-line reply, do one brief reply and immediately close the assigned task with king-ai task done.",
-    "Do not run king-ai inbox, messages, or task list just to rediscover the same context; use the already fetched unread digest and runtime preamble, with a single king-ai glance only when you need a live group-thread duplicate check before posting."
+    "Do not run king-ai inbox, messages, or task list just to rediscover the same context; use the already fetched unread digest and the Conversation Glance snapshot in the runtime preamble when the wake pins a conversation.",
+    "For pinned single-conversation work, post and close in one shell when ready: king-ai reply <conversationId> --file notes/reply.md --quote <messageId> && king-ai task done <taskId>."
   ].join("\n");
 }
 
-export function buildChatDelta(digest: string, memoryDigest: string, rosterDigest: string, triage?: TriageVerdict | null): string {
+export function engineTurnToolHint(engine: EngineId, triage?: TriageVerdict | null): string {
+  if (triage?.actionable !== true) return "";
+  if (triage.source !== "routed-task" && triage.responseMode !== "me") return "";
+  const chain = "king-ai reply <conversationId> --file notes/reply.md --quote <messageId> && king-ai task done <taskId>";
+  if (engine === "codex") {
+    return [
+      "Codex tool-chain fast path:",
+      "The runtime preamble already includes a Conversation Glance snapshot — do NOT run king-ai glance first for a pinned conversation.",
+      `Post and close in one shell: ${chain}.`
+    ].join("\n");
+  }
+  return [
+    "Tool-chain fast path:",
+    "Use the preamble Conversation Glance snapshot instead of a separate king-ai glance when the wake pins one conversation.",
+    `When ready, combine reply and task close: ${chain}.`
+  ].join("\n");
+}
+
+export function buildChatDelta(
+  digest: string,
+  memoryDigest: string,
+  rosterDigest: string,
+  triage?: TriageVerdict | null,
+  toolHint?: string
+): string {
   const triageNote = formatTriageNote(triage);
   const fastPath = simpleTurnFastPathInstruction(triage);
   return `You've been woken because there's new runtime activity, and local triage already decided whether you should respond. If triage marked it relevant, your job is to act, not re-litigate whether to wake.
 
-${triageNote ? `${triageNote}\n\n` : ""}${fastPath ? `${fastPath}\n\n` : ""}Your unread messages (ALREADY FETCHED - no need to re-run king-ai inbox or messages just to reread these; do run king-ai glance before posting in a group to catch anything posted while you compose):
+${triageNote ? `${triageNote}\n\n` : ""}${fastPath ? `${fastPath}\n\n` : ""}${toolHint ? `${toolHint}\n\n` : ""}Your unread messages (ALREADY FETCHED - no need to re-run king-ai inbox or messages just to reread these; do run king-ai glance before posting in a group to catch anything posted while you compose):
 ${digest || "(none)"}
 
 Your memory index (memory/MEMORY.md):
@@ -412,7 +437,7 @@ export function routedTaskTriageVerdict(taskId: string): TriageVerdict {
     actionable: true,
     source: "routed-task",
     reason: `SSE wake pinned task ${taskId}`,
-    promptNote: "This wake targeted an assigned task. Use king-ai glance in the routed conversation, complete the pinned task, and close with king-ai task done when finished."
+    promptNote: "This wake targeted an assigned task. Use the Conversation Glance snapshot in the runtime preamble, complete the pinned task, and close with king-ai task done when finished. Combine reply and task close in one shell when possible."
   };
 }
 
@@ -780,6 +805,29 @@ export class AgentRunner {
     }
   }
 
+  private invalidateRuntimeToken(): void {
+    this.token = "";
+    this.tokenExpiresAt = 0;
+  }
+
+  private async withRuntimeAuthRetry<T>(fn: (token: string) => Promise<T>): Promise<T> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        return await fn(await this.ensureToken());
+      } catch (err) {
+        lastError = err;
+        const message = err instanceof Error ? err.message : String(err);
+        if (attempt === 0 && isRuntimeAuthError(message)) {
+          this.invalidateRuntimeToken();
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw lastError;
+  }
+
   private async ensureToken(): Promise<string> {
     if (this.token && Date.now() < this.tokenExpiresAt - TOKEN_REFRESH_SKEW_MS) return this.token;
     const minted = await api<{ token: string; expiresInSeconds: number }>(
@@ -1145,7 +1193,10 @@ export class AgentRunner {
   }
 
   private promptForTurn(digest: string, memoryDigest: string, rosterDigest: string, preamble: string, triage?: TriageVerdict | null): string {
-    const delta = appendRuntimePreamble(buildChatDelta(digest, memoryDigest, rosterDigest, triage), preamble);
+    const delta = appendRuntimePreamble(
+      buildChatDelta(digest, memoryDigest, rosterDigest, triage, engineTurnToolHint(this.adapter.id, triage)),
+      preamble
+    );
     if (this.engineSession?.carriesStandingPrompt) return delta;
     return `${this.standingPrompt()}
 
@@ -1225,8 +1276,7 @@ ${delta}`;
           console.warn(`[${this.agent.id}/${this.adapter.id}] runtime inbox unavailable: ${message}; backing off without acking unread`);
           await this.publishEvent("runtime.inbox_unavailable", { reason, error: message }, "warn");
           if (isRuntimeAuthError(message)) {
-            this.token = "";
-            this.tokenExpiresAt = 0;
+            this.invalidateRuntimeToken();
             this.onConfigChange?.();
             break;
           }
@@ -1404,7 +1454,7 @@ ${delta}`;
             this.failOpenStreak = nextFailOpenStreak(this.failOpenStreak, triage.source, true);
             this.clearFailOpenBackoff();
           }
-          const acked = await this.ackRunActions(token, run?.runId, seen);
+          const acked = await this.withRuntimeAuthRetry((freshToken) => this.ackRunActions(freshToken, run?.runId, seen));
           const unreadKey = unreadBatchKey(seen);
           if (acked || unreadKey !== this.noStateActionUnreadKey) {
             this.noStateActionUnreadKey = acked ? "" : unreadKey;
@@ -1424,7 +1474,7 @@ ${delta}`;
             // unread has produced no action across NO_STATE_ACTION_ACK_STREAK turns, which still
             // breaks the no-action reprocessing loop without dropping a message on a single turn.
             if (shouldFallbackAckSeen(acked, seen.size) && shouldFallbackAckAfterStreak(this.noStateActionStreak)) {
-              await this.ackSeen(token, seen);
+              await this.withRuntimeAuthRetry((freshToken) => this.ackSeen(freshToken, seen));
               this.noStateActionStreak = 0;
               this.noStateActionUnreadKey = "";
               await this.publishEvent("turn.fallback_ack", {
@@ -1436,14 +1486,14 @@ ${delta}`;
             }
           }
         }
-        await runtimePost(this.cfg.serverUrl, `/runs/${run?.runId}/finish`, token, {
+        await this.withRuntimeAuthRetry((freshToken) => runtimePost(this.cfg.serverUrl, `/runs/${run?.runId}/finish`, freshToken, {
           status: error ? "failed" : "completed",
           summary: error ?? `local ${this.adapter.id} completed`,
           error,
           exitCode,
           model: turnModel ?? this.agent.model,
           usage: turnUsage ?? null
-        }, this.cfg.tenantId);
+        }, this.cfg.tenantId));
         const durationMs = Date.now() - runStartedAt;
         this.runStats = recordAgentRunStats(this.runStats, {
           status: error ? "failed" : "completed",
@@ -1462,11 +1512,11 @@ ${delta}`;
           usage: turnUsage ?? null,
           durationMs
         }, error ? "error" : "info");
-        await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" }, this.cfg.tenantId);
+        await this.withRuntimeAuthRetry((freshToken) => runtimePost(this.cfg.serverUrl, "/status", freshToken, { status: "avail" }, this.cfg.tenantId));
         await this.setActiveRun(null, null);
         this.lastTurnEndedAt = Date.now();
         if (this.pendingRerun && !this.stopped) {
-          const fresh = await this.snapshotUnread(token).catch(() => null);
+          const fresh = await this.withRuntimeAuthRetry((freshToken) => this.snapshotUnread(freshToken)).catch(() => null);
           const hasPinnedTask = Boolean(this.lastWakeContract?.taskId?.trim());
           const agenda = fresh?.hasReal === true
             ? null
@@ -1617,10 +1667,10 @@ ${delta}`;
           if (this.stopped) break;
           if (evt.event === "config") {
             // Runtime config (engine/model/lifecycle) changed: ask the daemon to re-sync now
-            // instead of waiting for the next poll.
+            // instead of waiting for the next poll. Do not clear the cached token here — an
+            // in-flight turn may still need it for post-turn ledger writes until re-host stops
+            // this runner or the server-side grace window ends.
             this.lastWakeStreamAt = Date.now();
-            this.token = "";
-            this.tokenExpiresAt = 0;
             console.log(`[${this.agent.id}/${this.adapter.id}] SSE config received; requesting runtime re-sync`);
             this.onConfigChange?.();
             continue;

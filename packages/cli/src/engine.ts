@@ -117,6 +117,39 @@ function textOfContent(content: unknown): string {
     .join(" ");
 }
 
+export const ENGINE_PREFERENCE_ORDER: EngineId[] = ["grok", "claude", "codex"];
+
+export function createGrokLogSink(onLog: (line: string) => void): (line: string) => void {
+  let textBuffer = "";
+  const flushText = () => {
+    const text = textBuffer.replace(/\s+/g, " ").trim();
+    textBuffer = "";
+    if (text) onLog(`[grok] ${text.slice(0, 500)}`);
+  };
+  return (line: string) => {
+    const cleaned = cleanLine(line);
+    if (!cleaned) return;
+    if (!cleaned.startsWith("{")) {
+      flushText();
+      onLog(cleaned);
+      return;
+    }
+    try {
+      const obj = JSON.parse(cleaned) as Record<string, unknown>;
+      if (obj.type === "text" && typeof obj.data === "string") {
+        textBuffer += obj.data;
+        return;
+      }
+      flushText();
+      const display = formatEngineLogLine("grok", cleaned);
+      if (display) onLog(display);
+    } catch {
+      flushText();
+      onLog(cleaned);
+    }
+  };
+}
+
 export function formatEngineLogLine(engine: EngineId, line: string): string | null {
   const cleaned = cleanLine(line);
   if (!cleaned) return null;
@@ -1260,14 +1293,13 @@ function spawnGrokTurn(
     const timeoutMs = turnTimeoutMs();
     if (timeoutMs > 0) timer = setTimeout(onAbort, timeoutMs);
 
+    const grokLog = createGrokLogSink(opts.onLog);
     child.stdout?.on("data", (buf) => {
       const text = buf.toString("utf8");
       stdout.push(text);
       for (const raw of text.split("\n")) {
         const line = cleanLine(raw);
-        if (!line) continue;
-        const display = formatEngineLogLine("grok", line);
-        if (display) opts.onLog(display);
+        if (line) grokLog(line);
       }
     });
     child.stderr?.on("data", (buf) => {
@@ -1353,14 +1385,14 @@ class GrokSession implements EngineSession {
         signal: controller.signal,
         shell,
         model: this.opts.model ?? null,
-        onLog: (line) => {
+        onLog: createGrokLogSink((line) => {
           sawOutput = true;
           if (noOutputTimer) {
             clearTimeout(noOutputTimer);
             noOutputTimer = null;
           }
           this.opts.onLog(line);
-        }
+        })
       });
     };
 
@@ -1496,7 +1528,7 @@ export function getAdapter(id: EngineId): EngineAdapter {
 
 export async function detectEngines(): Promise<EngineId[]> {
   const entries = await Promise.all(
-    (Object.keys(ADAPTERS) as EngineId[]).map(async (id) => ((await binOnPath(ADAPTERS[id].bin)) ? id : null))
+    ENGINE_PREFERENCE_ORDER.map(async (id) => ((await binOnPath(ADAPTERS[id].bin)) ? id : null))
   );
   return entries.filter((id): id is EngineId => id != null);
 }

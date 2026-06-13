@@ -290,6 +290,12 @@ export function createGuiApp(deps: GuiRouteDeps): Hono<GuiEnv> {
     const isRemoteAssist = Boolean(new URL(c.req.url).searchParams.get("assist") || c.req.header("X-King-AI-Assist-Token"));
     return (await deps.stateForRequest(c)).fetch(`https://state/gui-state${isRemoteAssist ? "?redact=1" : ""}`);
   });
+  app.get("/gui/messages", async (c) => {
+    const blocked = await deps.requireGuiAuth(c);
+    if (blocked) return blocked;
+    const search = new URL(c.req.url).search;
+    return (await deps.stateForRequest(c)).fetch(`https://state/gui-messages${search}`);
+  });
   app.get("/gui/summary", async (c) => {
     const blocked = await deps.requireGuiAuth(c);
     if (blocked) return blocked;

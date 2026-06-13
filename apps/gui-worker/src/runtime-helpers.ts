@@ -106,3 +106,169 @@ export function wakeEventVisibleToAgent(evt: { data: unknown }, agentId: string)
   if (data.resetState === true || data.importedState === true || data.config === true) return true;
   return false;
 }
+
+export interface WakeDedupMessage {
+  id: string;
+  conversation_id: string;
+  author_kind: string;
+  author_agent_id?: string;
+  status?: string;
+  quoted_message_id?: string;
+  created_at: number;
+  readBy: string[];
+}
+
+export interface WakeDedupTask {
+  id: string;
+  status: string;
+  assignee?: string;
+  requestMessageId?: string;
+  conversationId?: string;
+  coordinatorAgentId?: string;
+}
+
+export interface WakeDedupContext {
+  messages: WakeDedupMessage[];
+  tasks: WakeDedupTask[];
+  conversations: ConversationTeamLike[];
+}
+
+export interface WakeSuppressResult {
+  suppress: boolean;
+  reason?: string;
+  autoRead?: { conversationId: string; messageId: string; agentId: string };
+}
+
+function singleResponderConversation(ctx: WakeDedupContext, conversationId: string): ConversationTeamLike | undefined {
+  return ctx.conversations.find((row) => row.id === conversationId);
+}
+
+function isSingleResponderConversation(conversation: ConversationTeamLike | undefined): boolean {
+  if (!conversation) return false;
+  return conversation.teamMode === "single" || conversation.kind === "direct";
+}
+
+export function agentReplyForMessage(ctx: WakeDedupContext, messageId: string, agentId: string): boolean {
+  const message = ctx.messages.find((row) => row.id === messageId);
+  if (!message) return false;
+
+  const quotedReply = ctx.messages.some((row) =>
+    row.status !== "pending" &&
+    row.quoted_message_id === messageId &&
+    row.author_kind === "agent" &&
+    row.author_agent_id === agentId
+  );
+  if (quotedReply) return true;
+
+  const conversation = singleResponderConversation(ctx, message.conversation_id);
+  if (!isSingleResponderConversation(conversation)) return false;
+
+  const convoMessages = ctx.messages
+    .filter((row) => row.conversation_id === message.conversation_id && row.status !== "pending")
+    .sort((a, b) => a.created_at - b.created_at);
+  const index = convoMessages.findIndex((row) => row.id === messageId);
+  if (index < 0) return false;
+  return convoMessages.slice(index + 1).some((row) =>
+    row.author_kind === "agent" && row.author_agent_id === agentId
+  );
+}
+
+export function taskForRequestMessage(ctx: WakeDedupContext, messageId: string): WakeDedupTask | undefined {
+  return ctx.tasks.find((row) => row.requestMessageId === messageId);
+}
+
+function taskSettledForAgent(task: WakeDedupTask, agentId: string): boolean {
+  if (task.status === "done") return true;
+  if (task.status === "review" && task.assignee !== agentId) return true;
+  return false;
+}
+
+export function isMessageInboxSettled(ctx: WakeDedupContext, messageId: string, agentId: string): boolean {
+  const message = ctx.messages.find((row) => row.id === messageId);
+  if (!message || message.author_kind === "agent") return false;
+  if (!agentReplyForMessage(ctx, messageId, agentId)) return false;
+
+  const task = taskForRequestMessage(ctx, messageId);
+  if (!task) return true;
+  if (task.assignee === agentId) return taskSettledForAgent(task, agentId);
+  return task.status === "done" || task.status === "review";
+}
+
+export function shouldSuppressAgentWake(ctx: WakeDedupContext, data: Record<string, unknown>): WakeSuppressResult {
+  if (data.resetState === true || data.importedState === true || data.config === true) {
+    return { suppress: false };
+  }
+
+  const agentId = normalizeAgentId(data.agentId);
+  if (!agentId) return { suppress: false };
+
+  const messageId =
+    typeof data.messageId === "string" ? data.messageId :
+      typeof data.requestId === "string" ? data.requestId :
+        undefined;
+  const taskId = typeof data.taskId === "string" ? data.taskId : undefined;
+  const conversationId = typeof data.conversationId === "string" ? data.conversationId : undefined;
+
+  const task = taskId
+    ? ctx.tasks.find((row) => row.id === taskId)
+    : messageId
+      ? taskForRequestMessage(ctx, messageId)
+      : undefined;
+  const requestMessageId = messageId ?? task?.requestMessageId;
+
+  if (!requestMessageId) return { suppress: false };
+
+  if (!agentReplyForMessage(ctx, requestMessageId, agentId)) {
+    return { suppress: false };
+  }
+
+  if (!task) {
+    return {
+      suppress: true,
+      reason: "message already answered",
+      autoRead: conversationId ? { conversationId, messageId: requestMessageId, agentId } : undefined
+    };
+  }
+
+  if (task.assignee === agentId) {
+    if (!taskSettledForAgent(task, agentId)) {
+      return { suppress: false };
+    }
+    return {
+      suppress: true,
+      reason: "reply posted and assigned task settled",
+      autoRead: {
+        conversationId: conversationId ?? task.conversationId ?? "",
+        messageId: requestMessageId,
+        agentId
+      }
+    };
+  }
+
+  if (task.status === "done" && task.assignee && task.assignee !== agentId) {
+    return {
+      suppress: true,
+      reason: "worker already answered; task handed to coordinator",
+      autoRead: {
+        conversationId: conversationId ?? task.conversationId ?? "",
+        messageId: requestMessageId,
+        agentId
+      }
+    };
+  }
+
+  return { suppress: false };
+}
+
+export function applyAgentReadUpTo(
+  ctx: WakeDedupContext,
+  spec: { conversationId: string; messageId: string; agentId: string }
+): void {
+  if (!spec.conversationId) return;
+  const conversationMessages = ctx.messages.filter((row) => row.conversation_id === spec.conversationId);
+  const cutoffIndex = conversationMessages.findIndex((row) => row.id === spec.messageId);
+  const readable = cutoffIndex >= 0 ? conversationMessages.slice(0, cutoffIndex + 1) : conversationMessages;
+  for (const message of readable) {
+    if (!message.readBy.includes(spec.agentId)) message.readBy.push(spec.agentId);
+  }
+}

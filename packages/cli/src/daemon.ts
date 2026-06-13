@@ -21,6 +21,8 @@ import { validateAgentConfig } from "./agent-config-validation.js";
 const AGENT_POLL_MS = Number(process.env.KING_AI_AGENT_POLL_MS) || 5_000;
 const HEARTBEAT_MS = Number(process.env.KING_AI_HEARTBEAT_MS) || 30_000;
 const SHUTDOWN_GRACE_MS = Number(process.env.KING_AI_SHUTDOWN_GRACE_MS) || 15_000;
+const REHOST_GRACE_MS = Number(process.env.KING_AI_REHOST_GRACE_MS) || 120_000;
+const CONFIG_RESYNC_DEBOUNCE_MS = Number(process.env.KING_AI_CONFIG_RESYNC_DEBOUNCE_MS) || 2_000;
 const UPDATE_CHECK_MS = Number(process.env.KING_AI_UPDATE_CHECK_MS) || 6 * 60 * 60 * 1000;
 const IDLE_UPDATE_CHECK_MS = Number(process.env.KING_AI_IDLE_UPDATE_CHECK_MS) || 30_000;
 const LOG_ROTATE_MS = Number(process.env.KING_AI_LOG_ROTATE_MS) || 5 * 60 * 1000;
@@ -32,6 +34,18 @@ export function anyRunnerBusy(runners: Iterable<{ isBusy: boolean }>): boolean {
     if (runner.isBusy) return true;
   }
   return false;
+}
+
+export async function waitForRunnerIdle(
+  runner: { isBusy: boolean },
+  deadlineMs: number,
+  pollMs = 100
+): Promise<boolean> {
+  const deadline = Date.now() + deadlineMs;
+  while (runner.isBusy && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  return !runner.isBusy;
 }
 
 export function shouldExitForUpdate(args: { updateReady: boolean; shuttingDown: boolean; anyBusy: boolean }): boolean {
@@ -315,7 +329,16 @@ export async function doRun(serverOverride?: string, tenantOverride?: string): P
       const engine = agent.engine && available.includes(agent.engine) ? agent.engine : available[0];
       const existing = runners.get(agent.id);
       if (existing?.configMatches(agent, engine)) continue;
-      existing?.stop();
+      if (existing) {
+        if (existing.isBusy) {
+          console.log(`waiting for ${agent.id} to finish in-flight turn before re-hosting on ${engine}`);
+        }
+        const idle = await waitForRunnerIdle(existing, REHOST_GRACE_MS);
+        if (!idle) {
+          console.warn(`${agent.id} still busy after ${Math.round(REHOST_GRACE_MS / 1000)}s; re-hosting on ${engine} anyway`);
+        }
+        existing.stop();
+      }
       const runner = new AgentRunner(runtimeCfg, { ...agent, lifecycle }, engine, available, () => publishRunningAgents(), requestResync);
       runners.set(agent.id, runner);
       console.log(`hosting ${agent.name} (${agent.id}) on ${engine} lifecycle=${lifecycle}`);
@@ -376,7 +399,7 @@ export async function doRun(serverOverride?: string, tenantOverride?: string): P
     resyncTimer = setTimeout(() => {
       resyncTimer = null;
       void sync();
-    }, 250);
+    }, CONFIG_RESYNC_DEBOUNCE_MS);
   };
 
   const heartbeat = () => {

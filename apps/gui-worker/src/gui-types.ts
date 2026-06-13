@@ -82,6 +82,8 @@ export type Message = {
   kind: "message" | "system";
   body: string;
   body_html?: string;
+  /** When equal to `body`, `body_html` is a cached render and can be reused. */
+  body_render_key?: string;
   priority?: "normal" | "steer";
   message_type?: "message" | "decision" | "blocker";
   to_agent_id?: string;
@@ -715,7 +717,7 @@ export const DEFAULT_AGENT: Agent = {
   id: "king-ai-ceo",
   name: "King AI CEO",
   role: "Coordinate the conversation: clarify ambiguous human requests, split work into concrete tasks for available teammates, track progress, and summarize verified results back to the human. Role template: planner.",
-  engine: "codex",
+  engine: "grok",
   lifecycle: "on-demand"
 };
 
@@ -728,14 +730,14 @@ export const DEFAULT_TEAM_AGENTS: Agent[] = [
     id: "dev",
     name: "Dev",
     role: "Implement only assigned tasks. Make concrete changes, run focused verification, report files changed and command results, then mark the task done so it can be reviewed or returned to King AI CEO. Role template: builder.",
-    engine: "codex",
+    engine: "grok",
     lifecycle: "on-demand"
   },
   {
     id: "reviewer",
     name: "Reviewer",
     role: "Review completed Dev work before King AI CEO summarizes. Check correctness, regressions, and missing tests; pass verified work back to King AI CEO or request specific revisions. Role template: reviewer.",
-    engine: "codex",
+    engine: "grok",
     lifecycle: "on-demand"
   }
 ];
@@ -766,7 +768,7 @@ export const IELTS_WORKFLOW_AGENTS: Agent[] = [
       "- End your reply with one hidden WordCards JSON block after the visible answer. Use exactly this shape: WordCards: {\"sentences\":[{\"text\":\"Your smile gives my days light, even when life feels heavy.\",\"clauses\":[{\"type\":\"main\",\"text\":\"Your smile gives my days light\",\"core\":\"Your smile gives\",\"phrases\":[\"my days light\"]},{\"type\":\"subordinate\",\"text\":\"even when life feels heavy\",\"core\":\"life feels\",\"phrases\":[\"even when\"]}]}],\"cards\":[{\"token\":\"Your\",\"lemma\":\"your\",\"meaningZh\":\"你的\",\"partOfSpeech\":\"代词(物主限定词)\",\"phonetic\":\"/jɔːr/\",\"syllables\":[\"your\"],\"roots\":\"\"},{\"token\":\"smile\",\"lemma\":\"smile\",\"meaningZh\":\"微笑\",\"partOfSpeech\":\"名词/动词\",\"phonetic\":\"/smaɪl/\",\"syllables\":[\"smile\"],\"roots\":\"\"}]}. Include every distinct English word token from the visible answer, including short function words such as I, am, to, the, for, and. Do not skip words because they are common. Use concise Chinese meanings, the Chinese part of speech in partOfSpeech (such as 名词, 动词, 形容词, 副词, 介词, 连词, 代词, or 限定词), IPA phonetics wrapped in slashes such as /driːmz/ (never respellings such as DREEMZ), syllable arrays, and a short Chinese root/affix breakdown in roots such as \"un- 否定前缀 + happy 快乐\" or \"morn 词根 + -ing 名词后缀\" (use an empty string for single-morpheme words like the or smile). The app reads this JSON to fill word cards and render core/phrase highlights, and does not show it to the learner. Do not put prose inside WordCards.",
       "Keep replies compact: a short natural English reply or the requested passage, an optional one-line Tip, and the WordCards JSON block at the very end."
     ].join(" "),
-    engine: "codex",
+    engine: "grok",
     lifecycle: "on-demand"
   }
 ];
@@ -847,6 +849,9 @@ export const GUI_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
 export const GUI_ATTACHMENT_STORE_CAPACITY = 50;
 export const GUI_ATTACHMENT_CHUNK_CHARS = 256 * 1024;
 export const RUNTIME_TOKEN_TTL_MS = 60 * 60 * 1000;
+export function runtimeTokenInvalidationGraceMs(): number {
+  return Number(process.env.KING_AI_RUNTIME_TOKEN_INVALIDATION_GRACE_MS ?? 30_000);
+}
 export const GUI_BASE_STATE_KEY = "state:base";
 export const GUI_ENTITY_STATE_KEYS: EntityStateKey[] = [
   "conversations",

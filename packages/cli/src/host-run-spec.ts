@@ -576,11 +576,8 @@ function resolveOptionalDir(value: unknown, label: string): string | undefined {
 }
 
 export function detectAvailableHostEngines(env: NodeJS.ProcessEnv = process.env): EngineId[] {
-  const engines: EngineId[] = [];
-  if (commandExists("claude", env)) engines.push("claude");
-  if (commandExists("codex", env)) engines.push("codex");
-  if (commandExists("grok", env)) engines.push("grok");
-  return engines;
+  const order: EngineId[] = ["grok", "claude", "codex"];
+  return order.filter((engine) => commandExists(engine, env));
 }
 
 function commandExists(command: string, env: NodeJS.ProcessEnv): boolean {

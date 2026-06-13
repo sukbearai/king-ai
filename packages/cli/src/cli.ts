@@ -38,7 +38,7 @@ import {
   uninstallTradeService
 } from "./trade/service.js";
 
-const PREFERRED_ENGINES: EngineId[] = ["claude", "codex", "grok"];
+const PREFERRED_ENGINES: EngineId[] = ["grok", "claude", "codex"];
 
 function assertPreferredEngine(engine: EngineId | undefined): void {
   if (engine && !PREFERRED_ENGINES.includes(engine)) {

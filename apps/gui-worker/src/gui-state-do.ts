@@ -39,6 +39,7 @@ import {
   NOTICE_LOG_CAPACITY,
   REVIEW_COVERAGE_GATE,
   RUNTIME_TOKEN_TTL_MS,
+  runtimeTokenInvalidationGraceMs,
   RUN_LOG_CAPACITY,
   RUN_STREAM_CAPACITY,
   SAFETY_ACTIONS,
@@ -122,7 +123,11 @@ import {
   isGroupRollCallMessage,
   shouldAutoDelegateMessage,
   triageResponseMode,
-  wakeEventVisibleToAgent
+  wakeEventVisibleToAgent,
+  shouldSuppressAgentWake,
+  isMessageInboxSettled,
+  agentReplyForMessage,
+  applyAgentReadUpTo
 } from "./runtime-helpers.js";
 import {
   addGuiTaskToState as workflowAddGuiTaskToState,
@@ -267,6 +272,7 @@ export class GuiState implements DurableObject {
     if (path.startsWith("/runs/") && path.endsWith("/actions")) return this.authRuntime(request, async (agentId) => this.runActions(path.split("/")[2] || "run", agentId));
     if (path === "/gui-events") return this.guiEvents();
     if (path === "/gui-state") return json(await stateForGui(await this.get(), url.searchParams.get("redact") === "1"));
+    if (path === "/gui-messages") return this.guiMessages(request);
     if (path === "/gui-summary") return this.guiSummary(request);
     if (path === "/gui-activity") return this.guiActivity(url.searchParams);
     if (path === "/gui-storage-debug") return this.storageDebug();
@@ -556,6 +562,29 @@ export class GuiState implements DurableObject {
     return json({ ok: true, at: state.lastHeartbeat.at });
   }
 
+  private async guiMessages(request: Request): Promise<Response> {
+    const conversationId = new URL(request.url).searchParams.get("conversationId") || DEFAULT_CONVERSATION.id;
+    const state = await this.get();
+    let dirty = false;
+    const messages: Message[] = [];
+    for (let index = 0; index < state.messages.length; index++) {
+      const message = state.messages[index];
+      if (message.conversation_id !== conversationId) continue;
+      const rendered = await renderMessageMarkdown(message);
+      if (rendered.body_html !== message.body_html || rendered.body_render_key !== message.body_render_key) {
+        state.messages[index] = {
+          ...message,
+          body_html: rendered.body_html,
+          body_render_key: rendered.body_render_key
+        };
+        dirty = true;
+      }
+      messages.push(rendered);
+    }
+    if (dirty) await this.put(state);
+    return json({ conversationId, messages });
+  }
+
   private async guiSummary(request: Request): Promise<Response> {
     const state = await this.get();
     const agent = defaultAgentFor(state);
@@ -796,7 +825,7 @@ export class GuiState implements DurableObject {
     const argv = payload.argv ?? [];
     const state = await this.get();
     const actor = findAgent(state, payload.agentId) ?? findAgent(state, payload.tokenAgentId) ?? defaultAgentFor(state);
-    const authorEngine = activeRunEngine(state) ?? normalizeEngineId(payload.engine) ?? actor.engine ?? DEFAULT_AGENT.engine ?? "codex";
+    const authorEngine = activeRunEngine(state) ?? normalizeEngineId(payload.engine) ?? actor.engine ?? DEFAULT_AGENT.engine ?? "grok";
     const runContract = resolveRunContract(state, payload.runId, payload.contract);
     // Snapshot task routing and message ids before the command mutates state, so we can push a
     // targeted SSE wake to any agent that just gained routed work (e.g. a reviewer the actor handed
@@ -1985,10 +2014,21 @@ export class GuiState implements DurableObject {
     });
     state.agentConfigUpdatedAt = Date.now();
     if (changed) {
-      // Every agent's config changed, so invalidate all runtime tokens to force a clean re-host.
+      // Shorten existing runtime token TTL instead of wiping immediately so in-flight turns can
+      // finish post-turn ledger writes before re-host swaps engines.
+      const graceMs = runtimeTokenInvalidationGraceMs();
+      if (graceMs <= 0) {
+        state.runtimeTokens = {};
+        state.runtimeTokenMeta = {};
+      } else {
+        const graceUntil = Date.now() + graceMs;
+        state.runtimeTokens ??= {};
+        state.runtimeTokenMeta ??= {};
+        for (const [agentId, meta] of Object.entries(state.runtimeTokenMeta)) {
+          state.runtimeTokenMeta[agentId] = { token: meta.token, expiresAt: Math.min(meta.expiresAt, graceUntil) };
+        }
+      }
       state.runtimeToken = crypto.randomUUID();
-      state.runtimeTokens = {};
-      state.runtimeTokenMeta = {};
     }
     await this.put(state);
     if (changed) {
@@ -2001,33 +2041,63 @@ export class GuiState implements DurableObject {
 
   private async broadcast(evt: { event: string; data: unknown }): Promise<void> {
     let event = evt;
+    let suppressed = false;
     try {
       const state = await this.get();
       if (evt.event === "wake" && evt.data && typeof evt.data === "object") {
-        event = resolveWakeEvent(
-          wakeResolveContextFromState({
-            agents: state.agents,
-            cards: state.cards,
-            tasks: state.tasks,
-            conversations: state.conversations,
-            defaultConversationId: DEFAULT_CONVERSATION.id,
-            defaultCoordinatorAgentId: DEFAULT_AGENT.id
-          }),
-          evt
+        const wakeCtx = wakeResolveContextFromState({
+          agents: state.agents,
+          cards: state.cards,
+          tasks: state.tasks,
+          conversations: state.conversations,
+          defaultConversationId: DEFAULT_CONVERSATION.id,
+          defaultCoordinatorAgentId: DEFAULT_AGENT.id
+        });
+        event = resolveWakeEvent(wakeCtx, evt);
+        const dedup = shouldSuppressAgentWake(
+          { messages: state.messages, tasks: state.tasks, conversations: state.conversations },
+          event.data as Record<string, unknown>
         );
+        if (dedup.suppress) {
+          suppressed = true;
+          if (dedup.autoRead?.conversationId) {
+            applyAgentReadUpTo(
+              { messages: state.messages, tasks: state.tasks, conversations: state.conversations },
+              dedup.autoRead
+            );
+          }
+          state.wakeLog ??= [];
+          state.wakeLog.push({
+            at: Date.now(),
+            event: event.event,
+            data: {
+              ...(event.data as Record<string, unknown>),
+              suppressed: true,
+              suppressReason: dedup.reason
+            }
+          });
+          state.wakeLog = state.wakeLog.slice(-WAKE_LOG_CAPACITY);
+          await this.put(state);
+        }
       }
-      state.wakeLog ??= [];
-      state.wakeLog.push({ at: Date.now(), event: event.event, data: event.data });
-      state.wakeLog = state.wakeLog.slice(-WAKE_LOG_CAPACITY);
-      await this.put(state);
+      if (!suppressed) {
+        state.wakeLog ??= [];
+        state.wakeLog.push({ at: Date.now(), event: event.event, data: event.data });
+        state.wakeLog = state.wakeLog.slice(-WAKE_LOG_CAPACITY);
+        await this.put(state);
+      }
     } catch {
       // Wake delivery must not depend on observability persistence.
     }
     const frame = encode(`event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`);
     // GUI clients only need a "something changed" nudge, so collapse every event into one frame.
-    const guiFrame = encode(`event: change\ndata: ${JSON.stringify({ event: event.event, at: Date.now() })}\n\n`);
+    const guiFrame = encode(`event: change\ndata: ${JSON.stringify({ event: event.event, at: Date.now(), suppressed })}\n\n`);
     await Promise.all([...this.waiters].map(async (waiter) => {
-      if (!waiter.gui && !wakeEventVisibleToAgent(event, waiter.agentId)) return;
+      if (suppressed) {
+        if (!waiter.gui) return;
+      } else if (!waiter.gui && !wakeEventVisibleToAgent(event, waiter.agentId)) {
+        return;
+      }
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         await Promise.race([
@@ -2060,6 +2130,7 @@ import {
   isAgentLifecycle,
   normalizeMessages,
   stateForGui,
+  renderMessageMarkdown,
   normalizeTasks,
   normalizeTaskEvents,
   normalizeCards,
@@ -2211,7 +2282,11 @@ export {
   shouldAutoDelegateMessage,
   triageResponseMode,
   wakeEventVisibleToAgent,
-  wakeResolveContextFromState
+  wakeResolveContextFromState,
+  shouldSuppressAgentWake,
+  isMessageInboxSettled,
+  agentReplyForMessage,
+  applyAgentReadUpTo
 };
 
 export default app;
