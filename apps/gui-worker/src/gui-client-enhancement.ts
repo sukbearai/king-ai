@@ -445,7 +445,7 @@ function updateBackToBottom() {
 	  optimisticMessages.forEach(function(opt) {
 	    if (opt.conversation_id !== activeConversationId) return;
 	    // Bulletproof: the POST response gave us the server's id for this send; drop the batch once it lands.
-	    if (opt.__serverId && serverIds[opt.__serverId]) confirmed[opt.__batch] = true;
+	    if (opt.__serverId && serverIds[opt.__serverId] && !opt.__awaitingImagePreload) confirmed[opt.__batch] = true;
 	    if (opt.author_kind !== 'human') return;
 	    const count = serverRows.filter(function(m) { return m.author_kind === 'human' && m.body === opt.body; }).length;
 	    if (count > opt.__baseline) confirmed[opt.__batch] = true;
@@ -535,6 +535,28 @@ function renderAttachmentTray() {
 	  }
 	  return uploaded;
 	}
+	function preloadAttachmentImages(attachments) {
+	  const rows = (attachments || []).filter(isImageAttachment);
+	  if (!rows.length) return Promise.resolve();
+	  return Promise.all(rows.map(function(attachment) {
+	    return new Promise(function(resolve) {
+	      if (!attachment.url) {
+	        resolve();
+	        return;
+	      }
+	      const img = new Image();
+	      img.onload = function() { resolve(); };
+	      img.onerror = function() { resolve(); };
+	      img.src = attachment.url;
+	    });
+	  }));
+	}
+	function attachmentPreviewLoaded(img) {
+	  const link = img && img.closest('.attachment-preview-link');
+	  if (!link) return;
+	  link.classList.add('is-loaded');
+	  link.classList.remove('is-loading');
+	}
 function isImageAttachment(attachment) {
 	  const mime = String(attachment && attachment.mime || '').toLowerCase();
 	  if (mime.indexOf('image/') === 0) return true;
@@ -551,9 +573,11 @@ function isImageAttachment(attachment) {
 	  const name = attachment.name || 'image';
 	  const url = attachment.url ? escapeHtml(attachment.url) : '';
 	  if (!url) return attachmentFileTokenHtml(attachment);
+	  const readyClass = attachment.__objectUrl ? ' is-loaded' : ' is-loading';
 	  return '<figure class="attachment-preview">' +
-	    '<a class="attachment-preview-link" href="' + url + '" target="_blank" rel="noreferrer noopener" title="' + escapeHtml(name) + '">' +
-	    '<img class="attachment-preview-image" src="' + url + '" alt="' + escapeHtml(name) + '" loading="lazy" decoding="async" />' +
+	    '<a class="attachment-preview-link' + readyClass + '" href="' + url + '" target="_blank" rel="noreferrer noopener" title="' + escapeHtml(name) + '">' +
+	    '<span class="attachment-preview-placeholder" aria-hidden="true"></span>' +
+	    '<img class="attachment-preview-image" src="' + url + '" alt="' + escapeHtml(name) + '" loading="eager" decoding="async" onload="attachmentPreviewLoaded(this)" onerror="attachmentPreviewLoaded(this)" />' +
 	    '</a>' +
 	    '<figcaption class="attachment-preview-meta">' +
 	    '<span class="attachment-preview-name">' + escapeHtml(name) + '</span>' +
@@ -1655,7 +1679,21 @@ sendMessage = async function() {
 	      body: JSON.stringify({ body: optimisticBody, conversationId: activeConversationId, attachments })
 	    });
 	    const serverId = result && result.message && result.message.id;
-	    if (serverId) optimisticMessages.forEach(function(m) { if (m.__batch === batchId) m.__serverId = serverId; });
+	    const imageAttachments = attachments.filter(isImageAttachment);
+	    if (serverId) {
+	      optimisticMessages.forEach(function(m) {
+	        if (m.__batch !== batchId) return;
+	        m.__serverId = serverId;
+	        if (imageAttachments.length) m.__awaitingImagePreload = true;
+	      });
+	    }
+	    if (imageAttachments.length) {
+	      await preloadAttachmentImages(imageAttachments);
+	      optimisticMessages.forEach(function(m) {
+	        if (m.__batch === batchId) m.__awaitingImagePreload = false;
+	      });
+	      renderMessages(window.__lastState || { messages: [] }, {});
+	    }
 	    refreshSoon();
 	  } catch (error) {
 	    optimisticMessages = optimisticMessages.filter(function(m) {

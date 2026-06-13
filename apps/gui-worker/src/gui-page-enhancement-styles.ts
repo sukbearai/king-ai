@@ -513,10 +513,37 @@ export const guiPageEnhancementStyles = `
 	    }
 	    .attachment-preview-link {
 	      display: block;
+	      position: relative;
 	      border: 1px solid var(--line);
 	      background: var(--panel);
 	      line-height: 0;
 	      overflow: hidden;
+	    }
+	    .attachment-preview-link.is-loading {
+	      min-height: 180px;
+	      width: min(280px, 100%);
+	    }
+	    .attachment-preview-placeholder {
+	      display: none;
+	    }
+	    .attachment-preview-link.is-loading .attachment-preview-placeholder {
+	      display: flex;
+	      align-items: center;
+	      justify-content: center;
+	      position: absolute;
+	      inset: 0;
+	      background: linear-gradient(110deg, var(--panel) 8%, #fff 18%, var(--panel) 33%);
+	      background-size: 200% 100%;
+	      animation: attachmentPreviewShimmer 1.2s linear infinite;
+	    }
+	    .attachment-preview-link.is-loading .attachment-preview-placeholder::after {
+	      content: '';
+	      width: 22px;
+	      height: 22px;
+	      border: 2px solid var(--soft-line);
+	      border-top-color: var(--muted);
+	      border-radius: 50%;
+	      animation: attachmentPreviewSpin 0.8s linear infinite;
 	    }
 	    .attachment-preview-image {
 	      display: block;
@@ -526,6 +553,19 @@ export const guiPageEnhancementStyles = `
 	      height: auto;
 	      object-fit: contain;
 	      background: var(--canvas);
+	    }
+	    .attachment-preview-link.is-loading .attachment-preview-image {
+	      opacity: 0;
+	    }
+	    .attachment-preview-link.is-loaded .attachment-preview-image {
+	      opacity: 1;
+	    }
+	    @keyframes attachmentPreviewShimmer {
+	      0% { background-position: 200% 0; }
+	      100% { background-position: -200% 0; }
+	    }
+	    @keyframes attachmentPreviewSpin {
+	      to { transform: rotate(360deg); }
 	    }
 	    .attachment-preview-meta {
 	      display: flex;

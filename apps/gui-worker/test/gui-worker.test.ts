@@ -229,6 +229,9 @@ test("gui page exposes attachment controls in the composer", async () => {
   assert.match(body, /data-i18n="attachFile"/);
   assert.match(body, /\.attachment-token/);
   assert.match(body, /function isImageAttachment/);
+  assert.match(body, /function preloadAttachmentImages/);
+  assert.match(body, /function attachmentPreviewLoaded/);
+  assert.match(body, /attachment-preview-placeholder/);
   assert.match(body, /attachment-preview-image/);
   assert.match(body, /\[' \+ escapeHtml\(file\.name\) \+ '\]/);
 });
@@ -2871,6 +2874,9 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /function addOptimisticMessages/);
   assert.match(html, /function reconcileOptimistic/);
   assert.match(html, /const batchId = addOptimisticMessages\(optimisticBody, optimisticAttachments\)/);
+  assert.match(html, /__awaitingImagePreload/);
+  assert.match(html, /await preloadAttachmentImages\(imageAttachments\)/);
+  assert.match(html, /attachmentPreviewShimmer/);
   // The "agent thinking" placeholder is no longer shown — pending bubbles are filtered out.
   assert.match(html, /function shouldRenderChatMessage/);
   assert.match(html, /if \(message\.status === 'pending'\) return false/);
