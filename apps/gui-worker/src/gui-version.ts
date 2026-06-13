@@ -9,6 +9,7 @@ export const WORKER_RUNTIME_FEATURES = [
   "gui-messages-endpoint",
   "markdown-render-cache",
   "optimistic-conversation-switch",
+  "optimistic-new-window",
   "lightweight-coordination",
   "sequential-coordination",
   "task-inbox-settle"
