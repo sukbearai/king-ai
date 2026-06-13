@@ -67,3 +67,7 @@ pnpm dev -- agent computer --doctor
 pnpm dev -- agent computer --pair <code> --server http://127.0.0.1:8787
 pnpm dev -- agent computer --server http://127.0.0.1:8787
 ```
+
+## Trade & Signals
+
+Crypto trade intelligence (alerts, morning brief, SignalEngine) lives under `king-ai trade` and `king-ai signal`. See [Trade Intelligence](/guide/trade) for setup, rule IDs, and `~/.king-ai/trade_config.json`.

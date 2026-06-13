@@ -8,10 +8,10 @@
       "event": 0.15,
       "meme": 0.1
     },
-    "scan_seconds": 0
+    "scan_seconds": 600
   },
   "alerts": {
-    "enabled": ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "r", "u"],
+    "enabled": ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "tm", "u"],
     "poll_seconds": 120,
     "aggregator_seconds": 300,
     "confluence_window_seconds": 900,

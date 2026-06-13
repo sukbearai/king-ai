@@ -27,6 +27,8 @@ Use `~/.king-ai` for user-facing setup and documentation.
 ~/.king-ai/heartbeat.json
 ~/.king-ai/host-events.ndjson
 ~/.king-ai/host-runs.ndjson
+~/.king-ai/trade_config.json
+~/.king-ai/trade/
 ```
 
 - `computer.json` stores the paired server URL, computer ID, tenant ID, and device token.
@@ -46,6 +48,13 @@ Treat this directory as sensitive because it contains runtime tokens and local e
 - `KING_AI_SESSION_NO_OUTPUT_TIMEOUT_MS`: watchdog for persistent engine turns that produce no visible output. The default is `300000` (5 minutes); set `0` to disable.
 - `KING_AI_SESSION_TIMEOUT_MS`: optional hard timeout for a persistent engine turn. It is disabled by default.
 - `KING_AI_TURN_TIMEOUT_MS`: optional hard timeout for one-shot engine runs. It is disabled by default.
+- `KING_AI_TRADE_CONFIG`: override the trade config path (default `~/.king-ai/trade_config.json`).
+- `KING_AI_SIGNAL_ALERT_LOG`: override the shared alert JSONL path used by trade rules and accuracy tracking.
+- `KING_AI_SIGNAL_OUTPUT_DIR`: override SignalEngine output directory (default `~/.king-ai/trade/signals`).
+
+## Trade Runtime
+
+Trade intelligence uses `~/.king-ai/trade/` for logs, scratchpad weights, signal output, and bundled skills such as PANews. See [Trade Intelligence](/guide/trade) for daemon installation and rule configuration.
 
 ## Local Engines
 

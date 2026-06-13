@@ -67,3 +67,7 @@ pnpm dev -- agent computer --doctor
 pnpm dev -- agent computer --pair <code> --server http://127.0.0.1:8787
 pnpm dev -- agent computer --server http://127.0.0.1:8787
 ```
+
+## 交易信号
+
+加密市场告警、晨报与 SignalEngine 融合扫描见 `king-ai trade` 与 `king-ai signal`。安装、规则 ID 与配置说明见 [交易信号](/zh/guide/trade)。

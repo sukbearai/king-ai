@@ -20,6 +20,7 @@ const enSidebar = [
     text: "Operate",
     items: [
       { text: "CLI Reference", link: "/guide/cli" },
+      { text: "Trade Intelligence", link: "/guide/trade" },
       { text: "GUI Runtime", link: "/guide/gui" },
       { text: "Configuration", link: "/guide/configuration" },
       { text: "Deploy & Release", link: "/guide/release" }
@@ -47,6 +48,7 @@ const zhSidebar = [
     text: "使用与运维",
     items: [
       { text: "CLI 参考", link: "/zh/guide/cli" },
+      { text: "交易信号", link: "/zh/guide/trade" },
       { text: "GUI Runtime", link: "/zh/guide/gui" },
       { text: "配置", link: "/zh/guide/configuration" },
       { text: "部署与发布", link: "/zh/guide/release" }
