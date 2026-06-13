@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { anyRunnerBusy, clearLocalRuntimeState, doctorExitCode, formatDoctorReport, installLogTimestamps, missingEngineMessage, parsePairLocator, resolveHostName, shouldExitForUpdate, waitForRunnerIdle } from "../src/daemon.js";
+import { formatWorkerHealthProbe } from "../src/worker-health.js";
 
 test("anyRunnerBusy reports whether any runner is active", () => {
   assert.equal(anyRunnerBusy([]), false);
@@ -143,4 +144,22 @@ test("doctorExitCode fails only when no engine has both brains healthy", () => {
   assert.equal(doctorExitCode([{ id: "claude", installed: false }]), 1);
   assert.equal(doctorExitCode([{ id: "codex", installed: true, big: { ok: true }, small: { ok: false } }]), 1);
   assert.equal(doctorExitCode([{ id: "claude", installed: true, big: { ok: true }, small: { ok: true } }]), 0);
+});
+
+test("formatWorkerHealthProbe compares worker and CLI versions", () => {
+  const mismatch = formatWorkerHealthProbe({
+    ok: true,
+    serverUrl: "https://king-ai.example",
+    version: "0.2.59",
+    runtimeFeatures: ["wake-dedup"]
+  }, "0.2.60");
+  assert.match(mismatch.join("\n"), /0\.2\.59 != local CLI 0\.2\.60/);
+  assert.match(mismatch.join("\n"), /wake-dedup advertised/);
+
+  const failed = formatWorkerHealthProbe({
+    ok: false,
+    serverUrl: "https://king-ai.example",
+    error: "fetch failed"
+  });
+  assert.match(failed.join("\n"), /fetch failed/);
 });

@@ -5207,6 +5207,29 @@ test("root dev helper strips package-manager argument separators", () => {
   assert.deepEqual(payload.cliArgs, ["--filter", "@suwujs/king-ai", "dev", "host", "status", "--json"]);
 });
 
+test("GET /health returns worker version and runtime features without auth", async () => {
+  const bindings = env();
+  const res = await worker.fetch(new Request("https://gui/health"), bindings);
+  assert.equal(res.status, 200);
+  const body = await res.json() as {
+    ok?: boolean;
+    version?: string;
+    service?: string;
+    runtimeFeatures?: string[];
+    cliPackage?: string;
+  };
+  assert.equal(body.ok, true);
+  assert.equal(body.service, "king-ai-gui-worker");
+  assert.match(body.version || "", /^\d+\.\d+\.\d+$/);
+  assert.match(body.cliPackage || "", /^@suwujs\/king-ai@/);
+  assert.equal(body.runtimeFeatures?.includes("wake-dedup"), true);
+
+  const alias = await worker.fetch(new Request("https://gui/api/version"), bindings);
+  assert.equal(alias.status, 200);
+  const aliasBody = await alias.json() as { version?: string };
+  assert.equal(aliasBody.version, body.version);
+});
+
 test("shouldSuppressAgentWake skips settled message and task repeats", () => {
   const conversationId = "convo-ielts";
   const humanId = "msg-human-1";

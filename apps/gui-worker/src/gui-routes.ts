@@ -5,6 +5,7 @@ import { fetchHostWorkflowSnapshot, resolveHostDecision, runHostRemoteCommand } 
 import { json } from "./gui-http.js";
 import { renderPage } from "./page.js";
 import { guiPageStyles } from "./gui-page-styles.js";
+import { buildWorkerHealthPayload } from "./gui-version.js";
 import type { GuiKanbanCardLike, GuiTaskLike } from "./workflow-state.js";
 
 export type GuiBindings = {
@@ -138,6 +139,9 @@ export function createGuiApp(deps: GuiRouteDeps): Hono<GuiEnv> {
     return c.html(renderPage(guiPageStyles));
   });
   app.get("/favicon.ico", () => new Response(null, { status: 204 }));
+
+  app.get("/health", (c) => json(buildWorkerHealthPayload()));
+  app.get("/api/version", (c) => json(buildWorkerHealthPayload()));
 
   app.post("/gui/tts", async (c) => {
     const blocked = await deps.requireGuiAuth(c);

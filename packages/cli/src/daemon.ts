@@ -17,6 +17,7 @@ import { detectLocalCapabilities } from "./workspace.js";
 import { normalizeAgentLifecycle, shouldHostAgent } from "./lifecycle.js";
 import { FileHeartbeat } from "./heartbeat.js";
 import { validateAgentConfig } from "./agent-config-validation.js";
+import { formatWorkerHealthProbe, probeWorkerHealth } from "./worker-health.js";
 
 const AGENT_POLL_MS = Number(process.env.KING_AI_AGENT_POLL_MS) || 5_000;
 const HEARTBEAT_MS = Number(process.env.KING_AI_HEARTBEAT_MS) || 30_000;
@@ -260,7 +261,13 @@ export async function clearLocalRuntimeState(paths = {
 
 export async function runDoctor(): Promise<void> {
   const results = await collectDoctorResults();
-  console.log(formatDoctorReport(results));
+  const lines = [formatDoctorReport(results)];
+  const cfg = await loadConfig();
+  if (cfg?.serverUrl) {
+    const probe = await probeWorkerHealth(cfg.serverUrl);
+    lines.push("", "remote GUI worker health...", ...formatWorkerHealthProbe(probe));
+  }
+  console.log(lines.join("\n"));
   if (doctorExitCode(results) !== 0) process.exitCode = 1;
 }
 
