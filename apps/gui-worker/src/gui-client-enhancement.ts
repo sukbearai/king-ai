@@ -407,7 +407,12 @@ function updateBackToBottom() {
 	function refreshSoon() {
 	  setTimeout(function() { refresh().catch(function() {}); }, 0);
 	}
-	function addOptimisticMessages(optimisticBody) {
+	function revokeOptimisticAttachmentUrls(rows) {
+	  (rows || []).forEach(function(attachment) {
+	    if (attachment && attachment.__objectUrl) URL.revokeObjectURL(attachment.__objectUrl);
+	  });
+	}
+	function addOptimisticMessages(optimisticBody, optimisticAttachments) {
 	  // Only the human message is shown optimistically; we no longer render an agent "thinking" placeholder.
 	  const now = Date.now();
 	  const convRows = ((window.__lastState && window.__lastState.messages) || []).filter(function(m) {
@@ -422,6 +427,7 @@ function updateBackToBottom() {
 	    conversation_id: activeConversationId,
 	    author_kind: 'human',
 	    body: optimisticBody,
+	    attachments: optimisticAttachments && optimisticAttachments.length ? optimisticAttachments : undefined,
 	    created_at: now,
 	    readBy: []
 	  });
@@ -445,9 +451,16 @@ function updateBackToBottom() {
 	    if (count > opt.__baseline) confirmed[opt.__batch] = true;
 	  });
 	  optimisticMessages = optimisticMessages.filter(function(opt) {
-	    if (now - (opt.created_at || 0) > 60000) return false; // safety TTL so nothing lingers forever
+	    if (now - (opt.created_at || 0) > 60000) {
+	      revokeOptimisticAttachmentUrls(opt.attachments);
+	      return false; // safety TTL so nothing lingers forever
+	    }
 	    if (opt.conversation_id !== activeConversationId) return true; // not in view; TTL bounds the leak
-	    return !confirmed[opt.__batch];
+	    if (confirmed[opt.__batch]) {
+	      revokeOptimisticAttachmentUrls(opt.attachments);
+	      return false;
+	    }
+	    return true;
 	  });
 	}
 	function mergeOptimistic(serverRows) {
@@ -496,9 +509,9 @@ function renderAttachmentTray() {
 	    reader.readAsDataURL(file);
 	  });
 	}
-	async function uploadPendingAttachments() {
+	async function uploadAttachmentFiles(files) {
 	  const uploaded = [];
-	  for (const file of pendingAttachments) {
+	  for (const file of files) {
 	    const bytesBase64 = await fileToBase64(file);
 	    const result = await request('/gui/attachments', {
 	      method: 'POST',
@@ -1578,18 +1591,33 @@ sendMessage = async function() {
 	  if (!body && !attachmentsToSend.length) return;
 	  sendingMessage = true;
 	  const optimisticBody = body || t('attachments');
-	  // Paint the user's message + an "agent thinking" placeholder instantly, before any
-	  // network round trip; the next refresh swaps in the server's canonical copies.
-	  const batchId = addOptimisticMessages(optimisticBody);
+	  const optimisticAttachments = attachmentsToSend.map(function(file) {
+	    const row = {
+	      name: file.name || 'attachment',
+	      mime: file.type || 'application/octet-stream',
+	      size: file.size || 0,
+	      source: 'optimistic',
+	      required: true
+	    };
+	    if (file.type && file.type.indexOf('image/') === 0) {
+	      row.url = URL.createObjectURL(file);
+	      row.__objectUrl = row.url;
+	    }
+	    return row;
+	  });
+	  pendingAttachments = [];
+	  renderAttachmentTray();
 	  input.value = '';
 	  input.blur();
+	  // Paint the human message (and attachment chips) instantly, before upload/message POST.
+	  const batchId = addOptimisticMessages(optimisticBody, optimisticAttachments);
 	  button.disabled = true;
 	  button.textContent = t('send');
 	  visibleMessageCount = 20;
 	  shouldStickToBottom = true;
 	  renderMessages(window.__lastState || { messages: [] }, {});
 	  try {
-	    const attachments = await uploadPendingAttachments();
+	    const attachments = await uploadAttachmentFiles(attachmentsToSend);
 	    const result = await request('/gui/message', {
 	      method: 'POST',
 	      headers: { 'Content-Type': 'application/json' },
@@ -1597,14 +1625,13 @@ sendMessage = async function() {
 	    });
 	    const serverId = result && result.message && result.message.id;
 	    if (serverId) optimisticMessages.forEach(function(m) { if (m.__batch === batchId) m.__serverId = serverId; });
-	    pendingAttachments = [];
-	    renderAttachmentTray();
-	    sendingMessage = false;
-	    button.disabled = false;
-	    button.textContent = t('send');
 	    refreshSoon();
 	  } catch (error) {
-	    optimisticMessages = optimisticMessages.filter(function(m) { return m.__batch !== batchId; });
+	    optimisticMessages = optimisticMessages.filter(function(m) {
+	      if (m.__batch !== batchId) return true;
+	      revokeOptimisticAttachmentUrls(m.attachments);
+	      return false;
+	    });
 	    input.value = body;
 	    pendingAttachments = attachmentsToSend;
 	    renderAttachmentTray();

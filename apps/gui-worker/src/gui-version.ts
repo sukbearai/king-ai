@@ -11,6 +11,7 @@ export const WORKER_RUNTIME_FEATURES = [
   "optimistic-conversation-switch",
   "optimistic-new-window",
   "chronological-chat",
+  "optimistic-attachment-send",
   "lightweight-coordination",
   "sequential-coordination",
   "task-inbox-settle"

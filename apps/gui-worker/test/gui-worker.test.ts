@@ -2796,6 +2796,10 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /\.agent-check\s*\{[\s\S]*color:\s*var\(--ink\)/);
   assert.match(html, /\.agent-check input\s*\{[\s\S]*width:\s*16px/);
   assert.match(html, /function syncNewWindowMode/);
+  assert.match(html, /sendMessage = async function/);
+  assert.match(html, /pendingAttachments = \[\][\s\S]{0,80}renderAttachmentTray\(\)/);
+  assert.match(html, /renderAttachmentTray\(\)[\s\S]{0,700}uploadAttachmentFiles/);
+  assert.match(html, /addOptimisticMessages\(optimisticBody, optimisticAttachments\)/);
   assert.match(html, /function submitConversation/);
   assert.match(html, /function sortMessagesChronologically/);
   assert.match(html, /function applyNewConversationOptimistic/);
@@ -2863,7 +2867,7 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   // Outgoing user messages render optimistically before the network round trip.
   assert.match(html, /function addOptimisticMessages/);
   assert.match(html, /function reconcileOptimistic/);
-  assert.match(html, /const batchId = addOptimisticMessages\(optimisticBody\)/);
+  assert.match(html, /const batchId = addOptimisticMessages\(optimisticBody, optimisticAttachments\)/);
   // The "agent thinking" placeholder is no longer shown — pending bubbles are filtered out.
   assert.match(html, /function shouldRenderChatMessage/);
   assert.match(html, /if \(message\.status === 'pending'\) return false/);
