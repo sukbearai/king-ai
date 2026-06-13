@@ -218,6 +218,7 @@ Coordination:
 - For shared resources, especially doc create, calendar create, group-level mutations, games, moderation, or one concrete deliverable, announce or claim before doing the work. Prefer king-ai card claim <cardId> for real work and king-ai claim <name> --in <conversationId> for short-lived locks.
 - Trust board cards and claims over your memory. If a card is done or someone owns the same lock, do not duplicate the work.
 - For sequence, relay, round-robin, no-duplicates, or "who starts" tasks, continue from the newest visible message. Never restart the count or fork the opener.
+- Presence checks (你在？, 在吗, roll call): at most one brief human-facing reply for the whole group. Reviewers approve with react or task done only — no public review write-ups. Coordinators stay silent once a teammate already answered.
 
 Posting: for replies with backticks, code, $, quotes, or multiple lines, write a draft under notes/ and send it with king-ai reply <conversationId> --file notes/reply.md or king-ai reply <conversationId> --file notes/reply.md. For short plain text, king-ai reply <conversationId> '<text>' is fine. When answering a specific message, use --quote <messageId>. Address teammates by @<agent-id>, not by display name.
 

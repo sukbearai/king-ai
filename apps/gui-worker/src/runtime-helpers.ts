@@ -34,7 +34,7 @@ export function shouldAutoDelegateMessage(conversation: ConversationTeamLike, me
   if (!body) return false;
   if (/^(hi|hello|hey|thanks|thank you|ok|okay|yes|no)[!.?\s]*$/i.test(body)) return false;
   if (/^(你好|大家好|谢谢|在吗|收到)[!.?\s]*$/u.test(body)) return false;
-  if (isGroupRollCallMessage(conversation, body)) return false;
+  if (isLightweightCoordinationMessage(conversation, body)) return false;
   return true;
 }
 
@@ -42,9 +42,23 @@ export function isGroupRollCallMessage(conversation: ConversationTeamLike, messa
   const mode = conversation.teamMode ?? "team";
   if (mode === "single") return false;
   const body = messageBody.trim();
+  if (!body) return false;
   if (/\b(everyone|everybody|all hands|team)\b/i.test(body) && /\b(roll call|presence check|attendance check|reply with \d+)\b/i.test(body)) return true;
   if (/(所有人|大家|全员).*(回个?|回复|报个?)\s*\d+/.test(body)) return true;
   if (/(有人|都|还).{0,6}(在吗|在不在)/.test(body)) return true;
+  return false;
+}
+
+/** Team-room presence pings and roll calls — one brief reply, no review loop or CEO summary. */
+export function isLightweightCoordinationMessage(conversation: ConversationTeamLike, messageBody = ""): boolean {
+  if (isGroupRollCallMessage(conversation, messageBody)) return true;
+  const mode = conversation.teamMode ?? "team";
+  if (mode === "single") return false;
+  const body = messageBody.trim();
+  if (!body) return false;
+  if (/^(你在[吗么]?|在吗|在不在|有人[吗吗]?|还在[吗吗]?)[?.!？!]*$/u.test(body)) return true;
+  if (/^(hi|hello|hey|ping|yo)[?.!]*$/i.test(body)) return true;
+  if (/^(are you there|anyone there|still there|you there)[?.!]*$/i.test(body)) return true;
   return false;
 }
 

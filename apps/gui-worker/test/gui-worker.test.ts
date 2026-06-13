@@ -6,6 +6,7 @@ import { test } from "node:test";
 import worker, {
   GuiState,
   isGroupRollCallMessage,
+  isLightweightCoordinationMessage,
   resolveWakeEvent,
   resolveWakeData,
   shouldAutoDelegateMessage,
@@ -5417,9 +5418,42 @@ test("shouldAutoDelegateMessage keeps single-mode tracking and gates casual team
   assert.equal(shouldAutoDelegateMessage(team, "大家好"), false);
   assert.equal(shouldAutoDelegateMessage(team, "所有人在回个 1"), false);
   assert.equal(shouldAutoDelegateMessage(team, "everyone roll call reply with 1"), false);
+  assert.equal(shouldAutoDelegateMessage(team, "你在？"), false);
   assert.equal(shouldAutoDelegateMessage(team, "@dev roll call reply"), true);
   assert.equal(shouldAutoDelegateMessage(team, "research competitors and source evidence"), true);
   assert.equal(shouldAutoDelegateMessage(team, "请团队实现多角色协作"), true);
+});
+
+test("presence checks in #all do not spawn reviewer tasks", async () => {
+  const bindings = env();
+  await pairComputer(bindings, { engines: ["grok"] });
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    body: JSON.stringify({ conversationId: "king-ai-convo", body: "你在？" })
+  }), bindings);
+
+  const state = await json<{
+    tasks: { requestMessageId?: string; assignee?: string; reviewerAgentId?: string; coordinationOnly?: boolean }[];
+    messages: { id: string; body: string; to_agent_id?: string; author_kind: string }[];
+    wakeLog?: { event: string; data: { agentId?: string; taskId?: string; agenda?: boolean } }[];
+  }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
+  const human = state.messages.find((row) => row.author_kind === "human" && row.body === "你在？");
+  assert.equal(state.tasks.some((row) => row.requestMessageId === human?.id), false);
+  assert.equal(state.messages.some((row) => row.to_agent_id === "reviewer" && row.body.includes("Task assigned")), false);
+  assert.equal(state.wakeLog?.some((row) =>
+    row.event === "wake" &&
+    row.data.agentId === "king-ai-ceo" &&
+    row.data.taskId === undefined &&
+    row.data.agenda !== true
+  ), true);
+  assert.equal(state.wakeLog?.some((row) => row.data.agentId === "dev" && row.data.agenda === true), false);
+});
+
+test("isLightweightCoordinationMessage treats direct presence pings as coordination", () => {
+  const team = { id: "x", title: "x", kind: "group" as const, teamMode: "team" as const };
+  assert.equal(isLightweightCoordinationMessage(team, "你在？"), true);
+  assert.equal(isLightweightCoordinationMessage(team, "在吗"), true);
+  assert.equal(isLightweightCoordinationMessage(team, "fix the login bug"), false);
 });
 
 test("isGroupRollCallMessage only catches broad team attendance pings", () => {

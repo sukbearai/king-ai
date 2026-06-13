@@ -8,7 +8,8 @@ export const WORKER_RUNTIME_FEATURES = [
   "runtime-token-grace",
   "gui-messages-endpoint",
   "markdown-render-cache",
-  "optimistic-conversation-switch"
+  "optimistic-conversation-switch",
+  "lightweight-coordination"
 ] as const;
 
 export type WorkerRuntimeFeature = (typeof WORKER_RUNTIME_FEATURES)[number];

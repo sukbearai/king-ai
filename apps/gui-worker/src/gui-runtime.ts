@@ -7,7 +7,7 @@ import { selectOwnerRole } from "@suwujs/king-ai/team-routing";
 import { defaultTeamSpec, requiredCapabilitiesForText, roleTemplateForAgent } from "@suwujs/king-ai/team-workflow";
 import { taskDoneTransition, workflowCardFromTask, workflowReadiness } from "@suwujs/king-ai/workflow-core";
 import { sanitizeTenantId, displayNameForAuthUser } from "./gui-auth.js";
-import { isGroupRollCallMessage, isMessageInboxSettled } from "./runtime-helpers.js";
+import { isLightweightCoordinationMessage, isMessageInboxSettled } from "./runtime-helpers.js";
 import {
   artifactCandidateFromArgs as artifactCandidateFromArgsHelper,
   checkArtifactQuality,
@@ -1420,15 +1420,15 @@ function agentIdForRuntimeToken(state: State, runtimeToken: string): string | nu
 }
 
 function autoDelegateMessage(state: State, conversation: Conversation, message: Message, coordinator: Agent): Task | undefined {
-  const isGroupRollCall = isGroupRollCallMessage(conversation, message.body);
-  const ownerRole = isGroupRollCall
+  const lightweight = isLightweightCoordinationMessage(conversation, message.body);
+  const ownerRole = lightweight
     ? "builder"
     : selectOwnerRole(teamSpecForConversation(state, conversation), requiredCapabilitiesForText(message.body)) ?? "builder";
-  const worker = isGroupRollCall
+  const worker = lightweight
     ? workerAgentForConversation(state, conversation) ?? agentForRoleInConversation(state, conversation, ownerRole)
     : agentForRoleInConversation(state, conversation, ownerRole) ?? workerAgentForConversation(state, conversation);
   if (!worker) return undefined;
-  const reviewer = isGroupRollCall ? undefined : agentForRoleInConversation(state, conversation, "reviewer") ?? reviewerAgentForConversation(state, conversation);
+  const reviewer = lightweight ? undefined : agentForRoleInConversation(state, conversation, "reviewer") ?? reviewerAgentForConversation(state, conversation);
   const now = Date.now();
   const task: Task = {
     id: `task-${now}-${Math.random().toString(36).slice(2)}`,
@@ -1447,6 +1447,7 @@ function autoDelegateMessage(state: State, conversation: Conversation, message: 
     requestMessageId: message.id,
     coordinatorAgentId: coordinator.id,
     reviewerAgentId: reviewer?.id,
+    coordinationOnly: lightweight || undefined,
     created_at: now,
     updated_at: now
   };
@@ -1465,6 +1466,14 @@ function autoDelegateMessage(state: State, conversation: Conversation, message: 
 function advanceTaskDone(state: State, task: Task, actor: Agent, resultText?: string): string {
   const previousStatus = task.status;
   if (resultText?.trim()) task.result = resultText.trim();
+  if (task.coordinationOnly) {
+    task.status = "done";
+    task.assignee = actor.id;
+    task.reviewerAgentId = undefined;
+    task.updated_at = Date.now();
+    if (previousStatus !== task.status) pushTaskTransition(state, task, previousStatus);
+    return `Task ${task.id} marked done.`;
+  }
   const reviewer = task.reviewerAgentId ? findAgent(state, task.reviewerAgentId) ?? reviewerAgentFor(state) : undefined;
   const transition = taskDoneTransition(workflowCardFromTask(task), actor.id, {
     coordinatorId: task.coordinatorAgentId ?? DEFAULT_AGENT.id,
