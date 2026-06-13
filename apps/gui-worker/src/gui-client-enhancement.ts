@@ -535,6 +535,69 @@ function renderAttachmentTray() {
 	  }
 	  return uploaded;
 	}
+	const attachmentPreviewSizeCache = new Map();
+	function rememberAttachmentPreviewSize(url, width, height) {
+	  const w = Number(width || 0);
+	  const h = Number(height || 0);
+	  if (!url || w < 1 || h < 1) return;
+	  attachmentPreviewSizeCache.set(url, { width: w, height: h });
+	}
+	function attachmentPreviewSize(attachment) {
+	  if (!attachment) return null;
+	  const cached = attachment.url ? attachmentPreviewSizeCache.get(attachment.url) : null;
+	  if (cached) return cached;
+	  const w = Number(attachment.width || 0);
+	  const h = Number(attachment.height || 0);
+	  if (w > 0 && h > 0) return { width: w, height: h };
+	  return null;
+	}
+	function fittedAttachmentPreviewSize(width, height) {
+	  const maxW = 360;
+	  const maxH = 280;
+	  let dw = Number(width || 0);
+	  let dh = Number(height || 0);
+	  if (dw < 1 || dh < 1) return null;
+	  if (dw > maxW) {
+	    const scale = maxW / dw;
+	    dw = maxW;
+	    dh = Math.round(dh * scale);
+	  }
+	  if (dh > maxH) {
+	    const scale = maxH / dh;
+	    dh = maxH;
+	    dw = Math.round(dw * scale);
+	  }
+	  return { width: Math.max(1, Math.round(dw)), height: Math.max(1, Math.round(dh)) };
+	}
+	function attachmentPreviewFrameStyle(attachment) {
+	  const raw = attachmentPreviewSize(attachment);
+	  if (!raw) return { className: '', style: '' };
+	  const fitted = fittedAttachmentPreviewSize(raw.width, raw.height);
+	  if (!fitted) return { className: '', style: '' };
+	  return {
+	    className: ' has-preview-size',
+	    style: ' style="width:' + fitted.width + 'px;height:' + fitted.height + 'px"'
+	  };
+	}
+	function readImageDimensions(url) {
+	  return new Promise(function(resolve) {
+	    if (!url) {
+	      resolve(null);
+	      return;
+	    }
+	    const img = new Image();
+	    img.onload = function() {
+	      const width = img.naturalWidth || 0;
+	      const height = img.naturalHeight || 0;
+	      if (width > 0 && height > 0) {
+	        rememberAttachmentPreviewSize(url, width, height);
+	        resolve({ width: width, height: height });
+	      } else resolve(null);
+	    };
+	    img.onerror = function() { resolve(null); };
+	    img.src = url;
+	  });
+	}
 	function preloadAttachmentImages(attachments) {
 	  const rows = (attachments || []).filter(isImageAttachment);
 	  if (!rows.length) return Promise.resolve();
@@ -545,7 +608,16 @@ function renderAttachmentTray() {
 	        return;
 	      }
 	      const img = new Image();
-	      img.onload = function() { resolve(); };
+	      img.onload = function() {
+	        const width = img.naturalWidth || 0;
+	        const height = img.naturalHeight || 0;
+	        if (width > 0 && height > 0) {
+	          attachment.width = width;
+	          attachment.height = height;
+	          rememberAttachmentPreviewSize(attachment.url, width, height);
+	        }
+	        resolve();
+	      };
 	      img.onerror = function() { resolve(); };
 	      img.src = attachment.url;
 	    });
@@ -556,6 +628,15 @@ function renderAttachmentTray() {
 	  if (!link) return;
 	  link.classList.add('is-loaded');
 	  link.classList.remove('is-loading');
+	  if (!link.classList.contains('has-preview-size') && img.naturalWidth > 0 && img.naturalHeight > 0) {
+	    const fitted = fittedAttachmentPreviewSize(img.naturalWidth, img.naturalHeight);
+	    if (fitted) {
+	      link.classList.add('has-preview-size');
+	      link.style.width = fitted.width + 'px';
+	      link.style.height = fitted.height + 'px';
+	      if (img.src) rememberAttachmentPreviewSize(img.src, img.naturalWidth, img.naturalHeight);
+	    }
+	  }
 	}
 function isImageAttachment(attachment) {
 	  const mime = String(attachment && attachment.mime || '').toLowerCase();
@@ -574,8 +655,9 @@ function isImageAttachment(attachment) {
 	  const url = attachment.url ? escapeHtml(attachment.url) : '';
 	  if (!url) return attachmentFileTokenHtml(attachment);
 	  const readyClass = attachment.__objectUrl ? ' is-loaded' : ' is-loading';
+	  const frame = attachmentPreviewFrameStyle(attachment);
 	  return '<figure class="attachment-preview">' +
-	    '<a class="attachment-preview-link' + readyClass + '" href="' + url + '" target="_blank" rel="noreferrer noopener" title="' + escapeHtml(name) + '">' +
+	    '<a class="attachment-preview-link' + readyClass + frame.className + '"' + frame.style + ' href="' + url + '" target="_blank" rel="noreferrer noopener" title="' + escapeHtml(name) + '">' +
 	    '<span class="attachment-preview-placeholder" aria-hidden="true"></span>' +
 	    '<img class="attachment-preview-image" src="' + url + '" alt="' + escapeHtml(name) + '" loading="eager" decoding="async" onload="attachmentPreviewLoaded(this)" onerror="attachmentPreviewLoaded(this)" />' +
 	    '</a>' +
@@ -1646,7 +1728,7 @@ sendMessage = async function() {
 	  if (!body && !attachmentsToSend.length) return;
 	  sendingMessage = true;
 	  const optimisticBody = body || t('attachments');
-	  const optimisticAttachments = attachmentsToSend.map(function(file) {
+	  const optimisticAttachments = await Promise.all(attachmentsToSend.map(async function(file) {
 	    const row = {
 	      name: file.name || 'attachment',
 	      mime: file.type || 'application/octet-stream',
@@ -1657,9 +1739,14 @@ sendMessage = async function() {
 	    if (file.type && file.type.indexOf('image/') === 0) {
 	      row.url = URL.createObjectURL(file);
 	      row.__objectUrl = row.url;
+	      const dims = await readImageDimensions(row.url);
+	      if (dims) {
+	        row.width = dims.width;
+	        row.height = dims.height;
+	      }
 	    }
 	    return row;
-	  });
+	  }));
 	  pendingAttachments = [];
 	  renderAttachmentTray();
 	  input.value = '';

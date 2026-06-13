@@ -519,9 +519,13 @@ export const guiPageEnhancementStyles = `
 	      line-height: 0;
 	      overflow: hidden;
 	    }
-	    .attachment-preview-link.is-loading {
+	    .attachment-preview-link.is-loading:not(.has-preview-size) {
 	      min-height: 180px;
 	      width: min(280px, 100%);
+	    }
+	    .attachment-preview-link.has-preview-size .attachment-preview-image {
+	      width: 100%;
+	      height: 100%;
 	    }
 	    .attachment-preview-placeholder {
 	      display: none;
