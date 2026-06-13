@@ -38,6 +38,14 @@
     "./run-stream": {
       "types": "./dist/src/run-stream.d.ts",
       "default": "./dist/src/run-stream.js"
+    },
+    "./signal-engine": {
+      "types": "./dist/src/signal-engine.d.ts",
+      "default": "./dist/src/signal-engine.js"
+    },
+    "./trade/rules/registry": {
+      "types": "./dist/src/trade/rules/registry.d.ts",
+      "default": "./dist/src/trade/rules/registry.js"
     }
   },
   "scripts": {
