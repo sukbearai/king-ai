@@ -1842,13 +1842,22 @@ submitConversation = async function(event) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title, workflowId, teamMode: mode, coordinatorAgentId, teamAgentIds })
     });
+    optimisticMessages = [];
     activeConversationId = result.conversation.id;
     localStorage.setItem('king-ai:activeConversationId', activeConversationId);
+    applyNewConversationOptimistic(result.conversation);
     visibleMessageCount = 20;
     shouldStickToBottom = true;
     input.disabled = false;
     closeNewWindowDialog();
-    await refresh();
+    const switchToken = ++conversationSwitchToken;
+    void loadGuiPayload({ conversationSwitch: true, switchToken: switchToken }).then(function(payload) {
+      if (!payload) return;
+      renderSummary(payload.summary);
+      renderMessages(payload.state);
+      renderTasks(payload.state);
+      renderDecisions(payload.state, window.__lastHostDecisions || { configured: false, cards: [] });
+    }).catch(function() {});
   } finally {
     submit.disabled = false;
     submit.textContent = t('create');
@@ -2071,6 +2080,12 @@ refresh = async function(options) {
 const baseApplyConversationSwitchOptimistic = applyConversationSwitchOptimistic;
 applyConversationSwitchOptimistic = function() {
   baseApplyConversationSwitchOptimistic();
+  const state = window.__lastState;
+  if (state) renderDecisions(state, window.__lastHostDecisions || { configured: false, cards: [] });
+};
+const baseApplyNewConversationOptimistic = applyNewConversationOptimistic;
+applyNewConversationOptimistic = function(conversation) {
+  baseApplyNewConversationOptimistic(conversation);
   const state = window.__lastState;
   if (state) renderDecisions(state, window.__lastHostDecisions || { configured: false, cards: [] });
 };

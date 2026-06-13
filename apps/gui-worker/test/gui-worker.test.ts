@@ -2787,6 +2787,9 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /\.agent-check input\s*\{[\s\S]*width:\s*16px/);
   assert.match(html, /function syncNewWindowMode/);
   assert.match(html, /function submitConversation/);
+  assert.match(html, /function applyNewConversationOptimistic/);
+  assert.match(html, /applyNewConversationOptimistic\(result\.conversation\)/);
+  assert.doesNotMatch(html, /submitConversation[\s\S]{0,900}await refresh\(\)/);
   assert.doesNotMatch(html, /prompt\('Window name'\)/);
   assert.match(html, /function openSettings/);
   assert.match(html, /function openComputerFlow/);

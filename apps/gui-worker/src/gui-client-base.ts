@@ -244,6 +244,31 @@ function applyConversationSwitchOptimistic() {
     renderTasks(state);
   }
 }
+function applyNewConversationOptimistic(conversation) {
+  const summary = window.__lastSummary || { conversations: [] };
+  const conversations = (summary.conversations || []).slice();
+  if (!conversations.some(function(row) { return row.id === conversation.id; })) {
+    conversations.push({
+      id: conversation.id,
+      title: conversation.title || conversation.id,
+      unread: 0,
+      workflowId: conversation.workflowId,
+      teamMode: conversation.teamMode
+    });
+  }
+  window.__lastSummary = Object.assign({}, summary, { conversations: conversations });
+  lastMessageTotal = 0;
+  applyConversationSwitchOptimistic();
+}
+function loadActiveConversationInBackground() {
+  const switchToken = ++conversationSwitchToken;
+  void loadGuiPayload({ conversationSwitch: true, switchToken: switchToken }).then(function(payload) {
+    if (!payload) return;
+    renderSummary(payload.summary);
+    renderMessages(payload.state);
+    renderTasks(payload.state);
+  }).catch(function() {});
+}
 async function loadGuiPayload(options) {
   options = options || {};
   const conversationId = activeConversationId;
@@ -306,10 +331,11 @@ async function submitConversation(event) {
     });
     activeConversationId = result.conversation.id;
     localStorage.setItem('king-ai:activeConversationId', activeConversationId);
+    applyNewConversationOptimistic(result.conversation);
     visibleMessageCount = 20;
     shouldStickToBottom = true;
     closeNewWindowDialog();
-    await refresh();
+    loadActiveConversationInBackground();
   } finally {
     submit.disabled = false;
     submit.textContent = 'Create';
