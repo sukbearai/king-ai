@@ -234,10 +234,20 @@ export const guiPageEnhancementStyles = `
       font-size: 10px;
       white-space: nowrap;
     }
+    .post > div:not(.avatar) {
+      min-width: 0;
+      max-width: 100%;
+    }
     .post-body {
       color: var(--body);
       line-height: 1.45;
+      min-width: 0;
+      max-width: 100%;
+      overflow-x: auto;
+      overscroll-behavior-x: contain;
+      -webkit-overflow-scrolling: touch;
       word-break: break-word;
+      overflow-wrap: anywhere;
     }
     .post-body.plain { white-space: pre-wrap; }
     .post-body.markdown-body {
@@ -269,6 +279,7 @@ export const guiPageEnhancementStyles = `
       background: var(--panel);
       padding: 8px;
       white-space: pre;
+      -webkit-overflow-scrolling: touch;
     }
     .post-body.markdown-body code {
       background: var(--panel);
@@ -284,8 +295,10 @@ export const guiPageEnhancementStyles = `
       display: block;
       width: max-content;
       max-width: 100%;
-      overflow: auto;
+      overflow-x: auto;
+      overflow-y: hidden;
       border-collapse: collapse;
+      -webkit-overflow-scrolling: touch;
     }
     .post-body.markdown-body th,
     .post-body.markdown-body td {
@@ -460,7 +473,13 @@ export const guiPageEnhancementStyles = `
     }
     .workspace {
       min-width: 0;
-      overflow-x: hidden;
+      overflow-x: auto;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .message-list {
+      min-width: 0;
+      max-width: 100%;
     }
 	    .composer {
 	      left: 196px;
@@ -967,6 +986,8 @@ export const guiPageEnhancementStyles = `
     body.mobile-layout .post-body {
       font-size: 14px;
       line-height: 1.5;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
     }
     body.mobile-layout .composer {
       left: 8px;
