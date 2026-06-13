@@ -361,12 +361,33 @@ function setLanguage(lang) {
 const mobileQuery = window.matchMedia('(max-width: 820px)');
 function syncMobileLayout() {
   document.body.classList.toggle('mobile-layout', mobileQuery.matches);
+  syncMobileViewport();
+}
+function syncMobileViewport() {
+  if (!mobileQuery.matches) {
+    document.documentElement.style.removeProperty('--king-visual-height');
+    document.documentElement.style.removeProperty('--king-composer-height');
+    return;
+  }
+  const visualHeight = window.visualViewport && window.visualViewport.height ? window.visualViewport.height : window.innerHeight;
+  if (visualHeight > 0) document.documentElement.style.setProperty('--king-visual-height', Math.round(visualHeight) + 'px');
+  const composer = document.querySelector('.composer');
+  if (composer) {
+    const height = composer.getBoundingClientRect().height;
+    if (height > 0) document.documentElement.style.setProperty('--king-composer-height', Math.ceil(height) + 'px');
+  }
 }
 syncMobileLayout();
 if (mobileQuery.addEventListener) {
   mobileQuery.addEventListener('change', syncMobileLayout);
 } else if (mobileQuery.addListener) {
   mobileQuery.addListener(syncMobileLayout);
+}
+window.addEventListener('resize', syncMobileViewport);
+window.addEventListener('orientationchange', syncMobileViewport);
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', syncMobileViewport);
+  window.visualViewport.addEventListener('scroll', syncMobileViewport);
 }
 const workspaceEl = document.querySelector('.workspace');
 if (workspaceEl) workspaceEl.addEventListener('scroll', updateBackToBottom);
@@ -551,8 +572,19 @@ function renderAttachmentTray() {
 	  if (w > 0 && h > 0) return { width: w, height: h };
 	  return null;
 	}
+	function attachmentPreviewMaxWidth() {
+	  const post = document.querySelector('#chatWindow .post > div:last-child');
+	  const workspace = document.querySelector('.workspace');
+	  const viewport = Math.max(1, window.innerWidth || document.documentElement.clientWidth || 360);
+	  const measured = post && post.getBoundingClientRect().width > 0
+	    ? post.getBoundingClientRect().width
+	    : workspace && workspace.getBoundingClientRect().width > 0
+	      ? workspace.getBoundingClientRect().width - 52
+	      : viewport - 52;
+	  return Math.max(120, Math.min(360, Math.floor(measured)));
+	}
 	function fittedAttachmentPreviewSize(width, height) {
-	  const maxW = 360;
+	  const maxW = attachmentPreviewMaxWidth();
 	  const maxH = 280;
 	  let dw = Number(width || 0);
 	  let dh = Number(height || 0);
@@ -1865,6 +1897,7 @@ renderMessages = function(state, options) {
   const chatWindow = document.getElementById('chatWindow');
   chatWindow.classList.toggle('empty-state', !visibleRows.length);
   chatWindow.innerHTML = '<div class="system-line">' + olderLine + '</div>' + html;
+  syncMobileViewport();
   if (!visibleRows.length) {
     const workspace = document.querySelector('.workspace');
     if (workspace) workspace.scrollTop = 0;

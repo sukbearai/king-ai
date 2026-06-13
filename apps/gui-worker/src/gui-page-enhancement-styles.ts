@@ -505,15 +505,19 @@ export const guiPageEnhancementStyles = `
 	      display: flex;
 	      flex-wrap: wrap;
 	      gap: 8px;
+	      min-width: 0;
+	      width: 100%;
 	      max-width: 100%;
 	    }
 	    .attachment-preview {
 	      margin: 0;
-	      max-width: min(360px, 100%);
+	      min-width: 0;
+	      max-width: 100%;
 	    }
 	    .attachment-preview-link {
 	      display: block;
 	      position: relative;
+	      max-width: 100%;
 	      border: 1px solid var(--line);
 	      background: var(--panel);
 	      line-height: 0;
@@ -855,7 +859,7 @@ export const guiPageEnhancementStyles = `
     body.mobile-layout .main {
       grid-column: 1;
       grid-row: 2;
-      height: calc(100vh - 38px);
+      height: calc(var(--king-visual-height, 100vh) - 38px);
       min-width: 0;
       grid-template-rows: auto auto auto minmax(0, 1fr);
     }
@@ -930,7 +934,7 @@ export const guiPageEnhancementStyles = `
       padding: 4px 12px;
     }
     body.mobile-layout .chat-panel {
-      padding: 10px 0 196px;
+      padding: 10px 0 calc(var(--king-composer-height, 126px) + 24px);
     }
     body.mobile-layout .message-list {
       padding: 0 10px;
@@ -973,17 +977,25 @@ export const guiPageEnhancementStyles = `
       gap: 8px;
       padding: 10px;
     }
+    @supports (bottom: env(safe-area-inset-bottom)) {
+      body.mobile-layout .composer {
+        bottom: max(8px, env(safe-area-inset-bottom));
+      }
+    }
     body.mobile-layout .composer-tools {
       position: static;
       grid-area: tools;
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto auto;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 6px 8px;
       align-items: center;
       padding-bottom: 8px;
       margin-bottom: 2px;
       border-bottom: 1px solid var(--line);
       background: transparent;
+    }
+    body.mobile-layout .composer-tools .run-indicator {
+      grid-column: 1 / -1;
     }
     body.mobile-layout .composer-main {
       grid-area: main;
@@ -1368,6 +1380,7 @@ export const guiPageEnhancementStyles = `
     body.mobile-layout .composer-tools button {
       min-height: 28px;
       padding: 4px 10px;
+      width: 100%;
     }
     body.mobile-layout .task-board {
       padding: 10px 10px 24px;
