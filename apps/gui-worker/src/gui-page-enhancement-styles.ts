@@ -792,6 +792,8 @@ export const guiPageEnhancementStyles = `
     body.mobile-layout .app {
       grid-template-columns: minmax(0, 1fr);
       grid-template-rows: 38px minmax(0, 1fr);
+      height: 100dvh;
+      min-height: 100dvh;
     }
     body.mobile-layout .windows {
       grid-column: 1;
@@ -859,7 +861,8 @@ export const guiPageEnhancementStyles = `
     body.mobile-layout .main {
       grid-column: 1;
       grid-row: 2;
-      height: calc(var(--king-visual-height, 100vh) - 38px);
+      height: auto;
+      min-height: 0;
       min-width: 0;
       grid-template-rows: auto auto auto minmax(0, 1fr);
     }

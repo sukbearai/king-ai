@@ -368,17 +368,18 @@ function mobileKeyboardInset() {
   if (!vv) return 0;
   return Math.max(0, Math.round(window.innerHeight - vv.offsetTop - vv.height));
 }
+function resetMobilePageScroll() {
+  window.scrollTo(0, 0);
+  document.documentElement.scrollTop = 0;
+  document.body.scrollTop = 0;
+}
 function syncMobileViewport() {
   if (!mobileQuery.matches) {
-    document.documentElement.style.removeProperty('--king-visual-height');
     document.documentElement.style.removeProperty('--king-composer-height');
     document.documentElement.style.removeProperty('--king-composer-bottom');
     document.body.classList.remove('keyboard-open');
     return;
   }
-  const vv = window.visualViewport;
-  const visualHeight = vv && vv.height ? vv.height : window.innerHeight;
-  if (visualHeight > 0) document.documentElement.style.setProperty('--king-visual-height', Math.round(visualHeight) + 'px');
   const keyboardInset = mobileKeyboardInset();
   const composerBottom = keyboardInset > 0 ? keyboardInset + 8 : 16;
   document.documentElement.style.setProperty('--king-composer-bottom', composerBottom + 'px');
@@ -389,10 +390,22 @@ function syncMobileViewport() {
     if (height > 0) document.documentElement.style.setProperty('--king-composer-height', Math.ceil(height) + 'px');
   }
 }
+function restoreMobileChatViewport() {
+  if (!mobileQuery.matches) return;
+  resetMobilePageScroll();
+  syncMobileViewport();
+  if (shouldStickToBottom) scrollToBottom();
+  else updateBackToBottom();
+}
 function scheduleMobileViewportSync() {
   syncMobileViewport();
   requestAnimationFrame(syncMobileViewport);
   window.setTimeout(syncMobileViewport, 120);
+}
+function scheduleMobileViewportRestore() {
+  scheduleMobileViewportSync();
+  window.setTimeout(restoreMobileChatViewport, 120);
+  window.setTimeout(restoreMobileChatViewport, 320);
 }
 const MOBILE_VIEWPORT_BASE = 'width=device-width, initial-scale=1, interactive-widget=overlays-content';
 const MOBILE_VIEWPORT_FOCUSED = MOBILE_VIEWPORT_BASE + ', maximum-scale=1';
@@ -410,10 +423,11 @@ function onComposerFocus() {
   scheduleMobileViewportSync();
 }
 function onComposerBlur() {
-  scheduleMobileViewportSync();
+  scheduleMobileViewportRestore();
   if (isMobileTouchDevice()) {
     window.setTimeout(function() {
       setViewportMeta(MOBILE_VIEWPORT_BASE);
+      restoreMobileChatViewport();
     }, 0);
   }
 }

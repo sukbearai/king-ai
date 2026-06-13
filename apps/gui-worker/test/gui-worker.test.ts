@@ -3084,7 +3084,7 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /\.composer-tools \.jump[\s\S]*position:\s*static/);
   assert.match(html, /\.composer-tools \.jump\.visible[\s\S]*display:\s*inline-flex/);
   assert.match(html, /function syncMobileViewport\(\)/);
-  assert.match(html, /--king-visual-height/);
+  assert.doesNotMatch(html, /--king-visual-height/);
   assert.match(html, /--king-composer-height/);
   assert.match(html, /--king-composer-bottom/);
   assert.match(html, /function mobileKeyboardInset\(\)/);
@@ -3097,8 +3097,12 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /autocomplete="off"/);
   assert.match(html, /enterKeyHint="send"/);
   assert.match(html, /scheduleMobileViewportSync/);
+  assert.match(html, /scheduleMobileViewportRestore/);
+  assert.match(html, /function restoreMobileChatViewport\(\)/);
+  assert.match(html, /function resetMobilePageScroll\(\)/);
   assert.match(html, /window\.visualViewport\.addEventListener\('resize', syncMobileViewport\)/);
-  assert.match(html, /body\.mobile-layout \.main[\s\S]*height:\s*calc\(var\(--king-visual-height, 100vh\) - 38px\)/);
+  assert.match(html, /body\.mobile-layout \.app[\s\S]*height:\s*100dvh/);
+  assert.match(html, /body\.mobile-layout \.main[\s\S]*height:\s*auto/);
   assert.match(html, /body\.mobile-layout \.chat-panel[\s\S]*padding:\s*10px 0 calc\(var\(--king-composer-height, 126px\) \+ 24px\)/);
   assert.match(html, /body\.mobile-layout \.composer[\s\S]*bottom:\s*max\(var\(--king-composer-bottom, 16px\), env\(safe-area-inset-bottom, 0px\)\)/);
   assert.match(html, /body\.mobile-layout \.composer[\s\S]*grid-template-areas/);
