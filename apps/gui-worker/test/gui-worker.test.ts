@@ -3089,7 +3089,7 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.doesNotMatch(html, /function syncMobileViewport\(\)/);
   assert.match(html, /--king-composer-height/);
   assert.match(html, /--king-composer-bottom/);
-  assert.match(html, /MOBILE_COMPOSER_BOTTOM_OPEN/);
+  assert.doesNotMatch(html, /MOBILE_COMPOSER_BOTTOM_OPEN/);
   assert.match(html, /function setComposerKeyboardOpen\(/);
   assert.match(html, /keyboard-open/);
   assert.match(html, /interactive-widget=overlays-content/);
@@ -3108,7 +3108,8 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /body\.mobile-layout \.main[\s\S]*height:\s*auto/);
   assert.match(html, /body\.mobile-layout \.chat-panel[\s\S]*padding:\s*10px 0 calc\(var\(--king-composer-height, 126px\) \+ 24px\)/);
   assert.match(html, /body\.mobile-layout \.composer[\s\S]*bottom:\s*max\(var\(--king-composer-bottom, 16px\), env\(safe-area-inset-bottom, 0px\)\)/);
-  assert.match(html, /body\.mobile-layout\.keyboard-open \.composer[\s\S]*bottom:\s*0/);
+  assert.match(html, /body\.mobile-layout\.keyboard-open \.composer[\s\S]*position:\s*static/);
+  assert.match(html, /body\.mobile-layout\.keyboard-open \.composer[\s\S]*bottom:\s*auto/);
   assert.match(html, /body\.mobile-layout \.composer[\s\S]*grid-template-areas/);
   assert.match(html, /body\.mobile-layout #sendButton[\s\S]*min-width:\s*68px/);
   assert.match(html, /body\.mobile-layout #sendButton[\s\S]*height:\s*54px/);

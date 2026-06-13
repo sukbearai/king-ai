@@ -364,7 +364,6 @@ function syncMobileLayout() {
   syncComposerHeight();
 }
 const MOBILE_COMPOSER_BOTTOM_CLOSED = '16px';
-const MOBILE_COMPOSER_BOTTOM_OPEN = '0px';
 function resetMobilePageScroll() {
   window.scrollTo(0, 0);
   document.documentElement.scrollTop = 0;
@@ -373,7 +372,8 @@ function resetMobilePageScroll() {
 function setComposerKeyboardOpen(open) {
   if (!mobileQuery.matches) return;
   document.body.classList.toggle('keyboard-open', open);
-  document.documentElement.style.setProperty('--king-composer-bottom', open ? MOBILE_COMPOSER_BOTTOM_OPEN : MOBILE_COMPOSER_BOTTOM_CLOSED);
+  if (open) document.documentElement.style.removeProperty('--king-composer-bottom');
+  else document.documentElement.style.setProperty('--king-composer-bottom', MOBILE_COMPOSER_BOTTOM_CLOSED);
 }
 function syncComposerHeight() {
   if (!mobileQuery.matches) {
@@ -420,6 +420,10 @@ function onComposerFocus() {
   if (isMobileTouchDevice()) setViewportMeta(MOBILE_VIEWPORT_FOCUSED);
   setComposerKeyboardOpen(true);
   scheduleComposerHeightSync();
+  if (mobileQuery.matches) {
+    scrollToBottom();
+    requestAnimationFrame(scrollToBottom);
+  }
 }
 function onComposerBlur() {
   setComposerKeyboardOpen(false);

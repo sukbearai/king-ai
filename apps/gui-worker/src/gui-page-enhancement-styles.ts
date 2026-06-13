@@ -981,8 +981,17 @@ export const guiPageEnhancementStyles = `
       padding: 10px;
       max-width: calc(100vw - 16px);
     }
+    body.mobile-layout.keyboard-open .chat-panel {
+      padding-bottom: 10px;
+    }
     body.mobile-layout.keyboard-open .composer {
-      bottom: 0;
+      position: static;
+      bottom: auto;
+      left: auto;
+      right: auto;
+      width: auto;
+      max-width: none;
+      margin: 0 8px 8px;
     }
     body.mobile-layout .composer-tools {
       position: static;
