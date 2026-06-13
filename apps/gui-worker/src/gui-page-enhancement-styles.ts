@@ -936,34 +936,11 @@ export const guiPageEnhancementStyles = `
       min-width: 58px;
       padding: 4px 12px;
     }
-    body.mobile-layout .workspace {
-      min-height: 0;
-      overflow: hidden;
-      display: flex;
-      flex-direction: column;
+    body.mobile-layout .chat-panel {
+      padding: 10px 0 calc(var(--king-composer-height, 126px) + 24px);
     }
-    body.mobile-layout .panel.active {
-      flex: 1;
-      min-height: 0;
-    }
-    body.mobile-layout #panel-chat.chat-panel.active {
-      display: flex;
-      flex-direction: column;
-      min-height: 0;
-      padding: 0;
-      overflow: hidden;
-    }
-    body.mobile-layout #panel-tasks.tab-panel.active,
-    body.mobile-layout #panel-files.tab-panel.active,
-    body.mobile-layout #panel-decisions.tab-panel.active {
-      overflow: auto;
-    }
-    body.mobile-layout #panel-chat .message-list {
-      flex: 1 1 auto;
-      min-height: 0;
-      overflow-y: auto;
-      -webkit-overflow-scrolling: touch;
-      padding: 10px;
+    body.mobile-layout .message-list {
+      padding: 0 10px;
       gap: 14px;
     }
     body.mobile-layout .post {
@@ -991,20 +968,10 @@ export const guiPageEnhancementStyles = `
       font-size: 14px;
       line-height: 1.5;
     }
-    body.mobile-layout #panel-chat .composer {
-      position: static;
-      flex: 0 0 auto;
-      left: auto;
-      right: auto;
-      bottom: auto;
-      width: auto;
-      max-width: none;
-      margin: 0;
-      z-index: auto;
-      border-left: 0;
-      border-right: 0;
-      border-bottom: 0;
-      padding-bottom: max(10px, env(safe-area-inset-bottom, 0px));
+    body.mobile-layout .composer {
+      left: 8px;
+      right: 8px;
+      bottom: max(var(--king-composer-bottom, 16px), env(safe-area-inset-bottom, 0px));
       grid-template-columns: minmax(0, 1fr) auto;
       grid-template-areas:
         "tools tools"
@@ -1012,6 +979,19 @@ export const guiPageEnhancementStyles = `
       align-items: stretch;
       gap: 8px;
       padding: 10px;
+      max-width: calc(100vw - 16px);
+    }
+    body.mobile-layout.keyboard-open .chat-panel {
+      padding-bottom: 10px;
+    }
+    body.mobile-layout.keyboard-open .composer {
+      position: static;
+      bottom: auto;
+      left: auto;
+      right: auto;
+      width: auto;
+      max-width: none;
+      margin: 0 8px 8px;
     }
     body.mobile-layout .composer-tools {
       position: static;
