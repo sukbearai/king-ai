@@ -30,6 +30,7 @@ import {
   shouldDeferFailOpenTriage,
   shouldFallbackAckSeen,
   shouldFallbackAckAfterStreak,
+  engineStatusPayload,
   shouldHandleWakeEvent,
   shouldContinuePendingRerun,
   shouldForceActionableTurn,
@@ -375,6 +376,19 @@ test("engine failures publish user-facing notices even for quota and rate limits
   assert.equal(shouldPublishEngineFailureNotice("HTTP 429 too many requests"), true);
   assert.equal(shouldPublishEngineFailureNotice("not logged in"), true);
   assert.equal(shouldPublishEngineFailureNotice(""), false);
+});
+
+test("engine status payload carries and clears remediation", () => {
+  const remediation = {
+    engine: "claude",
+    category: "quota" as const,
+    severity: "error" as const,
+    summary: "claude quota or billing limit is blocking runs",
+    actions: ["Open claude locally"]
+  };
+  assert.deepEqual(engineStatusPayload("thinking", remediation), { status: "thinking", remediation });
+  assert.deepEqual(engineStatusPayload("avail", null), { status: "avail", remediation: null });
+  assert.deepEqual(engineStatusPayload("avail"), { status: "avail" });
 });
 
 test("visibleEngineError redacts local home paths before publishing", () => {

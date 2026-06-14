@@ -388,6 +388,10 @@ export function planEngineFailureAttempt(args: { error?: string; attempts: numbe
   };
 }
 
+export function engineStatusPayload(status: string, remediation?: RemediationAdvice | null): { status: string; remediation?: RemediationAdvice | null } {
+  return remediation === undefined ? { status } : { status, remediation };
+}
+
 export function swallowTurnRejection(task: Promise<void>, onError: (message: string) => void): void {
   void task.catch((err) => {
     onError(err instanceof Error ? err.message : String(err));
@@ -986,6 +990,10 @@ export class AgentRunner {
     );
   }
 
+  private async publishStatus(token: string, status: string): Promise<void> {
+    await runtimePost(this.cfg.serverUrl, "/status", token, engineStatusPayload(status, this.remediation), this.cfg.tenantId);
+  }
+
   private async publishAttempt(args: { token: string; runId?: string; attempt: number; status: "failed_retrying" | "failed_final"; message?: string }): Promise<void> {
     if (!args.runId) return;
     await runtimePost(this.cfg.serverUrl, `/runs/${args.runId}/attempts`, args.token, {
@@ -1281,14 +1289,14 @@ ${delta}`;
             this.onConfigChange?.();
             break;
           }
-          await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" }, this.cfg.tenantId);
+          await this.publishStatus(token, "avail");
           break;
         }
         const { seen, digest, hasReal, imagePaths } = snapshot;
         const forceRoutedTask = shouldForceActionableTurn({ hasRealUnread: hasReal, contract: activeContract });
         if (!hasReal && !forceRoutedTask) {
           await this.ackSeen(token, seen);
-          await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" }, this.cfg.tenantId);
+          await this.publishStatus(token, "avail");
           await this.maybeAgendaTurn(token);
           continue;
         }
@@ -1308,7 +1316,7 @@ ${delta}`;
           // messages, so acking would mark them read and silently drop human input. Back off one
           // cycle without acking, then allow fail-open to reach the big brain again even if triage
           // is still degraded.
-          await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" }, this.cfg.tenantId);
+          await this.publishStatus(token, "avail");
           break;
         }
         if (triage?.source === "rate-limited") {
@@ -1316,7 +1324,7 @@ ${delta}`;
           const backoff = Math.min(TRIAGE_BACKOFF_MAX_MS, 30_000 * 2 ** (this.triageTroubleStreak - 1));
           this.triageBackoffUntil = Date.now() + backoff;
           console.warn(`[${this.agent.id}/${this.adapter.id}] triage rate-limited; backing off ${Math.round(backoff / 1000)}s without acking unread`);
-          await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" }, this.cfg.tenantId);
+          await this.publishStatus(token, "avail");
           break;
         }
         if (triage?.source !== "fail-open") {
@@ -1327,12 +1335,12 @@ ${delta}`;
         }
         if (triage?.actionable === false) {
           await this.ackSeen(token, seen);
-          await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" }, this.cfg.tenantId);
+          await this.publishStatus(token, "avail");
           await this.maybeAgendaTurn(token);
           continue;
         }
 
-        await runtimePost(this.cfg.serverUrl, "/status", token, { status: "thinking" }, this.cfg.tenantId);
+        await this.publishStatus(token, "thinking");
         let typingTimer: NodeJS.Timeout | null = null;
         const typingConvo = activeConversationId;
         if (typingConvo) {
@@ -1513,7 +1521,7 @@ ${delta}`;
           usage: turnUsage ?? null,
           durationMs
         }, error ? "error" : "info");
-        await this.withRuntimeAuthRetry((freshToken) => runtimePost(this.cfg.serverUrl, "/status", freshToken, { status: "avail" }, this.cfg.tenantId));
+        await this.withRuntimeAuthRetry((freshToken) => this.publishStatus(freshToken, "avail"));
         await this.setActiveRun(null, null);
         this.lastTurnEndedAt = Date.now();
         if (this.pendingRerun && !this.stopped) {
@@ -1548,7 +1556,7 @@ ${delta}`;
     if (!agenda?.actionable || !agenda.brief) return;
     console.log(`[${this.agent.id}/${this.adapter.id}] agenda turn START${agenda.focus ? ` ${agenda.focus}` : ""}`);
     await this.publishEvent("agenda.started", { focus: agenda.focus ?? null });
-    await runtimePost(this.cfg.serverUrl, "/status", token, { status: "thinking" }, this.cfg.tenantId);
+    await this.publishStatus(token, "thinking");
     const run = await runtimePost<RuntimeRun>(this.cfg.serverUrl, "/runs", token, {
       trigger: { source: "agenda", engine: this.adapter.id }
     }, this.cfg.tenantId);
@@ -1631,7 +1639,7 @@ ${delta}`;
       usage: turnUsage ?? null,
       durationMs
     }, error ? "error" : "info");
-    await runtimePost(this.cfg.serverUrl, "/status", token, { status: "avail" }, this.cfg.tenantId);
+    await this.publishStatus(token, "avail");
     this.lastTurnEndedAt = Date.now();
   }
 

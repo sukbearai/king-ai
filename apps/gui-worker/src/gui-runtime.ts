@@ -2098,7 +2098,8 @@ function agentStateSummary(state: State, agent: Agent): AgentStateSummary {
     activeCards: state.cards.filter((card) => card.column !== "done" && (card.assignee === agent.id || card.claimedBy === agent.id)).length,
     openTasks: state.tasks.filter((task) => task.status !== "done" && (!task.assignee || task.assignee === agent.id)).length,
     blockedTasks: state.tasks.filter((task) => taskVisibleStatus(state, task) === "blocked" && (!task.assignee || task.assignee === agent.id)).length,
-    lastStatusAt: latestStatus?.at
+    lastStatusAt: latestStatus?.at,
+    remediation: latestStatus && "remediation" in latestStatus ? latestStatus.remediation ?? null : null
   };
 }
 

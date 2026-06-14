@@ -468,7 +468,14 @@ function renderSummary(summary) {
     const label = active && !available ? '当前配置，未检测到本机' : available ? '可用' : '未检测到';
     return '<div class="model-row"><span>' + engine + (active ? ' · 当前' : '') + '</span><span class="' + (available ? 'available' : 'unavailable') + '">' + label + '</span></div>';
   }).join('');
-  document.getElementById('modelStatus').innerHTML = modelRows + '<div class="model-row"><span>运行模式</span><span>' + lifecycleLabel(agent.lifecycle) + '</span></div>';
+  const remediation = agent.remediation || null;
+  const remediationActions = remediation && Array.isArray(remediation.actions)
+    ? remediation.actions.slice(0, 2).map(function(action) { return '<div>' + escapeHtml(action) + '</div>'; }).join('')
+    : '';
+  const remediationRow = remediation
+    ? '<div class="model-row model-row-warning"><span>运行异常</span><span><strong>' + escapeHtml(remediation.summary || '本地模型暂时不可用') + '</strong>' + (remediationActions ? '<small>' + remediationActions + '</small>' : '') + '</span></div>'
+    : '';
+  document.getElementById('modelStatus').innerHTML = modelRows + '<div class="model-row"><span>运行模式</span><span>' + lifecycleLabel(agent.lifecycle) + '</span></div>' + remediationRow;
 }
 async function refresh(options) {
   const payload = await loadGuiPayload(options || {});

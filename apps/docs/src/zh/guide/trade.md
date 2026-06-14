@@ -95,7 +95,7 @@ king-ai trade alert run tm --once --push-tg
 | `t` | 名人推文 alpha（默认 Trump/Musk/CZ） |
 | `tm` | Twitter ticker 提及加速 |
 | `u` | BTC ETF 流向（另每日 22:00 定时跑一次） |
-| `discord_wba` | Discord WBA 频道（需 Chrome CDP，见下方） |
+| `discord_wba` | Discord WBA 频道（需 OpenCLI browser bridge，见下方） |
 
 `info` 级告警写入 JSONL；Telegram 默认只推 `warning` 及以上。
 
@@ -144,23 +144,23 @@ king-ai trade watchdog --kill
 king-ai trade weekly-review --push-tg
 ```
 
-## 外部依赖
+## OpenCLI Browser Bridge
 
-## Chrome CDP（替代 opencli）
-
-Twitter 时间线、雪球 A 股、Discord 浏览器抓取改为通过 **Chrome DevTools Protocol** 访问你已登录的 Chrome：
+Twitter 时间线、雪球 A 股、Discord 浏览器抓取通过 **OpenCLI** 复用已登录的浏览器会话，不需要用 remote debugging port 启动 Chrome。
 
 ```sh
-# macOS：先完全退出 Chrome，再用日常 profile 加调试端口启动（非 headless）
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
+opencli doctor
+opencli twitter timeline --limit 1 --site-session persistent --keep-tab true -f json
+opencli xueqiu stock SH000001 --site-session persistent --keep-tab true -f json
 ```
 
-环境变量 `KING_AI_CHROME_CDP_URL`（默认 `http://127.0.0.1:9222`）或在 `trade_config.json` 的 `data_sources.chrome.cdp_url` 配置调试地址。trade daemon 会 **attach 到已打开的 Chrome 标签页**（优先复用 x.com / xueqiu.com / discord.com 页面），使用你已登录的日常会话。
+保持 OpenCLI 浏览器扩展和 daemon 可用，并在对应站点登录。trade daemon 调用 Twitter/雪球时会带 `--site-session persistent --keep-tab true`，Discord 频道读取使用固定的 `trade-discord` browser session。
 
 ## 外部依赖
 
 规则在本地调用以下 CLI（若已安装）：
 
+- `opencli` — Twitter/X、雪球、Discord 浏览器读取
 - `onchainos` — 链上数据
 - `surf` — 行情、资金费率、期权
 - `tg` — Telegram 频道读取

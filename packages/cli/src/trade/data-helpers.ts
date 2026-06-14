@@ -45,6 +45,19 @@ export async function okxPost(path: string, body: Record<string, unknown>, timeo
   return {};
 }
 
+export function stripAnsi(text: string): string {
+  return text.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
+function cliEnv(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    NO_COLOR: "1",
+    CLICOLOR: "0",
+    FORCE_COLOR: "0"
+  };
+}
+
 async function runCli(
   bin: string,
   args: string[],
@@ -53,13 +66,13 @@ async function runCli(
   const { stdout } = await execFileP(bin, args, {
     timeout: timeoutMs,
     maxBuffer: 10 * 1024 * 1024,
-    env: process.env
+    env: cliEnv()
   });
   return stdout;
 }
 
 function parseCliJson(stdout: string): unknown {
-  const trimmed = stdout.trim();
+  const trimmed = stripAnsi(stdout).trim();
   if (!trimmed) return {};
   try {
     return JSON.parse(trimmed);
@@ -72,6 +85,26 @@ function parseCliJson(stdout: string): unknown {
         continue;
       }
     }
+  }
+  return {};
+}
+
+function extractSurfList(resp: unknown): unknown[] {
+  if (Array.isArray(resp)) return resp;
+  if (resp && typeof resp === "object") {
+    const data = (resp as Record<string, unknown>).data;
+    if (Array.isArray(data)) return data;
+  }
+  return [];
+}
+
+function extractSurfObject(resp: unknown): Record<string, unknown> {
+  if (resp && typeof resp === "object" && !Array.isArray(resp)) {
+    const obj = resp as Record<string, unknown>;
+    if (obj.data && typeof obj.data === "object" && !Array.isArray(obj.data)) {
+      return obj.data as Record<string, unknown>;
+    }
+    return obj;
   }
   return {};
 }
@@ -99,6 +132,16 @@ export async function runGmgn(args: string[], timeoutMs = 30_000): Promise<unkno
     return parseCliJson(out);
   } catch {
     return {};
+  }
+}
+
+export async function runOpencli(args: string[], timeoutMs = 90_000): Promise<unknown[]> {
+  try {
+    const out = await runCli("opencli", args, timeoutMs);
+    const parsed = parseCliJson(out);
+    return Array.isArray(parsed) ? parsed : parsed && typeof parsed === "object" ? [parsed] : [];
+  } catch {
+    return [];
   }
 }
 
@@ -132,8 +175,20 @@ export async function yahooFinanceQuote(symbol: string): Promise<{ price: number
   }
 }
 
+function yahooQuoteSymbol(symbol: string): string {
+  if (/^\d+$/.test(symbol) && symbol.length >= 4) {
+    return `${Number.parseInt(symbol, 10)}.HK`;
+  }
+  if (symbol.toUpperCase() === "VIX") return "^VIX";
+  if (symbol.length >= 8 && (symbol.startsWith("SH") || symbol.startsWith("SZ"))) {
+    const code = symbol.slice(2);
+    return symbol.startsWith("SH") ? `${code}.SS` : `${code}.SZ`;
+  }
+  return symbol;
+}
+
 export async function stockQuote(symbol: string): Promise<{ price: number; change_pct?: number; source?: string }> {
-  const yf = await yahooFinanceQuote(symbol);
+  const yf = await yahooFinanceQuote(yahooQuoteSymbol(symbol));
   if (yf.price > 0) return { ...yf, source: "yahoo" };
   return { price: 0 };
 }
@@ -231,57 +286,127 @@ export async function gmgnMarketTrending(
   return [];
 }
 
-const POLYHUB_BASE = "https://polyhub.skill-test.bedev.hubble-rpc.xyz";
+const POLYHUB_DEFAULT_BASE = "https://polyhub.skill-test.bedev.hubble-rpc.xyz";
 const BLOCKBEATS_PRO_BASE = "https://api-pro.theblockbeats.info";
 
+function polyhubBases(): string[] {
+  const custom = process.env.KING_AI_POLYHUB_BASE?.trim();
+  return custom ? [custom, POLYHUB_DEFAULT_BASE] : [POLYHUB_DEFAULT_BASE];
+}
+
+function normalizePolyhubRows(data: unknown): unknown[] {
+  if (Array.isArray(data)) return data;
+  if (data && typeof data === "object") {
+    const obj = data as Record<string, unknown>;
+    const rows = obj.rows ?? obj.data ?? obj.results;
+    if (Array.isArray(rows)) return rows;
+    return [obj];
+  }
+  return [];
+}
+
+function mapSurfLeaderboardToPolyhub(rows: unknown[]): Array<Record<string, unknown>> {
+  const mapped: Array<Record<string, unknown>> = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const r = row as Record<string, unknown>;
+    const addr = String(r.address ?? "");
+    if (!addr) continue;
+    const pnl = Number(r.pnl ?? 0);
+    const volume = Number(r.volume ?? 0);
+    const tradeCount = Number(r.trade_count ?? 0);
+    const activity = tradeCount > 0
+      ? tradeCount
+      : Number(r.positions_won ?? 0) + Number(r.positions_lost ?? 0);
+    const roi = volume > 0 ? pnl / volume : 0;
+    mapped.push({
+      user: addr,
+      pnl,
+      pnl_30: pnl,
+      roi,
+      roi_30: roi,
+      trade_count_30: activity,
+      trade_count_7: activity,
+      tradeCount30: activity,
+      timingScore: 50,
+      evPerBought: volume > 0 ? pnl / volume : 0
+    });
+  }
+  return mapped;
+}
+
+async function surfPolymarketLeaderboard(limit: number): Promise<Array<Record<string, unknown>>> {
+  const resp = await runSurf(["polymarket-leaderboard", "--limit", String(limit)], 20_000);
+  return mapSurfLeaderboardToPolyhub(extractSurfList(resp));
+}
+
 export async function polyhubGet(path: string, timeoutMs = 15_000): Promise<unknown[]> {
-  const url = path.startsWith("http") ? path : `${POLYHUB_BASE}${path}`;
-  for (let attempt = 0; attempt < 3; attempt++) {
+  if (!path.startsWith("http")) {
+    for (const base of polyhubBases()) {
+      const url = `${base}${path}`;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const res = await fetch(url, {
+            headers: { "User-Agent": OKX_UA },
+            signal: AbortSignal.timeout(timeoutMs)
+          });
+          if (!res.ok) continue;
+          const rows = normalizePolyhubRows(await res.json());
+          if (rows.length) return rows;
+        } catch {
+          if (attempt < 2) await new Promise((r) => setTimeout(r, 3000 + Math.random() * 2000));
+        }
+      }
+    }
+  } else {
     try {
-      const res = await fetch(url, {
+      const res = await fetch(path, {
         headers: { "User-Agent": OKX_UA },
         signal: AbortSignal.timeout(timeoutMs)
       });
-      if (!res.ok) continue;
-      const data = await res.json();
-      if (Array.isArray(data)) return data;
-      if (data && typeof data === "object") {
-        const obj = data as Record<string, unknown>;
-        const rows = obj.rows ?? obj.data ?? obj.results;
-        if (Array.isArray(rows)) return rows;
-        return [obj];
-      }
-      return [];
+      if (res.ok) return normalizePolyhubRows(await res.json());
     } catch {
-      if (attempt < 2) await new Promise((r) => setTimeout(r, 3000 + Math.random() * 2000));
+      // fall through to surf fallback
     }
+  }
+
+  if (path.includes("traders-v2")) {
+    const params = new URL(path, "http://local").searchParams;
+    const limit = Number(params.get("limit") ?? 10);
+    const rows = await surfPolymarketLeaderboard(Number.isFinite(limit) && limit > 0 ? limit : 10);
+    if (rows.length) return rows;
   }
   return [];
 }
 
 export async function surfMarketTicker(symbol: string): Promise<Record<string, unknown>> {
-  const resp = await runSurf(["market-ticker", "--symbol", symbol], 15_000);
-  if (resp && typeof resp === "object" && !Array.isArray(resp)) {
-    return resp as Record<string, unknown>;
-  }
-  return {};
+  const pair = `${symbol.toUpperCase()}/USDT`;
+  const resp = await runSurf(["exchange-price", "--pair", pair, "--exchange", "okx"], 15_000);
+  const row = extractSurfList(resp)[0];
+  if (!row || typeof row !== "object") return {};
+  const r = row as Record<string, unknown>;
+  const last = Number(r.last ?? 0);
+  const changePct = Number(r.change_24h_pct ?? 0);
+  const open24h = Number.isFinite(last) && Number.isFinite(changePct) && changePct !== 0
+    ? last / (1 + changePct / 100)
+    : last;
+  return {
+    last: String(last),
+    open24h: String(open24h)
+  };
 }
 
 export async function surfFundingRate(symbol: string): Promise<Record<string, unknown>> {
-  const resp = await runSurf(["funding-rate", "--symbol", symbol], 15_000);
-  if (resp && typeof resp === "object" && !Array.isArray(resp)) {
-    return resp as Record<string, unknown>;
-  }
-  return {};
+  const pair = `${symbol.toUpperCase()}/USDT`;
+  const resp = await runSurf(["exchange-perp", "--pair", pair, "--exchange", "okx", "--fields", "funding"], 15_000);
+  const data = extractSurfObject(resp);
+  const funding = (data.funding ?? {}) as Record<string, unknown>;
+  return { fundingRate: funding.funding_rate ?? "" };
 }
 
 export async function surfOptionsData(symbol = "BTC"): Promise<Array<Record<string, unknown>>> {
-  const resp = await runSurf(["market-options", "--symbol", symbol], 20_000);
-  if (resp && typeof resp === "object" && !Array.isArray(resp)) {
-    const data = (resp as Record<string, unknown>).data;
-    return Array.isArray(data) ? data as Array<Record<string, unknown>> : [];
-  }
-  return [];
+  const resp = await runSurf(["market-options", "--symbol", symbol.toUpperCase()], 20_000);
+  return extractSurfList(resp) as Array<Record<string, unknown>>;
 }
 
 export async function blockbeatsProGet(path: string, params?: Record<string, string>, timeoutMs = 15_000): Promise<unknown> {

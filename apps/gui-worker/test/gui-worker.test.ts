@@ -3491,7 +3491,21 @@ test("gui runtime records status, typing, thinking, events, and runs", async () 
   );
   const auth = { Authorization: `Bearer ${tokenRes.token}`, "Content-Type": "application/json" };
 
-  await worker.fetch(new Request("https://gui/runtime/status", { method: "POST", headers: auth, body: JSON.stringify({ status: "thinking" }) }), bindings);
+  await worker.fetch(new Request("https://gui/runtime/status", {
+    method: "POST",
+    headers: auth,
+    body: JSON.stringify({
+      status: "thinking",
+      remediation: {
+        engine: "claude",
+        category: "quota",
+        severity: "error",
+        summary: "claude quota or billing limit is blocking runs",
+        detail: "You've hit your session limit",
+        actions: ["Open claude locally and refresh quota.", "Re-run: king-ai agent computer --doctor"]
+      }
+    })
+  }), bindings);
   await worker.fetch(new Request("https://gui/runtime/typing", { method: "POST", headers: auth, body: JSON.stringify({ conversationId: "king-ai-convo", done: false }) }), bindings);
   await worker.fetch(new Request("https://gui/runtime/thinking/mark", { method: "POST", headers: auth, body: JSON.stringify({ conversationIds: ["king-ai-convo"] }) }), bindings);
   await worker.fetch(new Request("https://gui/runtime/events", { method: "POST", headers: auth, body: JSON.stringify({ kind: "gui.event" }) }), bindings);
@@ -3508,7 +3522,7 @@ test("gui runtime records status, typing, thinking, events, and runs", async () 
   await worker.fetch(new Request("https://gui/runtime/thinking/unmark", { method: "POST", headers: auth, body: JSON.stringify({ conversationIds: ["king-ai-convo"] }) }), bindings);
 
   const state = await json<{
-    statusLog: { status: string }[];
+    statusLog: { status: string; remediation?: { category: string; summary: string; actions: string[] } | null }[];
     typingLog: { conversationId?: string }[];
     thinkingLog: { action: string }[];
     eventLog: { body: { kind?: string } }[];
@@ -3520,6 +3534,8 @@ test("gui runtime records status, typing, thinking, events, and runs", async () 
     runAttempts?: Record<string, { attempt: number; status: string; agentId: string }[]>;
   }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
   assert.equal(state.statusLog.at(-1)?.status, "thinking");
+  assert.equal(state.statusLog.at(-1)?.remediation?.category, "quota");
+  assert.match(state.statusLog.at(-1)?.remediation?.summary ?? "", /quota/);
   assert.equal(state.typingLog.at(-1)?.conversationId, "king-ai-convo");
   assert.deepEqual(state.thinkingLog.map((row) => row.action), ["mark", "unmark"]);
   assert.equal(state.eventLog.at(-1)?.body.kind, "gui.event");
@@ -3535,6 +3551,13 @@ test("gui runtime records status, typing, thinking, events, and runs", async () 
   assert.equal(state.runLog.at(-1)?.card?.summary, "Completed");
   assert.equal(state.runLog.at(-1)?.card?.sections?.some((section) => section.kind === "tool"), true);
   assert.equal(state.runLog.at(-1)?.card?.sections?.some((section) => section.title === "Attempts"), true);
+
+  const summary = await json<{ agents: { id: string; remediation?: { category: string; summary: string; actions: string[] } | null }[] }>(
+    await worker.fetch(new Request("https://gui/gui/summary"), bindings)
+  );
+  const agent = summary.agents.find((row) => row.id === "king-ai-ceo");
+  assert.equal(agent?.remediation?.category, "quota");
+  assert.match(agent?.remediation?.actions[0] ?? "", /Open claude locally/);
 });
 
 test("gui runtime bounds persisted run stream state", async () => {

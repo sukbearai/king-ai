@@ -475,7 +475,8 @@ export const guiPageStyles = `    :root {
     }
     .model-grid { display: grid; gap: 10px; }
     .model-row {
-      display: flex;
+      display: grid;
+      grid-template-columns: minmax(72px, max-content) minmax(0, 1fr);
       align-items: center;
       justify-content: space-between;
       gap: 12px;
@@ -483,7 +484,11 @@ export const guiPageStyles = `    :root {
       padding-top: 8px;
       color: var(--body);
     }
+    .model-row > span:last-child { text-align: right; min-width: 0; overflow-wrap: anywhere; }
     .model-row:first-child { border-top: 0; padding-top: 0; }
+    .model-row-warning { align-items: start; }
+    .model-row-warning > span:last-child { color: #a23b46; display: grid; gap: 4px; }
+    .model-row-warning small { color: var(--muted); font-size: 11px; line-height: 1.4; }
     .available { color: #cc2f68; font-weight: 900; }
     .unavailable { color: var(--muted); }
     .cmd {

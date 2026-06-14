@@ -2,8 +2,7 @@ import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { createAlert, type Alert, type AlertRule, type AlertState } from "../alert-rule.js";
 import { dotGet, loadTradeConfig } from "../config.js";
-import { chromeTwitterSearch } from "../chrome-cdp.js";
-import { gmgnTokenInfo, nowDisplay, runOnchainos } from "../data-helpers.js";
+import { gmgnTokenInfo, nowDisplay, runOnchainos, runOpencli } from "../data-helpers.js";
 import { extractJsonFromText, runAgent } from "../llm-utils.js";
 import { TRADE_STATE_DIR } from "../../paths.js";
 
@@ -87,7 +86,16 @@ async function persistSeen(tid: string): Promise<void> {
 
 async function fetchTweets(username: string, fetchLimit: number): Promise<Array<Record<string, unknown>>> {
   try {
-    return await chromeTwitterSearch({ query: `from:${username}`, limit: fetchLimit });
+    const rows = await runOpencli([
+      "twitter", "search", `from:${username}`,
+      "--filter", "live",
+      "--limit", String(fetchLimit),
+      "--site-session", "persistent",
+      "--keep-tab", "true",
+      "--format", "json"
+    ], 60_000);
+    if (rows.length && Array.isArray(rows[0])) return rows[0] as Array<Record<string, unknown>>;
+    return rows as Array<Record<string, unknown>>;
   } catch {
     return [];
   }

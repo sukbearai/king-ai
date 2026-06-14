@@ -95,7 +95,7 @@ king-ai trade alert run tm --once --push-tg
 | `t` | Celebrity tweet alpha (Trump/Musk/CZ by default) |
 | `tm` | Twitter ticker mention velocity |
 | `u` | BTC ETF flows (also scheduled daily at 22:00) |
-| `discord_wba` | Discord WBA channel (requires Chrome CDP; see below) |
+| `discord_wba` | Discord WBA channel (requires OpenCLI browser bridge; see below) |
 
 Info-level alerts are written to JSONL; Telegram pushes default to `warning` and above.
 
@@ -144,21 +144,23 @@ king-ai trade watchdog --kill
 king-ai trade weekly-review --push-tg
 ```
 
-## Chrome CDP (replaces opencli)
+## OpenCLI Browser Bridge
 
-Twitter timeline, Xueqiu A-shares, and Discord browser scraping use **Chrome DevTools Protocol** against your logged-in Chrome:
+Twitter timeline, Xueqiu A-shares, and Discord browser scraping use **OpenCLI** so the trade daemon can reuse your logged-in browser session without starting Chrome with a remote debugging port.
 
 ```sh
-# macOS: quit Chrome fully, then restart your daily profile with debugging
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
+opencli doctor
+opencli twitter timeline --limit 1 --site-session persistent --keep-tab true -f json
+opencli xueqiu stock SH000001 --site-session persistent --keep-tab true -f json
 ```
 
-Set `KING_AI_CHROME_CDP_URL` (default `http://127.0.0.1:9222`) or `data_sources.chrome.cdp_url` in `trade_config.json`. The trade daemon **attaches to open tabs** in that Chrome (preferring existing x.com / xueqiu.com / discord.com pages) and reuses your logged-in session.
+Keep the OpenCLI browser extension/daemon available and log in to the relevant sites in the browser session. The trade daemon passes `--site-session persistent --keep-tab true` for Twitter and Xueqiu calls, and uses a stable `trade-discord` browser session for the Discord channel reader.
 
 ## External Dependencies
 
 Trade rules call local CLIs when available:
 
+- `opencli` — Twitter/X, Xueqiu, and Discord browser-backed reads
 - `onchainos` — on-chain data
 - `surf` — market tickers, funding, options
 - `tg` — Telegram channel reads

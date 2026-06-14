@@ -1,21 +1,25 @@
 import { createHash } from "node:crypto";
 import { createAlert, type Alert, type AlertRule, type AlertState } from "../alert-rule.js";
-import { chromeBrowserEval, chromeBrowserOpen } from "../chrome-cdp.js";
-import { nowDisplay } from "../data-helpers.js";
+import { nowDisplay, runOpencli } from "../data-helpers.js";
 
 const SERVER_ID = "907214708581466112";
 const CHANNEL_ID = "1049250383068926022";
 const CHANNEL_URL = `https://discord.com/channels/${SERVER_ID}/${CHANNEL_ID}`;
 const TARGET_AUTHOR = "王不爱";
+const BROWSER_SESSION = "trade-discord";
 
 async function readDiscordMessages(count = 20): Promise<Array<Record<string, string>>> {
   try {
-    const currentUrl = await chromeBrowserEval("window.location.href", {
-      hostHint: "discord.com",
-      pageUrl: CHANNEL_URL
-    });
+    const check = await runOpencli(["browser", BROWSER_SESSION, "get", "url"], 10_000);
+    const currentUrl = check
+      .map((row) => {
+        if (typeof row === "string") return row;
+        if (row && typeof row === "object") return String((row as Record<string, unknown>).value ?? (row as Record<string, unknown>).stdout ?? "");
+        return "";
+      })
+      .join("\n");
     if (!currentUrl.includes(CHANNEL_ID)) {
-      await chromeBrowserOpen(CHANNEL_URL);
+      await runOpencli(["browser", BROWSER_SESSION, "open", CHANNEL_URL], 15_000);
       await new Promise((r) => setTimeout(r, 3000));
     }
   } catch {
@@ -35,7 +39,12 @@ async function readDiscordMessages(count = 20): Promise<Array<Record<string, str
 })()`;
 
   try {
-    const raw = await chromeBrowserEval(js, { hostHint: "discord.com", pageUrl: CHANNEL_URL });
+    const rows = await runOpencli(["browser", BROWSER_SESSION, "eval", js], 30_000);
+    const raw = rows.map((r) => {
+      if (typeof r === "string") return r;
+      if (r && typeof r === "object") return String((r as Record<string, unknown>).value ?? (r as Record<string, unknown>).stdout ?? JSON.stringify(r));
+      return "";
+    }).join("\n");
     if (!raw) return [];
     const jsonStart = raw.indexOf("[");
     if (jsonStart < 0) return [];

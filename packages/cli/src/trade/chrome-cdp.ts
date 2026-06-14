@@ -4,9 +4,13 @@
  *
  * Start Chrome with remote debugging, e.g.:
  *   /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
+ * Or enable via chrome://inspect → "Allow remote debugging" (Chrome 136+ writes DevToolsActivePort).
  *
  * Configure via KING_AI_CHROME_CDP_URL (default http://127.0.0.1:9222).
  */
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 export interface CdpTarget {
   id: string;
@@ -41,6 +45,47 @@ const WS_OPEN = 1;
 export function chromeCdpBaseUrl(): string {
   const raw = process.env.KING_AI_CHROME_CDP_URL?.trim();
   return raw || DEFAULT_CDP_BASE;
+}
+
+export function defaultChromeUserDataDir(): string {
+  const env = process.env.KING_AI_CHROME_USER_DATA_DIR?.trim();
+  if (env) return env;
+  if (process.platform === "darwin") {
+    return join(homedir(), "Library", "Application Support", "Google", "Chrome");
+  }
+  if (process.platform === "win32") {
+    return join(homedir(), "AppData", "Local", "Google", "Chrome", "User Data");
+  }
+  return join(homedir(), ".config", "google-chrome");
+}
+
+export async function readDevToolsActivePort(
+  userDataDir = defaultChromeUserDataDir()
+): Promise<{ port: number; browserPath: string } | null> {
+  try {
+    const raw = await readFile(join(userDataDir, "DevToolsActivePort"), "utf8");
+    const lines = raw.trim().split(/\r?\n/);
+    const port = Number.parseInt(lines[0] ?? "", 10);
+    const browserPath = lines[1]?.trim() ?? "";
+    if (!Number.isFinite(port) || !browserPath.startsWith("/devtools/browser/")) return null;
+    return { port, browserPath };
+  } catch {
+    return null;
+  }
+}
+
+export async function resolveBrowserWebSocketUrl(deps: ChromeCdpDeps = {}): Promise<string | null> {
+  const active = await readDevToolsActivePort();
+  if (!active) return null;
+  const base = deps.baseUrl ?? chromeCdpBaseUrl();
+  let host = "127.0.0.1";
+  try {
+    host = new URL(base).hostname || host;
+  } catch {
+    // keep default
+  }
+  const proto = base.startsWith("https") ? "wss" : "ws";
+  return `${proto}://${host}:${active.port}${active.browserPath}`;
 }
 
 export function twitterSearchUrl(query: string): string {
@@ -173,6 +218,7 @@ async function defaultWebSocketFactory(url: string): Promise<WebSocketLike> {
 class CdpSession {
   private readonly ws: WebSocketLike;
   private nextId = 1;
+  private attachedSessionId?: string;
   private readonly pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
 
   private constructor(ws: WebSocketLike) {
@@ -195,7 +241,10 @@ class CdpSession {
     });
   }
 
-  static async connect(webSocketDebuggerUrl: string, factory: (url: string) => WebSocketLike | Promise<WebSocketLike>): Promise<CdpSession> {
+  private static async openSocket(
+    webSocketDebuggerUrl: string,
+    factory: (url: string) => WebSocketLike | Promise<WebSocketLike>
+  ): Promise<WebSocketLike> {
     const ws = await factory(webSocketDebuggerUrl);
     await new Promise<void>((resolve, reject) => {
       const onOpen = (): void => {
@@ -215,21 +264,43 @@ class CdpSession {
       ws.addEventListener("open", onOpen);
       ws.addEventListener("error", onError);
     });
-    const session = new CdpSession(ws);
+    return ws;
+  }
+
+  static async connectRaw(
+    webSocketDebuggerUrl: string,
+    factory: (url: string) => WebSocketLike | Promise<WebSocketLike>
+  ): Promise<CdpSession> {
+    const ws = await CdpSession.openSocket(webSocketDebuggerUrl, factory);
+    return new CdpSession(ws);
+  }
+
+  static async connect(
+    webSocketDebuggerUrl: string,
+    factory: (url: string) => WebSocketLike | Promise<WebSocketLike>
+  ): Promise<CdpSession> {
+    const session = await CdpSession.connectRaw(webSocketDebuggerUrl, factory);
     await session.send("Page.enable");
     await session.send("Runtime.enable");
     return session;
+  }
+
+  bindAttachedSession(sessionId: string): void {
+    this.attachedSessionId = sessionId;
   }
 
   close(): void {
     this.ws.close();
   }
 
-  private send(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
+  send(method: string, params: Record<string, unknown> = {}, sessionId?: string): Promise<unknown> {
     const id = this.nextId++;
+    const payload: Record<string, unknown> = { id, method, params };
+    const sid = sessionId ?? this.attachedSessionId;
+    if (sid) payload.sessionId = sid;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      this.ws.send(JSON.stringify({ id, method, params }));
+      this.ws.send(JSON.stringify(payload));
       setTimeout(() => {
         if (!this.pending.has(id)) return;
         this.pending.delete(id);
@@ -256,7 +327,7 @@ class CdpSession {
   }
 }
 
-export async function listCdpTargets(deps: ChromeCdpDeps = {}): Promise<CdpTarget[]> {
+async function listCdpTargetsHttp(deps: ChromeCdpDeps = {}): Promise<CdpTarget[]> {
   const fetchImpl = deps.fetchImpl ?? fetch;
   const baseUrl = deps.baseUrl ?? chromeCdpBaseUrl();
   try {
@@ -274,6 +345,37 @@ export async function listCdpTargets(deps: ChromeCdpDeps = {}): Promise<CdpTarge
   } catch {
     return [];
   }
+}
+
+async function listCdpTargetsBrowser(deps: ChromeCdpDeps = {}): Promise<CdpTarget[]> {
+  const wsUrl = await resolveBrowserWebSocketUrl(deps);
+  if (!wsUrl) return [];
+  const wsFactory = deps.webSocketFactory ?? defaultWebSocketFactory;
+  let session: CdpSession | null = null;
+  try {
+    session = await CdpSession.connectRaw(wsUrl, wsFactory);
+    const result = (await session.send("Target.getTargets")) as {
+      targetInfos?: Array<{ targetId?: string; url?: string; title?: string; type?: string }>;
+    };
+    return (result.targetInfos ?? [])
+      .filter((row) => row.type === "page")
+      .map((row) => ({
+        id: String(row.targetId ?? ""),
+        url: String(row.url ?? ""),
+        title: String(row.title ?? ""),
+        webSocketDebuggerUrl: wsUrl
+      }));
+  } catch {
+    return [];
+  } finally {
+    session?.close();
+  }
+}
+
+export async function listCdpTargets(deps: ChromeCdpDeps = {}): Promise<CdpTarget[]> {
+  const httpTargets = await listCdpTargetsHttp(deps);
+  if (httpTargets.length) return httpTargets;
+  return listCdpTargetsBrowser(deps);
 }
 
 async function openCdpTab(url: string, deps: ChromeCdpDeps): Promise<CdpTarget | null> {
@@ -305,6 +407,49 @@ async function pickTarget(preferredHost: string, deps: ChromeCdpDeps): Promise<C
   return targets[0] ?? null;
 }
 
+async function withCdpSessionBrowser<T>(
+  pageUrl: string,
+  hostHint: string,
+  fn: (session: CdpSession) => Promise<T>,
+  deps: ChromeCdpDeps = {}
+): Promise<T> {
+  const sleep = deps.sleep ?? defaultSleep;
+  const wsFactory = deps.webSocketFactory ?? defaultWebSocketFactory;
+  const wsUrl = await resolveBrowserWebSocketUrl(deps);
+  if (!wsUrl) throw new Error(`Chrome CDP browser WebSocket unavailable (check DevToolsActivePort)`);
+  const browser = await CdpSession.connectRaw(wsUrl, wsFactory);
+  try {
+    const targets = (await browser.send("Target.getTargets")) as {
+      targetInfos?: Array<{ targetId?: string; url?: string; type?: string }>;
+    };
+    const pages = (targets.targetInfos ?? []).filter((t) => t.type === "page");
+    let targetId = hostHint
+      ? pages.find((t) => String(t.url ?? "").includes(hostHint))?.targetId
+      : pages[0]?.targetId;
+    if (!targetId) {
+      const created = (await browser.send("Target.createTarget", { url: pageUrl })) as { targetId?: string };
+      targetId = created.targetId;
+      if (targetId) await sleep(2500);
+    }
+    if (!targetId) throw new Error("Chrome CDP: could not create page target");
+    const attached = (await browser.send("Target.attachToTarget", { targetId, flatten: true })) as {
+      sessionId?: string;
+    };
+    if (!attached.sessionId) throw new Error("Chrome CDP: attachToTarget failed");
+    browser.bindAttachedSession(attached.sessionId);
+    await browser.send("Page.enable");
+    await browser.send("Runtime.enable");
+    const current = String(await browser.evaluate("window.location.href").catch(() => "") ?? "");
+    if (!current.includes(hostHint)) {
+      await browser.navigate(pageUrl);
+      await sleep(2500);
+    }
+    return await fn(browser);
+  } finally {
+    browser.close();
+  }
+}
+
 async function withCdpSession<T>(
   pageUrl: string,
   hostHint: string,
@@ -318,18 +463,29 @@ async function withCdpSession<T>(
     target = await openCdpTab(pageUrl, deps);
     if (target) await sleep(2000);
   }
-  if (!target) throw new Error(`Chrome CDP unavailable at ${deps.baseUrl ?? chromeCdpBaseUrl()}`);
-  const session = await CdpSession.connect(target.webSocketDebuggerUrl, wsFactory);
-  try {
-    const current = String(await session.evaluate("window.location.href").catch(() => "") ?? "");
-    if (!current.includes(hostHint)) {
-      await session.navigate(pageUrl);
-      await sleep(2500);
-    }
-    return await fn(session);
-  } finally {
-    session.close();
+  // Chrome 145 fallback: when /json/* HTTP discovery is unavailable, targets are
+  // resolved via the browser-level WebSocket (Target.getTargets) and carry the
+  // browser endpoint (ws://.../devtools/browser/<uuid>) rather than a per-page
+  // socket. Connecting CdpSession.connect there and calling Page/Runtime.enable
+  // targets the browser (no DOM) → empty scrapes. Route through the
+  // attachToTarget path instead.
+  if (target && target.webSocketDebuggerUrl.includes("/devtools/browser/")) {
+    return withCdpSessionBrowser(pageUrl, hostHint, fn, deps);
   }
+  if (target) {
+    const session = await CdpSession.connect(target.webSocketDebuggerUrl, wsFactory);
+    try {
+      const current = String(await session.evaluate("window.location.href").catch(() => "") ?? "");
+      if (!current.includes(hostHint)) {
+        await session.navigate(pageUrl);
+        await sleep(2500);
+      }
+      return await fn(session);
+    } finally {
+      session.close();
+    }
+  }
+  return withCdpSessionBrowser(pageUrl, hostHint, fn, deps);
 }
 
 export interface ChromeBrowserOptions {

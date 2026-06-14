@@ -106,6 +106,7 @@ import type {
   RunContract,
   RunFeedback,
   RuntimeTokenMeta,
+  RuntimeRemediation,
   SafetyAction,
   State,
   StateSnapshot,
@@ -207,6 +208,26 @@ function formatNoticeSummary(body: unknown): string {
   return summarizeUnknown(body);
 }
 
+function normalizeRuntimeRemediation(value: unknown): RuntimeRemediation | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  const summary = typeof record.summary === "string" ? record.summary.trim().slice(0, 240) : "";
+  if (!summary) return undefined;
+  const actions = Array.isArray(record.actions)
+    ? record.actions.filter((action): action is string => typeof action === "string" && Boolean(action.trim())).map((action) => action.trim().slice(0, 240)).slice(0, 4)
+    : [];
+  return {
+    engine: typeof record.engine === "string" ? record.engine.slice(0, 40) : undefined,
+    category: typeof record.category === "string" ? record.category.slice(0, 40) : "unknown",
+    severity: typeof record.severity === "string" ? record.severity.slice(0, 40) : "warning",
+    summary,
+    detail: typeof record.detail === "string" ? record.detail.trim().slice(0, 500) : undefined,
+    actions
+  };
+}
+
 const app = createGuiApp({
   requireGuiAuth,
   requireOwnerGuiAuth,
@@ -261,7 +282,7 @@ export class GuiState implements DurableObject {
     if (path === "/preamble") return this.authRuntime(request, async () => this.preamble(url.searchParams));
     if (path === "/cli") return this.authRuntime(request, async (agentId) => this.cli({ ...await request.json() as { argv?: string[]; agentId?: string }, tokenAgentId: agentId, authUser: authUserFromRequest(request) }));
     if (path === "/mark-read") return this.authRuntime(request, async (agentId) => this.markRead(await request.json() as { conversationId?: string; upToMessageId?: string }, agentId));
-    if (path === "/status") return this.authRuntime(request, async (agentId) => this.status(await request.json() as { status?: string }, agentId));
+    if (path === "/status") return this.authRuntime(request, async (agentId) => this.status(await request.json() as { status?: string; remediation?: unknown }, agentId));
     if (path === "/typing") return this.authRuntime(request, async (agentId) => this.typing(await request.json() as { conversationId?: string; done?: boolean }, agentId));
     if (path === "/thinking/mark") return this.authRuntime(request, async (agentId) => this.thinking("mark", await request.json() as { conversationIds?: string[] }, agentId));
     if (path === "/thinking/unmark") return this.authRuntime(request, async (agentId) => this.thinking("unmark", await request.json() as { conversationIds?: string[] }, agentId));
@@ -1319,9 +1340,15 @@ export class GuiState implements DurableObject {
     return json({ ok: true, approval: request });
   }
 
-  private async status(payload: { status?: string }, agentId = DEFAULT_AGENT.id): Promise<Response> {
+  private async status(payload: { status?: string; remediation?: unknown }, agentId = DEFAULT_AGENT.id): Promise<Response> {
     const state = await this.get();
-    state.statusLog.push({ at: Date.now(), status: payload.status || "unknown", agentId });
+    const remediation = normalizeRuntimeRemediation(payload.remediation);
+    state.statusLog.push({
+      at: Date.now(),
+      status: payload.status || "unknown",
+      agentId,
+      ...(remediation !== undefined ? { remediation } : {})
+    });
     await this.put(state);
     return json({ ok: true });
   }

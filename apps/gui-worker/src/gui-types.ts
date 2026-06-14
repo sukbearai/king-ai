@@ -67,6 +67,16 @@ export type AgentStateSummary = {
   openTasks: number;
   blockedTasks: number;
   lastStatusAt?: number;
+  remediation?: RuntimeRemediation | null;
+};
+
+export type RuntimeRemediation = {
+  engine?: string;
+  category: string;
+  severity: string;
+  summary: string;
+  detail?: string;
+  actions: string[];
 };
 
 export type Message = {
@@ -564,7 +574,7 @@ export type State = {
   conversations: Conversation[];
   messages: Message[];
   cliLog: { at: number; agentId: string; argv: string[]; result: string }[];
-  statusLog: { at: number; status: string; agentId?: string }[];
+  statusLog: { at: number; status: string; agentId?: string; remediation?: RuntimeRemediation | null }[];
   typingLog: { at: number; conversationId?: string; done?: boolean }[];
   thinkingLog: { at: number; action: "mark" | "unmark"; conversationIds: string[] }[];
   eventLog: { at: number; body: unknown }[];
