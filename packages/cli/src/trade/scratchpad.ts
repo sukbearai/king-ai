@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { TRADE_SCRATCHPAD_PATH } from "../paths.js";
-import { calcRsi, fetchOkxCandles } from "../signal-engine.js";
+import { calcRsi, fetchOkxCandles } from "./market-indicators.js";
 
 export type MarketRegime = "risk_on" | "risk_off" | "neutral" | "volatile";
 
@@ -117,31 +117,6 @@ export class Scratchpad {
     return "neutral";
   }
 
-  async setRiskModifier(modifier: number, reason = "", source = ""): Promise<void> {
-    await this.write("risk_modifier", { modifier, reason }, { source, ttlHours: 6, tags: ["risk"] });
-  }
-
-  async getRiskModifier(): Promise<number> {
-    const data = await this.read("risk_modifier");
-    const modifier = Number(data?.modifier);
-    return Number.isFinite(modifier) ? modifier : 1;
-  }
-
-  async setSignalWeightOverride(sourceName: string, weight: number, reason = ""): Promise<void> {
-    await this.write(`weight_override_${sourceName}`, { source: sourceName, weight, reason }, {
-      source: "scratchpad",
-      ttlHours: 6,
-      tags: ["weight_override"]
-    });
-  }
-
-  async getSignalWeightOverride(sourceName: string): Promise<number | null> {
-    const data = await this.read(`weight_override_${sourceName}`);
-    if (!data) return null;
-    const weight = Number(data.weight);
-    return Number.isFinite(weight) ? weight : null;
-  }
-
   async autoDetectRegime(): Promise<MarketRegime | null> {
     try {
       const tickerRes = await fetch("https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT", {
@@ -232,15 +207,3 @@ export function getScratchpad(): Scratchpad {
   return singleton;
 }
 
-/** Category names used by SignalEngine weight overrides. */
-export const SIGNAL_WEIGHT_CATEGORIES = ["smart_money", "technical", "social", "event", "meme"] as const;
-
-export async function loadSignalWeightOverrides(): Promise<Partial<Record<string, number>>> {
-  const pad = getScratchpad();
-  const overrides: Partial<Record<string, number>> = {};
-  for (const cat of SIGNAL_WEIGHT_CATEGORIES) {
-    const w = await pad.getSignalWeightOverride(cat);
-    if (w != null) overrides[cat] = w;
-  }
-  return overrides;
-}

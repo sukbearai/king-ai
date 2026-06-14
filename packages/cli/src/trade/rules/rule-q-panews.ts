@@ -1,8 +1,5 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { promisify } from "node:util";
 import { TRADE_PANEWS_CLI_PATH } from "../../paths.js";
 import { createAlert, type Alert, type AlertRule, type AlertState } from "../alert-rule.js";
@@ -11,22 +8,7 @@ import { extractJsonFromText, runAgent } from "../llm-utils.js";
 
 const execFileP = promisify(execFile);
 
-const LEGACY_PANEWS_CLI = join(
-  homedir(),
-  "workspace",
-  "github",
-  "pnpm",
-  "trade-agent",
-  ".claude",
-  "skills",
-  "panews",
-  "scripts",
-  "cli.mjs"
-);
-
 function panewsCliPath(): string {
-  if (existsSync(TRADE_PANEWS_CLI_PATH)) return TRADE_PANEWS_CLI_PATH;
-  if (existsSync(LEGACY_PANEWS_CLI)) return LEGACY_PANEWS_CLI;
   return TRADE_PANEWS_CLI_PATH;
 }
 
@@ -69,6 +51,21 @@ async function runPanews(args: string[]): Promise<Array<Record<string, string>>>
   } catch {
     return [];
   }
+}
+
+export function buildPanewsUnclassifiedAlert(art: Record<string, string>): Alert {
+  const title = (art.title ?? "").trim();
+  const desc = (art.desc ?? "").trim();
+  return createAlert({
+    rule: "PANews事件",
+    severity: "info",
+    title,
+    detail: desc ? desc.slice(0, 300) : "（agent 分类暂不可用，仅推送标题）",
+    timestamp: nowDisplay(),
+    direction: 0,
+    strength: 0.3,
+    asset: "CRYPTO"
+  });
 }
 
 async function llmClassify(candidates: Array<Record<string, string>>): Promise<Array<Record<string, unknown>>> {
@@ -115,12 +112,18 @@ export function createRuleQ(): AlertRule {
         if (typeof idx === "number" && idx >= 0 && idx < candidates.length) clsMap.set(idx, c);
       }
 
+      const agentUnavailable = classifications.length === 0 && candidates.length > 0;
+
       for (let i = 0; i < candidates.length; i++) {
         const art = candidates[i]!;
         const title = (art.title ?? "").trim();
         const desc = (art.desc ?? "").trim();
         const cls = clsMap.get(i);
-        if (!cls) continue;
+        if (!cls) {
+          if (!agentUnavailable) continue;
+          alerts.push(buildPanewsUnclassifiedAlert(art));
+          continue;
+        }
 
         const impact = String(cls.impact ?? "low");
         const directionStr = String(cls.direction ?? "neutral");

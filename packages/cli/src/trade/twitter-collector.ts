@@ -2,7 +2,7 @@ import { appendFile, readFile, writeFile } from "node:fs/promises";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { dotGet, loadTradeConfig } from "./config.js";
-import { runLast30days, runOpencli } from "./data-helpers.js";
+import { runOpencli } from "./data-helpers.js";
 import { recordTickerMentions, textHash } from "./ticker-mentions.js";
 import {
   defaultTwitterCachePath,
@@ -10,6 +10,8 @@ import {
   iterCacheRecords,
   type TwitterCacheEntry
 } from "./twitter-cache.js";
+
+const TWITTER_BROWSER_SESSION = "trade-twitter";
 
 function normalizeTweet(row: Record<string, unknown>): TwitterCacheEntry | null {
   const lower: Record<string, unknown> = {};
@@ -27,50 +29,62 @@ function normalizeTweet(row: Record<string, unknown>): TwitterCacheEntry | null 
   return tweet.id || tweet.text ? tweet : null;
 }
 
+async function fetchOpencliBrowserTweets(limit: number): Promise<Array<Record<string, unknown>>> {
+  const js = `(function() {
+  const out = [];
+  const seen = new Set();
+  window.scrollTo(0, document.body.scrollHeight * 0.4);
+  for (const article of document.querySelectorAll('article')) {
+    const textEl = article.querySelector('[data-testid="tweetText"]') || article;
+    const text = textEl ? textEl.innerText.trim() : '';
+    const link = article.querySelector('a[href*="/status/"]');
+    const href = link ? (link.getAttribute('href') || '') : '';
+    const idMatch = href.match(/status\\/(\\d+)/);
+    const id = idMatch ? idMatch[1] : '';
+    if (!text && !id) continue;
+    const key = id || text.slice(0, 100);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const userLink = article.querySelector('a[href^="/"][role="link"]');
+    const author = userLink ? (userLink.getAttribute('href') || '').replace(/^\\//, '').split('/')[0] : '';
+    const timeEl = article.querySelector('time');
+    out.push({
+      id,
+      text,
+      author,
+      created_at: timeEl ? (timeEl.getAttribute('datetime') || timeEl.innerText || '') : '',
+      likes: 0,
+      retweets: 0,
+      views: 0,
+      url: id ? 'https://x.com/i/status/' + id : (href ? new URL(href, location.origin).href : '')
+    });
+    if (out.length >= ${Math.max(1, Math.min(limit, 100))}) break;
+  }
+  return out;
+})()`;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await runOpencli(["browser", TWITTER_BROWSER_SESSION, "close"], 10_000);
+    await runOpencli(["browser", TWITTER_BROWSER_SESSION, "--window", "foreground", "open", "https://x.com/home"], 30_000);
+    await runOpencli(["browser", TWITTER_BROWSER_SESSION, "--window", "foreground", "wait", "time", "5"], 10_000);
+    await runOpencli(["browser", TWITTER_BROWSER_SESSION, "--window", "foreground", "wait", "selector", "article", "--timeout", "30000"], 35_000);
+    const evalResult = await runOpencli(["browser", TWITTER_BROWSER_SESSION, "--window", "foreground", "eval", js], 30_000);
+    if (!evalResult.ok) continue;
+    const rows = evalResult.data
+      .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row));
+    if (rows.length) return rows;
+  }
+  return [];
+}
+
 async function fetchTimelineRows(): Promise<TwitterCacheEntry[]> {
   const config = await loadTradeConfig();
   const ds = (dotGet(config, "data_sources.twitter", {}) ?? {}) as Record<string, unknown>;
   const limit = Number(ds.limit) || 500;
-  const tlType = String(ds.type ?? "following");
 
-  const rows = await runOpencli(
-    [
-      "twitter", "timeline",
-      "--limit", String(limit),
-      "--type", tlType,
-      "--site-session", "persistent",
-      "--keep-tab", "true",
-      "--format", "json"
-    ],
-    300_000
-  );
-  if (rows.length) {
-    return rows
-      .map((r) => normalizeTweet(r as Record<string, unknown>))
-      .filter((t): t is TwitterCacheEntry => t != null);
-  }
-
-  const out: TwitterCacheEntry[] = [];
-  for (const topic of ["crypto BTC ETH SOL", "meme coin web3", "DeFi yield farming", "NFT web3 alpha"]) {
-    const result = await runLast30days(topic, 90_000);
-    const ibs = result.items_by_source as Record<string, unknown[]> | undefined;
-    const xItems = (ibs?.x ?? result.x ?? []) as Array<Record<string, unknown>>;
-    for (const item of xItems) {
-      const eng = (item.engagement ?? {}) as Record<string, unknown>;
-      const tweet: TwitterCacheEntry = {
-        id: String(item.item_id ?? item.url ?? ""),
-        text: String(item.body ?? item.text ?? item.title ?? item.snippet ?? ""),
-        author: String(item.author ?? item.handle ?? ""),
-        created_at: String(item.published_at ?? item.date ?? ""),
-        likes: Number(eng.likes ?? 0),
-        retweets: Number(eng.reposts ?? 0),
-        views: 0,
-        url: String(item.url ?? "")
-      };
-      if (tweet.text) out.push(tweet);
-    }
-  }
-  return out;
+  const rows = await fetchOpencliBrowserTweets(limit);
+  return rows
+    .map((r) => normalizeTweet(r as Record<string, unknown>))
+    .filter((t): t is TwitterCacheEntry => t != null);
 }
 
 async function loadDedupSets(cachePath: string): Promise<{ ids: Set<string>; hashes: Set<string> }> {

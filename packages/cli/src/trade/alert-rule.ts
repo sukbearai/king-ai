@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { appendJsonl } from "../jsonl.js";
-import { SIGNAL_ALERT_LOG_PATH } from "../paths.js";
+import { TRADE_ALERT_LOG_PATH } from "../paths.js";
 import { dotGet, loadTradeConfig, type TradeConfig } from "./config.js";
 import { fetchMajorPrices, nowDisplay } from "./data-helpers.js";
 import { getRuleStateStore } from "./rule-state.js";
@@ -47,16 +47,23 @@ export function formatAlert(alert: Alert): string {
 }
 
 export const COOLDOWN_DEFAULTS: Record<string, number> = {
-  a: 600, b: 3600, c: 1800, d: 7200, e: 600, f: 3600, g: 3600, h: 1800,
-  i: 1800, j: 600, k: 86400, l: 3600, m: 3600, n: 600, o: 1800, p: 86400,
-  q: 86400, r: 3600, s: 1800, t: 600, u: 21600, discord_wba: 1800
+  e: 600,
+  f: 3600,
+  t: 600,
+  tm: 86400,
+  q: 86400,
+  discord_wba: 300
 };
 
 const TG_SEVERITY_ORDER: Record<AlertSeverity, number> = { info: 0, warning: 1, critical: 2 };
 const MIN_TG_SEVERITY: AlertSeverity = "warning";
 const DAILY_PUSH_CAP: Record<string, number> = {
-  "PANews事件": 5, "Meme 新币": 8, "大户转账": 3, "聪明钱": 8,
-  "股票异动": 3, "宏观经济": 3, Polymarket: 8, "提及加速": 5
+  "PANews事件": 5,
+  "Meme 大额": 8,
+  "股票异动": 3,
+  "提及加速": 5,
+  "王不爱喊单": 5,
+  t: 5
 };
 const DEFAULT_DAILY_CAP = 10;
 
@@ -71,11 +78,12 @@ async function cachedPrices(): Promise<Record<string, number>> {
 }
 
 export class AlertState {
-  cooldowns: Record<string, number> = {};
+  cooldowns: Record<string, number>;
   cooldownConfig: Record<string, number>;
 
-  constructor(cooldownConfig: Record<string, number>) {
+  constructor(cooldownConfig: Record<string, number>, sharedCooldowns?: Record<string, number>) {
     this.cooldownConfig = cooldownConfig;
+    this.cooldowns = sharedCooldowns ?? {};
   }
 
   canAlert(key: string, cooldown?: number): boolean {
@@ -104,12 +112,13 @@ export interface RunRuleLoopOptions {
   onStatus?: (line: string) => void;
 }
 
-async function writeAlertsJsonl(alerts: Alert[]): Promise<void> {
+async function writeAlertsJsonl(alerts: Alert[], ruleKey: string): Promise<void> {
   const prices = await cachedPrices();
   const regime = await getScratchpad().getRegime();
   for (const alert of alerts) {
-    await appendJsonl(SIGNAL_ALERT_LOG_PATH, {
+    await appendJsonl(TRADE_ALERT_LOG_PATH, {
       rule: alert.rule,
+      rule_key: ruleKey,
       severity: alert.severity,
       title: alert.title,
       detail: alert.detail,
@@ -155,26 +164,129 @@ async function applyRegimeCap(alerts: Alert[]): Promise<void> {
   }
 }
 
-function directionLabel(alert: Alert): string {
+export function directionLabel(alert: Alert): string {
   if (alert.direction < 0) return "跌破";
   if (alert.direction > 0) return "突破";
   if (alert.title.includes("跌") || alert.title.includes("超卖") || alert.title.includes("下轨")) return "跌破";
   return "突破";
 }
 
+export async function promoteConfluenceAlerts(
+  alerts: Alert[],
+  ruleKey: string,
+  options: { windowSeconds: number; enabled: boolean }
+): Promise<void> {
+  if (!options.enabled) return;
+  const store = getRuleStateStore();
+  for (const alert of alerts) {
+    const sym = alert.asset || alert.title.split(/\s+/)[0] || "";
+    await store.recordSignal(ruleKey, sym, directionLabel(alert), alert.severity);
+    if (alert.severity !== "info") continue;
+
+    const confluence = await store.checkConfluence(sym, options.windowSeconds);
+    const other = confluence.filter((c) => c.ruleKey !== ruleKey);
+    if (!other.length) continue;
+
+    const curDir = directionLabel(alert);
+    if (other.some((c) => c.direction !== curDir)) continue;
+    if (other.every((c) => c.volState === "shrink")) continue;
+
+    alert.severity = "warning";
+    alert.detail += `\n🔗 多指标共振: ${other.map((c) => c.ruleKey).join(", ")}`;
+  }
+}
+
+export interface RunRuleTickOptions {
+  pushTg?: boolean;
+  dryRun?: boolean;
+  onStatus?: (line: string) => void;
+  confluenceEnabled?: boolean;
+  confluenceWindowSeconds?: number;
+}
+
+export async function runRuleTick(
+  rule: AlertRule,
+  state: AlertState,
+  options: RunRuleTickOptions = {}
+): Promise<void> {
+  const config = await loadTradeConfig();
+  const store = getRuleStateStore();
+  const alertDir = dirname(TRADE_ALERT_LOG_PATH);
+  await mkdir(alertDir, { recursive: true });
+
+  try {
+    const t0 = Date.now();
+    const alerts = await rule.check(state);
+    const elapsedMs = Date.now() - t0;
+
+    await store.update((s) => {
+      s.heartbeats[rule.ruleKey] = {
+        ruleName: rule.name,
+        lastCheck: Date.now() / 1000,
+        status: "ok",
+        durationMs: elapsedMs
+      };
+    });
+
+    if (!alerts.length) {
+      options.onStatus?.(`[${formatDisplayTime(new Date(), "hm")}] ${rule.name} 监控中... 无告警`);
+      return;
+    }
+
+    await applyRegimeCap(alerts);
+    const message = [`🔔 交易告警 — ${nowDisplay()}\n`, ...alerts.flatMap((a) => [formatAlert(a), ""])].join("\n");
+    options.onStatus?.(message);
+
+    if (options.dryRun) return;
+
+    await writeFile(join(alertDir, "latest_alert.txt"), message, "utf8");
+    await writeAlertsJsonl(alerts, rule.ruleKey);
+
+    const confluenceWindow = options.confluenceWindowSeconds
+      ?? (Number(dotGet(config, "alerts.confluence_window_seconds", 900)) || 900);
+    await promoteConfluenceAlerts(alerts, rule.ruleKey, {
+      windowSeconds: confluenceWindow,
+      enabled: options.confluenceEnabled !== false
+    });
+
+    if (options.pushTg) {
+      const tgAlerts = await filterTgWorthy(alerts);
+      if (tgAlerts.length) {
+        const header = `🔔 交易告警 — ${formatDisplayTime(new Date(), "hm")}`;
+        const chunks = chunkAlertMessages(
+          tgAlerts.map((a) => ({ format: () => formatAlert(a) })),
+          header
+        );
+        for (const chunk of chunks) {
+          await sendTelegram(chunk, config);
+        }
+      }
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    options.onStatus?.(`规则 ${rule.ruleKey} 异常: ${msg}`);
+    await store.update((s) => {
+      s.heartbeats[rule.ruleKey] = {
+        ruleName: rule.name,
+        lastCheck: Date.now() / 1000,
+        status: "error",
+        durationMs: 0
+      };
+    });
+  }
+}
+
 export async function runRuleLoop(rule: AlertRule, options: RunRuleLoopOptions = {}): Promise<void> {
   const config = await loadTradeConfig();
+  const store = getRuleStateStore();
+  const sharedCooldowns = await store.loadAlertCooldowns();
   const cdOverrides = (dotGet(config, "alerts.cooldowns", {}) ?? {}) as Record<string, number>;
   const cooldownConfig = { ...COOLDOWN_DEFAULTS, ...cdOverrides };
-  const state = new AlertState(cooldownConfig);
-  const store = getRuleStateStore();
+  const state = new AlertState(cooldownConfig, sharedCooldowns);
   const pollSeconds = options.pollSeconds ?? (Number(dotGet(config, "alerts.poll_seconds", 120)) || 120);
   const pad = getScratchpad();
   let lastRegimeCheck = 0;
   const REGIME_INTERVAL = 4 * 3600;
-
-  const alertDir = dirname(SIGNAL_ALERT_LOG_PATH);
-  await mkdir(alertDir, { recursive: true });
 
   const maybeUpdateRegime = async () => {
     const now = Date.now() / 1000;
@@ -186,81 +298,14 @@ export async function runRuleLoop(rule: AlertRule, options: RunRuleLoopOptions =
   await maybeUpdateRegime();
 
   for (;;) {
-    try {
-      await maybeUpdateRegime();
-      const t0 = Date.now();
-      let alerts = await rule.check(state);
-      const elapsedMs = Date.now() - t0;
-
-      await store.update((s) => {
-        s.heartbeats[rule.ruleKey] = {
-          ruleName: rule.name,
-          lastCheck: Date.now() / 1000,
-          status: "ok",
-          durationMs: elapsedMs
-        };
-      });
-
-      if (alerts.length) {
-        await applyRegimeCap(alerts);
-
-        const message = [`🔔 交易告警 — ${nowDisplay()}\n`, ...alerts.flatMap((a) => [formatAlert(a), ""])].join("\n");
-        options.onStatus?.(message);
-
-        if (!options.dryRun) {
-          await writeFile(join(alertDir, "latest_alert.txt"), message, "utf8");
-          await writeAlertsJsonl(alerts);
-
-          const confluenceWindow = Number(dotGet(config, "alerts.confluence_window_seconds", 900)) || 900;
-          for (const alert of alerts) {
-            const sym = alert.asset || alert.title.split(/\s+/)[0] || "";
-            await store.recordSignal(rule.ruleKey, sym, directionLabel(alert), alert.severity);
-            if (alert.severity === "info") {
-              const confluence = await store.checkConfluence(sym, confluenceWindow);
-              const other = confluence.filter((c) => c.ruleKey !== rule.ruleKey);
-              if (other.length) {
-                const curDir = directionLabel(alert);
-                if (!other.some((c) => c.direction !== curDir)) {
-                  const hasShrink = other.every((c) => c.volState === "shrink");
-                  if (!hasShrink) {
-                    alert.severity = "warning";
-                    alert.detail += `\n🔗 多指标共振: ${other.map((c) => c.ruleKey).join(", ")}`;
-                  }
-                }
-              }
-            }
-          }
-
-          if (options.pushTg) {
-            const tgAlerts = await filterTgWorthy(alerts);
-            if (tgAlerts.length) {
-              const header = `🔔 交易告警 — ${formatDisplayTime(new Date(), "hm")}`;
-              const chunks = chunkAlertMessages(
-                tgAlerts.map((a) => ({ format: () => formatAlert(a) })),
-                header
-              );
-              for (const chunk of chunks) {
-                await sendTelegram(chunk, config);
-              }
-            }
-          }
-        }
-      } else {
-        options.onStatus?.(`[${formatDisplayTime(new Date(), "hm")}] ${rule.name} 监控中... 无告警`);
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      options.onStatus?.(`规则 ${rule.ruleKey} 异常: ${msg}`);
-      await store.update((s) => {
-        s.heartbeats[rule.ruleKey] = {
-          ruleName: rule.name,
-          lastCheck: Date.now() / 1000,
-          status: "error",
-          durationMs: 0
-        };
-      });
-    }
-
+    await maybeUpdateRegime();
+    await runRuleTick(rule, state, {
+      pushTg: options.pushTg,
+      dryRun: options.dryRun,
+      onStatus: options.onStatus,
+      confluenceEnabled: dotGet(config, "alerts.confluence_enabled", true) !== false
+    });
+    if (!options.dryRun) await store.saveAlertCooldowns(sharedCooldowns);
     if (options.runOnce) break;
     await new Promise((r) => setTimeout(r, pollSeconds * 1000));
   }

@@ -1,5 +1,5 @@
 import { dotGet, loadTradeConfig } from "./config.js";
-import { okxGet, runOnchainos, runTg, surfFundingRate, surfMarketTicker } from "./data-helpers.js";
+import { okxGet, runTg, surfFundingRate, surfMarketTicker } from "./data-helpers.js";
 import { batchSummarize } from "./llm-summarize.js";
 import { getScratchpad } from "./scratchpad.js";
 import { sendTelegram } from "./telegram.js";
@@ -14,15 +14,13 @@ import {
 } from "./twitter-cache.js";
 import { llmSummarize } from "./llm-summarize.js";
 
-export type BriefSection = "market" | "stocks" | "twitter" | "telegram" | "leaderboard" | "pumpfun";
+export type BriefSection = "market" | "stocks" | "twitter" | "telegram";
 
 const SECTION_FETCHERS: Record<BriefSection, (hours: number) => Promise<string>> = {
   market: fetchMarketOverview,
   stocks: async () => fetchStocksSection(),
   telegram: fetchTelegramSummary,
-  twitter: fetchTwitterSummary,
-  leaderboard: fetchLeaderboard,
-  pumpfun: fetchPumpfun
+  twitter: fetchTwitterSummary
 };
 
 async function fetchMarketOverview(): Promise<string> {
@@ -81,13 +79,15 @@ async function fetchMarketOverview(): Promise<string> {
   return lines.join("\n");
 }
 
-function extractTgMessages(raw: string): string[] {
-  const prefixes = ["schema_version:", "platform:", "chat_id:", "content:", "text:", "- content:", "- text:"];
+export function parseTelegramChannels(raw: Record<string, string>): Array<{ label: string; chat: string }> {
+  return Object.entries(raw).map(([label, chat]) => ({ label, chat }));
+}
+
+function extractTgMessagesFromYaml(raw: string): string[] {
   const out: string[] = [];
   for (const line of raw.split("\n")) {
     const s = line.trim();
     if (!s || s.startsWith("---")) continue;
-    if (prefixes.some((p) => s.toLowerCase().startsWith(p) && !s.includes(":"))) continue;
     for (const prefix of ["content:", "- content:", "text:", "- text:"]) {
       if (s.startsWith(prefix)) {
         const text = s.slice(prefix.length).trim().replace(/^["']|["']$/g, "");
@@ -97,6 +97,19 @@ function extractTgMessages(raw: string): string[] {
     }
   }
   return out;
+}
+
+export function parseTgRecentMessages(raw: string): string[] {
+  const trimmed = raw.trim();
+  if (!trimmed) return [];
+  try {
+    const parsed = JSON.parse(trimmed) as { data?: Array<{ content?: string }> };
+    return (parsed.data ?? [])
+      .map((m) => String(m.content ?? "").trim())
+      .filter(Boolean);
+  } catch {
+    return extractTgMessagesFromYaml(raw);
+  }
 }
 
 async function fetchTwitterSummary(hours: number): Promise<string> {
@@ -142,7 +155,7 @@ async function fetchTwitterSummary(hours: number): Promise<string> {
   }
 
   if (useLlm) {
-    const summary = await llmSummarize(picked.join("\n"), "Twitter 时间线");
+    const summary = await llmSummarize(picked.slice(0, 30).join("\n"), "Twitter 时间线");
     lines.push(summary);
   } else {
     lines.push(...picked.slice(0, 30));
@@ -154,17 +167,35 @@ async function fetchTelegramSummary(hours: number): Promise<string> {
   const config = await loadTradeConfig();
   const useLlm = dotGet(config, "briefing.llm_summarize", true) !== false;
   const channels = (dotGet(config, "telegram.channels", {
-    BWEnews: "方程式快讯",
-    BWETradFi: "传统金融/宏观",
-    meme: "meme 链上监控"
+    "方程式快讯": "方程式新闻 BWEnews",
+    "传统金融/宏观": "@BWETradFi |方程式财经（传统金融新闻）",
+    "meme 链上监控": "meme链上监控"
   }) ?? {}) as Record<string, string>;
   const msgLimit = Number(dotGet(config, "data_sources.telegram.messages_per_channel", 15)) || 15;
   const lines = [`📰 Telegram 频道摘要（最近 ${hours}h）\n`];
-  const blocks: Array<{ label: string; text: string }> = [];
+  const channelRows = parseTelegramChannels(channels);
+  const fetched = await Promise.all(
+    channelRows.map(async ({ label, chat }) => {
+      const result = await runTg([
+        "recent",
+        "-c", chat,
+        "-n", String(msgLimit),
+        "--hours", String(hours),
+        "--sync-first",
+        "--json"
+      ]);
+      if (!result.ok) return { label, messages: [] as string[], error: result.error };
+      const messages = parseTgRecentMessages(result.data);
+      return { label, messages, error: undefined as string | undefined };
+    })
+  );
 
-  for (const [channel, label] of Object.entries(channels)) {
-    const raw = await runTg(["recent", channel, "--limit", String(msgLimit)]);
-    const messages = extractTgMessages(raw);
+  const blocks: Array<{ label: string; text: string }> = [];
+  for (const { label, messages, error } of fetched) {
+    if (error) {
+      lines.push(`【${label}】采集失败: ${error}`);
+      continue;
+    }
     if (!messages.length) {
       lines.push(`【${label}】暂无消息`);
       continue;
@@ -183,28 +214,6 @@ async function fetchTelegramSummary(hours: number): Promise<string> {
   return lines.join("\n\n");
 }
 
-async function fetchLeaderboard(): Promise<string> {
-  const config = await loadTradeConfig();
-  const ds = (dotGet(config, "data_sources.leaderboard", {}) ?? {}) as Record<string, unknown>;
-  const chains = (ds.chains as string[] | undefined) ?? ["solana"];
-  const limit = Number(ds.limit) || 5;
-  const lines = ["🏆 聪明钱 Leaderboard\n"];
-  for (const chain of chains) {
-    const data = await runOnchainos(["leaderboard", "list", "--chain", chain, "--limit", String(limit)]);
-    lines.push(`${chain}: ${JSON.stringify(data).slice(0, 1500)}`);
-  }
-  return lines.join("\n");
-}
-
-async function fetchPumpfun(): Promise<string> {
-  const config = await loadTradeConfig();
-  const ds = (dotGet(config, "data_sources.pumpfun", {}) ?? {}) as Record<string, unknown>;
-  const chain = String(ds.chain ?? "solana");
-  const limit = Number(ds.limit) || 5;
-  const data = await runOnchainos(["memepump", "tokens", "--chain", chain, "--limit", String(limit)]);
-  return `🎰 Pump.fun 热榜\n\n${JSON.stringify(data, null, 2).slice(0, 3000)}`;
-}
-
 export async function runMorningBrief(options: {
   sections?: BriefSection[];
   hours?: number;
@@ -212,10 +221,11 @@ export async function runMorningBrief(options: {
   dryRun?: boolean;
 } = {}): Promise<string> {
   const config = await loadTradeConfig();
-  const enabled = (dotGet(config, "briefing.enabled", [
-    "market", "stocks", "telegram", "twitter", "leaderboard", "pumpfun"
-  ]) as BriefSection[] | undefined) ?? ["market", "stocks", "telegram", "leaderboard", "pumpfun"];
-  const sections = options.sections?.length ? options.sections : enabled.filter((s): s is BriefSection => s in SECTION_FETCHERS);
+  const defaultSections: BriefSection[] = ["stocks", "telegram", "twitter"];
+  const enabled = (dotGet(config, "briefing.enabled", defaultSections) as string[] | undefined) ?? defaultSections;
+  const sections = options.sections?.length
+    ? options.sections.filter((s): s is BriefSection => s in SECTION_FETCHERS)
+    : enabled.filter((s): s is BriefSection => s in SECTION_FETCHERS);
   const hours = options.hours ?? (Number(dotGet(config, "briefing.hours_lookback", 24)) || 24);
 
   const parts = [`🌅 每日晨报 — ${formatDisplayTime()}\n`];

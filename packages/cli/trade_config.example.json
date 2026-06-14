@@ -1,44 +1,30 @@
 {
-  "signals": {
-    "enabled": ["smart_money", "technical", "social", "event", "meme"],
-    "weights": {
-      "smart_money": 0.3,
-      "technical": 0.25,
-      "social": 0.2,
-      "event": 0.15,
-      "meme": 0.1
-    },
-    "scan_seconds": 600
-  },
   "alerts": {
-    "enabled": ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "tm", "u"],
+    "enabled": ["e", "f", "t", "tm", "discord_wba", "q"],
     "poll_seconds": 120,
-    "aggregator_seconds": 300,
+    "rule_stagger_ms": 1000,
+    "confluence_enabled": true,
     "confluence_window_seconds": 900,
     "cooldowns": {},
-    "smart_money": { "min_wallets": 5, "min_mcap": 200000 },
-    "whale": { "min_mcap": 5000, "min_amount": 10000 },
-    "polymarket": { "conviction_threshold": 0.2 }
+    "celebrity_tweet": {
+      "accounts": ["realDonaldTrump", "elonmusk", "cz_binance"],
+      "fetch_limit": 10
+    }
   },
   "briefing": {
-    "enabled": ["market", "stocks", "telegram", "leaderboard", "pumpfun"],
+    "enabled": ["stocks", "telegram", "twitter"],
     "schedule_hour": 5,
     "hours_lookback": 24,
     "llm_summarize": true,
     "push_telegram": false
   },
   "data_sources": {
-    "chrome": {
-      "cdp_url": "http://127.0.0.1:9222"
-    },
-    "market": {
-      "instruments": ["BTC-USDT", "ETH-USDT", "SOL-USDT"],
-      "show_funding_rate": true,
-      "show_open_interest": true
-    },
-    "telegram": { "messages_per_channel": 100 },
-    "leaderboard": { "chains": ["solana"], "limit": 5 },
-    "pumpfun": { "chain": "solana", "limit": 5 }
+    "telegram": { "messages_per_channel": 15 },
+    "twitter": {
+      "collect_seconds": 7200,
+      "max_display": 500,
+      "per_author_cap": 2
+    }
   },
   "stocks": {
     "watchlist": {
@@ -51,16 +37,17 @@
   },
   "telegram": {
     "channels": {
-      "BWEnews": "方程式快讯",
-      "BWETradFi": "传统金融/宏观",
-      "meme": "meme 链上监控"
+      "方程式快讯": "方程式新闻 BWEnews",
+      "传统金融/宏观": "@BWETradFi |方程式财经（传统金融新闻）",
+      "meme 链上监控": "meme链上监控"
     },
     "bot_token": "",
     "push_chat_id": ""
   },
   "llm": {
-    "provider": "gemini",
-    "gemini_api_key": "",
-    "anthropic_api_key": ""
+    "default_backend": "grok",
+    "grok_model": "",
+    "claude_model": "",
+    "codex_model": ""
   }
 }

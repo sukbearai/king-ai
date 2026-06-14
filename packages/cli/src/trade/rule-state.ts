@@ -93,6 +93,17 @@ export class RuleStateStore {
     });
   }
 
+  async loadAlertCooldowns(): Promise<Record<string, number>> {
+    const state = await this.readState();
+    return { ...state.cooldowns };
+  }
+
+  async saveAlertCooldowns(cooldowns: Record<string, number>): Promise<void> {
+    await this.update((state) => {
+      state.cooldowns = { ...cooldowns };
+    });
+  }
+
   async checkConfluence(symbol: string, windowSeconds = 900): Promise<Array<{ ruleKey: string; direction: string; severity: string; volState: string }>> {
     const state = await this.readState();
     const cutoff = Date.now() / 1000 - windowSeconds;

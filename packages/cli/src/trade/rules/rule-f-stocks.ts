@@ -45,14 +45,15 @@ function yahooSymbol(symbol: string): string {
 }
 
 async function ashareQuote(symbol: string): Promise<{ price: number; change_pct: number } | null> {
-  const rows = await runOpencli([
+  const result = await runOpencli([
     "xueqiu", "stock", symbol,
+    "--window", "foreground",
     "--site-session", "persistent",
     "--keep-tab", "true",
     "--format", "json"
-  ], 60_000);
-  if (rows.length) {
-    const row = rows[0] as Record<string, unknown>;
+  ], 5_000);
+  if (result.ok && result.data.length) {
+    const row = result.data[0] as Record<string, unknown>;
     const price = Number(row.price ?? row.Price);
     const changeRaw = row.change_pct ?? row.ChangePercent ?? row.changePercent ?? row.changePct ?? "0";
     const changePct = Number(String(changeRaw).replace(/%/g, "").replace(/\+/g, "").trim());

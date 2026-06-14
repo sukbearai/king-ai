@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -11,31 +11,6 @@ import { parseDarwinLaunchctlStatus } from "../service.js";
 import { serviceNames } from "../service.js";
 
 const execFileP = promisify(execFile);
-const LEGACY_TRADE_AGENT_PREFIX = "com.trade-agent.";
-
-/** Legacy Python aux LaunchAgents replaced by king-ai trade daemon scheduler. */
-const LEGACY_PYTHON_AUX = [
-  "com.trade-agent.twitter-collector",
-  "com.trade-agent.alert-accuracy",
-  "com.trade-agent.process-watchdog",
-  "com.trade-agent.weekly-review"
-] as const;
-
-export async function unloadLegacyPythonAuxServices(removePlists = true): Promise<string[]> {
-  const unloaded: string[] = [];
-  for (const label of LEGACY_PYTHON_AUX) {
-    const plistPath = join(launchAgentsDir(), `${label}.plist`);
-    if (!existsSync(plistPath)) continue;
-    try {
-      await execFileP("launchctl", ["unload", plistPath]);
-      unloaded.push(label);
-    } catch {
-      // Already unloaded.
-    }
-    if (removePlists) await rm(plistPath, { force: true });
-  }
-  return unloaded;
-}
 
 export function tradeDaemonLogPath(): string {
   return join(TRADE_LOG_DIR, "daemon.log");
@@ -75,19 +50,6 @@ export function resolveTradeDaemonProgramArgs(options: { pushTg?: boolean; cliPa
 
 function darwinPlistPath(): string {
   return join(homedir(), "Library", "LaunchAgents", `${TRADE_SERVICE_LABEL}.plist`);
-}
-
-function launchAgentsDir(): string {
-  return join(homedir(), "Library", "LaunchAgents");
-}
-
-export function listLegacyTradeAgentPlists(): string[] {
-  const dir = launchAgentsDir();
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir)
-    .filter((name) => name.startsWith(LEGACY_TRADE_AGENT_PREFIX) && name.endsWith(".plist"))
-    .map((name) => join(dir, name))
-    .sort();
 }
 
 function proxyEnvEntries(): Array<[string, string]> {
@@ -130,39 +92,11 @@ function buildDarwinPlist(args: string[], logPath: string): string {
 </dict></plist>`;
 }
 
-export async function unloadLegacyTradeAgentServices(options: { removePlists?: boolean } = {}): Promise<string[]> {
-  const plists = listLegacyTradeAgentPlists();
-  const unloaded: string[] = [];
-  for (const plistPath of plists) {
-    const label = plistPath.split("/").pop()?.replace(/\.plist$/, "") ?? "";
-    try {
-      await execFileP("launchctl", ["unload", plistPath]);
-      unloaded.push(label);
-    } catch {
-      // Already unloaded or missing job.
-    }
-    if (options.removePlists) {
-      await rm(plistPath, { force: true });
-    }
-  }
-  return unloaded;
-}
-
-export async function installTradeService(options: { pushTg?: boolean; unloadLegacy?: boolean } = {}): Promise<void> {
+export async function installTradeService(options: { pushTg?: boolean } = {}): Promise<void> {
   const names = tradeServiceNames();
   const logPath = tradeDaemonLogPath();
   const args = resolveTradeDaemonProgramArgs({ pushTg: options.pushTg });
   await mkdir(TRADE_LOG_DIR, { recursive: true });
-
-  if (options.unloadLegacy !== false) {
-    const unloaded = [
-      ...(await unloadLegacyTradeAgentServices()),
-      ...(await unloadLegacyPythonAuxServices())
-    ];
-    if (unloaded.length > 0) {
-      console.log(`unloaded ${unloaded.length} legacy trade-agent LaunchAgent(s): ${unloaded.join(", ")}`);
-    }
-  }
 
   if (process.platform === "darwin") {
     await mkdir(dirname(darwinPlistPath()), { recursive: true });
@@ -252,21 +186,8 @@ export async function restartTradeService(): Promise<void> {
 
 export async function printTradeServiceStatus(): Promise<void> {
   const names = tradeServiceNames();
-  const legacy = listLegacyTradeAgentPlists();
   console.log(`trade cli: ${names.displayName} (${names.packageName})`);
-  const pythonAux = LEGACY_PYTHON_AUX.filter(
-    (label) => existsSync(join(launchAgentsDir(), `${label}.plist`))
-  );
-  if (legacy.length > 0) {
-    console.log(`legacy:  ${legacy.length} com.trade-agent.* plist(s) still present; run: king-ai trade unload-legacy`);
-  } else {
-    console.log("legacy:  no legacy rule/brief LaunchAgents");
-  }
-  if (pythonAux.length > 0) {
-    console.log(`python:  ${pythonAux.join(", ")} still present; run: king-ai trade install-service to unload`);
-  } else {
-    console.log("aux:     twitter-collector, alert-accuracy, watchdog, weekly-review (built into trade daemon)");
-  }
+  console.log("aux:     twitter-collector, watchdog (built into trade daemon)");
 
   if (!isTradeServiceInstalled()) {
     console.log("service: not installed; run: king-ai trade install-service --push-tg");
@@ -316,7 +237,7 @@ export async function tailTradeLogs(): Promise<void> {
 }
 
 export function shouldKillTradeDaemonCommand(command: string): boolean {
-  return /trade daemon/.test(command) && !/--(install-service|uninstall-service|status|logs|unload-legacy)\b|\bnpx\b/.test(command);
+  return /trade daemon/.test(command) && !/--(install-service|uninstall-service|status|logs)\b|\bnpx\b/.test(command);
 }
 
 export async function killRunningTradeDaemons(): Promise<number> {

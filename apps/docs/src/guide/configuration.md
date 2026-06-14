@@ -49,12 +49,12 @@ Treat this directory as sensitive because it contains runtime tokens and local e
 - `KING_AI_SESSION_TIMEOUT_MS`: optional hard timeout for a persistent engine turn. It is disabled by default.
 - `KING_AI_TURN_TIMEOUT_MS`: optional hard timeout for one-shot engine runs. It is disabled by default.
 - `KING_AI_TRADE_CONFIG`: override the trade config path (default `~/.king-ai/trade_config.json`).
-- `KING_AI_SIGNAL_ALERT_LOG`: override the shared alert JSONL path used by trade rules and accuracy tracking.
-- `KING_AI_SIGNAL_OUTPUT_DIR`: override SignalEngine output directory (default `~/.king-ai/trade/signals`).
+- `KING_AI_ALERT_LOG`: override the alert JSONL audit log path written by trade rules.
+
 
 ## Trade Runtime
 
-Trade intelligence uses `~/.king-ai/trade/` for logs, scratchpad weights, signal output, and bundled skills such as PANews. See [Trade Intelligence](/guide/trade) for daemon installation and rule configuration.
+Trade intelligence uses `~/.king-ai/trade/` for logs, scratchpad state, alert audit logs, and bundled skills such as PANews. See [Trade Intelligence](/guide/trade) for daemon installation and rule configuration.
 
 ## Local Engines
 

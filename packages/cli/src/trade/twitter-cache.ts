@@ -1,6 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { TRADE_TWITTER_CACHE_PATH } from "../paths.js";
 
 const ID_HEAD_RE = /^\s*\{\s*"id"\s*:/;
 
@@ -18,7 +17,7 @@ export interface TwitterCacheEntry {
 }
 
 export function defaultTwitterCachePath(): string {
-  return join(homedir(), ".onchainos", "strategies", "twitter_cache.jsonl");
+  return TRADE_TWITTER_CACHE_PATH;
 }
 
 export async function* iterCacheRecords(path = defaultTwitterCachePath()): AsyncGenerator<TwitterCacheEntry> {

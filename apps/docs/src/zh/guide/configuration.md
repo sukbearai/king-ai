@@ -49,12 +49,12 @@ KING_AI_CONFIG_DIR=/tmp/king-ai-dev king-ai agent computer --doctor
 - `KING_AI_SESSION_TIMEOUT_MS`：持久引擎 turn 的可选硬超时。默认关闭。
 - `KING_AI_TURN_TIMEOUT_MS`：一次性引擎运行的可选硬超时。默认关闭。
 - `KING_AI_TRADE_CONFIG`：覆盖交易配置文件路径（默认 `~/.king-ai/trade_config.json`）。
-- `KING_AI_SIGNAL_ALERT_LOG`：覆盖 trade 规则与准确率追踪共用的告警 JSONL 路径。
-- `KING_AI_SIGNAL_OUTPUT_DIR`：覆盖 SignalEngine 输出目录（默认 `~/.king-ai/trade/signals`）。
+- `KING_AI_ALERT_LOG`：覆盖 trade 规则写入的告警 JSONL 审计日志路径。
+
 
 ## 交易运行时
 
-交易信号使用 `~/.king-ai/trade/` 存放日志、scratchpad 权重、信号输出及 PANews 等 skill。安装 daemon 与规则配置见 [交易信号](/zh/guide/trade)。
+交易信号使用 `~/.king-ai/trade/` 存放日志、scratchpad 状态、告警审计日志及 PANews 等 skill。安装 daemon 与规则配置见 [交易信号](/zh/guide/trade)。
 
 ## 本地引擎
 

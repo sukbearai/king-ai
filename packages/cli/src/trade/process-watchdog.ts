@@ -1,18 +1,22 @@
 import { execFile } from "node:child_process";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { loadavg } from "node:os";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { TRADE_SERVICE_LABEL } from "../paths.js";
+import {
+  TRADE_SERVICE_LABEL,
+  TRADE_WATCHDOG_HEALTH_PATH,
+  TRADE_WATCHDOG_LOG_PATH,
+  TRADE_WATCHDOG_SERVICE_PATH
+} from "../paths.js";
 import { loadTradeConfig } from "./config.js";
 import { sendTelegram } from "./telegram.js";
 
 const execFileP = promisify(execFile);
 
-const LOG_PATH = join(homedir(), ".onchainos", "strategies", "logs", "watchdog.log");
-const HEALTH_STATE_PATH = join(homedir(), ".onchainos", "strategies", "logs", "watchdog_health_state.txt");
-const SERVICE_STATE_PATH = join(homedir(), ".onchainos", "strategies", "logs", "watchdog_service_state.json");
+const LOG_PATH = TRADE_WATCHDOG_LOG_PATH;
+const HEALTH_STATE_PATH = TRADE_WATCHDOG_HEALTH_PATH;
+const SERVICE_STATE_PATH = TRADE_WATCHDOG_SERVICE_PATH;
 
 const MAX_AGE_MINUTES = 30;
 const LEAKER_AGE_MINUTES = 5;

@@ -1,6 +1,6 @@
 {
   "name": "@suwujs/king-ai",
-  "version": "0.2.82",
+  "version": "0.3.0",
   "description": "King AI, a local BYOA agent daemon that bridges remote runtime events to Claude or Codex CLI.",
   "type": "module",
   "bin": {
@@ -38,10 +38,6 @@
     "./run-stream": {
       "types": "./dist/src/run-stream.d.ts",
       "default": "./dist/src/run-stream.js"
-    },
-    "./signal-engine": {
-      "types": "./dist/src/signal-engine.d.ts",
-      "default": "./dist/src/signal-engine.js"
     },
     "./trade/rules/registry": {
       "types": "./dist/src/trade/rules/registry.d.ts",

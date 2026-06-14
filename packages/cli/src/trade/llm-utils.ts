@@ -4,6 +4,9 @@ import { dotGet, loadTradeConfig } from "./config.js";
 
 const execFileP = promisify(execFile);
 
+const AGENT_BACKENDS = ["grok", "claude", "codex"] as const;
+type AgentBackend = typeof AGENT_BACKENDS[number];
+
 export function extractJsonFromText(text: string): unknown {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   const body = (fenced ? fenced[1] : text) ?? "";
@@ -28,6 +31,69 @@ export function extractJsonFromText(text: string): unknown {
   return null;
 }
 
+function normalizeBackend(raw: string): AgentBackend | null {
+  const v = raw.trim().toLowerCase();
+  if (v === "gemini" || v === "api") return "grok";
+  if (AGENT_BACKENDS.includes(v as AgentBackend)) return v as AgentBackend;
+  return null;
+}
+
+function agentBackendOrder(llmCfg: Record<string, unknown>, taskBackend?: string): AgentBackend[] {
+  const preferred = normalizeBackend(String(taskBackend ?? llmCfg.default_backend ?? llmCfg.provider ?? "grok"));
+  const order: AgentBackend[] = preferred ? [preferred] : [];
+  for (const name of AGENT_BACKENDS) {
+    if (!order.includes(name)) order.push(name);
+  }
+  return order;
+}
+
+async function runAgentBackend(
+  name: AgentBackend,
+  prompt: string,
+  llmCfg: Record<string, unknown>,
+  timeoutMs: number
+): Promise<string> {
+  if (name === "claude") {
+    const model = String(llmCfg.claude_model ?? "");
+    const args = ["-p", prompt, "--output-format", "text"];
+    if (model) args.unshift("-m", model);
+    const { stdout } = await execFileP("claude", args, {
+      timeout: timeoutMs,
+      maxBuffer: 5 * 1024 * 1024,
+      env: process.env
+    });
+    return stdout.trim();
+  }
+
+  if (name === "codex") {
+    const model = String(llmCfg.codex_model ?? "");
+    const args = ["exec", "-s", "read-only", "-o", "/tmp/king-ai-llm-out.txt"];
+    if (model) args.push("-m", model);
+    args.push(prompt);
+    await execFileP("codex", args, { timeout: timeoutMs, env: process.env });
+    const { stdout } = await execFileP("cat", ["/tmp/king-ai-llm-out.txt"], { timeout: 5000 });
+    return stdout.trim();
+  }
+
+  const model = String(llmCfg.grok_model ?? "");
+  const args = [
+    "--no-auto-update",
+    "--always-approve",
+    "--no-alt-screen",
+    "-p",
+    prompt,
+    "--output-format",
+    "plain"
+  ];
+  if (model) args.unshift("-m", model);
+  const { stdout } = await execFileP("grok", args, {
+    timeout: timeoutMs,
+    maxBuffer: 5 * 1024 * 1024,
+    env: process.env
+  });
+  return stdout.trim();
+}
+
 export async function runAgent(
   prompt: string,
   options: { timeoutMs?: number; task?: string } = {}
@@ -37,66 +103,16 @@ export async function runAgent(
   const task = options.task ?? "summarize";
   const tasks = (dotGet(config, "llm.agent_tasks", {}) ?? {}) as Record<string, unknown>;
   const taskCfg = (tasks[task] ?? {}) as Record<string, unknown>;
-  const backend = String(taskCfg.backend ?? llmCfg.default_backend ?? "claude");
   const timeoutMs = options.timeoutMs ?? 60_000;
-
-  const backends = backend === "api"
-    ? ["api"]
-    : [backend, "claude", "codex", "api"];
+  const backends = agentBackendOrder(llmCfg, String(taskCfg.backend ?? ""));
 
   for (const name of backends) {
     try {
-      if (name === "claude") {
-        const model = String(llmCfg.claude_model ?? "");
-        const args = ["-p", prompt, "--output-format", "text"];
-        if (model) args.unshift("-m", model);
-        const { stdout } = await execFileP("claude", args, {
-          timeout: timeoutMs,
-          maxBuffer: 5 * 1024 * 1024,
-          env: process.env
-        });
-        if (stdout.trim()) return stdout.trim();
-      } else if (name === "codex") {
-        const model = String(llmCfg.codex_model ?? "");
-        const args = ["exec", "-s", "read-only", "-o", "/tmp/king-ai-llm-out.txt"];
-        if (model) args.push("-m", model);
-        args.push(prompt);
-        await execFileP("codex", args, { timeout: timeoutMs, env: process.env });
-        const { stdout } = await execFileP("cat", ["/tmp/king-ai-llm-out.txt"], { timeout: 5000 });
-        if (stdout.trim()) return stdout.trim();
-      } else if (name === "api") {
-        const result = await callLlmApi(prompt, llmCfg);
-        if (result) return result;
-      }
-    } catch {
-      continue;
-    }
-  }
-  return "";
-}
-
-async function callLlmApi(prompt: string, llmCfg: Record<string, unknown>): Promise<string> {
-  const geminiKey = String(process.env.GEMINI_API_KEY ?? llmCfg.gemini_api_key ?? "");
-  if (geminiKey) {
-    try {
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
-          signal: AbortSignal.timeout(30_000)
-        }
-      );
-      if (res.ok) {
-        const body = (await res.json()) as {
-          candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-        };
-        const text = body.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-        if (text) return text;
-      }
-    } catch {
-      // fall through
+      const text = await runAgentBackend(name, prompt, llmCfg, timeoutMs);
+      if (text) return text;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`[llm-agent] ${name} failed: ${msg}\n`);
     }
   }
   return "";

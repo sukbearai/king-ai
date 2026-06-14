@@ -35,20 +35,21 @@ export const HOST_RUNS_PATH = join(CONFIG_DIR, "host-runs.ndjson");
 export const TRADE_DIR = join(CONFIG_DIR, "trade");
 export const TRADE_CONFIG_PATH = process.env.KING_AI_TRADE_CONFIG || join(CONFIG_DIR, "trade_config.json");
 export const TRADE_ALERT_DIR = join(TRADE_DIR, "alerts");
-export const TRADE_SIGNAL_DIR = join(TRADE_DIR, "signals");
 export const TRADE_STATE_DIR = join(TRADE_DIR, "state");
 export const TRADE_LOG_DIR = join(TRADE_DIR, "logs");
 export const TRADE_SCRATCHPAD_PATH = join(TRADE_DIR, "scratchpad.json");
-/** PANews skill CLI (migrated from trade-agent). */
+/** PANews skill CLI bundled with trade runtime. */
 export const TRADE_PANEWS_CLI_PATH = join(TRADE_DIR, "skills", "panews", "cli.mjs");
 export const TRADE_RULE_STATE_PATH = join(TRADE_STATE_DIR, "rule_state.json");
-/** JSONL alert log written by trade alert rules; shared with trade-agent accuracy tracker during migration. */
-export const SIGNAL_ALERT_LOG_PATH = process.env.KING_AI_SIGNAL_ALERT_LOG
-  || join(homedir(), ".onchainos", "strategies", "alerts", "alert_log.jsonl");
-/** SignalEngine scan output directory. */
-export const SIGNAL_OUTPUT_DIR = process.env.KING_AI_SIGNAL_OUTPUT_DIR || TRADE_SIGNAL_DIR;
+/** JSONL alert audit log written by trade rules. */
+export const TRADE_ALERT_LOG_PATH = process.env.KING_AI_ALERT_LOG || join(TRADE_ALERT_DIR, "alert_log.jsonl");
+export const TRADE_TWITTER_CACHE_PATH = join(TRADE_STATE_DIR, "twitter_cache.jsonl");
+export const TRADE_MENTIONS_DB_PATH = join(TRADE_STATE_DIR, "twitter_mentions.db");
+export const TRADE_WATCHDOG_LOG_PATH = join(TRADE_LOG_DIR, "watchdog.log");
+export const TRADE_WATCHDOG_HEALTH_PATH = join(TRADE_LOG_DIR, "watchdog_health_state.txt");
+export const TRADE_WATCHDOG_SERVICE_PATH = join(TRADE_LOG_DIR, "watchdog_service_state.json");
 export const SERVICE_LABEL = "dev.king-ai";
 /** LaunchAgent label for `king-ai trade daemon` background supervisor. */
 export const TRADE_SERVICE_LABEL = "dev.king-ai-trade";
-export const CURRENT_VERSION = "0.2.82";
+export const CURRENT_VERSION = "0.3.0";
 export const DEFAULT_SERVER = process.env.KING_AI_SERVER_URL || "https://king-ai.congrongtech.cn";

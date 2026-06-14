@@ -11,7 +11,7 @@ const BROWSER_SESSION = "trade-discord";
 async function readDiscordMessages(count = 20): Promise<Array<Record<string, string>>> {
   try {
     const check = await runOpencli(["browser", BROWSER_SESSION, "get", "url"], 10_000);
-    const currentUrl = check
+    const currentUrl = check.data
       .map((row) => {
         if (typeof row === "string") return row;
         if (row && typeof row === "object") return String((row as Record<string, unknown>).value ?? (row as Record<string, unknown>).stdout ?? "");
@@ -39,8 +39,9 @@ async function readDiscordMessages(count = 20): Promise<Array<Record<string, str
 })()`;
 
   try {
-    const rows = await runOpencli(["browser", BROWSER_SESSION, "eval", js], 30_000);
-    const raw = rows.map((r) => {
+    const evalResult = await runOpencli(["browser", BROWSER_SESSION, "eval", js], 30_000);
+    if (!evalResult.ok) return [];
+    const raw = evalResult.data.map((r) => {
       if (typeof r === "string") return r;
       if (r && typeof r === "object") return String((r as Record<string, unknown>).value ?? (r as Record<string, unknown>).stdout ?? JSON.stringify(r));
       return "";

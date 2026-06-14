@@ -1,10 +1,7 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { TRADE_MENTIONS_DB_PATH } from "../../paths.js";
 import { createAlert, type Alert, type AlertRule, type AlertState } from "../alert-rule.js";
 import { dotGet, loadTradeConfig } from "../config.js";
 import { nowDisplay, sqliteQuery } from "../data-helpers.js";
-
-const MENTIONS_DB_PATH = join(homedir(), ".onchainos", "strategies", "twitter_mentions.db");
 
 export function createRuleTTicker(): AlertRule {
   let minMentions = 3;
@@ -35,7 +32,7 @@ export function createRuleTTicker(): AlertRule {
       const cutoff24hPriorTo7d = cutoff24h - 86400 * 7;
 
       const rows = await sqliteQuery(
-        MENTIONS_DB_PATH,
+        TRADE_MENTIONS_DB_PATH,
         `SELECT ticker, COUNT(*) AS cnt_24h, SUM(views) AS views_24h, COUNT(DISTINCT author) AS authors_24h
          FROM ticker_mentions WHERE created_ts >= ${cutoff24h}
          GROUP BY ticker HAVING cnt_24h >= ${minMentions} AND views_24h >= ${minViews} AND authors_24h >= ${minAuthors}
@@ -52,7 +49,7 @@ export function createRuleTTicker(): AlertRule {
         if (!ticker) continue;
 
         const baselineRows = await sqliteQuery(
-          MENTIONS_DB_PATH,
+          TRADE_MENTIONS_DB_PATH,
           `SELECT COUNT(*) FROM ticker_mentions WHERE ticker = '${ticker.replace(/'/g, "''")}'
            AND created_ts >= ${cutoff24hPriorTo7d} AND created_ts < ${cutoff24h}`
         );
@@ -78,7 +75,7 @@ export function createRuleTTicker(): AlertRule {
         }
 
         const sampleRows = await sqliteQuery(
-          MENTIONS_DB_PATH,
+          TRADE_MENTIONS_DB_PATH,
           `SELECT author, views, substr(text_snippet, 1, 120) FROM ticker_mentions
            WHERE ticker = '${ticker.replace(/'/g, "''")}' AND created_ts >= ${cutoff24h}
            ORDER BY views DESC LIMIT 1`

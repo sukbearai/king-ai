@@ -30,14 +30,26 @@ export function dotGet(config: TradeConfig, path: string, fallback?: unknown): u
   return cur ?? fallback;
 }
 
+/** Default slim stack: OpenCLI + tg + local agent + Yahoo. */
+export const SLIM_ALERT_RULES = ["e", "f", "t", "tm", "discord_wba", "q"] as const;
+
 export function enabledAlertRules(config: TradeConfig): string[] {
-  const enabled = dotGet(config, "alerts.enabled", []) as unknown;
-  return Array.isArray(enabled) ? enabled.map(String) : [];
+  const enabled = dotGet(config, "alerts.enabled", [...SLIM_ALERT_RULES]) as unknown;
+  return Array.isArray(enabled) ? enabled.map(String) : [...SLIM_ALERT_RULES];
 }
 
 export function defaultPollSeconds(config: TradeConfig): number {
   const v = Number(dotGet(config, "alerts.poll_seconds", 120));
   return Number.isFinite(v) && v > 0 ? v : 120;
+}
+
+export function confluenceEnabled(config: TradeConfig): boolean {
+  return dotGet(config, "alerts.confluence_enabled", true) !== false;
+}
+
+export function ruleStaggerMs(config: TradeConfig): number {
+  const v = Number(dotGet(config, "alerts.rule_stagger_ms", 1000));
+  return Number.isFinite(v) && v >= 0 ? v : 1000;
 }
 
 export function telegramFromConfig(config: TradeConfig): { botToken: string; chatId: string } {

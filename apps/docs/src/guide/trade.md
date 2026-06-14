@@ -1,6 +1,6 @@
 # Trade Intelligence
 
-`king-ai trade` replaces the legacy `trade-agent` stack: alert rules, morning brief, Twitter collection, accuracy tracking, weekly review, and process watchdog run inside one supervisor daemon. `king-ai signal` runs the multi-source SignalEngine fusion scan.
+`king-ai trade` runs alert rules, morning brief, Twitter collection, and process watchdog inside one supervisor daemon. The stack uses **OpenCLI + tg + local agent + Yahoo** with six rules: `e`, `f`, `t`, `tm`, `discord_wba`, `q`.
 
 ## Quick Start
 
@@ -15,7 +15,7 @@ king-ai trade install-service --push-tg
 king-ai trade status
 ```
 
-`install-service` registers `dev.king-ai-trade` (macOS LaunchAgent or Linux systemd user unit), unloads legacy `com.trade-agent.*` plists when present, and starts the daemon.
+`install-service` registers `dev.king-ai-trade` (macOS LaunchAgent or Linux systemd user unit) and starts the daemon.
 
 Foreground debugging:
 
@@ -33,24 +33,25 @@ Important runtime paths:
 ~/.king-ai/trade_config.json
 ~/.king-ai/trade/logs/daemon.log
 ~/.king-ai/trade/scratchpad.json
-~/.king-ai/trade/signals/signal_log.jsonl
+~/.king-ai/trade/rule_state.json
 ~/.king-ai/trade/skills/panews/cli.mjs
 ```
 
-Shared alert history (compatible with the old accuracy tracker):
+Alert audit log and Twitter cache:
 
 ```text
-~/.onchainos/strategies/alerts/alert_log.jsonl
+~/.king-ai/trade/alerts/alert_log.jsonl
+~/.king-ai/trade/state/twitter_cache.jsonl
 ```
 
 Key config sections:
 
 | Section | Purpose |
 |---------|---------|
-| `alerts.enabled` | Rule IDs to poll (`a`–`u`, `s`, `t`, `tm`, optional `discord_wba`) |
-| `alerts.poll_seconds` | Rule loop interval (default `120`) |
-| `alerts.aggregator_seconds` | Multi-rule correlation window (default `300`) |
-| `signals.scan_seconds` | SignalEngine interval inside daemon; `0` disables auto scan |
+| `alerts.enabled` | Rule IDs to poll; defaults to `e`, `f`, `t`, `tm`, `discord_wba`, `q` |
+| `alerts.poll_seconds` | Unified rule poll interval (default `120`) |
+| `alerts.confluence_enabled` | Per-asset confluence promotion inside rule ticks (default `true`) |
+| `alerts.rule_stagger_ms` | Delay between rules in one poll round (default `1000`) |
 | `briefing.schedule_hour` | Morning brief cron hour (local, default `5`) |
 | `telegram` | `bot_token` and `push_chat_id` for alert pushes |
 
@@ -73,76 +74,39 @@ king-ai trade alert run tm --once --push-tg
 
 | ID | Monitor |
 |----|---------|
-| `a` | BTC/ETH/SOL price moves |
-| `b` | Funding rates |
-| `c` | Smart-money clusters |
-| `d` | Polymarket shifts |
-| `e` | Meme large buys / new tokens |
-| `f` | Stock watchlist moves |
-| `g` | Options flow |
-| `h` | Stablecoin flows |
-| `i` | Whale transfers |
-| `j` | VIX spike / elevated |
-| `k` | MA breakdown / breakout |
-| `l` | RSI extremes |
-| `m` | Bollinger squeeze / breakout |
-| `n` | Liquidation cascade |
-| `o` | Gas spikes |
-| `p` | Macro news (Bloomberg) |
-| `q` | PANews events |
-| `r` | Long/short ratio |
-| `s` | Subscribed wallet addresses |
+| `e` | Meme large buys (`tg` meme链上监控) |
+| `f` | Stock watchlist moves (OpenCLI/Yahoo) |
 | `t` | Celebrity tweet alpha (Trump/Musk/CZ by default) |
 | `tm` | Twitter ticker mention velocity |
-| `u` | BTC ETF flows (also scheduled daily at 22:00) |
-| `discord_wba` | Discord WBA channel (requires OpenCLI browser bridge; see below) |
+| `q` | PANews events (local agent classification) |
+| `discord_wba` | Discord WBA channel (OpenCLI browser) |
 
-Info-level alerts are written to JSONL; Telegram pushes default to `warning` and above.
+Info-level alerts are written to JSONL; Telegram pushes default to `warning` and above. Alert cooldowns persist in `~/.king-ai/trade/rule_state.json`.
 
 ## Daemon Supervisor
 
-The daemon runs all enabled rule loops plus scheduled jobs:
+The daemon runs a unified rule scheduler plus scheduled jobs:
 
 - Morning brief (`briefing.schedule_hour`)
-- Rule `u` once daily at 22:00
-- Weekly review Sundays at 06:00
-- Alert aggregator, optional SignalEngine scan, regime detection
-- Twitter collector, alert-accuracy cycle, process watchdog
+- Regime detection
+- Twitter collector and process watchdog
 
 ```sh
 king-ai trade daemon --push-tg
 king-ai trade restart-service
 king-ai trade logs
-king-ai trade unload-legacy --remove
 ```
-
-## SignalEngine
-
-Manual fusion scan:
-
-```sh
-king-ai signal scan
-king-ai signal scan --push-tg --threshold 0.3
-king-ai signal scan --sources smart_money,technical,event
-```
-
-Enable automatic scans in config:
-
-```json
-"signals": { "scan_seconds": 600 }
-```
-
-Output: `~/.king-ai/trade/signals/signal_log.jsonl` and `latest_scan.txt`.
 
 ## Auxiliary Commands
 
 ```sh
 king-ai trade brief --push-tg
 king-ai trade collect
-king-ai trade accuracy --stats
+king-ai trade verify-tg --dry-run
 king-ai trade watchdog --kill
-king-ai trade weekly-review --push-tg
 ```
+
+`verify-tg` runs each enabled alert and brief source once (six rules + three brief sections by default) and pushes one Telegram message per source. Trade AI summaries and PANews classification use the local agent CLI chain (`grok` → `claude` → `codex`) via `llm.default_backend`.
 
 ## OpenCLI Browser Bridge
 
@@ -150,21 +114,21 @@ Twitter timeline, Xueqiu A-shares, and Discord browser scraping use **OpenCLI** 
 
 ```sh
 opencli doctor
-opencli twitter timeline --limit 1 --site-session persistent --keep-tab true -f json
-opencli xueqiu stock SH000001 --site-session persistent --keep-tab true -f json
+opencli browser trade-twitter --window foreground open https://x.com/home
+opencli browser trade-twitter --window foreground wait selector article --timeout 30000
+king-ai trade alert run f --once --dry-run
 ```
 
-Keep the OpenCLI browser extension/daemon available and log in to the relevant sites in the browser session. The trade daemon passes `--site-session persistent --keep-tab true` for Twitter and Xueqiu calls, and uses a stable `trade-discord` browser session for the Discord channel reader.
+Keep the OpenCLI browser extension/daemon available and log in to the relevant sites in the browser session. The trade daemon uses stable `trade-twitter`, `trade-twitter-search`, and `trade-discord` browser sessions for Twitter and Discord reads. Xueqiu is attempted through OpenCLI with foreground/persistent settings, then quickly falls back to Yahoo Finance when the site adapter is unavailable.
 
 ## External Dependencies
 
 Trade rules call local CLIs when available:
 
 - `opencli` — Twitter/X, Xueqiu, and Discord browser-backed reads
-- `onchainos` — on-chain data
-- `surf` — market tickers, funding, options
 - `tg` — Telegram channel reads
-- Gemini API or `claude` / `codex` — LLM summarization and PANews classification
+- Yahoo Finance HTTP — stock quotes
+- Local agent CLI (`grok`, `claude`, or `codex`) — LLM summarization, PANews classification, and celebrity tweet parsing
 
 PANews article fetch uses `~/.king-ai/trade/skills/panews/cli.mjs`. Copy it from the PANews skill if missing.
 
@@ -173,5 +137,5 @@ PANews article fetch uses `~/.king-ai/trade/skills/panews/cli.mjs`. Copy it from
 ```sh
 pnpm dev -- trade status
 pnpm dev -- trade daemon --push-tg
-pnpm dev -- signal scan
+pnpm dev -- trade verify-tg --dry-run
 ```

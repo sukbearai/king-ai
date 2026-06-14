@@ -17,24 +17,22 @@ import { DEFAULT_HOST_SERVER_HOST, hostServerPortFromEnv, serveHostStatus } from
 import { scenarioTemplate } from "./team-workflow.js";
 import type { KingScenarioTemplate } from "./team-workflow.js";
 import type { EngineId } from "./types.js";
-import { parseSourceList, runSignalScan, runSignalScanLoop } from "./signal-scan.js";
+
 import { runRuleLoop } from "./trade/alert-rule.js";
 import { runMorningBrief } from "./trade/morning-brief.js";
-import { createRule, listRuleIds } from "./trade/rules/registry.js";
+import { createRuleAsync, listRuleIds } from "./trade/rules/registry.js";
 import { runTradeDaemon } from "./trade/scheduler.js";
-import { runAccuracyCycle } from "./trade/alert-accuracy.js";
+
 import { runProcessWatchdog } from "./trade/process-watchdog.js";
 import { runTwitterCollector } from "./trade/twitter-collector.js";
-import { runWeeklyReview } from "./trade/weekly-review.js";
+
+import { runVerifySignalsPush } from "./trade/verify-signals.js";
 import {
   installTradeService,
   killRunningTradeDaemons,
-  listLegacyTradeAgentPlists,
   printTradeServiceStatus,
   restartTradeService,
   tailTradeLogs,
-  unloadLegacyPythonAuxServices,
-  unloadLegacyTradeAgentServices,
   uninstallTradeService
 } from "./trade/service.js";
 
@@ -1669,79 +1667,6 @@ const hostWorkflowCommand = command({
   if (!result.ok || result.exitCode !== 0) process.exitCode = result.exitCode || 1;
 });
 
-const signalScanCommand = command({
-  name: "scan",
-  flags: {
-    help: {
-      type: Boolean,
-      alias: "h",
-      description: "Show help"
-    },
-    json: {
-      type: Boolean,
-      description: "Emit scan result as JSON"
-    },
-    threshold: {
-      type: Number,
-      description: "Minimum absolute composite score to include (default 0)"
-    },
-    sources: {
-      type: String,
-      description: "Comma-separated sources: smart_money,technical,social,event,meme"
-    },
-    dryRun: {
-      type: Boolean,
-      description: "Print only; do not write signal output files"
-    },
-    loop: {
-      type: Number,
-      description: "Repeat scan every N seconds (0 = once)"
-    },
-    alertLog: {
-      type: String,
-      description: "Path to alert_log.jsonl (default: ~/.onchainos/strategies/alerts/alert_log.jsonl)"
-    },
-    outputDir: {
-      type: String,
-      description: "Directory for latest_scan.txt and signal_log.jsonl"
-    },
-    pushTg: {
-      type: Boolean,
-      description: "Push strong fusion signals to Telegram"
-    },
-    minPushScore: {
-      type: Number,
-      description: "Minimum absolute score for TG push (default 0.5)"
-    },
-    pushCooldown: {
-      type: Number,
-      description: "Per-token TG push cooldown seconds (default 7200)"
-    }
-  },
-  help: {
-    description: "Run the multi-source SignalEngine scan (trade-agent compatible)"
-  }
-}, async (argv) => {
-  const sources = argv.flags.sources ? parseSourceList(argv.flags.sources) : undefined;
-  const options = {
-    threshold: argv.flags.threshold,
-    sources,
-    dryRun: argv.flags.dryRun,
-    alertLogPath: argv.flags.alertLog,
-    outputDir: argv.flags.outputDir,
-    json: argv.flags.json,
-    pushTg: argv.flags.pushTg,
-    minPushScore: argv.flags.minPushScore,
-    pushCooldownSec: argv.flags.pushCooldown
-  };
-  const loop = argv.flags.loop ?? 0;
-  if (loop > 0) {
-    await runSignalScanLoop(loop, options);
-    return;
-  }
-  await runSignalScan(options);
-});
-
 const tradeAlertRunCommand = command({
   name: "run",
   parameters: ["<ruleId>"],
@@ -1756,7 +1681,7 @@ const tradeAlertRunCommand = command({
 }, async (argv) => {
   const ruleId = argv._.ruleId;
   if (!ruleId) throw new Error("rule id required, e.g. a, b, c");
-  const rule = createRule(ruleId);
+  const rule = await createRuleAsync(ruleId);
   if (!rule) throw new Error(`Unknown rule: ${ruleId}. Available: ${listRuleIds().join(", ")}`);
   await runRuleLoop(rule, {
     pollSeconds: argv.flags.poll,
@@ -1789,7 +1714,7 @@ const tradeAlertCommand = command({
       name: `${commandNameFromArgv(process.argv[1])} trade alert`,
       strictFlags: true,
       commands: [tradeAlertRunCommand, tradeAlertListCommand],
-      help: { description: "Trade alert rules (ported from trade-agent)" }
+      help: { description: "Trade alert rules" }
     },
     () => console.log(`Run \`${commandNameFromArgv(process.argv[1])} trade alert --help\` for usage.`),
     process.argv.slice(4)
@@ -1802,13 +1727,13 @@ const tradeBriefCommand = command({
     help: { type: Boolean, alias: "h", description: "Show help" },
     pushTg: { type: Boolean, description: "Push brief to Telegram" },
     dryRun: { type: Boolean, description: "Print only" },
-    sections: { type: String, description: "Comma-separated sections: market,stocks,telegram,leaderboard,pumpfun" },
+    sections: { type: String, description: "Comma-separated sections: market,stocks,telegram,twitter" },
     hours: { type: Number, description: "Lookback hours for social sections" }
   },
-  help: { description: "Daily morning brief (ported from trade-agent)" }
+  help: { description: "Daily morning brief" }
 }, async (argv) => {
   const sections = argv.flags.sections
-    ? argv.flags.sections.split(",").map((s) => s.trim()).filter(Boolean) as Array<"market" | "stocks" | "telegram" | "twitter" | "leaderboard" | "pumpfun">
+    ? argv.flags.sections.split(",").map((s) => s.trim()).filter(Boolean) as Array<"market" | "stocks" | "telegram" | "twitter">
     : undefined;
   await runMorningBrief({
     sections,
@@ -1825,7 +1750,7 @@ const tradeDaemonCommand = command({
     pushTg: { type: Boolean, description: "Push alerts and brief to Telegram" },
     dryRun: { type: Boolean, description: "Dry run mode" }
   },
-  help: { description: "Run trade supervisor: all enabled rules + cron brief/Rule U + aggregator" }
+  help: { description: "Run trade supervisor: unified rule poll + cron brief" }
 }, async (argv) => {
   await runTradeDaemon({ pushTg: argv.flags.pushTg, dryRun: argv.flags.dryRun });
 });
@@ -1834,12 +1759,11 @@ const tradeInstallServiceCommand = command({
   name: "install-service",
   flags: {
     help: { type: Boolean, alias: "h", description: "Show help" },
-    pushTg: { type: Boolean, description: "Enable Telegram push in the background daemon" },
-    keepLegacy: { type: Boolean, description: "Do not unload com.trade-agent.* LaunchAgents" }
+    pushTg: { type: Boolean, description: "Enable Telegram push in the background daemon" }
   },
   help: { description: "Install LaunchAgent/systemd service for king-ai trade daemon" }
 }, async (argv) => {
-  await installTradeService({ pushTg: argv.flags.pushTg, unloadLegacy: !argv.flags.keepLegacy });
+  await installTradeService({ pushTg: argv.flags.pushTg });
 });
 
 const tradeUninstallServiceCommand = command({
@@ -1868,7 +1792,7 @@ const tradeStatusCommand = command({
   flags: {
     help: { type: Boolean, alias: "h", description: "Show help" }
   },
-  help: { description: "Show trade daemon service status and legacy trade-agent plists" }
+  help: { description: "Show trade daemon service status" }
 }, async () => {
   await printTradeServiceStatus();
 });
@@ -1893,16 +1817,16 @@ const tradeCollectCommand = command({
   await runTwitterCollector();
 });
 
-const tradeAccuracyCommand = command({
-  name: "accuracy",
+const tradeVerifyTgCommand = command({
+  name: "verify-tg",
   flags: {
     help: { type: Boolean, alias: "h", description: "Show help" },
-    days: { type: Number, description: "Rolling window days (default 30)" }
+    dryRun: { type: Boolean, description: "Print only; do not push to Telegram" },
+    noCollect: { type: Boolean, description: "Skip twitter-collector before tm check" }
   },
-  help: { description: "Run alert accuracy ingest + validate + weight update" }
+  help: { description: "Run each alert/brief source once and push one Telegram message per source" }
 }, async (argv) => {
-  const stats = await runAccuracyCycle({ days: argv.flags.days });
-  if (stats) console.log(stats);
+  await runVerifySignalsPush({ collect: !argv.flags.noCollect, dryRun: argv.flags.dryRun });
 });
 
 const tradeWatchdogCommand = command({
@@ -1923,53 +1847,6 @@ const tradeWatchdogCommand = command({
   });
 });
 
-const tradeWeeklyReviewCommand = command({
-  name: "weekly-review",
-  flags: {
-    help: { type: Boolean, alias: "h", description: "Show help" },
-    weekly: { type: Boolean, description: "Force weekly summary" },
-    driftOnly: { type: Boolean, description: "Drift alerts only" },
-    pushTg: { type: Boolean, description: "Push to Telegram" },
-    dryRun: { type: Boolean, description: "Print only" }
-  },
-  help: { description: "Signal quality weekly review + drift alarm" }
-}, async (argv) => {
-  await runWeeklyReview({
-    weekly: argv.flags.weekly,
-    driftOnly: argv.flags.driftOnly,
-    pushTg: argv.flags.pushTg,
-    dryRun: argv.flags.dryRun
-  });
-});
-
-const tradeUnloadLegacyCommand = command({
-  name: "unload-legacy",
-  flags: {
-    help: { type: Boolean, alias: "h", description: "Show help" },
-    remove: { type: Boolean, description: "Delete plist files after unload" },
-    list: { type: Boolean, description: "List legacy plists only; do not unload" }
-  },
-  help: { description: "Unload com.trade-agent.* LaunchAgents from trade-agent" }
-}, async (argv) => {
-  const plists = listLegacyTradeAgentPlists();
-  if (plists.length === 0) {
-    console.log("no com.trade-agent.* LaunchAgents found");
-    return;
-  }
-  if (argv.flags.list) {
-    for (const path of plists) console.log(path);
-    return;
-  }
-  const unloaded = [
-    ...(await unloadLegacyTradeAgentServices({ removePlists: argv.flags.remove })),
-    ...(await unloadLegacyPythonAuxServices(argv.flags.remove))
-  ];
-  console.log(`unloaded ${unloaded.length} LaunchAgent(s): ${unloaded.join(", ")}`);
-  if (!argv.flags.remove) {
-    console.log("plist files kept; re-run with --remove to delete them");
-  }
-});
-
 const tradeCommand = command({
   name: "trade",
   parameters: ["[trade arguments...]"],
@@ -1988,47 +1865,15 @@ const tradeCommand = command({
         tradeRestartServiceCommand,
         tradeStatusCommand,
         tradeLogsCommand,
-        tradeUnloadLegacyCommand,
         tradeCollectCommand,
-        tradeAccuracyCommand,
+        tradeVerifyTgCommand,
         tradeWatchdogCommand,
-        tradeWeeklyReviewCommand,
         tradeAlertCommand,
         tradeBriefCommand
       ],
-      help: { description: "Crypto trade intelligence (alerts, brief, signals) — trade-agent replacement" }
+      help: { description: "Crypto trade intelligence (alerts, brief, verify-tg)" }
     },
     () => console.log(`Run \`${commandNameFromArgv(process.argv[1])} trade --help\` for usage.`),
-    process.argv.slice(3)
-  );
-});
-
-const signalCommand = command({
-  name: "signal",
-  parameters: ["[signal arguments...]"],
-  flags: {
-    help: {
-      type: Boolean,
-      alias: "h",
-      description: "Show help"
-    }
-  },
-  help: false,
-  strictFlags: false
-}, async () => {
-  await cli(
-    {
-      name: `${commandNameFromArgv(process.argv[1])} signal`,
-      strictFlags: true,
-      commands: [signalScanCommand],
-      help: {
-        description: "Crypto signal fusion engine (SignalEngine from trade-agent)"
-      }
-    },
-    () => {
-      const commandName = commandNameFromArgv(process.argv[1]);
-      console.log(`Run \`${commandName} signal --help\` for usage.`);
-    },
     process.argv.slice(3)
   );
 });
@@ -2069,7 +1914,7 @@ async function main(): Promise<void> {
       name: commandNameFromArgv(process.argv[1]),
       version: CURRENT_VERSION,
       strictFlags: true,
-      commands: [agentCommand, skillCheckCommand, projectProfileCommand, usageCommand, teamCommand, tradeCommand, signalCommand, hostCommand],
+      commands: [agentCommand, skillCheckCommand, projectProfileCommand, usageCommand, teamCommand, tradeCommand, hostCommand],
       help: {
         description: "Local BYOA agent daemon",
         examples: [
@@ -2099,13 +1944,10 @@ async function main(): Promise<void> {
           `${commandNameFromArgv(process.argv[1])} project-profile .`,
           `${commandNameFromArgv(process.argv[1])} trade install-service --push-tg`,
           `${commandNameFromArgv(process.argv[1])} trade collect`,
-          `${commandNameFromArgv(process.argv[1])} trade accuracy`,
-          `${commandNameFromArgv(process.argv[1])} trade unload-legacy --remove`,
           `${commandNameFromArgv(process.argv[1])} trade daemon --push-tg`,
-          `${commandNameFromArgv(process.argv[1])} trade alert run a --once`,
+          `${commandNameFromArgv(process.argv[1])} trade alert run q --once`,
           `${commandNameFromArgv(process.argv[1])} trade brief --push-tg`,
-          `${commandNameFromArgv(process.argv[1])} signal scan --push-tg`,
-          `${commandNameFromArgv(process.argv[1])} signal scan --sources technical,smart_money --json`
+          `${commandNameFromArgv(process.argv[1])} trade verify-tg --dry-run`
         ]
       }
     },

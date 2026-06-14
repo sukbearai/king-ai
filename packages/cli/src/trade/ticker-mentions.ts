@@ -1,11 +1,10 @@
 import { createHash } from "node:crypto";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { TRADE_MENTIONS_DB_PATH } from "../paths.js";
 import { openSqliteDb } from "./sqlite-db.js";
 import type { TwitterCacheEntry } from "./twitter-cache.js";
 import { entryTimestamp } from "./twitter-cache.js";
 
-export const MENTIONS_DB_PATH = join(homedir(), ".onchainos", "strategies", "twitter_mentions.db");
+export const MENTIONS_DB_PATH = TRADE_MENTIONS_DB_PATH;
 
 const TICKER_RE = /\$([A-Z]{2,6})\b/g;
 const TICKER_BLOCKLIST = new Set([

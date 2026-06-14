@@ -2,24 +2,19 @@ import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { createAlert, type Alert, type AlertRule, type AlertState } from "../alert-rule.js";
 import { dotGet, loadTradeConfig } from "../config.js";
-import { gmgnTokenInfo, nowDisplay, runOnchainos, runOpencli } from "../data-helpers.js";
+import { nowDisplay, runOpencli } from "../data-helpers.js";
 import { extractJsonFromText, runAgent } from "../llm-utils.js";
 import { TRADE_STATE_DIR } from "../../paths.js";
 
 const SEEN_TWEETS_DB = `${TRADE_STATE_DIR}/celebrity_seen.jsonl`;
-const CHAIN_MAP: Record<string, string> = { "1": "ethereum", "501": "solana", "56": "bsc" };
-const GMGN_CHAIN_MAP: Record<string, string> = { solana: "sol", ethereum: "eth", bsc: "bsc", base: "base" };
+const TWITTER_SEARCH_SESSION = "trade-twitter-search";
 
 const ENTITY_BLACKLIST = new Set([
   "USD", "USDT", "USDC", "AI", "CEO", "CFO", "IPO", "ETF",
   "USA", "NEW", "NFT", "DEFI", "WEB3", "FED"
 ]);
 
-const NATIVE_SYMBOL_BLACKLIST = new Set([
-  "SOL", "BTC", "ETH", "BNB", "MATIC", "AVAX", "ADA", "DOT", "TRX",
-  "WBTC", "WETH", "STETH", "WBNB", "WSOL",
-  "USDT", "USDC", "DAI", "BUSD", "TUSD", "FDUSD"
-]);
+const WARNING_ALPHA_TYPES = new Set(["endorsement", "partnership", "ipo", "policy"]);
 
 const ENTITY_PROMPT_TPL = `你是加密 meme 币 alpha 信号过滤器。判定这条推文是否描述了
 "会积聚资金/注意力到特定 token 或标的"的催化剂事件,仅当是真实 alpha
@@ -48,16 +43,35 @@ const ENTITY_PROMPT_TPL = `你是加密 meme 币 alpha 信号过滤器。判定�
 
 is_alpha=false 时 entities 必须返回 [].`;
 
-interface TokenCandidate {
-  symbol: string;
-  address: string;
+interface ChainFmRef {
   chain: string;
-  mcap: number;
-  matched_entity: string;
-  kol_smart?: number;
-  kol_renowned?: number;
-  kol_total?: number;
-  score?: number;
+  address: string;
+  url: string;
+}
+
+function chainFmUrl(chain: string, address: string): string {
+  return `https://chain.fm/token/${chain}/${address}`;
+}
+
+export function extractChainFmRefs(text: string): ChainFmRef[] {
+  const chainMap: Record<string, string> = {
+    solana: "solana", sol: "solana", bsc: "bsc", ethereum: "ethereum", eth: "ethereum", base: "base"
+  };
+  const seen = new Set<string>();
+  const refs: ChainFmRef[] = [];
+  for (const match of text.matchAll(/chain\.fm\/token\/(\w+)\/([0-9a-zA-Z]+)/gi)) {
+    const chainRaw = match[1]!.toLowerCase();
+    const address = match[2]!;
+    const key = `${chainRaw}:${address}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    refs.push({
+      chain: chainMap[chainRaw] ?? chainRaw,
+      address,
+      url: chainFmUrl(chainRaw, address)
+    });
+  }
+  return refs;
 }
 
 async function loadSeenIds(): Promise<Set<string>> {
@@ -86,16 +100,47 @@ async function persistSeen(tid: string): Promise<void> {
 
 async function fetchTweets(username: string, fetchLimit: number): Promise<Array<Record<string, unknown>>> {
   try {
-    const rows = await runOpencli([
-      "twitter", "search", `from:${username}`,
-      "--filter", "live",
-      "--limit", String(fetchLimit),
-      "--site-session", "persistent",
-      "--keep-tab", "true",
-      "--format", "json"
-    ], 60_000);
-    if (rows.length && Array.isArray(rows[0])) return rows[0] as Array<Record<string, unknown>>;
-    return rows as Array<Record<string, unknown>>;
+    const url = `https://x.com/search?q=${encodeURIComponent(`from:${username}`)}&f=live`;
+    const js = `(function() {
+  const out = [];
+  const seen = new Set();
+  for (const article of document.querySelectorAll('article')) {
+    const textEl = article.querySelector('[data-testid="tweetText"]') || article;
+    const text = textEl ? textEl.innerText.trim() : '';
+    const link = article.querySelector('a[href*="/status/"]');
+    const href = link ? (link.getAttribute('href') || '') : '';
+    const idMatch = href.match(/status\\/(\\d+)/);
+    const id = idMatch ? idMatch[1] : '';
+    if (!text && !id) continue;
+    const key = id || text.slice(0, 100);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const timeEl = article.querySelector('time');
+    out.push({
+      id,
+      text,
+      author: ${JSON.stringify(username)},
+      created_at: timeEl ? (timeEl.getAttribute('datetime') || timeEl.innerText || '') : '',
+      likes: 0,
+      views: 0,
+      url: id ? 'https://x.com/i/status/' + id : (href ? new URL(href, location.origin).href : '')
+    });
+    if (out.length >= ${Math.max(1, Math.min(fetchLimit, 50))}) break;
+  }
+  return out;
+})()`;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await runOpencli(["browser", TWITTER_SEARCH_SESSION, "close"], 10_000);
+      await runOpencli(["browser", TWITTER_SEARCH_SESSION, "--window", "foreground", "open", url], 30_000);
+      await runOpencli(["browser", TWITTER_SEARCH_SESSION, "--window", "foreground", "wait", "time", "5"], 10_000);
+      await runOpencli(["browser", TWITTER_SEARCH_SESSION, "--window", "foreground", "wait", "selector", "article", "--timeout", "30000"], 35_000);
+      const evalResult = await runOpencli(["browser", TWITTER_SEARCH_SESSION, "--window", "foreground", "eval", js], 30_000);
+      if (!evalResult.ok) continue;
+      const rows = evalResult.data
+        .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row));
+      if (rows.length) return rows;
+    }
+    return [];
   } catch {
     return [];
   }
@@ -124,70 +169,15 @@ async function extractEntities(text: string, author: string): Promise<{ entities
   return { entities: clean, meta };
 }
 
-async function findTopTokens(
-  entities: string[],
-  topN: number,
-  enrichPool: number,
-  kolDivisor: number
-): Promise<TokenCandidate[]> {
-  const seenAddrs = new Map<string, TokenCandidate>();
-  for (const ent of entities) {
-    if (NATIVE_SYMBOL_BLACKLIST.has(ent.toUpperCase())) continue;
-    const data = await runOnchainos(["token", "search", "--query", ent]);
-    const toks = Array.isArray(data)
-      ? data
-      : (data && typeof data === "object" ? (data as Record<string, unknown>).tokens : []);
-    const tokenList = Array.isArray(toks) ? toks : [];
-    for (const tok of tokenList.slice(0, 10)) {
-      if (!tok || typeof tok !== "object") continue;
-      const t = tok as Record<string, unknown>;
-      const addr = String(t.tokenContractAddress ?? t.tokenAddress ?? "");
-      if (!addr || seenAddrs.has(addr)) continue;
-      const sym = String(t.tokenSymbol ?? "").toUpperCase();
-      const name = String(t.tokenName ?? "").toUpperCase();
-      const entU = ent.toUpperCase();
-      if (!sym.includes(entU) && !name.includes(entU)) continue;
-      if (NATIVE_SYMBOL_BLACKLIST.has(sym)) continue;
-      const mcap = Number.parseFloat(String(t.marketCap ?? t.usd_market_cap ?? 0));
-      if (!Number.isFinite(mcap) || mcap <= 0) continue;
-      const ch = CHAIN_MAP[String(t.chainIndex ?? "")] ?? "";
-      if (!ch) continue;
-      seenAddrs.set(addr, {
-        symbol: String(t.tokenSymbol ?? "?"),
-        address: addr,
-        chain: ch,
-        mcap,
-        matched_entity: ent
-      });
-    }
-  }
-  if (!seenAddrs.size) return [];
-
-  let candidates = [...seenAddrs.values()].sort((a, b) => b.mcap - a.mcap);
-  candidates = candidates.slice(0, Math.max(topN + 2, enrichPool));
-
-  for (const c of candidates) {
-    const gchain = GMGN_CHAIN_MAP[c.chain] ?? c.chain.slice(0, 3);
-    const info = await gmgnTokenInfo(gchain, c.address);
-    const wt = (info.wallet_tags_stat ?? {}) as Record<string, unknown>;
-    c.kol_smart = Number(wt.smart_wallets ?? 0);
-    c.kol_renowned = Number(wt.renowned_wallets ?? 0);
-    c.kol_total = (c.kol_smart ?? 0) + (c.kol_renowned ?? 0);
-    c.score = c.mcap * (1 + (c.kol_total ?? 0) / kolDivisor);
-  }
-
-  return candidates.sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, topN);
+export function celebrityAlertSeverity(alphaType: string, entityCount: number): Alert["severity"] {
+  if (WARNING_ALPHA_TYPES.has(alphaType) || entityCount >= 3) return "warning";
+  return "info";
 }
 
 export function createRuleTCelebrity(): AlertRule {
   let seen = new Set<string>();
   let accounts: string[] = [];
-  let topN = 3;
   let fetchLimit = 10;
-  let warningMcap = 1_000_000;
-  let warningKol = 30;
-  let enrichPool = 5;
-  let kolDivisor = 100;
 
   return {
     name: "celebrity_tweet",
@@ -197,12 +187,7 @@ export function createRuleTCelebrity(): AlertRule {
       const config = await loadTradeConfig();
       const cfg = (dotGet(config, "alerts.celebrity_tweet", {}) ?? {}) as Record<string, unknown>;
       accounts = Array.isArray(cfg.accounts) ? cfg.accounts.map(String) : [];
-      topN = Number(cfg.top_n ?? 3);
       fetchLimit = Number(cfg.fetch_limit ?? 10);
-      warningMcap = Number(cfg.warning_mcap ?? 1_000_000);
-      warningKol = Number(cfg.warning_kol ?? 30);
-      enrichPool = Number(cfg.enrich_pool ?? 5);
-      kolDivisor = Number(cfg.kol_divisor ?? 100);
       seen = await loadSeenIds();
 
       const alerts: Alert[] = [];
@@ -217,46 +202,37 @@ export function createRuleTCelebrity(): AlertRule {
 
           const { entities, meta } = await extractEntities(text, user);
           if (!meta.is_alpha || !entities.length) continue;
-
-          const topTokens = await findTopTokens(entities, topN, enrichPool, kolDivisor);
-          if (!topTokens.length) continue;
           if (!state.canAlert(`t_${tid}`, 600)) continue;
 
-          const primary = topTokens[0]!;
           const alphaType = String(meta.alpha_type ?? "none");
           const reason = String(meta.reason ?? "");
-          const title = `@${user} [${alphaType}] → $${primary.symbol} (MC $${primary.mcap.toLocaleString()} · KOL ${primary.kol_total ?? 0})`;
+          const chainRefs = extractChainFmRefs(text);
+          const entityLabel = entities.slice(0, 3).join(", ");
+          const title = `@${user} [${alphaType}] → ${entityLabel}`;
           const lines = [
             `⚡ alpha=${alphaType} — ${reason}`,
             `💬 ${text.slice(0, 200)}`,
             `🔗 ${String(tw.url ?? "")}`,
-            `🎯 抽取 entities: ${entities.join(", ")}`,
-            "",
-            `📊 Top ${topTokens.length} by mcap×KOL score:`
+            `🎯 抽取 entities: ${entities.join(", ")}`
           ];
-          for (let i = 0; i < topTokens.length; i++) {
-            const t = topTokens[i]!;
-            lines.push(
-              `  ${i + 1}. $${t.symbol} (${t.chain}) MC $${t.mcap.toLocaleString()} · KOL ${t.kol_total ?? 0} ` +
-              `(smart=${t.kol_smart ?? 0}, renowned=${t.kol_renowned ?? 0}) — matched '${t.matched_entity}'`
-            );
-            lines.push(`     https://gmgn.ai/${t.chain}/token/${t.address}`);
+          if (chainRefs.length) {
+            lines.push("", "📋 推文内 chain.fm 链接:");
+            for (const ref of chainRefs) {
+              lines.push(`  ${ref.chain} ${ref.address}`);
+              lines.push(`  ${ref.url}`);
+            }
           }
 
-          const kolSignal = (primary.kol_total ?? 0) >= warningKol;
-          const mcapSignal = primary.mcap >= warningMcap;
-          const severity: Alert["severity"] = kolSignal || mcapSignal ? "warning" : "info";
-
+          const primaryRef = chainRefs[0];
           alerts.push(createAlert({
             rule: "t",
-            severity,
+            severity: celebrityAlertSeverity(alphaType, entities.length),
             title,
             detail: lines.join("\n"),
             timestamp: nowDisplay(),
-            asset: primary.symbol,
-            tokenContract: primary.address,
-            tokenChain: primary.chain,
-            tokenMcap: primary.mcap
+            asset: entities[0] ?? "",
+            tokenContract: primaryRef?.address ?? "",
+            tokenChain: primaryRef?.chain ?? ""
           }));
         }
       }
