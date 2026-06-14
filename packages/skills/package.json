@@ -1,6 +1,6 @@
 {
   "name": "@king-ai/skills",
-  "version": "0.2.81",
+  "version": "0.2.82",
   "private": true,
   "type": "module",
   "description": "Shared Codex skills for King AI operational workflows.",
