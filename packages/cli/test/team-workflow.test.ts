@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { KING_AI_ROLE_TEMPLATES, checkTeamPermission, defaultTeamSpec, normalizeTeamRoleId, requiredCapabilitiesForText, roleTemplateForAgent, scenarioTemplate } from "../src/team-workflow.js";
+import { KING_AI_ROLE_TEMPLATES, checkTeamPermission, defaultTeamSpec, hasExplicitImplementationIntent, isPlannerGuidanceText, normalizeTeamRoleId, requiredCapabilitiesForText, roleTemplateForAgent, scenarioTemplate } from "../src/team-workflow.js";
 
 test("default team exposes structured role templates and routing policy", () => {
   const team = defaultTeamSpec();
@@ -45,6 +45,24 @@ test("shared collaboration semantics classify agents and request capabilities", 
   assert.deepEqual(requiredCapabilitiesForText("轮流报数"), ["coordination"]);
   assert.deepEqual(requiredCapabilitiesForText("team count in order"), ["coordination"]);
   assert.deepEqual(requiredCapabilitiesForText("build the feature"), ["implementation", "code"]);
+  assert.deepEqual(requiredCapabilitiesForText("接下来做什么"), ["coordination"]);
+  assert.deepEqual(requiredCapabilitiesForText("还没改完？"), ["coordination"]);
+  assert.deepEqual(requiredCapabilitiesForText("你推荐个方案"), ["coordination"]);
+});
+
+test("planner guidance text stays out of builder routing", () => {
+  assert.equal(isPlannerGuidanceText("接下来做什么"), true);
+  assert.equal(isPlannerGuidanceText("继续下一步"), true);
+  assert.equal(isPlannerGuidanceText("还没改完？"), true);
+  assert.equal(isPlannerGuidanceText("改造完了？"), true);
+  assert.equal(isPlannerGuidanceText("你推荐个方案"), true);
+  assert.equal(isPlannerGuidanceText("哪些任务啊？"), true);
+  assert.equal(isPlannerGuidanceText("怎么验证要提交发布吗"), true);
+  assert.equal(isPlannerGuidanceText("是不是有问题?"), true);
+  assert.equal(isPlannerGuidanceText("Go Phase 2"), true);
+  assert.equal(isPlannerGuidanceText("请团队实现多角色协作"), false);
+  assert.equal(hasExplicitImplementationIntent("请团队实现多角色协作"), true);
+  assert.equal(hasExplicitImplementationIntent("@dev roll call reply"), true);
 });
 
 test("built-in team scenarios include roles tasks and acceptance", () => {

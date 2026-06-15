@@ -242,8 +242,72 @@ export function roleTemplateForAgent(agent: KingAgentRoleLike): KingRoleTemplate
   return "builder";
 }
 
+function isRuntimeLogPaste(text: string): boolean {
+  const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+  if (lines.length < 3) return false;
+  const logLines = lines.filter((line) => /^\[\d{4}-\d{2}-\d{2}T/.test(line) && /\[[\w-]+\/[\w-]+\]/.test(line));
+  return logLines.length >= 3 || (logLines.length >= 2 && logLines.length / lines.length >= 0.5);
+}
+
+/** True when the message asks for concrete implementation work, not coordinator guidance. */
+export function hasExplicitImplementationIntent(text: string): boolean {
+  const body = text.trim();
+  if (!body) return false;
+  const value = body.toLowerCase();
+
+  if (/@(?:dev|builder)\b/i.test(body)) {
+    if (/\b(roll call|reply with \d+|presence check|attendance)\b/i.test(value)) return true;
+    if (/(实现|开发|修复|编写|添加|做成|搞定)/.test(body)) return true;
+    if (/\b(implement|build|fix|create|add|write|code|ship|deploy)\b/i.test(value)) return true;
+  }
+
+  if (/请.*(?:团队|大家|dev).*(?:实现|开发|修复|做|完成)/.test(body)) return true;
+  if (/(?:实现|开发|修复|编写|添加).{0,24}(?:功能|模块|接口|命令|适配|层|bug|feature)/i.test(body)) return true;
+  if (/\b(implement|build|fix|create|add|write)\b.+\b(feature|bug|module|api|endpoint|adapter|command)\b/i.test(value)) return true;
+  if (/\bphase\s*\d+\b/i.test(value) && /\b(implement|build|add|create|adapter|materialize)\b/i.test(value)) return true;
+
+  return false;
+}
+
+/** Status, planning, approval, or meta questions that the coordinator should answer in chat. */
+export function isPlannerGuidanceText(text: string): boolean {
+  const body = text.trim();
+  if (!body) return false;
+  if (hasExplicitImplementationIntent(body)) return false;
+  if (isRuntimeLogPaste(body)) return true;
+
+  const value = body.toLowerCase();
+
+  if (/(还没|尚未|有没有).{0,8}(改完|做完|完成|搞定|落地|实现)/.test(body)) return true;
+  if (/(改造|做|弄).{0,4}(完了|好了|完了吗|好了吗|完了？)/.test(body)) return true;
+  if (/\b(done yet|finished yet|not done|still working|implemented yet)\b/i.test(value)) return true;
+
+  if (/接下来.{0,12}做什么|继续.{0,6}下一步|下一步.{0,8}(做什么|怎么|走)?/.test(body)) return true;
+  if (/\b(what'?s next|what next|continue next|proceed next)\b/i.test(value)) return true;
+
+  if (/(推荐|给个?).{0,8}(方案|计划|建议|路线)/.test(body)) return true;
+  if (/\b(recommend|suggest).{0,12}(plan|approach|option|path)\b/i.test(value)) return true;
+
+  if (/(哪些|什么|有啥).{0,6}任务/.test(body)) return true;
+  if (/\b(which|what).{0,8}tasks?\b/i.test(value)) return true;
+
+  if (/(怎么|如何).{0,8}(验证|验收|发布|提交|部署)/.test(body)) return true;
+  if (/(要不要|需要|是否).{0,8}(发布|提交|部署)/.test(body)) return true;
+  if (/\b(how (to )?verify|need (to )?(publish|release|deploy)|should (i|we) (publish|release|deploy))\b/i.test(value)) return true;
+
+  if (/^(go|yes|ok|收到|确认|拍板)/i.test(body)) return true;
+  if (/(拍板|确认开工|落盘吧)/.test(body)) return true;
+  if (/\b(hold|pause|wait)\b/i.test(value) && body.length < 80) return true;
+
+  if (/(是不是|有没有|是否).{0,6}问题/.test(body)) return true;
+  if (/\b(any (issues?|problems?)|is there (a )?problem)\b/i.test(value)) return true;
+
+  return false;
+}
+
 export function requiredCapabilitiesForText(text: string): string[] {
   const value = text.toLowerCase();
+  if (isPlannerGuidanceText(text)) return ["coordination"];
   if (/\b(everyone|everybody|all hands|team)\b/.test(value) && /\b(roll call|presence check|attendance check|reply with \d+)\b/.test(value)) return ["coordination"];
   if (/(所有人|大家|全员).*(回个?|回复|报个?)\s*\d+/.test(text)) return ["coordination"];
   if (/(有人|都|还).{0,6}(在吗|在不在)/.test(text)) return ["coordination"];

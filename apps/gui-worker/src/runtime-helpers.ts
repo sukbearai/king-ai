@@ -1,4 +1,5 @@
 import type { RoutedRuntimeMessage } from "@suwujs/king-ai/message-routing";
+import { isPlannerGuidanceText } from "@suwujs/king-ai/team-workflow";
 
 export interface ConversationTeamLike {
   id?: string;
@@ -35,7 +36,15 @@ export function shouldAutoDelegateMessage(conversation: ConversationTeamLike, me
   if (/^(hi|hello|hey|thanks|thank you|ok|okay|yes|no)[!.?\s]*$/i.test(body)) return false;
   if (/^(你好|大家好|谢谢|在吗|收到)[!.?\s]*$/u.test(body)) return false;
   if (isLightweightCoordinationMessage(conversation, body)) return false;
+  if (isPlannerGuidanceMessage(conversation, body)) return false;
   return true;
+}
+
+/** Team-room guidance/status/decision pings — coordinator answers in chat, no builder task. */
+export function isPlannerGuidanceMessage(conversation: ConversationTeamLike, messageBody = ""): boolean {
+  const mode = conversation.teamMode ?? "team";
+  if (mode === "single") return false;
+  return isPlannerGuidanceText(messageBody);
 }
 
 export function isGroupRollCallMessage(conversation: ConversationTeamLike, messageBody = ""): boolean {

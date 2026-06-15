@@ -5,6 +5,7 @@ export {
   isGroupRollCallMessage,
   isGroupSequentialCountMessage,
   isLightweightCoordinationMessage,
+  isPlannerGuidanceMessage,
   resolveWakeEvent,
   resolveWakeData,
   shouldAutoDelegateMessage,

@@ -16,6 +16,7 @@ export const WORKER_RUNTIME_FEATURES = [
   "chat-image-preview",
   "lightweight-coordination",
   "sequential-coordination",
+  "planner-guidance-routing",
   "task-inbox-settle"
 ] as const;
 

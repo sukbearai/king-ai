@@ -8,6 +8,7 @@ import worker, {
   isGroupRollCallMessage,
   isGroupSequentialCountMessage,
   isLightweightCoordinationMessage,
+  isPlannerGuidanceMessage,
   resolveWakeEvent,
   resolveWakeData,
   shouldAutoDelegateMessage,
@@ -5515,6 +5516,36 @@ test("shouldAutoDelegateMessage keeps single-mode tracking and gates casual team
   assert.equal(shouldAutoDelegateMessage(team, "@dev roll call reply"), true);
   assert.equal(shouldAutoDelegateMessage(team, "research competitors and source evidence"), true);
   assert.equal(shouldAutoDelegateMessage(team, "请团队实现多角色协作"), true);
+  assert.equal(shouldAutoDelegateMessage(team, "接下来做什么"), false);
+  assert.equal(shouldAutoDelegateMessage(team, "还没改完？"), false);
+  assert.equal(shouldAutoDelegateMessage(team, "你推荐个方案"), false);
+  assert.equal(shouldAutoDelegateMessage(team, "是不是有问题?"), false);
+  assert.equal(isPlannerGuidanceMessage(team, "继续下一步"), true);
+  assert.equal(isPlannerGuidanceMessage(single, "继续下一步"), false);
+});
+
+test("planner guidance in #all does not spawn dev tasks", async () => {
+  const bindings = env();
+  await pairComputer(bindings, { engines: ["grok"] });
+  await worker.fetch(new Request("https://gui/gui/message", {
+    method: "POST",
+    body: JSON.stringify({ conversationId: "king-ai-convo", body: "接下来做什么" })
+  }), bindings);
+
+  const state = await json<{
+    tasks: { requestMessageId?: string; assignee?: string }[];
+    messages: { id: string; body: string; author_kind: string }[];
+    wakeLog?: { event: string; data: { agentId?: string; taskId?: string; agenda?: boolean } }[];
+  }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
+  const human = state.messages.find((row) => row.author_kind === "human" && row.body === "接下来做什么");
+  assert.equal(state.tasks.some((row) => row.requestMessageId === human?.id), false);
+  assert.equal(state.wakeLog?.some((row) =>
+    row.event === "wake" &&
+    row.data.agentId === "king-ai-ceo" &&
+    row.data.taskId === undefined &&
+    row.data.agenda !== true
+  ), true);
+  assert.equal(state.wakeLog?.some((row) => row.data.agentId === "dev" && row.data.agenda === true), false);
 });
 
 test("presence checks in #all do not spawn reviewer tasks", async () => {

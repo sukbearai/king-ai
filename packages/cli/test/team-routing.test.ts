@@ -20,6 +20,7 @@ test("selectOwnerRole picks the best capability match under capability-first rou
   // No overlap returns undefined so the caller can fall back to an explicit owner.
   assert.equal(selectOwnerRole(team, ["unknown-capability"]), undefined);
   assert.equal(selectOwnerRole(team, []), undefined);
+  assert.equal(selectOwnerRole(team, ["coordination"]), "planner");
 });
 
 test("planHandoff routes a completed builder card to its reviewer", () => {
