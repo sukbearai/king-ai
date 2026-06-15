@@ -6,8 +6,10 @@ export function readOption(args: string[], name: string): string | undefined {
 }
 
 export function readBooleanOption(args: string[], name: string): boolean | undefined {
-  const raw = readOption(args, name);
-  if (raw === undefined) return undefined;
+  const idx = args.indexOf(name);
+  if (idx < 0) return undefined;
+  const raw = args[idx + 1];
+  if (raw === undefined || raw.startsWith("--")) return true;
   const value = raw.trim().toLowerCase();
   if (value === "1" || value === "true" || value === "yes" || value === "on") return true;
   if (value === "0" || value === "false" || value === "no" || value === "off") return false;

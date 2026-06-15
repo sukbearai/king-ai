@@ -23,6 +23,8 @@ import { encode, json, requestKeepAlive } from "./gui-http.js";
 import { createGuiApp } from "./gui-routes.js";
 import {
   CLI_LOG_CAPACITY,
+  CLI_LOG_RESULT_MAX_CHARS,
+  MESSAGE_STORE_CAPACITY,
   DEFAULT_AGENT,
   DEFAULT_CONVERSATION,
   DEFAULT_EVALUATION_CRITERIA,
@@ -280,7 +282,20 @@ export class GuiState implements DurableObject {
     if (path === "/agenda") return this.authRuntime(request, async (agentId) => this.agenda(agentId));
     if (path === "/roster") return this.authRuntime(request, async () => this.roster());
     if (path === "/preamble") return this.authRuntime(request, async () => this.preamble(url.searchParams));
-    if (path === "/cli") return this.authRuntime(request, async (agentId) => this.cli({ ...await request.json() as { argv?: string[]; agentId?: string }, tokenAgentId: agentId, authUser: authUserFromRequest(request) }));
+    if (path === "/cli") {
+      return this.authRuntime(request, async (agentId) => {
+        try {
+          return await this.cli({
+            ...await request.json() as { argv?: string[]; agentId?: string; engine?: string; runId?: string; contract?: unknown },
+            tokenAgentId: agentId,
+            authUser: authUserFromRequest(request)
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return json({ exitCode: 70, text: `cli error: ${message}` });
+        }
+      });
+    }
     if (path === "/mark-read") return this.authRuntime(request, async (agentId) => this.markRead(await request.json() as { conversationId?: string; upToMessageId?: string }, agentId));
     if (path === "/status") return this.authRuntime(request, async (agentId) => this.status(await request.json() as { status?: string; remediation?: unknown }, agentId));
     if (path === "/typing") return this.authRuntime(request, async (agentId) => this.typing(await request.json() as { conversationId?: string; done?: boolean }, agentId));
@@ -475,7 +490,7 @@ export class GuiState implements DurableObject {
     saved.remoteAssist = normalizeRemoteAssistGrant(saved.remoteAssist);
     saved.agents = normalizeAgents(saved.agents);
     saved.workflowAgentIds = normalizeWorkflowAgentIds(saved.workflowAgentIds, saved.agents);
-    saved.messages = normalizeMessages(saved.messages ?? []);
+    saved.messages = normalizeMessages((saved.messages ?? []).slice(-MESSAGE_STORE_CAPACITY));
     saved.tasks = normalizeTasks(saved.tasks ?? []);
     saved.taskEvents = normalizeTaskEvents(saved.taskEvents ?? []);
     saved.cards = normalizeCards(saved.cards ?? []);
@@ -496,7 +511,12 @@ export class GuiState implements DurableObject {
       conversation.teamAgentIds = team.teamAgentIds;
       conversation.teamSnapshot = buildConversationTeamSnapshot(saved, team, {}, conversation.teamSnapshot?.createdAt ?? (conversation.created_at || Date.now()));
     }
-    saved.cliLog = (saved.cliLog ?? []).slice(-CLI_LOG_CAPACITY);
+    saved.cliLog = (saved.cliLog ?? []).slice(-CLI_LOG_CAPACITY).map((row) => ({
+      ...row,
+      result: typeof row.result === "string" && row.result.length > CLI_LOG_RESULT_MAX_CHARS
+        ? `${row.result.slice(0, CLI_LOG_RESULT_MAX_CHARS)}…`
+        : row.result
+    }));
     saved.statusLog = (saved.statusLog ?? []).slice(-STATUS_LOG_CAPACITY);
     saved.typingLog = (saved.typingLog ?? []).slice(-TYPING_LOG_CAPACITY);
     saved.thinkingLog = (saved.thinkingLog ?? []).slice(-THINKING_LOG_CAPACITY);
