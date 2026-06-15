@@ -7,7 +7,9 @@ import type { GuiCliCard } from "../src/gui-cli-card.js";
 import type { GuiCliInitiative } from "../src/gui-cli-initiative.js";
 import type { GuiCliTask } from "../src/gui-cli-task.js";
 import { runCapsuleCommand } from "../src/gui-cli-capsule.js";
-import { runInitiativeCommand } from "../src/gui-cli-initiative.js";
+import { runInitiativeCommand, type RunInitiativeCommandDeps } from "../src/gui-cli-initiative.js";
+import type { GuiCliContextEntry } from "../src/gui-cli-context.js";
+import type { GuiCliDoc } from "../src/gui-cli-doc.js";
 import { runLoopCommand } from "../src/gui-cli-loop.js";
 import { runMergeCommand } from "../src/gui-cli-merge.js";
 import { runPlanCommand } from "../src/gui-cli-plan.js";
@@ -115,25 +117,55 @@ test("runLoopCommand records tick events", () => {
   assert.equal(state.loopEvents.length, 1);
 });
 
-test("runInitiativeCommand and runCapsuleCommand create records", () => {
-  const state = {
-    initiatives: [] as GuiCliInitiative[],
-    tasks: [] as Array<{ initiativeId?: string }>,
-    capsules: [] as GuiCliCapsule[]
-  };
-  const initiativeResult = runInitiativeCommand(state, ["create", "Q2", "--goal", "Ship"], {
+type InitiativeTestState = {
+  initiatives: GuiCliInitiative[];
+  tasks: GuiCliTask[];
+  capsules: GuiCliCapsule[];
+  docs: GuiCliDoc[];
+  context: GuiCliContextEntry[];
+};
+
+function initiativeDeps(
+  state: InitiativeTestState,
+  overrides: Partial<RunInitiativeCommandDeps<InitiativeTestState, GuiCliInitiative>> = {}
+): RunInitiativeCommandDeps<InitiativeTestState, GuiCliInitiative> {
+  return {
     defaultAgentId: "king-ai-ceo",
-    findInitiative: () => undefined,
-    formatInitiativeLine: (_s, initiative) => initiative.id,
-    readOption: (args, flag) => {
+    actorId: "dev",
+    findInitiative: (_state, id) => state.initiatives.find((row) => row.id === id),
+    formatInitiativeLine: (_state, initiative) => initiative.id,
+    readOption: (args: string[], flag: string) => {
       const idx = args.indexOf(flag);
       return idx >= 0 ? args[idx + 1] : undefined;
     },
-    stripOptions: (args, flags) => args.filter((arg, index) => !flags.includes(arg) && !flags.includes(args[index - 1])),
+    readBooleanOption: (args: string[], flag: string) => {
+      const idx = args.indexOf(flag);
+      if (idx < 0) return undefined;
+      const raw = args[idx + 1];
+      if (raw === undefined) return true;
+      return raw === "true";
+    },
+    stripOptions: (args: string[], flags: string[]) =>
+      args.filter((arg, index) => !flags.includes(arg) && !flags.includes(args[index - 1])),
     parseCsvOption: () => undefined,
     normalizePriority: () => 5,
-    isInitiativeStatus: (value): value is "active" => value === "active"
-  });
+    isInitiativeStatus: (value: string): value is "active" => value === "active",
+    parseExecutionPlan: (raw: string) => JSON.parse(raw),
+    applyExecutionPlan: (_state, plan, options) =>
+      `applied ${plan.optionId} initiative=${options.initiativeId} tasks=${plan.tasks.length}`,
+    ...overrides
+  };
+}
+
+test("runInitiativeCommand and runCapsuleCommand create records", () => {
+  const state: InitiativeTestState = {
+    initiatives: [],
+    tasks: [],
+    capsules: [],
+    docs: [],
+    context: []
+  };
+  const initiativeResult = runInitiativeCommand(state, ["create", "Q2", "--goal", "Ship"], initiativeDeps(state));
   assert.match(initiativeResult, /^Initiative initiative-/);
   const capsuleResult = runCapsuleCommand(state, ["create", "--goal", "Refactor", "--paths", "src/"], {
     defaultAgentId: "dev",
@@ -156,6 +188,53 @@ test("runInitiativeCommand and runCapsuleCommand create records", () => {
   assert.match(capsuleResult, /^Capsule capsule-/);
   assert.equal(state.initiatives.length, 1);
   assert.equal(state.capsules.length, 1);
+});
+
+test("runInitiativeCommand advance reports gaps and auto-applies plans", () => {
+  const state: InitiativeTestState = {
+    initiatives: [{
+      id: "initiative-1",
+      title: "Vision",
+      goal: "Ship advance CLI",
+      status: "active",
+      priority: 7,
+      created_at: 1,
+      updated_at: 1
+    }],
+    tasks: [],
+    capsules: [],
+    docs: [],
+    context: []
+  };
+  const gap = runInitiativeCommand(state, ["advance", "initiative-1"], initiativeDeps(state));
+  assert.match(gap, /no tasks linked/);
+  const auto = runInitiativeCommand(state, ["advance", "initiative-1", "--auto"], initiativeDeps(state));
+  assert.match(auto, /applied advance-initiative-1/);
+  state.tasks.push({
+    id: "task-open",
+    title: "In flight",
+    status: "assigned",
+    priority: 5,
+    initiativeId: "initiative-1"
+  });
+  const blocked = runInitiativeCommand(state, ["advance", "initiative-1", "--auto"], initiativeDeps(state));
+  assert.match(blocked, /auto: skipped/);
+});
+
+test("runInitiativeCommand persist writes vision doc and context", () => {
+  const state: InitiativeTestState = {
+    initiatives: [],
+    tasks: [],
+    capsules: [],
+    docs: [],
+    context: []
+  };
+  const result = runInitiativeCommand(state, ["persist"], initiativeDeps(state));
+  assert.match(result, /^vision plan persisted doc=/);
+  assert.equal(state.docs.length, 1);
+  assert.match(state.docs[0]?.body || "", /Phase 1/);
+  assert.equal(state.initiatives.length, 1);
+  assert.ok(state.context.some((entry) => entry.key === "vision.plan.phase" && entry.value === "1"));
 });
 
 test("runMergeCommand enqueues merge requests", () => {

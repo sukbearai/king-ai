@@ -3365,7 +3365,8 @@ test("gui runtime supports broader king-ai CLI commands", async () => {
   assert.match((await callCli(["help"])).text, /king-ai agents \[spawn\|destroy\]/);
   assert.match((await callCli(["help"])).text, /king-ai card list\|create\|claim\|move\|done\|release/);
   assert.match((await callCli(["help"])).text, /--paths a,b/);
-  assert.match((await callCli(["help"])).text, /king-ai initiative create\|list\|get\|update/);
+  assert.match((await callCli(["help"])).text, /king-ai initiative create\|list\|get\|update\|advance\|persist/);
+  assert.match((await callCli(["help"])).text, /king-ai initiative advance <id>/);
   assert.match((await callCli(["help"])).text, /king-ai capsule create\|list\|mine\|get\|update/);
   assert.match((await callCli(["help"])).text, /king-ai send <agentId> <message>/);
   assert.match((await callCli(["help"])).text, /king-ai recv \[--agent agent-id\]/);

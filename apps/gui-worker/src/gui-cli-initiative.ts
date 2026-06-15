@@ -1,3 +1,13 @@
+import type { GuiCliContextEntry } from "./gui-cli-context.js";
+import type { GuiCliDoc } from "./gui-cli-doc.js";
+import type { GuiCliExecutionPlan } from "./gui-cli-plan.js";
+import {
+  runInitiativeAdvanceCommand,
+  runInitiativePersistCommand,
+  type InitiativeLinkedCapsule,
+  type InitiativeLinkedTask
+} from "./gui-cli-initiative-advance.js";
+
 export type GuiCliInitiativeStatus = "active" | "paused" | "completed" | "abandoned";
 
 export type GuiCliInitiative = {
@@ -14,24 +24,57 @@ export type GuiCliInitiative = {
 };
 
 export type RunInitiativeCommandDeps<
-  S extends { initiatives: GuiCliInitiative[]; tasks: Array<{ initiativeId?: string }>; capsules: Array<{ initiativeId?: string }> },
+  S extends {
+    initiatives: GuiCliInitiative[];
+    tasks: InitiativeLinkedTask[];
+    capsules: InitiativeLinkedCapsule[];
+    docs: GuiCliDoc[];
+    context: GuiCliContextEntry[];
+  },
   I extends GuiCliInitiative
 > = {
   defaultAgentId: string;
+  actorId?: string;
   findInitiative: (state: S, id: string | undefined) => I | undefined;
   formatInitiativeLine: (state: S, initiative: I) => string;
   readOption: (args: string[], flag: string) => string | undefined;
+  readBooleanOption: (args: string[], flag: string) => boolean | undefined;
   stripOptions: (args: string[], flags: string[]) => string[];
   parseCsvOption: (args: string[], flag: string) => string[] | undefined;
   normalizePriority: (value: string | undefined) => number;
   isInitiativeStatus: (value: string) => value is GuiCliInitiativeStatus;
+  parseExecutionPlan: (raw: string) => GuiCliExecutionPlan;
+  applyExecutionPlan: (
+    state: S,
+    plan: GuiCliExecutionPlan,
+    options: { assign?: string; initiativeId: string }
+  ) => string;
 };
 
 export function runInitiativeCommand<
-  S extends { initiatives: GuiCliInitiative[]; tasks: Array<{ initiativeId?: string }>; capsules: Array<{ initiativeId?: string }> },
+  S extends {
+    initiatives: GuiCliInitiative[];
+    tasks: InitiativeLinkedTask[];
+    capsules: InitiativeLinkedCapsule[];
+    docs: GuiCliDoc[];
+    context: GuiCliContextEntry[];
+  },
   I extends GuiCliInitiative
 >(state: S, args: string[], deps: RunInitiativeCommandDeps<S, I>): string {
   const cmd = args[0] || "list";
+  if (cmd === "advance") {
+    return runInitiativeAdvanceCommand(state, args.slice(1), deps);
+  }
+  if (cmd === "persist") {
+    return runInitiativePersistCommand(state, args.slice(1), {
+      defaultAgentId: deps.defaultAgentId,
+      actorId: deps.actorId || deps.defaultAgentId,
+      findInitiative: deps.findInitiative,
+      readOption: deps.readOption,
+      readBooleanOption: deps.readBooleanOption,
+      normalizePriority: deps.normalizePriority
+    });
+  }
   if (cmd === "list") {
     const status = deps.readOption(args, "--status");
     const initiatives = state.initiatives.filter((initiative) => !status || initiative.status === status) as I[];
@@ -86,5 +129,5 @@ export function runInitiativeCommand<
     initiative.updated_at = Date.now();
     return `Initiative ${initiative.id} updated [${initiative.status}]`;
   }
-  return "usage: king-ai initiative create|list|get|update";
+  return "usage: king-ai initiative create|list|get|update|advance|persist";
 }

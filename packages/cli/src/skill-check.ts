@@ -59,7 +59,7 @@ export const KNOWN_SUBCOMMANDS: Record<string, Set<string>> = {
   feedback: new Set(["record", "list", "summary", "get"]),
   hypothesis: new Set(["create", "list", "update"]),
   safety: new Set(["check", "request", "list", "get", "approve", "deny", "pending"]),
-  initiative: new Set(["create", "list", "get", "update"]),
+  initiative: new Set(["create", "list", "get", "update", "advance", "persist"]),
   loop: new Set(["tick", "emit", "classify", "recent", "snapshot", "list"]),
   merge: new Set(["enqueue", "list", "get", "mark"]),
   plan: new Set(["parse", "apply"]),

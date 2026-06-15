@@ -1078,13 +1078,28 @@ export class GuiState implements DurableObject {
   private initiativeCommand(state: State, args: string[]): string {
     return runInitiativeCommand(state, args, {
       defaultAgentId: DEFAULT_AGENT.id,
+      actorId: DEFAULT_AGENT.id,
       findInitiative,
       formatInitiativeLine,
       readOption,
+      readBooleanOption,
       stripOptions,
       parseCsvOption,
       normalizePriority,
-      isInitiativeStatus
+      isInitiativeStatus,
+      parseExecutionPlan,
+      applyExecutionPlan: (currentState, plan, options) => runPlanCommand(currentState, [
+        "apply",
+        JSON.stringify(plan),
+        ...(options.assign ? ["--assign", options.assign] : []),
+        "--initiative",
+        options.initiativeId
+      ], {
+        defaultAgentId: DEFAULT_AGENT.id,
+        parseExecutionPlan,
+        readOption,
+        createTask: (input) => workflowCreateGuiTaskDraft(input) as Task
+      })
     });
   }
 
