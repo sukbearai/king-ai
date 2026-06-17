@@ -12,7 +12,7 @@
     }
   },
   "briefing": {
-    "enabled": ["stocks", "telegram", "twitter"],
+    "enabled": ["market", "stocks", "telegram", "twitter", "leaderboard", "pumpfun"],
     "schedule_hour": 5,
     "hours_lookback": 24,
     "llm_summarize": true,
@@ -24,7 +24,9 @@
       "collect_seconds": 7200,
       "max_display": 500,
       "per_author_cap": 2
-    }
+    },
+    "leaderboard": { "chains": ["solana"], "limit": 5, "time_frame": "1", "sort_by": "1" },
+    "pumpfun": { "chain": "solana", "limit": 5, "stage": "NEW" }
   },
   "stocks": {
     "watchlist": {
@@ -48,6 +50,9 @@
     "default_backend": "grok",
     "grok_model": "",
     "claude_model": "",
-    "codex_model": ""
+    "codex_model": "",
+    "agent_tasks": {
+      "celebrity_extract": { "timeout_ms": 45000 }
+    }
   }
 }

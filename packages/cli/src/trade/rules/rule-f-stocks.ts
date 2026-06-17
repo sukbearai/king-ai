@@ -22,7 +22,7 @@ const EXTENDED_THRESHOLD = 5;
 
 interface StockQuoteResult {
   price: number;
-  change_pct: number;
+  change_pct?: number;
   extended_price: number | null;
   extended_change_pct: number;
   session: "regular" | "pre" | "post";
@@ -44,14 +44,14 @@ function yahooSymbol(symbol: string): string {
   return symbol;
 }
 
-async function ashareQuote(symbol: string): Promise<{ price: number; change_pct: number } | null> {
+async function ashareQuote(symbol: string): Promise<{ price: number; change_pct?: number } | null> {
   const result = await runOpencli([
     "xueqiu", "stock", symbol,
     "--window", "foreground",
     "--site-session", "persistent",
     "--keep-tab", "true",
     "--format", "json"
-  ], 5_000);
+  ], 15_000);
   if (result.ok && result.data.length) {
     const row = result.data[0] as Record<string, unknown>;
     const price = Number(row.price ?? row.Price);
@@ -63,7 +63,7 @@ async function ashareQuote(symbol: string): Promise<{ price: number; change_pct:
   }
 
   const yf = await yahooFinanceQuote(yahooSymbol(symbol));
-  if (yf.price > 0) return { price: yf.price, change_pct: yf.change_pct ?? 0 };
+  if (yf.price > 0) return { price: yf.price, change_pct: yf.change_pct };
   return null;
 }
 
@@ -79,12 +79,12 @@ async function yahooFinanceQuoteExtended(symbol: string): Promise<StockQuoteResu
       signal: AbortSignal.timeout(10_000)
     });
     if (!res.ok) {
-      return {
-        price: base.price,
-        change_pct: base.change_pct ?? 0,
-        extended_price: null,
-        extended_change_pct: 0,
-        session: "regular"
+        return {
+          price: base.price,
+          change_pct: base.change_pct,
+          extended_price: null,
+          extended_change_pct: 0,
+          session: "regular"
       };
     }
 
@@ -106,7 +106,7 @@ async function yahooFinanceQuoteExtended(symbol: string): Promise<StockQuoteResu
     if (!result) {
       return {
         price: base.price,
-        change_pct: base.change_pct ?? 0,
+        change_pct: base.change_pct,
         extended_price: null,
         extended_change_pct: 0,
         session: "regular"
@@ -145,7 +145,7 @@ async function yahooFinanceQuoteExtended(symbol: string): Promise<StockQuoteResu
 
     return {
       price: base.price,
-      change_pct: base.change_pct ?? 0,
+      change_pct: base.change_pct,
       extended_price: extendedPrice,
       extended_change_pct: Math.round(extendedPct * 100) / 100,
       session
@@ -153,7 +153,7 @@ async function yahooFinanceQuoteExtended(symbol: string): Promise<StockQuoteResu
   } catch {
     return {
       price: base.price,
-      change_pct: base.change_pct ?? 0,
+      change_pct: base.change_pct,
       extended_price: null,
       extended_change_pct: 0,
       session: "regular"
@@ -181,7 +181,7 @@ async function fetchStock(symbol: string): Promise<StockQuoteResult | null> {
   if (base.price > 0) {
     return {
       price: base.price,
-      change_pct: base.change_pct ?? 0,
+      change_pct: base.change_pct,
       extended_price: null,
       extended_change_pct: 0,
       session: "regular"
@@ -212,6 +212,7 @@ export function createRuleF(threshold = 5): AlertRule {
         if (!quote) continue;
 
         const { price, change_pct: change, extended_price: extPrice, extended_change_pct: extChange, session } = quote;
+        if (change == null) continue;
         const symThreshold = ETF_SYMBOLS.has(symbol) ? 3 : threshold;
 
         if (Math.abs(change) >= symThreshold) {

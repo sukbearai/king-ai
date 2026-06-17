@@ -43,6 +43,8 @@ const ENTITY_PROMPT_TPL = `你是加密 meme 币 alpha 信号过滤器。判定�
 
 is_alpha=false 时 entities 必须返回 [].`;
 
+const TWEET_UI_FRAGMENT_RE = /^(?:@\w+|·|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}|\d{1,2}:\d{2}|\d+(?:\.\d+)?[KMB]?|\d+(?:\.\d+)?[KMB]?\s*(?:views?|likes?|reposts?)?)$/i;
+
 interface ChainFmRef {
   chain: string;
   address: string;
@@ -148,7 +150,7 @@ async function fetchTweets(username: string, fetchLimit: number): Promise<Array<
 
 async function extractEntities(text: string, author: string): Promise<{ entities: string[]; meta: Record<string, unknown> }> {
   const prompt = ENTITY_PROMPT_TPL.replace("{text}", text.slice(0, 500)).replace("{author}", author);
-  const result = await runAgent(prompt, { timeoutMs: 30_000, task: "summarize" });
+  const result = await runAgent(prompt, { timeoutMs: 45_000, task: "celebrity_extract" });
   const parsed = extractJsonFromText(result) as Record<string, unknown> | null;
   if (!parsed || typeof parsed !== "object") return { entities: [], meta: {} };
   const meta = {
@@ -167,6 +169,18 @@ async function extractEntities(text: string, author: string): Promise<{ entities
     clean.push(s);
   }
   return { entities: clean, meta };
+}
+
+export function isLikelyTweetUiFragment(text: string, author: string): boolean {
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (!lines.length || lines.length > 12) return false;
+  const authorRe = new RegExp(`^@?${author.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
+  const nonUi = lines.filter((line) => {
+    if (authorRe.test(line)) return false;
+    if (line.toLowerCase() === "donald j. trump" && author.toLowerCase() === "realdonaldtrump") return false;
+    return !TWEET_UI_FRAGMENT_RE.test(line);
+  });
+  return nonUi.length === 0;
 }
 
 export function celebrityAlertSeverity(alphaType: string, entityCount: number): Alert["severity"] {
@@ -199,6 +213,7 @@ export function createRuleTCelebrity(): AlertRule {
           await persistSeen(tid);
           const text = String(tw.text ?? "").trim();
           if (text.length < 10) continue;
+          if (isLikelyTweetUiFragment(text, user)) continue;
 
           const { entities, meta } = await extractEntities(text, user);
           if (!meta.is_alpha || !entities.length) continue;

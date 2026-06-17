@@ -52,7 +52,9 @@ Key config sections:
 | `alerts.poll_seconds` | Unified rule poll interval (default `120`) |
 | `alerts.confluence_enabled` | Per-asset confluence promotion inside rule ticks (default `true`) |
 | `alerts.rule_stagger_ms` | Delay between rules in one poll round (default `1000`) |
+| `briefing.enabled` | Morning brief sections, such as `market`, `stocks`, `telegram`, `twitter`, `leaderboard`, `pumpfun` |
 | `briefing.schedule_hour` | Morning brief cron hour (local, default `5`) |
+| `llm.agent_tasks.<task>.timeout_ms` | Optional per-task local agent timeout, for example `celebrity_extract` |
 | `telegram` | `bot_token` and `push_chat_id` for alert pushes |
 
 See `packages/cli/trade_config.example.json` in the repository for a minimal template.
@@ -106,7 +108,7 @@ king-ai trade verify-tg --dry-run
 king-ai trade watchdog --kill
 ```
 
-`verify-tg` runs each enabled alert and brief source once (six rules + three brief sections by default) and pushes one Telegram message per source. Trade AI summaries and PANews classification use the local agent CLI chain (`grok` → `claude` → `codex`) via `llm.default_backend`.
+`verify-tg` runs each enabled alert and brief source once (six rules + the configured brief sections) and pushes one Telegram message per source. Trade AI summaries and PANews classification use the local agent CLI chain (`grok` → `claude` → `codex`) via `llm.default_backend`.
 
 ## OpenCLI Browser Bridge
 
@@ -127,6 +129,7 @@ Trade rules call local CLIs when available:
 
 - `opencli` — Twitter/X, Xueqiu, and Discord browser-backed reads
 - `tg` — Telegram channel reads
+- `onchainos` — optional smart-money leaderboard and Pump.fun brief sections
 - Yahoo Finance HTTP — stock quotes
 - Local agent CLI (`grok`, `claude`, or `codex`) — LLM summarization, PANews classification, and celebrity tweet parsing
 

@@ -103,7 +103,10 @@ export async function runAgent(
   const task = options.task ?? "summarize";
   const tasks = (dotGet(config, "llm.agent_tasks", {}) ?? {}) as Record<string, unknown>;
   const taskCfg = (tasks[task] ?? {}) as Record<string, unknown>;
-  const timeoutMs = options.timeoutMs ?? 60_000;
+  const configuredTimeout = Number(taskCfg.timeout_ms);
+  const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0
+    ? configuredTimeout
+    : options.timeoutMs ?? 60_000;
   const backends = agentBackendOrder(llmCfg, String(taskCfg.backend ?? ""));
 
   for (const name of backends) {

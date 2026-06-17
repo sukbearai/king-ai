@@ -52,7 +52,9 @@ king-ai trade daemon --push-tg
 | `alerts.poll_seconds` | 统一规则轮询间隔（默认 `120`） |
 | `alerts.confluence_enabled` | 单规则 tick 内同标的共振升 severity（默认 `true`） |
 | `alerts.rule_stagger_ms` | 一轮轮询中规则之间的间隔毫秒（默认 `1000`） |
+| `briefing.enabled` | 晨报板块，例如 `market`、`stocks`、`telegram`、`twitter`、`leaderboard`、`pumpfun` |
 | `briefing.schedule_hour` | 晨报 cron 小时（本地时间，默认 `5`） |
+| `llm.agent_tasks.<task>.timeout_ms` | 可选的本地 agent 单任务超时，例如 `celebrity_extract` |
 | `telegram` | `bot_token` 与 `push_chat_id`，用于推送告警 |
 
 仓库内模板见 `packages/cli/trade_config.example.json`。
@@ -106,7 +108,7 @@ king-ai trade verify-tg --dry-run
 king-ai trade watchdog --kill
 ```
 
-`verify-tg` 会各跑一遍当前启用的告警与晨报源（默认六条规则 + 晨报三板块），每个源推一条 Telegram。晨报摘要与 PANews 分类走本地 agent CLI 链（`grok` → `claude` → `codex`），由 `llm.default_backend` 控制首选后端。
+`verify-tg` 会各跑一遍当前启用的告警与晨报源（六条规则 + 当前配置的晨报板块），每个源推一条 Telegram。晨报摘要与 PANews 分类走本地 agent CLI 链（`grok` → `claude` → `codex`），由 `llm.default_backend` 控制首选后端。
 
 ## OpenCLI Browser Bridge
 
@@ -125,6 +127,7 @@ king-ai trade alert run f --once --dry-run
 
 - `opencli` — Twitter/X、雪球、Discord 浏览器读取
 - `tg` — Telegram 频道读取
+- `onchainos` — 可选的聪明钱 Leaderboard 与 Pump.fun 晨报板块
 - Yahoo Finance HTTP — 股票报价
 - 本地 agent CLI（`grok`、`claude`、`codex`）— 摘要、PANews 分类、名人推文解析
 

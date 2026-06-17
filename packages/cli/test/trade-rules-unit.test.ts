@@ -4,7 +4,8 @@ import { directionLabel, createAlert } from "../src/trade/alert-rule.js";
 import { parseMemeTradeAmount } from "../src/trade/rules/rule-e-meme.js";
 import {
   celebrityAlertSeverity,
-  extractChainFmRefs
+  extractChainFmRefs,
+  isLikelyTweetUiFragment
 } from "../src/trade/rules/rule-t-celebrity.js";
 import { buildPanewsUnclassifiedAlert } from "../src/trade/rules/rule-q-panews.js";
 import { createRule, listRuleIds } from "../src/trade/rules/registry.js";
@@ -54,6 +55,19 @@ describe("celebrity rule helpers", () => {
     assert.equal(celebrityAlertSeverity("endorsement", 1), "warning");
     assert.equal(celebrityAlertSeverity("naming", 3), "warning");
     assert.equal(celebrityAlertSeverity("naming", 1), "info");
+  });
+
+  it("filters browser UI fragments before LLM extraction", () => {
+    assert.equal(isLikelyTweetUiFragment(`Donald J. Trump
+@realDonaldTrump
+·
+May 23
+0:20
+72K
+112K
+909K
+99M`, "realDonaldTrump"), true);
+    assert.equal(isLikelyTweetUiFragment("Launching a new token today on Solana", "realDonaldTrump"), false);
   });
 });
 

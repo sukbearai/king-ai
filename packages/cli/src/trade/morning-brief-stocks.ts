@@ -25,7 +25,11 @@ export async function fetchStocksSection(): Promise<string> {
       continue;
     }
     const threshold = ETF_SYMBOLS.has(symbol) ? 3 : 5;
-    const chg = q.change_pct ?? 0;
+    const chg = q.change_pct;
+    if (chg == null) {
+      lines.push(`  ${name}(${symbol}): $${q.price.toFixed(2)} (涨跌幅 N/A)`);
+      continue;
+    }
     const flag = Math.abs(chg) >= threshold ? " ⚠️" : "";
     lines.push(`  ${name}(${symbol}): $${q.price.toFixed(2)} (${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%)${flag}`);
   }

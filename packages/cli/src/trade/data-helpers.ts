@@ -107,6 +107,16 @@ export async function runTg(args: string[], timeoutMs = 60_000): Promise<CliRunR
   }
 }
 
+export async function runOnchainos(args: string[], timeoutMs = 15_000): Promise<CliRunResult<unknown>> {
+  try {
+    return cliSuccess(parseCliJson(await runCli("onchainos", args, timeoutMs)));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logCliFailure("onchainos", args, err);
+    return cliFailure({}, msg);
+  }
+}
+
 export async function runOpencli(args: string[], timeoutMs = 90_000): Promise<CliRunResult<unknown[]>> {
   try {
     const out = await runCli("opencli", args, timeoutMs);
@@ -138,11 +148,11 @@ export async function yahooFinanceQuote(symbol: string): Promise<{ price: number
     });
     if (!res.ok) return { price: 0 };
     const body = (await res.json()) as {
-      chart?: { result?: Array<{ meta?: { regularMarketPrice?: number; previousClose?: number } }> };
+      chart?: { result?: Array<{ meta?: { regularMarketPrice?: number; previousClose?: number; chartPreviousClose?: number } }> };
     };
     const meta = body.chart?.result?.[0]?.meta;
     const price = meta?.regularMarketPrice ?? 0;
-    const prev = meta?.previousClose ?? 0;
+    const prev = meta?.previousClose ?? meta?.chartPreviousClose ?? 0;
     const change_pct = prev > 0 ? ((price - prev) / prev) * 100 : undefined;
     return { price, change_pct };
   } catch {

@@ -1,5 +1,5 @@
 import { dotGet, loadTradeConfig } from "./config.js";
-import { okxGet, runTg, surfFundingRate, surfMarketTicker } from "./data-helpers.js";
+import { okxGet, runOnchainos, runTg, surfFundingRate, surfMarketTicker } from "./data-helpers.js";
 import { batchSummarize } from "./llm-summarize.js";
 import { getScratchpad } from "./scratchpad.js";
 import { sendTelegram } from "./telegram.js";
@@ -14,13 +14,15 @@ import {
 } from "./twitter-cache.js";
 import { llmSummarize } from "./llm-summarize.js";
 
-export type BriefSection = "market" | "stocks" | "twitter" | "telegram";
+export type BriefSection = "market" | "stocks" | "twitter" | "telegram" | "leaderboard" | "pumpfun";
 
 const SECTION_FETCHERS: Record<BriefSection, (hours: number) => Promise<string>> = {
   market: fetchMarketOverview,
   stocks: async () => fetchStocksSection(),
   telegram: fetchTelegramSummary,
-  twitter: fetchTwitterSummary
+  twitter: fetchTwitterSummary,
+  leaderboard: fetchLeaderboard,
+  pumpfun: fetchPumpfun
 };
 
 async function fetchMarketOverview(): Promise<string> {
@@ -125,18 +127,32 @@ async function fetchTwitterSummary(hours: number): Promise<string> {
   const cutoff = Date.now() - hours * 3600 * 1000;
   const lines: string[] = [`🐦 Twitter 时间线（最近 ${hours}h）\n`];
   const tweets: string[] = [];
+  let totalRecords = 0;
+  let staleRecords = 0;
+  let invalidTimeRecords = 0;
 
   for await (const entry of iterCacheRecords(cachePath)) {
+    totalRecords += 1;
     const author = String(entry.author ?? "").toLowerCase();
     if (author && authorBlocklist.has(author)) continue;
     const ts = entryTimestamp(entry);
-    if (!ts || ts.getTime() < cutoff) continue;
+    if (!ts) {
+      invalidTimeRecords += 1;
+      continue;
+    }
+    if (ts.getTime() < cutoff) {
+      staleRecords += 1;
+      continue;
+    }
     const formatted = formatTweetLine(entry);
     if (formatted) tweets.push(formatted);
   }
 
   if (!tweets.length) {
-    lines.push("暂无推文（需运行 twitter-collector 或检查 opencli 登录状态）");
+    const diagnostics = totalRecords
+      ? `缓存 ${totalRecords} 条，过期 ${staleRecords} 条，时间异常 ${invalidTimeRecords} 条`
+      : `缓存为空或不存在：${cachePath}`;
+    lines.push(`暂无推文（${diagnostics}；需运行 twitter-collector 或检查 opencli 登录状态）`);
     return lines.join("\n");
   }
 
@@ -184,20 +200,20 @@ async function fetchTelegramSummary(hours: number): Promise<string> {
         "--sync-first",
         "--json"
       ]);
-      if (!result.ok) return { label, messages: [] as string[], error: result.error };
+      if (!result.ok) return { label, messages: [] as string[], rawBytes: 0, error: result.error };
       const messages = parseTgRecentMessages(result.data);
-      return { label, messages, error: undefined as string | undefined };
+      return { label, messages, rawBytes: result.data.length, error: undefined as string | undefined };
     })
   );
 
   const blocks: Array<{ label: string; text: string }> = [];
-  for (const { label, messages, error } of fetched) {
+  for (const { label, messages, rawBytes, error } of fetched) {
     if (error) {
       lines.push(`【${label}】采集失败: ${error}`);
       continue;
     }
     if (!messages.length) {
-      lines.push(`【${label}】暂无消息`);
+      lines.push(`【${label}】暂无消息（tg 返回 ${rawBytes} 字节，但未解析到 content/text）`);
       continue;
     }
     const body = messages.join("\n");
@@ -212,6 +228,75 @@ async function fetchTelegramSummary(hours: number): Promise<string> {
     });
   }
   return lines.join("\n\n");
+}
+
+function isEmptyObject(value: unknown): boolean {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value) && Object.keys(value as Record<string, unknown>).length === 0;
+}
+
+function formatJsonPreview(value: unknown, maxLen: number): string {
+  const text = JSON.stringify(value, null, 2);
+  if (!text || text === "{}" || text === "[]") return "";
+  return text.slice(0, maxLen);
+}
+
+function limitDataRows(value: unknown, limit: number): unknown {
+  if (Array.isArray(value)) return value.slice(0, limit);
+  if (value && typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    if (Array.isArray(obj.data)) return { ...obj, data: obj.data.slice(0, limit) };
+  }
+  return value;
+}
+
+async function fetchLeaderboard(): Promise<string> {
+  const config = await loadTradeConfig();
+  const ds = (dotGet(config, "data_sources.leaderboard", {}) ?? {}) as Record<string, unknown>;
+  const chains = (ds.chains as string[] | undefined) ?? ["solana"];
+  const limit = Number(ds.limit) || 5;
+  const timeFrame = String(ds.time_frame ?? "1");
+  const sortBy = String(ds.sort_by ?? "1");
+  const lines = ["🏆 聪明钱 Leaderboard\n"];
+  for (const chain of chains) {
+    const result = await runOnchainos([
+      "leaderboard", "list",
+      "--chain", chain,
+      "--time-frame", timeFrame,
+      "--sort-by", sortBy
+    ]);
+    if (!result.ok) {
+      lines.push(`${chain}: 采集失败: ${result.error}`);
+      continue;
+    }
+    const data = limitDataRows(result.data, limit);
+    if (isEmptyObject(data) || (Array.isArray(data) && !data.length)) {
+      lines.push(`${chain}: 暂无数据（onchainos 返回空结果）`);
+      continue;
+    }
+    lines.push(`${chain}: ${formatJsonPreview(data, 1500)}`);
+  }
+  return lines.join("\n");
+}
+
+async function fetchPumpfun(): Promise<string> {
+  const config = await loadTradeConfig();
+  const ds = (dotGet(config, "data_sources.pumpfun", {}) ?? {}) as Record<string, unknown>;
+  const chain = String(ds.chain ?? "solana");
+  const limit = Number(ds.limit) || 5;
+  const stage = String(ds.stage ?? "NEW");
+  const result = await runOnchainos(["memepump", "tokens", "--chain", chain, "--stage", stage]);
+  const lines = ["🎰 Pump.fun 热榜\n"];
+  if (!result.ok) {
+    lines.push(`采集失败: ${result.error}`);
+  } else {
+    const data = limitDataRows(result.data, limit);
+    if (isEmptyObject(data) || (Array.isArray(data) && !data.length)) {
+    lines.push("暂无数据（onchainos 返回空结果）");
+    } else {
+      lines.push(formatJsonPreview(data, 3000));
+    }
+  }
+  return lines.join("\n");
 }
 
 export async function runMorningBrief(options: {
