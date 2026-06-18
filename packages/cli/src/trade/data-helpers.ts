@@ -41,6 +41,11 @@ function cliEnv(): NodeJS.ProcessEnv {
   };
 }
 
+interface ExecFileError extends Error {
+  stdout?: string;
+  stderr?: string;
+}
+
 async function runCli(
   bin: string,
   args: string[],
@@ -107,14 +112,42 @@ export async function runTg(args: string[], timeoutMs = 60_000): Promise<CliRunR
   }
 }
 
-export async function runOnchainos(args: string[], timeoutMs = 15_000): Promise<CliRunResult<unknown>> {
-  try {
-    return cliSuccess(parseCliJson(await runCli("onchainos", args, timeoutMs)));
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    logCliFailure("onchainos", args, err);
-    return cliFailure({}, msg);
+// onchainos emits a structured `{ ok: false, error }` on stdout when a call
+// fails, while transient auth/network blips (e.g. "Failed to refresh session …
+// Falling back to API key auth") may surface as a non-zero exit. Prefer that
+// structured message over the opaque "Command failed: …", and retry a few
+// times so a single flaky refresh/fallback doesn't sink the whole section.
+function onchainosError(parsed: unknown): string | undefined {
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    const obj = parsed as Record<string, unknown>;
+    if (obj.ok === false) return String(obj.error ?? "onchainos returned ok:false");
   }
+  return undefined;
+}
+
+export async function runOnchainos(
+  args: string[],
+  timeoutMs = 15_000,
+  attempts = 3
+): Promise<CliRunResult<unknown>> {
+  let lastError = "onchainos call failed";
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      const parsed = parseCliJson(await runCli("onchainos", args, timeoutMs));
+      const structured = onchainosError(parsed);
+      if (!structured) return cliSuccess(parsed);
+      lastError = structured;
+    } catch (err) {
+      const e = err as ExecFileError;
+      const structured = e.stdout ? onchainosError(parseCliJson(e.stdout)) : undefined;
+      lastError = structured ?? (err instanceof Error ? err.message : String(err));
+    }
+    if (attempt < attempts - 1) {
+      await new Promise((r) => setTimeout(r, 1500 + Math.random() * 1500));
+    }
+  }
+  logCliFailure("onchainos", args, lastError);
+  return cliFailure({}, lastError);
 }
 
 export async function runOpencli(args: string[], timeoutMs = 90_000): Promise<CliRunResult<unknown[]>> {
