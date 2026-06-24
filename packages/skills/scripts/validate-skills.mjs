@@ -8,6 +8,17 @@ const skillsRoot = path.join(packageRoot, "skills");
 
 const requiredBodyMarkers = new Map([
   [
+    "bytevirt-reality-node",
+    [
+      "Prefer a no-panel deployment unless the user explicitly asks for x-ui",
+      "Run Xray as a dedicated `xray` system user, not root",
+      "Password (PublicKey)",
+      "www.cloudflare.com:443",
+      "If the service exits with `open /etc/xray/config.json: permission denied`",
+      "No `x-ui.service` is present unless explicitly requested",
+    ],
+  ],
+  [
     "digitalocean-cf-vless-deploy",
     [
       "Cloudflare SSL/TLS mode should be `Full (strict)`",

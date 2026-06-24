@@ -1,0 +1,3 @@
+display_name: ByteVirt Reality Node
+short_description: Deploy ByteVirt Xray VLESS Reality nodes.
+default_prompt: Use $bytevirt-reality-node to provision or audit a ByteVirt Debian VPS as a no-panel Xray VLESS Reality Vision node on 443.
