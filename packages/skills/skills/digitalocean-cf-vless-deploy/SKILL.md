@@ -30,12 +30,14 @@ Local examples may be run from macOS/Linux/Git Bash/WSL. On Windows PowerShell, 
 ## Core Decisions
 
 - Use Cloudflare orange cloud only for HTTP/HTTPS-compatible traffic.
+- Cloudflare edge certificates only cover the client-to-Cloudflare hop; keep a valid origin certificate on Nginx for Cloudflare-to-origin, especially with Full(strict).
 - Do not use Outline for this requirement; Outline's default Shadowsocks TCP/UDP ports do not fit Cloudflare's free orange-cloud proxy.
 - Use `VLESS + WebSocket + TLS + 443` for Shadowrocket compatibility through Cloudflare.
 - Let Nginx own public `80/443`; keep the 3x-ui panel and Xray inbound behind local/private ports.
 - Use Let's Encrypt via Certbot for origin certificates. Cloudflare Origin CA is also valid for Full(strict), but Let's Encrypt keeps direct-origin browser checks trusted.
 - `certbot.timer` is the systemd renewal scheduler installed by Certbot. Keep it active so origin certs renew automatically before expiry.
 - If the user is in mainland China and direct DigitalOcean IP access is blocked or unstable, the domain must resolve through Cloudflare orange cloud; do not hand out the raw Droplet IP as the client address.
+- Existing `xray`/Reality/TCP listeners on `443` cannot be reused through Cloudflare orange cloud. Back them up, stop them, and move the Cloudflare-facing stack to Nginx + WebSocket.
 
 ## Deployment Flow
 
@@ -46,6 +48,17 @@ ssh root@<ip>
 ss -ltnup
 docker ps
 ufw status verbose || true
+systemctl --no-pager --full status xray x-ui nginx 2>/dev/null || true
+ls -la /etc/xray /usr/local/x-ui /etc/x-ui 2>/dev/null || true
+```
+
+If `xray` already owns `443`, inspect and back up `/etc/xray/config.json` before stopping it. For example:
+
+```bash
+STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+mkdir -p /root/king-ai-backups/$STAMP
+cp -a /etc/xray/config.json /root/king-ai-backups/$STAMP/xray-config.json 2>/dev/null || true
+systemctl stop xray 2>/dev/null || true
 ```
 
 2. Install Nginx and Certbot:
@@ -117,6 +130,16 @@ systemctl restart x-ui
 
 Use quotes around passwords, especially if they contain punctuation such as `.` or `$`.
 
+3x-ui v3 may generate a random panel port and base path even if install answers are scripted. Always read the real values after install:
+
+```bash
+/usr/local/x-ui/x-ui setting -show true
+sed -n '1,120p' /etc/x-ui/install-result.env 2>/dev/null || true
+ss -ltnp | egrep ':(80|443|10000|51321|54321|2096)\b' || true
+```
+
+The subscription server commonly listens on `2096`; the panel web port and `webBasePath` may differ from the intended fixed port/path.
+
 ## VLESS Inbound Pattern
 
 Create one VLESS inbound through the 3x-ui API. Use:
@@ -136,6 +159,8 @@ If using the 3x-ui API, first confirm the base path and API token from install o
 ```
 
 Use `Authorization: Bearer <api-token>` for `/panel/api/inbounds/*` calls when available. If the API token is blank, login with the panel CSRF workflow or use the panel UI.
+
+For 3x-ui v3, do not trust the OpenAPI path blindly. The OpenAPI document may be served under the panel base path while `/panel/api/*` returns `404` in some installs. If API creation fails, prefer the panel UI. If automation is still required, use the current database schema as a last resort only after backing up `/etc/x-ui/x-ui.db`: insert matching rows into `inbounds`, `clients`, `client_inbounds`, `client_traffics`, and `hosts`, then restart `x-ui`. The host row is what makes subscriptions render `<vpn-domain>:443` instead of the internal `127.0.0.1:<xray-port>`.
 
 ## Nginx VPN Server Block
 
@@ -260,10 +285,22 @@ curl -I https://<vpn-domain>/
 curl -sS https://<vpn-domain>/sub/<subId> | base64 -d
 ```
 
+When local verification is confusing, check for local proxy/DNS interference before blaming the server:
+
+```bash
+env | grep -Ei 'https?_proxy|all_proxy|no_proxy' || true
+dig +short @hattie.ns.cloudflare.com <vpn-domain> A
+dig +short @miles.ns.cloudflare.com <vpn-domain> A
+curl --noproxy '*' --resolve <vpn-domain>:443:<origin-ip> -I https://<vpn-domain>/ || true
+```
+
+Some local proxy setups return synthetic addresses such as `198.18.0.0/15` or make direct TLS probes time out. Prefer Cloudflare authoritative DNS and origin-side `curl --resolve` evidence over stale resolver output.
+
 Expected:
 
 - Web domain returns `200` through Cloudflare when configured.
 - VPN root may return `404`; that is fine.
+- The panel path may return `404` to `HEAD`; verify with `GET` before calling it broken.
 - VPN WebSocket path should reach Xray. A synthetic incomplete WebSocket request may return `400 Bad Request`, which is acceptable evidence that Nginx reached Xray.
 - Subscription decodes to `<vpn-domain>:443`, not `localhost:<internal-port>`.
 - Shadowrocket import works and client traffic appears in 3x-ui after use.
@@ -272,7 +309,9 @@ Expected:
 
 - `521 Web server is down`: Cloudflare cannot connect to origin `80/443`. Check Nginx listeners, firewall, and origin IP.
 - `526 Invalid SSL certificate`: Cloudflare Full(strict) rejected origin cert. Issue a cert for the exact hostname.
+- Orange-cloud certificate confusion: enabling Cloudflare proxy gives clients a Cloudflare edge cert, but the origin still needs a certificate unless the zone is intentionally set to non-strict Full.
 - Cert expiry risk: confirm `systemctl is-active certbot.timer` and test with `certbot renew --dry-run`. If it fails, fix renewal before handoff.
+- Existing Reality node stops working after orange cloud: Cloudflare free proxy does not carry arbitrary VLESS Reality TCP. Replace it with VLESS WebSocket behind Nginx or keep the record DNS-only for Reality.
 - Website works but VLESS does not: confirm Cloudflare record is orange cloud, client uses `type=ws`, `security=tls`, `sni=<vpn-domain>`, `host=<vpn-domain>`, and the exact WebSocket path.
 - Subscription imports an unusable node: decode it and check for `localhost`, `127.0.0.1`, internal ports, or `security=none`. Add/fix the inbound external proxy.
 - Panel login fails after password change: test locally with the CSRF login flow and verify whether punctuation was included. Always quote password arguments.
