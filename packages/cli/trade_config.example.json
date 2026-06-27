@@ -26,7 +26,15 @@
       "per_author_cap": 2
     },
     "leaderboard": { "chains": ["solana"], "limit": 5, "time_frame": "1", "sort_by": "1" },
-    "pumpfun": { "chain": "solana", "limit": 5, "stage": "NEW" }
+    "pumpfun": {
+      "chain": "solana",
+      "limit": 5,
+      "stage": "MIGRATED",
+      "min_market_cap_usd": 10000,
+      "min_holders": 50,
+      "min_volume_usd_1h": 50,
+      "max_top10_holdings_percent": 90
+    }
   },
   "stocks": {
     "watchlist": {

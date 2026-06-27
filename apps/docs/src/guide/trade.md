@@ -54,6 +54,8 @@ Key config sections:
 | `alerts.rule_stagger_ms` | Delay between rules in one poll round (default `1000`) |
 | `briefing.enabled` | Morning brief sections, such as `market`, `stocks`, `telegram`, `twitter`, `leaderboard`, `pumpfun` |
 | `briefing.schedule_hour` | Morning brief cron hour (local, default `5`) |
+| `data_sources.pumpfun` | Pump.fun section: `stage` (default `MIGRATED`), `limit`, market-cap/holder/volume/Top10 filters; human-readable lines plus LLM summary |
+| `data_sources.leaderboard` | Smart-money leaderboard: `chains`, `limit`, `time_frame`, `sort_by`; human-readable lines plus LLM summary |
 | `llm.agent_tasks.<task>.timeout_ms` | Optional per-task local agent timeout, for example `celebrity_extract` |
 | `telegram` | `bot_token` and `push_chat_id` for alert pushes |
 

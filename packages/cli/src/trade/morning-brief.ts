@@ -13,6 +13,12 @@ import {
   iterCacheRecords
 } from "./twitter-cache.js";
 import { llmSummarize } from "./llm-summarize.js";
+import {
+  buildLeaderboardCliArgs,
+  buildPumpfunCliArgs,
+  formatLeaderboardSection,
+  formatPumpfunSection
+} from "./morning-brief-onchain.js";
 
 export type BriefSection = "market" | "stocks" | "twitter" | "telegram" | "leaderboard" | "pumpfun";
 
@@ -230,71 +236,65 @@ async function fetchTelegramSummary(hours: number): Promise<string> {
   return lines.join("\n\n");
 }
 
-function isEmptyObject(value: unknown): boolean {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value) && Object.keys(value as Record<string, unknown>).length === 0;
-}
-
-function formatJsonPreview(value: unknown, maxLen: number): string {
-  const text = JSON.stringify(value, null, 2);
-  if (!text || text === "{}" || text === "[]") return "";
-  return text.slice(0, maxLen);
-}
-
-function limitDataRows(value: unknown, limit: number): unknown {
-  if (Array.isArray(value)) return value.slice(0, limit);
-  if (value && typeof value === "object") {
-    const obj = value as Record<string, unknown>;
-    if (Array.isArray(obj.data)) return { ...obj, data: obj.data.slice(0, limit) };
-  }
-  return value;
-}
-
 async function fetchLeaderboard(): Promise<string> {
   const config = await loadTradeConfig();
+  const useLlm = dotGet(config, "briefing.llm_summarize", true) !== false;
   const ds = (dotGet(config, "data_sources.leaderboard", {}) ?? {}) as Record<string, unknown>;
   const chains = (ds.chains as string[] | undefined) ?? ["solana"];
   const limit = Number(ds.limit) || 5;
-  const timeFrame = String(ds.time_frame ?? "1");
-  const sortBy = String(ds.sort_by ?? "1");
   const lines = ["🏆 聪明钱 Leaderboard\n"];
+  const blocks: string[] = [];
+
   for (const chain of chains) {
-    const result = await runOnchainos([
-      "leaderboard", "list",
-      "--chain", chain,
-      "--time-frame", timeFrame,
-      "--sort-by", sortBy
-    ]);
+    const result = await runOnchainos(buildLeaderboardCliArgs(chain, ds));
     if (!result.ok) {
       lines.push(`${chain}: 采集失败: ${result.error}`);
       continue;
     }
-    const data = limitDataRows(result.data, limit);
-    if (isEmptyObject(data) || (Array.isArray(data) && !data.length)) {
+    const formatted = formatLeaderboardSection(result.data, limit);
+    if (!formatted.length) {
       lines.push(`${chain}: 暂无数据（onchainos 返回空结果）`);
       continue;
     }
-    lines.push(`${chain}: ${formatJsonPreview(data, 1500)}`);
+    blocks.push(`【${chain}】\n${formatted.join("\n\n")}`);
+  }
+
+  if (!blocks.length) return lines.join("\n");
+
+  const body = blocks.join("\n\n");
+  if (useLlm) {
+    const summary = await llmSummarize(body, "聪明钱 Leaderboard");
+    lines.push(summary);
+  } else {
+    lines.push(body);
   }
   return lines.join("\n");
 }
 
 async function fetchPumpfun(): Promise<string> {
   const config = await loadTradeConfig();
+  const useLlm = dotGet(config, "briefing.llm_summarize", true) !== false;
   const ds = (dotGet(config, "data_sources.pumpfun", {}) ?? {}) as Record<string, unknown>;
-  const chain = String(ds.chain ?? "solana");
-  const limit = Number(ds.limit) || 5;
-  const stage = String(ds.stage ?? "NEW");
-  const result = await runOnchainos(["memepump", "tokens", "--chain", chain, "--stage", stage]);
+  const result = await runOnchainos(buildPumpfunCliArgs(ds));
   const lines = ["🎰 Pump.fun 热榜\n"];
+
   if (!result.ok) {
     lines.push(`采集失败: ${result.error}`);
+    return lines.join("\n");
+  }
+
+  const { stage, lines: formatted } = formatPumpfunSection(result.data, ds);
+  if (!formatted.length) {
+    lines.push(`暂无符合条件代币（stage=${stage}，已应用质量过滤）`);
+    return lines.join("\n");
+  }
+
+  const body = formatted.join("\n\n");
+  if (useLlm) {
+    const summary = await llmSummarize(body, `Pump.fun ${stage}`);
+    lines.push(summary);
   } else {
-    const data = limitDataRows(result.data, limit);
-    if (isEmptyObject(data) || (Array.isArray(data) && !data.length)) {
-    lines.push("暂无数据（onchainos 返回空结果）");
-    } else {
-      lines.push(formatJsonPreview(data, 3000));
-    }
+    lines.push(body);
   }
   return lines.join("\n");
 }

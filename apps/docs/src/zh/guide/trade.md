@@ -54,6 +54,8 @@ king-ai trade daemon --push-tg
 | `alerts.rule_stagger_ms` | 一轮轮询中规则之间的间隔毫秒（默认 `1000`） |
 | `briefing.enabled` | 晨报板块，例如 `market`、`stocks`、`telegram`、`twitter`、`leaderboard`、`pumpfun` |
 | `briefing.schedule_hour` | 晨报 cron 小时（本地时间，默认 `5`） |
+| `data_sources.pumpfun` | Pump.fun 板块：`stage`（默认 `MIGRATED`）、`limit`、市值/持有人/成交量/Top10 过滤；可读摘要 + LLM 归纳 |
+| `data_sources.leaderboard` | 聪明钱榜单：`chains`、`limit`、`time_frame`、`sort_by`；可读摘要 + LLM 归纳 |
 | `llm.agent_tasks.<task>.timeout_ms` | 可选的本地 agent 单任务超时，例如 `celebrity_extract` |
 | `telegram` | `bot_token` 与 `push_chat_id`，用于推送告警 |
 
