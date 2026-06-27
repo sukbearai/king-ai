@@ -1,4 +1,7 @@
 import { execFile } from "node:child_process";
+import { readFile, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 import { dotGet, loadTradeConfig } from "./config.js";
 
@@ -6,6 +9,28 @@ const execFileP = promisify(execFile);
 
 const AGENT_BACKENDS = ["grok", "claude", "codex"] as const;
 type AgentBackend = typeof AGENT_BACKENDS[number];
+
+const BACKEND_BLOCK_MS = 10 * 60 * 1000;
+const backendBlockedUntil = new Map<AgentBackend, number>();
+
+interface ExecFileError extends Error {
+  stdout?: string | Buffer;
+  stderr?: string | Buffer;
+}
+
+async function execFileClosedStdin(
+  file: string,
+  args: string[],
+  options: { timeout: number; maxBuffer?: number; env?: NodeJS.ProcessEnv }
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = execFile(file, args, options, (err, stdout, stderr) => {
+      if (err) reject(err);
+      else resolve({ stdout, stderr });
+    });
+    child.stdin?.end();
+  });
+}
 
 export function extractJsonFromText(text: string): unknown {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
@@ -47,6 +72,46 @@ function agentBackendOrder(llmCfg: Record<string, unknown>, taskBackend?: string
   return order;
 }
 
+export function summarizeAgentError(err: unknown): string {
+  const e = err as ExecFileError;
+  const raw = [
+    err instanceof Error ? err.message : String(err),
+    e.stdout ? String(e.stdout) : "",
+    e.stderr ? String(e.stderr) : ""
+  ].filter(Boolean).join("\n");
+  const compact = raw.replace(/\x1b\[[0-9;]*m/g, "").replace(/\s+/g, " ").trim();
+  if (/personal-team-blocked:spending-limit|run out of credits|need a Grok subscription/i.test(compact)) {
+    return "quota blocked: Grok credits or subscription required";
+  }
+  if (/401 Invalid authentication credentials|Failed to authenticate/i.test(compact)) {
+    return "auth failed: invalid or expired credentials";
+  }
+  if (/no stdin data received/i.test(compact)) {
+    return "stdin warning while running non-interactive agent";
+  }
+  if (/No such file or directory/i.test(compact)) {
+    return "agent output file was not created";
+  }
+  return compact.length > 240 ? `${compact.slice(0, 237)}...` : compact;
+}
+
+function shouldBlockBackend(summary: string): boolean {
+  return /quota blocked|auth failed/i.test(summary);
+}
+
+export function resetAgentBackendBlocks(): void {
+  backendBlockedUntil.clear();
+}
+
+function isBackendBlocked(name: AgentBackend): boolean {
+  const until = backendBlockedUntil.get(name) ?? 0;
+  return until > Date.now();
+}
+
+function blockBackend(name: AgentBackend): void {
+  backendBlockedUntil.set(name, Date.now() + BACKEND_BLOCK_MS);
+}
+
 async function runAgentBackend(
   name: AgentBackend,
   prompt: string,
@@ -67,12 +132,21 @@ async function runAgentBackend(
 
   if (name === "codex") {
     const model = String(llmCfg.codex_model ?? "");
-    const args = ["exec", "-s", "read-only", "-o", "/tmp/king-ai-llm-out.txt"];
+    const outputFile = join(tmpdir(), `king-ai-llm-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`);
+    const args = ["exec", "--sandbox", "read-only", "--output-last-message", outputFile, "--ephemeral"];
     if (model) args.push("-m", model);
     args.push(prompt);
-    await execFileP("codex", args, { timeout: timeoutMs, env: process.env });
-    const { stdout } = await execFileP("cat", ["/tmp/king-ai-llm-out.txt"], { timeout: 5000 });
-    return stdout.trim();
+    try {
+      const { stdout } = await execFileClosedStdin("codex", args, {
+        timeout: timeoutMs,
+        maxBuffer: 5 * 1024 * 1024,
+        env: process.env
+      });
+      const fileText = await readFile(outputFile, "utf8").catch(() => "");
+      return (fileText || stdout).trim();
+    } finally {
+      await rm(outputFile, { force: true }).catch(() => undefined);
+    }
   }
 
   const model = String(llmCfg.grok_model ?? "");
@@ -110,11 +184,13 @@ export async function runAgent(
   const backends = agentBackendOrder(llmCfg, String(taskCfg.backend ?? ""));
 
   for (const name of backends) {
+    if (isBackendBlocked(name)) continue;
     try {
       const text = await runAgentBackend(name, prompt, llmCfg, timeoutMs);
       if (text) return text;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = summarizeAgentError(err);
+      if (shouldBlockBackend(msg)) blockBackend(name);
       process.stderr.write(`[llm-agent] ${name} failed: ${msg}\n`);
     }
   }
