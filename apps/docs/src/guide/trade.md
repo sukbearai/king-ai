@@ -120,12 +120,12 @@ Twitter timeline, Xueqiu A-shares, and Discord browser scraping use **OpenCLI** 
 
 ```sh
 opencli doctor
-opencli browser trade-twitter --window foreground open https://x.com/home
-opencli browser trade-twitter --window foreground wait selector article --timeout 30000
+opencli browser trade-twitter --window background open https://x.com/home
+opencli browser trade-twitter --window background wait selector article --timeout 30000
 king-ai trade alert run f --once --dry-run
 ```
 
-Keep the OpenCLI browser extension/daemon available and log in to the relevant sites in the browser session. The trade daemon uses stable `trade-twitter`, `trade-twitter-search`, and `trade-discord` browser sessions for Twitter and Discord reads. Xueqiu is attempted through OpenCLI with foreground/persistent settings, then quickly falls back to Yahoo Finance when the site adapter is unavailable.
+Keep the OpenCLI browser extension/daemon available and log in to the relevant sites in the browser session. The trade daemon uses stable `trade-twitter`, `trade-twitter-search`, and `trade-discord` browser sessions for Twitter and Discord reads. Xueqiu is attempted through OpenCLI with background/persistent settings, then quickly falls back to Yahoo Finance when the site adapter is unavailable.
 
 ## External Dependencies
 

@@ -120,12 +120,12 @@ Twitter 时间线、雪球 A 股、Discord 浏览器抓取通过 **OpenCLI** 复
 
 ```sh
 opencli doctor
-opencli browser trade-twitter --window foreground open https://x.com/home
-opencli browser trade-twitter --window foreground wait selector article --timeout 30000
+opencli browser trade-twitter --window background open https://x.com/home
+opencli browser trade-twitter --window background wait selector article --timeout 30000
 king-ai trade alert run f --once --dry-run
 ```
 
-保持 OpenCLI 浏览器扩展/daemon 可用，并在对应站点完成登录。daemon 使用稳定的 `trade-twitter`、`trade-twitter-search`、`trade-discord` 会话。雪球优先走 OpenCLI foreground/persistent，适配器不可用时快速回退 Yahoo Finance。
+保持 OpenCLI 浏览器扩展/daemon 可用，并在对应站点完成登录。daemon 使用稳定的 `trade-twitter`、`trade-twitter-search`、`trade-discord` 会话。雪球优先走 OpenCLI background/persistent，适配器不可用时快速回退 Yahoo Finance。
 
 ## 外部依赖
 

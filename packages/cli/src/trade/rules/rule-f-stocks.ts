@@ -47,7 +47,7 @@ function yahooSymbol(symbol: string): string {
 async function ashareQuote(symbol: string): Promise<{ price: number; change_pct?: number } | null> {
   const result = await runOpencli([
     "xueqiu", "stock", symbol,
-    "--window", "foreground",
+    "--window", "background",
     "--site-session", "persistent",
     "--keep-tab", "true",
     "--format", "json"

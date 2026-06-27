@@ -64,10 +64,10 @@ async function fetchOpencliBrowserTweets(limit: number): Promise<Array<Record<st
 })()`;
   for (let attempt = 0; attempt < 3; attempt++) {
     await runOpencli(["browser", TWITTER_BROWSER_SESSION, "close"], 10_000);
-    await runOpencli(["browser", TWITTER_BROWSER_SESSION, "--window", "foreground", "open", "https://x.com/home"], 30_000);
-    await runOpencli(["browser", TWITTER_BROWSER_SESSION, "--window", "foreground", "wait", "time", "5"], 10_000);
-    await runOpencli(["browser", TWITTER_BROWSER_SESSION, "--window", "foreground", "wait", "selector", "article", "--timeout", "30000"], 35_000);
-    const evalResult = await runOpencli(["browser", TWITTER_BROWSER_SESSION, "--window", "foreground", "eval", js], 30_000);
+    await runOpencli(["browser", TWITTER_BROWSER_SESSION, "--window", "background", "open", "https://x.com/home"], 30_000);
+    await runOpencli(["browser", TWITTER_BROWSER_SESSION, "--window", "background", "wait", "time", "5"], 10_000);
+    await runOpencli(["browser", TWITTER_BROWSER_SESSION, "--window", "background", "wait", "selector", "article", "--timeout", "30000"], 35_000);
+    const evalResult = await runOpencli(["browser", TWITTER_BROWSER_SESSION, "--window", "background", "eval", js], 30_000);
     if (!evalResult.ok) continue;
     const rows = evalResult.data
       .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row));
