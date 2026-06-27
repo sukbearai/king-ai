@@ -1,6 +1,6 @@
 # Trade Intelligence
 
-`king-ai trade` runs alert rules, morning brief, Twitter collection, and process watchdog inside one supervisor daemon. The stack uses **OpenCLI + tg + local agent + Yahoo** with six rules: `e`, `f`, `t`, `tm`, `discord_wba`, `q`.
+`king-ai trade` runs alert rules, morning brief, Twitter collection, and process watchdog inside one supervisor daemon. The stack uses **OpenCLI + tg + local agent + Yahoo** with seven rules: `b`, `e`, `f`, `t`, `tm`, `discord_wba`, `q`.
 
 ## Quick Start
 
@@ -48,7 +48,7 @@ Key config sections:
 
 | Section | Purpose |
 |---------|---------|
-| `alerts.enabled` | Rule IDs to poll; defaults to `e`, `f`, `t`, `tm`, `discord_wba`, `q` |
+| `alerts.enabled` | Rule IDs to poll; defaults to `b`, `e`, `f`, `t`, `tm`, `discord_wba`, `q` |
 | `alerts.poll_seconds` | Unified rule poll interval (default `120`) |
 | `alerts.confluence_enabled` | Per-asset confluence promotion inside rule ticks (default `true`) |
 | `alerts.rule_stagger_ms` | Delay between rules in one poll round (default `1000`) |
@@ -56,6 +56,7 @@ Key config sections:
 | `briefing.schedule_hour` | Morning brief cron hour (local, default `5`) |
 | `data_sources.pumpfun` | Pump.fun section: `stage` (default `MIGRATED`), `limit`, market-cap/holder/volume/Top10 filters; human-readable lines plus LLM summary |
 | `data_sources.leaderboard` | Smart-money leaderboard: `chains`, `limit`, `time_frame`, `sort_by`; human-readable lines plus LLM summary |
+| `treasury` | Treasury stress: `^TYX` (30Y), `^TNX` (10Y), `TLT` price; period-high and basis-point spike alerts |
 | `llm.agent_tasks.<task>.timeout_ms` | Optional per-task local agent timeout, for example `celebrity_extract` |
 | `telegram` | `bot_token` and `push_chat_id` for alert pushes |
 
@@ -78,6 +79,7 @@ king-ai trade alert run tm --once --push-tg
 
 | ID | Monitor |
 |----|---------|
+| `b` | Treasury selling / yields (`^TYX` 30Y, `TLT` price, Yahoo) |
 | `e` | Meme large buys (`tg` meme链上监控) |
 | `f` | Stock watchlist moves (OpenCLI/Yahoo) |
 | `t` | Celebrity tweet alpha (Trump/Musk/CZ by default) |
@@ -110,7 +112,7 @@ king-ai trade verify-tg --dry-run
 king-ai trade watchdog --kill
 ```
 
-`verify-tg` runs each enabled alert and brief source once (six rules + the configured brief sections) and pushes one Telegram message per source. Trade AI summaries and PANews classification use the local agent CLI chain (`grok` → `claude` → `codex`) via `llm.default_backend`.
+`verify-tg` runs each enabled alert and brief source once (seven rules + the configured brief sections) and pushes one Telegram message per source. Trade AI summaries and PANews classification use the local agent CLI chain (`grok` → `claude` → `codex`) via `llm.default_backend`.
 
 ## OpenCLI Browser Bridge
 

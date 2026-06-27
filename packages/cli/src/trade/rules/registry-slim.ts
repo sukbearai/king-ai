@@ -1,4 +1,5 @@
 import type { AlertRule } from "../alert-rule.js";
+import { createRuleB } from "./rule-b-treasury.js";
 import { createRuleDiscordWba } from "./rule-discord-wba.js";
 import { createRuleE } from "./rule-e-meme.js";
 import { createRuleF } from "./rule-f-stocks.js";
@@ -8,6 +9,7 @@ import { createRuleTTicker } from "./rule-t-ticker.js";
 
 /** Default slim stack — eagerly loaded at daemon startup. */
 export const SLIM_RULE_REGISTRY: Record<string, () => AlertRule> = {
+  b: createRuleB,
   e: createRuleE,
   f: createRuleF,
   t: createRuleTCelebrity,

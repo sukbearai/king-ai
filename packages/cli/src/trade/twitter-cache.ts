@@ -76,6 +76,28 @@ export function entryTimestamp(entry: TwitterCacheEntry): Date | null {
   return parseTweetTime(String(entry.created_at ?? "")) ?? parseTweetTime(String(entry._fetched_at ?? ""));
 }
 
+export async function countRecentCacheRecords(
+  hours: number,
+  path = defaultTwitterCachePath()
+): Promise<{ total: number; recent: number; stale: number; invalid: number }> {
+  const cutoff = Date.now() - hours * 3600 * 1000;
+  let total = 0;
+  let recent = 0;
+  let stale = 0;
+  let invalid = 0;
+  for await (const entry of iterCacheRecords(path)) {
+    total += 1;
+    const ts = entryTimestamp(entry);
+    if (!ts) {
+      invalid += 1;
+      continue;
+    }
+    if (ts.getTime() < cutoff) stale += 1;
+    else recent += 1;
+  }
+  return { total, recent, stale, invalid };
+}
+
 export function formatTweetLine(entry: TwitterCacheEntry): string {
   const author = String(entry.author ?? "");
   const text = String(entry.text ?? "").trim();

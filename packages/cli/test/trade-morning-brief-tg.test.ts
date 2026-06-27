@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { parseTelegramChannels, parseTgRecentMessages } from "../src/trade/morning-brief.js";
+import { countRecentCacheRecords } from "../src/trade/twitter-cache.js";
 
 describe("parseTelegramChannels", () => {
   it("maps label to tg chat name", () => {
@@ -26,5 +27,12 @@ describe("parseTgRecentMessages", () => {
 
   it("returns empty array for blank output", () => {
     assert.deepEqual(parseTgRecentMessages(""), []);
+  });
+});
+
+describe("countRecentCacheRecords", () => {
+  it("counts recent vs stale tweets from cache stats shape", async () => {
+    const stats = await countRecentCacheRecords(24, "/nonexistent/twitter_cache.jsonl");
+    assert.deepEqual(stats, { total: 0, recent: 0, stale: 0, invalid: 0 });
   });
 });

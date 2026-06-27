@@ -5,7 +5,10 @@ import { getScratchpad } from "./scratchpad.js";
 import { sendTelegram } from "./telegram.js";
 import { formatDisplayTime } from "./time-utils.js";
 import { fetchStocksSection } from "./morning-brief-stocks.js";
+import { fetchTreasurySection } from "./morning-brief-treasury.js";
+import { runTwitterCollector } from "./twitter-collector.js";
 import {
+  countRecentCacheRecords,
   defaultTwitterCachePath,
   engagementScore,
   entryTimestamp,
@@ -20,11 +23,12 @@ import {
   formatPumpfunSection
 } from "./morning-brief-onchain.js";
 
-export type BriefSection = "market" | "stocks" | "twitter" | "telegram" | "leaderboard" | "pumpfun";
+export type BriefSection = "market" | "stocks" | "treasury" | "twitter" | "telegram" | "leaderboard" | "pumpfun";
 
 const SECTION_FETCHERS: Record<BriefSection, (hours: number) => Promise<string>> = {
   market: fetchMarketOverview,
   stocks: async () => fetchStocksSection(),
+  treasury: async () => fetchTreasurySection(),
   telegram: fetchTelegramSummary,
   twitter: fetchTwitterSummary,
   leaderboard: fetchLeaderboard,
@@ -132,6 +136,19 @@ async function fetchTwitterSummary(hours: number): Promise<string> {
   const useLlm = dotGet(config, "briefing.llm_summarize", true) !== false;
   const cutoff = Date.now() - hours * 3600 * 1000;
   const lines: string[] = [`🐦 Twitter 时间线（最近 ${hours}h）\n`];
+
+  let cacheStats = await countRecentCacheRecords(hours, cachePath);
+  if (cacheStats.recent === 0) {
+    process.stderr.write("[morning-brief] twitter cache empty/stale; running collector...\n");
+    try {
+      await runTwitterCollector(cachePath);
+      cacheStats = await countRecentCacheRecords(hours, cachePath);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`[morning-brief] twitter collector failed: ${msg}\n`);
+    }
+  }
+
   const tweets: string[] = [];
   let totalRecords = 0;
   let staleRecords = 0;

@@ -31,7 +31,7 @@ export function dotGet(config: TradeConfig, path: string, fallback?: unknown): u
 }
 
 /** Default slim stack: OpenCLI + tg + local agent + Yahoo. */
-export const SLIM_ALERT_RULES = ["e", "f", "t", "tm", "discord_wba", "q"] as const;
+export const SLIM_ALERT_RULES = ["b", "e", "f", "t", "tm", "discord_wba", "q"] as const;
 
 export function enabledAlertRules(config: TradeConfig): string[] {
   const enabled = dotGet(config, "alerts.enabled", [...SLIM_ALERT_RULES]) as unknown;

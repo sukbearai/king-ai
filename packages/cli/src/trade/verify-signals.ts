@@ -6,10 +6,11 @@ import { sendTelegram } from "./telegram.js";
 import { formatDisplayTime } from "./time-utils.js";
 import { runTwitterCollector } from "./twitter-collector.js";
 
-const VERIFY_RULES = ["e", "f", "t", "tm", "discord_wba", "q"] as const;
-const VERIFY_BRIEF_SECTIONS: BriefSection[] = ["stocks", "telegram", "twitter"];
+const VERIFY_RULES = ["b", "e", "f", "t", "tm", "discord_wba", "q"] as const;
+const VERIFY_BRIEF_SECTIONS: BriefSection[] = ["stocks", "treasury", "telegram", "twitter"];
 
 const RULE_LABELS: Record<string, string> = {
+  b: "美债抛售 / 收益率 (Yahoo)",
   e: "Meme 监控 (tg)",
   f: "自选股 (OpenCLI/Yahoo)",
   t: "名人推文 (OpenCLI+agent)",
@@ -86,5 +87,6 @@ export async function runVerifySignalsPush(options: VerifySignalsOptions = {}): 
     }
   }
 
-  process.stderr.write("[verify-tg] done — 9 messages (6 rules + 3 brief sections)\n");
+  const totalMessages = VERIFY_RULES.length + VERIFY_BRIEF_SECTIONS.length;
+  process.stderr.write(`[verify-tg] done — ${totalMessages} messages (${VERIFY_RULES.length} rules + ${VERIFY_BRIEF_SECTIONS.length} brief sections)\n`);
 }

@@ -1,6 +1,6 @@
 {
   "alerts": {
-    "enabled": ["e", "f", "t", "tm", "discord_wba", "q"],
+    "enabled": ["b", "e", "f", "t", "tm", "discord_wba", "q"],
     "poll_seconds": 120,
     "rule_stagger_ms": 1000,
     "confluence_enabled": true,
@@ -12,7 +12,7 @@
     }
   },
   "briefing": {
-    "enabled": ["market", "stocks", "telegram", "twitter", "leaderboard", "pumpfun"],
+    "enabled": ["market", "stocks", "treasury", "telegram", "twitter", "leaderboard", "pumpfun"],
     "schedule_hour": 5,
     "hours_lookback": 24,
     "llm_summarize": true,
@@ -44,6 +44,16 @@
       "TSLA": "特斯拉",
       "NVDA": "英伟达"
     }
+  },
+  "treasury": {
+    "price_watchlist": { "TLT": "20+年美债ETF" },
+    "yield_watchlist": { "^TYX": "30年期收益率", "^TNX": "10年期收益率" },
+    "price_drop_warning_pct": 1,
+    "price_drop_critical_pct": 2,
+    "yield_rise_warning_bps": 5,
+    "yield_rise_critical_bps": 10,
+    "yield_high_lookback_years": 5,
+    "yield_near_high_bps": 5
   },
   "telegram": {
     "channels": {

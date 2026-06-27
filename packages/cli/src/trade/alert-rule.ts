@@ -47,6 +47,7 @@ export function formatAlert(alert: Alert): string {
 }
 
 export const COOLDOWN_DEFAULTS: Record<string, number> = {
+  b: 3600,
   e: 600,
   f: 3600,
   t: 600,
@@ -61,6 +62,7 @@ const DAILY_PUSH_CAP: Record<string, number> = {
   "PANews事件": 5,
   "Meme 大额": 8,
   "股票异动": 3,
+  "美债抛售": 4,
   "提及加速": 5,
   "王不爱喊单": 5,
   t: 5

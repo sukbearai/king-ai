@@ -1,6 +1,6 @@
 # 交易信号（Trade）
 
-`king-ai trade` 在单一 supervisor daemon 中运行告警规则、晨报、Twitter 采集和看门狗。栈为 **OpenCLI + tg + 本地 agent + Yahoo**，六条规则：`e`、`f`、`t`、`tm`、`discord_wba`、`q`。
+`king-ai trade` 在单一 supervisor daemon 中运行告警规则、晨报、Twitter 采集和看门狗。栈为 **OpenCLI + tg + 本地 agent + Yahoo**，七条规则：`b`、`e`、`f`、`t`、`tm`、`discord_wba`、`q`。
 
 ## 快速开始
 
@@ -48,7 +48,7 @@ king-ai trade daemon --push-tg
 
 | 配置段 | 作用 |
 |--------|------|
-| `alerts.enabled` | 启用的规则 ID；默认 `e`、`f`、`t`、`tm`、`discord_wba`、`q` |
+| `alerts.enabled` | 启用的规则 ID；默认 `b`、`e`、`f`、`t`、`tm`、`discord_wba`、`q` |
 | `alerts.poll_seconds` | 统一规则轮询间隔（默认 `120`） |
 | `alerts.confluence_enabled` | 单规则 tick 内同标的共振升 severity（默认 `true`） |
 | `alerts.rule_stagger_ms` | 一轮轮询中规则之间的间隔毫秒（默认 `1000`） |
@@ -56,6 +56,7 @@ king-ai trade daemon --push-tg
 | `briefing.schedule_hour` | 晨报 cron 小时（本地时间，默认 `5`） |
 | `data_sources.pumpfun` | Pump.fun 板块：`stage`（默认 `MIGRATED`）、`limit`、市值/持有人/成交量/Top10 过滤；可读摘要 + LLM 归纳 |
 | `data_sources.leaderboard` | 聪明钱榜单：`chains`、`limit`、`time_frame`、`sort_by`；可读摘要 + LLM 归纳 |
+| `treasury` | 美债抛售 / 收益率：`^TYX`（30Y）、`^TNX`（10Y）、`TLT` 价格；阶段新高与 bp 飙升告警 |
 | `llm.agent_tasks.<task>.timeout_ms` | 可选的本地 agent 单任务超时，例如 `celebrity_extract` |
 | `telegram` | `bot_token` 与 `push_chat_id`，用于推送告警 |
 
@@ -78,6 +79,7 @@ king-ai trade alert run tm --once --push-tg
 
 | ID | 监控内容 |
 |----|----------|
+| `b` | 美债抛售 / 收益率（`^TYX` 30Y、`TLT` 价格，Yahoo） |
 | `e` | Meme 大单（`tg` meme链上监控） |
 | `f` | 自选股涨跌（OpenCLI/Yahoo） |
 | `t` | 名人推文 alpha（默认 Trump/Musk/CZ） |
@@ -110,7 +112,7 @@ king-ai trade verify-tg --dry-run
 king-ai trade watchdog --kill
 ```
 
-`verify-tg` 会各跑一遍当前启用的告警与晨报源（六条规则 + 当前配置的晨报板块），每个源推一条 Telegram。晨报摘要与 PANews 分类走本地 agent CLI 链（`grok` → `claude` → `codex`），由 `llm.default_backend` 控制首选后端。
+`verify-tg` 会各跑一遍当前启用的告警与晨报源（七条规则 + 当前配置的晨报板块），每个源推一条 Telegram。晨报摘要与 PANews 分类走本地 agent CLI 链（`grok` → `claude` → `codex`），由 `llm.default_backend` 控制首选后端。
 
 ## OpenCLI Browser Bridge
 

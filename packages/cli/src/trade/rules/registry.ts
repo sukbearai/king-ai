@@ -9,7 +9,7 @@ export function listSlimRuleIds(): string[] {
 }
 
 export function listRuleIds(): string[] {
-  return listSlimRuleIds();
+  return Object.keys(SLIM_RULE_REGISTRY).sort();
 }
 
 export function createRule(id: string): AlertRule | null {

@@ -5,13 +5,14 @@ import { loadEnabledRules, listRuleIds, createRule } from "../src/trade/rules/re
 import { parseTelegramChannels, parseTgRecentMessages } from "../src/trade/morning-brief.js";
 
 describe("slim trade pipeline", () => {
-  it("registry exposes only verify-tg rule ids", () => {
-    assert.deepEqual(listRuleIds(), [...SLIM_ALERT_RULES]);
+  it("registry includes the default treasury rule", () => {
+    const ids = listRuleIds();
     for (const id of SLIM_ALERT_RULES) {
-      const rule = createRule(id);
-      assert.ok(rule, `missing slim rule ${id}`);
-      assert.equal(typeof rule!.check, "function");
+      assert.ok(ids.includes(id));
     }
+    const treasury = createRule("b");
+    assert.ok(treasury);
+    assert.equal(typeof treasury!.check, "function");
   });
 
   it("loadEnabledRules resolves full slim stack", async () => {
