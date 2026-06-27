@@ -51,5 +51,5 @@ export const TRADE_WATCHDOG_SERVICE_PATH = join(TRADE_LOG_DIR, "watchdog_service
 export const SERVICE_LABEL = "dev.king-ai";
 /** LaunchAgent label for `king-ai trade daemon` background supervisor. */
 export const TRADE_SERVICE_LABEL = "dev.king-ai-trade";
-export const CURRENT_VERSION = "0.3.2";
+export const CURRENT_VERSION = "0.3.3";
 export const DEFAULT_SERVER = process.env.KING_AI_SERVER_URL || "https://king-ai.congrongtech.cn";
