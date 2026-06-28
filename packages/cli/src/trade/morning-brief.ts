@@ -2,7 +2,7 @@ import { dotGet, loadTradeConfig } from "./config.js";
 import { okxGet, runOnchainos, runTg, surfFundingRate, surfMarketTicker } from "./data-helpers.js";
 import { batchSummarize } from "./llm-summarize.js";
 import { getScratchpad } from "./scratchpad.js";
-import { sendTelegram } from "./telegram.js";
+import { chunkTelegramMessage, sendTelegram } from "./telegram.js";
 import { formatDisplayTime } from "./time-utils.js";
 import { fetchStocksSection } from "./morning-brief-stocks.js";
 import { fetchTreasurySection } from "./morning-brief-treasury.js";
@@ -349,7 +349,15 @@ export async function runMorningBrief(options: {
   await getScratchpad().write("last_brief", { at: new Date().toISOString(), sections }, { source: "morning_brief", ttlHours: 24 });
 
   if (options.pushTg && !options.dryRun) {
-    await sendTelegram(output, config);
+    const chunks = chunkTelegramMessage(output).length;
+    const ok = await sendTelegram(output, config);
+    const status = ok ? "ok" : "failed";
+    process.stderr.write(`[morning-brief] telegram push ${status} chunks=${chunks}\n`);
+    await getScratchpad().write(
+      "last_brief_push",
+      { at: new Date().toISOString(), ok, sections, chunks },
+      { source: "morning_brief", ttlHours: 24 }
+    );
   }
 
   return output;

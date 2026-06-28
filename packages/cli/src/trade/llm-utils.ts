@@ -14,6 +14,8 @@ const BACKEND_BLOCK_MS = 10 * 60 * 1000;
 const backendBlockedUntil = new Map<AgentBackend, number>();
 
 interface ExecFileError extends Error {
+  code?: string | number;
+  signal?: string;
   stdout?: string | Buffer;
   stderr?: string | Buffer;
 }
@@ -74,10 +76,12 @@ function agentBackendOrder(llmCfg: Record<string, unknown>, taskBackend?: string
 
 export function summarizeAgentError(err: unknown): string {
   const e = err as ExecFileError;
+  const stdout = e.stdout ? String(e.stdout) : "";
+  const stderr = e.stderr ? String(e.stderr) : "";
   const raw = [
     err instanceof Error ? err.message : String(err),
-    e.stdout ? String(e.stdout) : "",
-    e.stderr ? String(e.stderr) : ""
+    stdout,
+    stderr
   ].filter(Boolean).join("\n");
   const compact = raw.replace(/\x1b\[[0-9;]*m/g, "").replace(/\s+/g, " ").trim();
   if (/personal-team-blocked:spending-limit|run out of credits|need a Grok subscription/i.test(compact)) {
@@ -92,7 +96,14 @@ export function summarizeAgentError(err: unknown): string {
   if (/No such file or directory/i.test(compact)) {
     return "agent output file was not created";
   }
-  return compact.length > 240 ? `${compact.slice(0, 237)}...` : compact;
+  const parts: string[] = [];
+  if (e.code !== undefined) parts.push(`exit=${e.code}`);
+  if (e.signal) parts.push(`signal=${e.signal}`);
+  if (stderr.trim()) parts.push(`stderr=${stderr.replace(/\x1b\[[0-9;]*m/g, "").replace(/\s+/g, " ").trim()}`);
+  if (stdout.trim()) parts.push(`stdout=${stdout.replace(/\x1b\[[0-9;]*m/g, "").replace(/\s+/g, " ").trim()}`);
+  if (!parts.length) parts.push(compact);
+  const detailed = parts.join(" ");
+  return detailed.length > 1000 ? `${detailed.slice(0, 997)}...` : detailed;
 }
 
 function shouldBlockBackend(summary: string): boolean {

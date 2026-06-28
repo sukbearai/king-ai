@@ -97,6 +97,10 @@ daemon 使用统一规则调度器，并运行定时任务：
 - regime 检测
 - Twitter 采集与看门狗
 
+晨报 Telegram 投递会在 `~/.king-ai/trade/logs/daemon.log` 写入
+`[morning-brief] telegram push ok|failed chunks=N`，最近一次投递元数据也会写到
+`~/.king-ai/trade/scratchpad.json` 的 `last_brief_push`。
+
 ```sh
 king-ai trade daemon --push-tg
 king-ai trade restart-service
@@ -112,7 +116,7 @@ king-ai trade verify-tg --dry-run
 king-ai trade watchdog --kill
 ```
 
-`verify-tg` 会各跑一遍当前启用的告警与晨报源（七条规则 + 当前配置的晨报板块），每个源推一条 Telegram。晨报摘要与 PANews 分类走本地 agent CLI 链（`grok` → `claude` → `codex`），由 `llm.default_backend` 控制首选后端。
+`verify-tg` 会各跑一遍当前启用的告警与晨报源（七条规则 + 当前配置的晨报板块），每个源推一条 Telegram。晨报摘要与 PANews 分类走本地 agent CLI 链（`grok` → `claude` → `codex`），由 `llm.default_backend` 控制首选后端。如果所有本地 agent 后端都不可用，晨报摘要会降级为压缩后的本地文本，而不是直接发送完整原始 feed。
 
 ## OpenCLI Browser Bridge
 

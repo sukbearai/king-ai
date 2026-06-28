@@ -1,8 +1,30 @@
 import { runAgent } from "./llm-utils.js";
 
-function rawFallback(text: string, reason: string): string {
-  process.stderr.write(`[llm-summarize] fallback to raw text: ${reason}\n`);
-  return stripMarkdown(text.slice(0, 2000));
+const FALLBACK_MAX_LINES = 12;
+const FALLBACK_MAX_CHARS = 1400;
+
+export function compactSummaryFallback(text: string): string {
+  const cleaned = stripMarkdown(text)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  for (const line of cleaned) {
+    const normalized = line.toLowerCase().replace(/\s+/g, " ");
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    lines.push(line);
+    if (lines.length >= FALLBACK_MAX_LINES) break;
+  }
+  const compact = lines.join("\n");
+  if (compact.length <= FALLBACK_MAX_CHARS) return compact;
+  return `${compact.slice(0, FALLBACK_MAX_CHARS - 1).trimEnd()}…`;
+}
+
+function localFallback(text: string, reason: string): string {
+  process.stderr.write(`[llm-summarize] fallback to compact local text: ${reason}\n`);
+  return compactSummaryFallback(text);
 }
 
 export function stripMarkdown(text: string): string {
@@ -36,7 +58,7 @@ export async function llmSummarize(text: string, label: string): Promise<string>
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(`[llm-summarize] agent error: ${msg}\n`);
   }
-  return rawFallback(text, "local agent unavailable");
+  return localFallback(text, "local agent unavailable");
 }
 
 export async function batchSummarize(blocks: Array<{ label: string; text: string }>): Promise<string[]> {

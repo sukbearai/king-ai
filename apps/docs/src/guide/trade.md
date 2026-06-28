@@ -97,6 +97,10 @@ The daemon runs a unified rule scheduler plus scheduled jobs:
 - Regime detection
 - Twitter collector and process watchdog
 
+Morning brief Telegram delivery writes `[morning-brief] telegram push ok|failed chunks=N` to
+`~/.king-ai/trade/logs/daemon.log`, and the latest delivery metadata is stored in
+`~/.king-ai/trade/scratchpad.json` under `last_brief_push`.
+
 ```sh
 king-ai trade daemon --push-tg
 king-ai trade restart-service
@@ -112,7 +116,7 @@ king-ai trade verify-tg --dry-run
 king-ai trade watchdog --kill
 ```
 
-`verify-tg` runs each enabled alert and brief source once (seven rules + the configured brief sections) and pushes one Telegram message per source. Trade AI summaries and PANews classification use the local agent CLI chain (`grok` → `claude` → `codex`) via `llm.default_backend`.
+`verify-tg` runs each enabled alert and brief source once (seven rules + the configured brief sections) and pushes one Telegram message per source. Trade AI summaries and PANews classification use the local agent CLI chain (`grok` → `claude` → `codex`) via `llm.default_backend`. If every local agent backend is unavailable, morning brief summaries fall back to compacted local text instead of sending the full raw feed.
 
 ## OpenCLI Browser Bridge
 

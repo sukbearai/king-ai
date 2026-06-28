@@ -28,6 +28,16 @@ export function chunkTelegramMessage(text: string, maxLen = TG_MAX_LEN): string[
     }
     let buf = "";
     for (const line of ch.split("\n")) {
+      if (line.length + 1 > maxLen) {
+        if (buf.trim()) {
+          repacked.push(buf.trimEnd());
+          buf = "";
+        }
+        for (let i = 0; i < line.length; i += maxLen) {
+          repacked.push(line.slice(i, i + maxLen));
+        }
+        continue;
+      }
       if (buf.length + line.length + 1 > maxLen && buf) {
         repacked.push(buf.trimEnd());
         buf = `${line}\n`;

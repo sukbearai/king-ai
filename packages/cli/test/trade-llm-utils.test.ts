@@ -27,8 +27,17 @@ personal-team-blocked:spending-limit: You have run out of credits or need a Grok
   assert.equal(summarizeAgentError(stdoutAuth), "auth failed: invalid or expired credentials");
 
   const generic = summarizeAgentError(new Error(`Command failed: agent ${prompt}`));
-  assert.ok(generic.length <= 240);
+  assert.ok(generic.length <= 1000);
   assert.doesNotMatch(generic, /交易分析师。交易分析师。交易分析师/);
+
+  const detailed = new Error("Command failed: codex exec prompt");
+  (detailed as Error & { code: number; stderr: string; stdout: string }).code = 1;
+  (detailed as Error & { stderr: string }).stderr = "first stderr line\nsecond stderr line";
+  (detailed as Error & { stdout: string }).stdout = "partial answer";
+  const detailSummary = summarizeAgentError(detailed);
+  assert.match(detailSummary, /exit=1/);
+  assert.match(detailSummary, /stderr=first stderr line second stderr line/);
+  assert.match(detailSummary, /stdout=partial answer/);
 });
 
 test("runAgent skips temporarily blocked auth/quota backends", async () => {
