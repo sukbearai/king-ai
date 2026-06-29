@@ -8,6 +8,7 @@ import {
   appendRuntimePreamble,
   buildRuntimePreambleSection,
   agentSessionFile,
+  conversationSessionScope,
   failOpenStreakAfterDeferral,
   formatTriageNote,
   formatSteerPrompt,
@@ -39,6 +40,7 @@ import {
   shouldRetryEngineNoOutputTurn,
   shouldSkipPollWake,
   shouldStopEngineOnBeginStop,
+  turnSessionScope,
   replaceWakeStreamController,
   sanitizeNestedEngineEnv,
   swallowTurnRejection,
@@ -50,6 +52,18 @@ import {
 test("agentSessionFile scopes session ids by engine", () => {
   assert.match(agentSessionFile("king-ai-ceo", "claude"), /king-ai-ceo\.claude\.session$/);
   assert.match(agentSessionFile("king-ai-ceo", "codex"), /king-ai-ceo\.codex\.session$/);
+  const first = agentSessionFile("ielts-tutor", "codex", conversationSessionScope("IELTS"));
+  const second = agentSessionFile("ielts-tutor", "codex", conversationSessionScope("雅思二"));
+  assert.match(first, /ielts-tutor\.codex\..+\.session$/);
+  assert.match(second, /ielts-tutor\.codex\..+\.session$/);
+  assert.notEqual(first, second);
+});
+
+test("turnSessionScope isolates single-conversation turns", () => {
+  assert.equal(turnSessionScope({ conversationId: "雅思二" }, []), conversationSessionScope("雅思二"));
+  assert.equal(turnSessionScope(null, ["IELTS"]), conversationSessionScope("IELTS"));
+  assert.equal(turnSessionScope(null, ["IELTS", "雅思二"]), "default");
+  assert.equal(turnSessionScope(null, []), "default");
 });
 
 test("parseWakeEventInfo extracts conversation and delivery latency", () => {

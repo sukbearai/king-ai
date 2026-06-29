@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { api, runtimeGet, runtimeGetStrict, runtimePost, runtimePostStrict, tenantHeader } from "./api.js";
@@ -398,8 +398,31 @@ export function swallowTurnRejection(task: Promise<void>, onError: (message: str
   });
 }
 
-export function agentSessionFile(agentId: string, engine: EngineId): string {
-  return join(SESSIONS_DIR, `${agentId}.${engine}.session`);
+const DEFAULT_SESSION_SCOPE = "default";
+
+function sessionScopeFilePart(scope: string): string {
+  const readable = scope
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40) || "scope";
+  return `${readable}-${hashText(scope)}`;
+}
+
+export function conversationSessionScope(conversationId?: string | null): string {
+  const id = conversationId?.trim();
+  return id ? `conversation:${id}` : DEFAULT_SESSION_SCOPE;
+}
+
+export function turnSessionScope(contract: RuntimeRunContract | null | undefined, seenConversationIds: Iterable<string>): string {
+  if (contract?.conversationId) return conversationSessionScope(contract.conversationId);
+  const ids = [...seenConversationIds].filter((id) => id.trim());
+  return ids.length === 1 ? conversationSessionScope(ids[0]) : DEFAULT_SESSION_SCOPE;
+}
+
+export function agentSessionFile(agentId: string, engine: EngineId, scope = DEFAULT_SESSION_SCOPE): string {
+  const suffix = scope === DEFAULT_SESSION_SCOPE ? "" : `.${sessionScopeFilePart(scope)}`;
+  return join(SESSIONS_DIR, `${agentId}.${engine}${suffix}.session`);
 }
 
 export function parseWakeEventInfo(rawData: string | undefined, now = Date.now()): WakeEventInfo {
@@ -508,7 +531,6 @@ export function failOpenStreakAfterDeferral(streak: number): number {
 export class AgentRunner {
   private readonly home: string;
   private readonly binDir: string;
-  private readonly sessionFile: string;
   private readonly adapter: EngineAdapter;
   private token = "";
   private tokenExpiresAt = 0;
@@ -544,6 +566,7 @@ export class AgentRunner {
   private noStateActionUnreadKey = "";
   private noOutputRerunKey = "";
   private noOutputRerunAttempts = 0;
+  private sessionScope = DEFAULT_SESSION_SCOPE;
   private triageVerdictCache: { key: string; verdict: TriageVerdict; at: number } | null = null;
   private readonly recentWakeEvents = new Map<string, number>();
 
@@ -558,7 +581,6 @@ export class AgentRunner {
     this.home = join(AGENTS_ROOT, agent.id);
     this.binDir = join(this.home, "bin");
     this.adapter = getAdapter(engine);
-    this.sessionFile = agentSessionFile(agent.id, this.adapter.id);
   }
 
   get isBusy(): boolean {
@@ -704,7 +726,7 @@ export class AgentRunner {
     this.lastSteeredMsgId = null;
     this.remediation = null;
     this.recentWakeEvents.clear();
-    await rm(this.sessionFile, { force: true });
+    await this.clearAllSessionIds();
     await rm(this.home, { recursive: true, force: true });
     this.stopped = false;
     try {
@@ -914,15 +936,27 @@ export class AgentRunner {
   }
 
   private async loadSessionId(): Promise<void> {
+    const sessionFile = agentSessionFile(this.agent.id, this.adapter.id, this.sessionScope);
     try {
-      const s = (await readFile(this.sessionFile, "utf8")).trim();
+      const s = (await readFile(sessionFile, "utf8")).trim();
       if (s) {
         this.sessionId = s;
-        console.log(`[${this.agent.id}/${this.adapter.id}] restored engine session ${s.slice(0, 8)} from disk; will resume`);
+        console.log(`[${this.agent.id}/${this.adapter.id}] restored engine session ${s.slice(0, 8)} from disk for ${this.sessionScope}; will resume`);
       }
     } catch {
       this.sessionId = null;
     }
+  }
+
+  private async switchSessionScope(scope: string): Promise<void> {
+    if (scope === this.sessionScope) return;
+    if (this.engineSession?.alive) {
+      this.engineSession.stop();
+      this.engineSession = null;
+    }
+    this.sessionScope = scope;
+    this.sessionId = null;
+    await this.loadSessionId();
   }
 
   private async setSessionId(id?: string | null): Promise<void> {
@@ -933,12 +967,27 @@ export class AgentRunner {
     }
     this.sessionId = id;
     await mkdir(SESSIONS_DIR, { recursive: true });
-    await writeFile(this.sessionFile, id, "utf8");
+    await writeFile(agentSessionFile(this.agent.id, this.adapter.id, this.sessionScope), id, "utf8");
   }
 
   private async clearSessionId(): Promise<void> {
     this.sessionId = null;
-    await rm(this.sessionFile, { force: true });
+    await rm(agentSessionFile(this.agent.id, this.adapter.id, this.sessionScope), { force: true });
+  }
+
+  private async clearAllSessionIds(): Promise<void> {
+    this.sessionId = null;
+    try {
+      const entries = await readdir(SESSIONS_DIR);
+      const prefix = `${this.agent.id}.${this.adapter.id}`;
+      await Promise.all(
+        entries
+          .filter((entry) => entry === `${prefix}.session` || (entry.startsWith(`${prefix}.`) && entry.endsWith(".session")))
+          .map((entry) => rm(join(SESSIONS_DIR, entry), { force: true }))
+      );
+    } catch {
+      // Missing sessions directory is already clean.
+    }
   }
 
   private async resetEngineSession(reason: string): Promise<void> {
@@ -1340,6 +1389,8 @@ ${delta}`;
           continue;
         }
 
+        await this.switchSessionScope(turnSessionScope(activeContract, seen.keys()));
+
         await this.publishStatus(token, "thinking");
         let typingTimer: NodeJS.Timeout | null = null;
         const typingConvo = activeConversationId;
@@ -1555,6 +1606,7 @@ ${delta}`;
     const agenda = await runtimeGet<AgendaPayload>(this.cfg.serverUrl, "/agenda", token, this.cfg.tenantId);
     if (!agenda?.actionable || !agenda.brief) return;
     console.log(`[${this.agent.id}/${this.adapter.id}] agenda turn START${agenda.focus ? ` ${agenda.focus}` : ""}`);
+    await this.switchSessionScope(DEFAULT_SESSION_SCOPE);
     await this.publishEvent("agenda.started", { focus: agenda.focus ?? null });
     await this.publishStatus(token, "thinking");
     const run = await runtimePost<RuntimeRun>(this.cfg.serverUrl, "/runs", token, {

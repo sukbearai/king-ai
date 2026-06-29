@@ -66,6 +66,8 @@ king-ai agent computer --doctor
 
 to verify engine availability after PATH, login, or quota changes.
 
+Persistent engine sessions are scoped by GUI conversation window when a turn is pinned to exactly one conversation. This keeps follow-up context inside the same window while preventing a newly created window from inheriting another window's local model transcript. Background agenda work and turns that span multiple conversations use the default per-agent session.
+
 Persistent engine sessions have a no-output watchdog. If a local CLI such as Codex or Grok gets stuck behind an interactive login, quota, billing, or credits prompt and produces no engine output, King AI aborts that attempt, resets the affected session, records the attempt in the run attempt ledger, shows it on the run stream card, and schedules one bounded retry for the same unread work or pinned task before backing off. If the retry also fails, King AI posts a clear runtime failure notice and shows the remediation in the GUI model status panel; run the engine directly in a local terminal and then re-run `king-ai agent computer --doctor` before waking the agent again.
 
 Grok uses the xAI CLI headless mode (`grok -p`) with `--output-format streaming-json` for turns and `--resume <sessionId>` for session reuse. When a turn includes accepted image attachments, King AI switches to `grok --prompt-json` and sends ACP image content blocks with base64 payloads instead of plain `-p` text. In scripted runs King AI also passes `--no-auto-update` and `--always-approve`. Optional extra flags can be supplied with `KING_AI_GROK_ARGS`.

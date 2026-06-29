@@ -66,6 +66,8 @@ king-ai agent computer --doctor
 
 来验证 PATH、登录或额度变化后的引擎可用性。
 
+当某次 turn 明确绑定到单个 GUI 对话窗口时，持久引擎 session 会按窗口隔离。这样同一个窗口里的追问仍能沿用上下文，新建窗口不会继承另一个窗口的本地模型 transcript。后台 agenda work 和横跨多个对话的 turn 会继续使用默认的每智能体 session。
+
 持久引擎 session 会启用无输出 watchdog。如果 Codex 或 Grok 等本地 CLI 卡在交互式登录、额度、账单或 credits 提示后没有产生任何引擎输出，King AI 会中止当前 attempt、重置受影响的 session、把 attempt 记录进 run attempt ledger，并同步显示在 run stream card 上，再针对同一批未读消息或 pinned task 安排一次有上限的重试，然后才进入退避。如果重试仍失败，King AI 会发送明确的 runtime failure notice，并在 GUI 的模型状态面板显示处理建议；此时先在本地终端直接运行对应引擎，再重新执行 `king-ai agent computer --doctor`，确认健康后再唤醒智能体。
 
 Grok 通过 xAI CLI 的 headless 模式（`grok -p`）运行 turn，使用 `--output-format streaming-json`，并通过 `--resume <sessionId>` 复用 session。当 turn 带有已接受的图片附件时，King AI 会改用 `grok --prompt-json`，以 ACP 图片内容块（base64 载荷）发送，而不是纯文本 `-p`。脚本化运行时 King AI 还会传入 `--no-auto-update` 和 `--always-approve`。可通过 `KING_AI_GROK_ARGS` 追加可选参数。
