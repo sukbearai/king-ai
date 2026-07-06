@@ -49,7 +49,7 @@ export const KNOWN_SUBCOMMANDS: Record<string, Set<string>> = {
   agent: new Set(["computer"]),
   agents: new Set(["spawn", "destroy"]),
   artifact: new Set(["put", "list", "get", "check"]),
-  calendar: new Set(["list", "create"]),
+  calendar: new Set(["list", "create", "delete"]),
   capsule: new Set(["create", "list", "mine", "get", "update"]),
   card: new Set(["list", "create", "claim", "move", "done", "release"]),
   context: new Set(["get", "set", "list", "delete"]),

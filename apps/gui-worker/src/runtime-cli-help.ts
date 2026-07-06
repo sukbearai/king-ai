@@ -30,7 +30,7 @@ export function runtimeCliHelp(): string {
     "  king-ai review record|list|get [--capsule id] [--coverage pct] [--checks true|false]",
     "  king-ai route set|list|delete|emit <eventType> [--agent agent-id] [--source source] '<payload json>'",
     "  king-ai card list|create|claim|move|done|release [--paths a,b] [--owner agent-id]",
-    "  king-ai calendar list|create",
+    "  king-ai calendar list|create|delete <id>",
     "  king-ai claim <name> [--in <conversationId>] [--paths a,b] [--owner agent-id]",
     "  king-ai unclaim <claimId>",
     "  king-ai dm <agentId> <text>",

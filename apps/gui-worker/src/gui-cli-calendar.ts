@@ -51,5 +51,13 @@ export function runCalendarCommand<S extends { calendar: GuiCliCalendarItem[] }>
     state.calendar.push(item);
     return `calendar created ${item.id}${cron ? ` cron=${cron}` : ""}`;
   }
-  return "usage: king-ai calendar list|create <title> --at <iso> [--cron expr] [--assignee <id>] [--prompt <text>]";
+  if (cmd === "delete") {
+    const id = args[1];
+    if (!id) return "usage: king-ai calendar delete <id>";
+    const index = state.calendar.findIndex((item) => item.id === id);
+    if (index < 0) return `calendar not found: ${id}`;
+    state.calendar.splice(index, 1);
+    return `calendar deleted ${id}`;
+  }
+  return "usage: king-ai calendar list|create|delete <title> --at <iso> [--cron expr] [--assignee <id>] [--prompt <text>] | delete <id>";
 }
