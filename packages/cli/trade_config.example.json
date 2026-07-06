@@ -15,6 +15,7 @@
     "enabled": ["market", "stocks", "treasury", "telegram", "twitter", "leaderboard", "pumpfun"],
     "schedule_hour": 5,
     "hours_lookback": 24,
+    "telegram_fallback_hours": 168,
     "llm_summarize": true,
     "push_telegram": false
   },

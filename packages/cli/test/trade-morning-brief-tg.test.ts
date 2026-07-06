@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { compactSummaryFallback } from "../src/trade/llm-summarize.js";
-import { parseTelegramChannels, parseTgRecentMessages } from "../src/trade/morning-brief.js";
+import {
+  parseTelegramChannels,
+  parseTgRecentMessages,
+  preprocessTelegramBody,
+  resolveBriefingPushTg
+} from "../src/trade/morning-brief.js";
 import { chunkTelegramMessage } from "../src/trade/telegram.js";
 import { countRecentCacheRecords } from "../src/trade/twitter-cache.js";
 
@@ -36,6 +41,35 @@ describe("countRecentCacheRecords", () => {
   it("counts recent vs stale tweets from cache stats shape", async () => {
     const stats = await countRecentCacheRecords(24, "/nonexistent/twitter_cache.jsonl");
     assert.deepEqual(stats, { total: 0, recent: 0, stale: 0, invalid: 0 });
+  });
+});
+
+describe("preprocessTelegramBody", () => {
+  it("deduplicates meme transfer spam and strips markdown links", () => {
+    const raw = [
+      "⬇️ [CZ](https://chain.fm/account) received 200k Fomo3D from 0xce...25c6",
+      "⬇️ [CZ](https://chain.fm/account) received 200k Fomo3D from 0xce...25c6",
+      "⚙️",
+      "⬇️ [CZ](https://chain.fm/account) received 100k Fomo3D from 0xb0...ea61"
+    ].join("\n");
+    const out = preprocessTelegramBody(raw);
+    assert.equal(out.split("\n").length, 2);
+    assert.match(out, /CZ.*received 200k Fomo3D/);
+    assert.equal(out.includes("https://"), false);
+  });
+});
+
+describe("resolveBriefingPushTg", () => {
+  it("prefers explicit CLI flag over config", () => {
+    const config = { briefing: { push_telegram: true } };
+    assert.equal(resolveBriefingPushTg(config, { pushTg: false }), false);
+    assert.equal(resolveBriefingPushTg(config, { pushTg: true }), true);
+  });
+
+  it("falls back to briefing.push_telegram when flag is unset", () => {
+    assert.equal(resolveBriefingPushTg({ briefing: { push_telegram: true } }), true);
+    assert.equal(resolveBriefingPushTg({ briefing: { push_telegram: false } }), false);
+    assert.equal(resolveBriefingPushTg({}), false);
   });
 });
 

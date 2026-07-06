@@ -1,6 +1,6 @@
 import { cronMatches } from "../cron.js";
 import { dotGet, enabledAlertRules, loadTradeConfig } from "./config.js";
-import { runMorningBrief } from "./morning-brief.js";
+import { resolveBriefingPushTg, runMorningBrief } from "./morning-brief.js";
 import { runUnifiedRuleScheduler } from "./rule-scheduler.js";
 import { getScratchpad } from "./scratchpad.js";
 import { runProcessWatchdog } from "./process-watchdog.js";
@@ -24,12 +24,13 @@ function minuteKey(date = new Date()): string {
 
 export async function runTradeDaemon(options: TradeDaemonOptions = {}): Promise<void> {
   const config = await loadTradeConfig();
+  const pushTg = resolveBriefingPushTg(config, options);
   const enabled = new Set(enabledAlertRules(config));
   const pad = getScratchpad();
   const onStatus = (line: string) => process.stderr.write(`${line}\n`);
 
   const ruleSchedulerLoop = runUnifiedRuleScheduler({
-    pushTg: options.pushTg,
+    pushTg,
     dryRun: options.dryRun,
     onStatus
   });
@@ -44,7 +45,7 @@ export async function runTradeDaemon(options: TradeDaemonOptions = {}): Promise<
       cron: briefCron,
       run: async () => {
         process.stderr.write("[scheduler] morning_brief\n");
-        await runMorningBrief({ pushTg: options.pushTg, dryRun: options.dryRun });
+        await runMorningBrief({ pushTg, dryRun: options.dryRun });
       }
     }
   ];
@@ -90,7 +91,7 @@ export async function runTradeDaemon(options: TradeDaemonOptions = {}): Promise<
     if (ts - lastWatchdog >= watchdogInterval) {
       lastWatchdog = ts;
       try {
-        await runProcessWatchdog({ kill: true, pushTg: options.pushTg, log: true });
+        await runProcessWatchdog({ kill: true, pushTg, log: true });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         process.stderr.write(`[watchdog] failed: ${msg}\n`);
@@ -102,7 +103,7 @@ export async function runTradeDaemon(options: TradeDaemonOptions = {}): Promise<
   await tick();
 
   process.stderr.write(
-    `trade daemon started — rules=[${[...enabled].join(",")}] pushTg=${!!options.pushTg}\n`
+    `trade daemon started — rules=[${[...enabled].join(",")}] pushTg=${!!pushTg}\n`
   );
 
   await ruleSchedulerLoop;

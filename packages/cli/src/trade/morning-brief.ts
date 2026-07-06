@@ -1,6 +1,6 @@
 import { dotGet, loadTradeConfig } from "./config.js";
 import { okxGet, runOnchainos, runTg, surfFundingRate, surfMarketTicker } from "./data-helpers.js";
-import { batchSummarize } from "./llm-summarize.js";
+import { batchSummarize, stripMarkdown } from "./llm-summarize.js";
 import { getScratchpad } from "./scratchpad.js";
 import { chunkTelegramMessage, sendTelegram } from "./telegram.js";
 import { formatDisplayTime } from "./time-utils.js";
@@ -124,6 +124,86 @@ export function parseTgRecentMessages(raw: string): string[] {
   }
 }
 
+export function preprocessTelegramBody(text: string, maxLines = 40): string {
+  const lines = stripMarkdown(text)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && line !== "⚙️");
+  const seen = new Set<string>();
+  const picked: string[] = [];
+  for (const line of lines) {
+    const normalized = line.toLowerCase().replace(/\s+/g, " ");
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    picked.push(line);
+    if (picked.length >= maxLines) break;
+  }
+  return picked.join("\n");
+}
+
+export function resolveBriefingPushTg(
+  config: Record<string, unknown>,
+  options: { pushTg?: boolean } = {}
+): boolean {
+  if (options.pushTg === true) return true;
+  if (options.pushTg === false) return false;
+  return dotGet(config, "briefing.push_telegram", false) === true;
+}
+
+type TgChannelFetch = {
+  messages: string[];
+  rawBytes: number;
+  usedHours?: number;
+  stale?: boolean;
+  error?: string;
+};
+
+async function fetchTgChannelMessages(
+  chat: string,
+  hours: number,
+  msgLimit: number,
+  fallbackHours: number
+): Promise<TgChannelFetch> {
+  const hourAttempts = [...new Set([hours, fallbackHours].filter((h) => Number.isFinite(h) && h > 0))];
+  let lastBytes = 0;
+  for (let i = 0; i < hourAttempts.length; i++) {
+    const h = hourAttempts[i]!;
+    const result = await runTg([
+      "recent",
+      "-c", chat,
+      "-n", String(msgLimit),
+      "--hours", String(h),
+      ...(i === 0 ? ["--sync-first"] : []),
+      "--json"
+    ]);
+    if (!result.ok) return { messages: [], rawBytes: 0, error: result.error };
+    lastBytes = result.data.length;
+    const messages = parseTgRecentMessages(result.data);
+    if (messages.length) {
+      return {
+        messages,
+        rawBytes: lastBytes,
+        usedHours: h,
+        stale: h > hours
+      };
+    }
+  }
+
+  const fallback = await runTg([
+    "recent",
+    "-c", chat,
+    "-n", String(msgLimit),
+    "--json"
+  ]);
+  if (!fallback.ok) return { messages: [], rawBytes: lastBytes, error: fallback.error };
+  const messages = parseTgRecentMessages(fallback.data);
+  return {
+    messages,
+    rawBytes: fallback.data.length || lastBytes,
+    stale: messages.length > 0
+  };
+}
+
 async function fetchTwitterSummary(hours: number): Promise<string> {
   const config = await loadTradeConfig();
   const ds = (dotGet(config, "data_sources.twitter", {}) ?? {}) as Record<string, unknown>;
@@ -211,43 +291,42 @@ async function fetchTelegramSummary(hours: number): Promise<string> {
     "meme 链上监控": "meme链上监控"
   }) ?? {}) as Record<string, string>;
   const msgLimit = Number(dotGet(config, "data_sources.telegram.messages_per_channel", 15)) || 15;
+  const fallbackHours = Number(dotGet(config, "briefing.telegram_fallback_hours", 168)) || 168;
   const lines = [`📰 Telegram 频道摘要（最近 ${hours}h）\n`];
   const channelRows = parseTelegramChannels(channels);
   const fetched = await Promise.all(
     channelRows.map(async ({ label, chat }) => {
-      const result = await runTg([
-        "recent",
-        "-c", chat,
-        "-n", String(msgLimit),
-        "--hours", String(hours),
-        "--sync-first",
-        "--json"
-      ]);
-      if (!result.ok) return { label, messages: [] as string[], rawBytes: 0, error: result.error };
-      const messages = parseTgRecentMessages(result.data);
-      return { label, messages, rawBytes: result.data.length, error: undefined as string | undefined };
+      const result = await fetchTgChannelMessages(chat, hours, msgLimit, fallbackHours);
+      return { label, ...result };
     })
   );
 
   const blocks: Array<{ label: string; text: string }> = [];
-  for (const { label, messages, rawBytes, error } of fetched) {
+  for (const { label, messages, rawBytes, usedHours, stale, error } of fetched) {
     if (error) {
       lines.push(`【${label}】采集失败: ${error}`);
       continue;
     }
     if (!messages.length) {
-      lines.push(`【${label}】暂无消息（tg 返回 ${rawBytes} 字节，但未解析到 content/text）`);
+      lines.push(`【${label}】暂无消息（tg 返回 ${rawBytes} 字节，最近 ${hours}h 与 ${fallbackHours}h 均无内容）`);
       continue;
     }
-    const body = messages.join("\n");
+    const body = preprocessTelegramBody(messages.join("\n"));
+    const staleNote = stale
+      ? `（最近 ${hours}h 无新消息${usedHours ? `，展示最近 ${usedHours}h 内消息` : "，展示最近缓存消息"}）\n`
+      : "";
     blocks.push({ label, text: body });
-    if (!useLlm) lines.push(`【${label}】\n${body.slice(0, 1500)}`);
+    if (!useLlm) lines.push(`【${label}】${staleNote}${body.slice(0, 1500)}`);
   }
 
   if (useLlm && blocks.length) {
     const summaries = await batchSummarize(blocks);
     blocks.forEach((b, i) => {
-      lines.push(`【${b.label}】\n${summaries[i]}`);
+      const fetchedRow = fetched.find((row) => row.label === b.label);
+      const staleNote = fetchedRow?.stale
+        ? `（最近 ${hours}h 无新消息${fetchedRow.usedHours ? `，展示最近 ${fetchedRow.usedHours}h 内消息` : "，展示最近缓存消息"}）\n`
+        : "";
+      lines.push(`【${b.label}】${staleNote}${summaries[i]}`);
     });
   }
   return lines.join("\n\n");
@@ -348,7 +427,8 @@ export async function runMorningBrief(options: {
 
   await getScratchpad().write("last_brief", { at: new Date().toISOString(), sections }, { source: "morning_brief", ttlHours: 24 });
 
-  if (options.pushTg && !options.dryRun) {
+  const pushTg = resolveBriefingPushTg(config, options);
+  if (pushTg && !options.dryRun) {
     const chunks = chunkTelegramMessage(output).length;
     const ok = await sendTelegram(output, config);
     const status = ok ? "ok" : "failed";

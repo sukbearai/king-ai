@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFile, rm } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
@@ -10,6 +10,7 @@ const execFileP = promisify(execFile);
 const AGENT_BACKENDS = ["grok", "claude", "codex"] as const;
 type AgentBackend = typeof AGENT_BACKENDS[number];
 
+const PROMPT_ARG_MAX = 4000;
 const BACKEND_BLOCK_MS = 10 * 60 * 1000;
 const backendBlockedUntil = new Map<AgentBackend, number>();
 
@@ -32,6 +33,32 @@ async function execFileClosedStdin(
     });
     child.stdin?.end();
   });
+}
+
+async function execFileWithStdin(
+  file: string,
+  args: string[],
+  stdinText: string,
+  options: { timeout: number; maxBuffer?: number; env?: NodeJS.ProcessEnv }
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = execFile(file, args, options, (err, stdout, stderr) => {
+      if (err) reject(err);
+      else resolve({ stdout, stderr });
+    });
+    child.stdin?.write(stdinText);
+    child.stdin?.end();
+  });
+}
+
+function promptNeedsFileDelivery(prompt: string): boolean {
+  return prompt.length > PROMPT_ARG_MAX;
+}
+
+async function writePromptTempFile(prompt: string): Promise<string> {
+  const file = join(tmpdir(), `king-ai-prompt-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`);
+  await writeFile(file, prompt, "utf8");
+  return file;
 }
 
 export function extractJsonFromText(text: string): unknown {
@@ -131,28 +158,36 @@ async function runAgentBackend(
 ): Promise<string> {
   if (name === "claude") {
     const model = String(llmCfg.claude_model ?? "");
-    const args = ["-p", prompt, "--output-format", "text"];
+    const useStdin = promptNeedsFileDelivery(prompt);
+    const args = ["-p", useStdin ? "-" : prompt, "--output-format", "text"];
     if (model) args.unshift("-m", model);
-    const { stdout } = await execFileP("claude", args, {
+    const execOpts = {
       timeout: timeoutMs,
       maxBuffer: 5 * 1024 * 1024,
       env: process.env
-    });
+    };
+    const { stdout } = useStdin
+      ? await execFileWithStdin("claude", args, prompt, execOpts)
+      : await execFileP("claude", args, execOpts);
     return stdout.trim();
   }
 
   if (name === "codex") {
     const model = String(llmCfg.codex_model ?? "");
     const outputFile = join(tmpdir(), `king-ai-llm-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`);
+    const useStdin = promptNeedsFileDelivery(prompt);
     const args = ["exec", "--sandbox", "read-only", "--output-last-message", outputFile, "--ephemeral"];
     if (model) args.push("-m", model);
-    args.push(prompt);
+    args.push(useStdin ? "-" : prompt);
+    const execOpts = {
+      timeout: timeoutMs,
+      maxBuffer: 5 * 1024 * 1024,
+      env: process.env
+    };
     try {
-      const { stdout } = await execFileClosedStdin("codex", args, {
-        timeout: timeoutMs,
-        maxBuffer: 5 * 1024 * 1024,
-        env: process.env
-      });
+      const { stdout } = useStdin
+        ? await execFileWithStdin("codex", args, prompt, execOpts)
+        : await execFileClosedStdin("codex", args, execOpts);
       const fileText = await readFile(outputFile, "utf8").catch(() => "");
       return (fileText || stdout).trim();
     } finally {
@@ -161,22 +196,27 @@ async function runAgentBackend(
   }
 
   const model = String(llmCfg.grok_model ?? "");
-  const args = [
-    "--no-auto-update",
-    "--always-approve",
-    "--no-alt-screen",
-    "-p",
-    prompt,
-    "--output-format",
-    "plain"
-  ];
-  if (model) args.unshift("-m", model);
-  const { stdout } = await execFileP("grok", args, {
-    timeout: timeoutMs,
-    maxBuffer: 5 * 1024 * 1024,
-    env: process.env
-  });
-  return stdout.trim();
+  const usePromptFile = promptNeedsFileDelivery(prompt);
+  const promptFile = usePromptFile ? await writePromptTempFile(prompt) : "";
+  try {
+    const args = [
+      "--no-auto-update",
+      "--always-approve",
+      "--no-alt-screen",
+      ...(usePromptFile ? ["--prompt-file", promptFile] : ["-p", prompt]),
+      "--output-format",
+      "plain"
+    ];
+    if (model) args.unshift("-m", model);
+    const { stdout } = await execFileP("grok", args, {
+      timeout: timeoutMs,
+      maxBuffer: 5 * 1024 * 1024,
+      env: process.env
+    });
+    return stdout.trim();
+  } finally {
+    if (promptFile) await rm(promptFile, { force: true }).catch(() => undefined);
+  }
 }
 
 export async function runAgent(
