@@ -50,11 +50,48 @@ Treat this directory as sensitive because it contains runtime tokens and local e
 - `KING_AI_TURN_TIMEOUT_MS`: optional hard timeout for one-shot engine runs. It is disabled by default.
 - `KING_AI_TRADE_CONFIG`: override the trade config path (default `~/.king-ai/trade_config.json`).
 - `KING_AI_ALERT_LOG`: override the alert JSONL audit log path written by trade rules.
+- `KING_AI_SHARED_SKILLS`: one or more directories that directly contain shared skill folders. Use the platform path delimiter, or commas, between multiple roots. The daemon copies every child directory with a `SKILL.md` into each agent home before starting the local engine.
+- `KING_AI_SKILL_SNAPSHOTS_DIR`: optional directory for activation snapshots that record the exact shared skill files installed for a run.
 
 
 ## Trade Runtime
 
 Trade intelligence uses `~/.king-ai/trade/` for logs, scratchpad state, alert audit logs, and bundled skills such as PANews. See [Trade Intelligence](/guide/trade) for daemon installation and rule configuration.
+
+## Shared Skills
+
+Shared skills let an operator mount a curated set of external procedures into every local agent home without bundling those procedures into the King AI package. This is useful for private team skills or third-party skill packs such as AI Builder Club.
+
+The directory named by `KING_AI_SHARED_SKILLS` must directly contain skill folders:
+
+```text
+/path/to/shared-skills/
+├── dev-local-setup/
+│   └── SKILL.md
+└── new-loop/
+    └── SKILL.md
+```
+
+For an AI Builder Club checkout next to this repository, enable it with:
+
+```sh
+eval "$(pnpm skills:aibc:env)"
+pnpm dev -- agent computer
+```
+
+On this machine the helper resolves to:
+
+```sh
+export KING_AI_SHARED_SKILLS='/Users/fayon/workspace/github/skills/skills/skills'
+```
+
+You can pass another root when the checkout lives elsewhere:
+
+```sh
+eval "$(pnpm skills:aibc:env /path/to/aibc/skills)"
+```
+
+At startup the daemon installs shared skills into `.claude/skills`, `.codex/skills`, and `.grok/skills` under each per-agent home. It also writes an activation snapshot under `.king-ai/skill-snapshots`, or under `KING_AI_SKILL_SNAPSHOTS_DIR` when configured, so a run can be audited against the exact skill contents it received.
 
 ## Local Engines
 

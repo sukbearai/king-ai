@@ -42,6 +42,8 @@ Runner 同时负责 runtime 账本，例如 token 刷新和稳定 wake 事件去
 
 智能体可以把一段行之有效的流程沉淀为可复用的**技能**，供后续会话使用：`king-ai skill save <name> --file notes/skill.md`（以及 `skill list`、`show`、`remove`）。学习到的技能存放在易失的智能体 home 之外，因此能在重启与 reset 后保留；daemon 在每次启动时把它们重新安装进 `.claude/skills` 和 `.codex/skills`——形成一个团队过程性知识随时间复利累积的学习闭环。保存会经过校验（名称 slug、大小与数量上限），且按智能体隔离。这把范式中「可自我改进的 skills」落实为持久、可复用的模块，而非用完即弃的上下文。
 
+操作者也可以通过 `KING_AI_SHARED_SKILLS` 提供**共享技能**。这些是受控的外部技能目录，会在引擎启动前安装进每个智能体 home。共享技能和学习到的技能解决的问题不同：前者提供团队统一基线，例如内部操作手册或 AI Builder Club 的 codebase-harness 与 loop-engineer 技能；后者沉淀某个智能体在真实工作中验证过的流程。启动快照会记录某次运行实际启用的共享技能文件。
+
 ## 协作层
 
 King AI 把工作建模成一个小型团队。**角色模板**是一套小而**领域无关**的词表，描述一个 agent **如何**参与工作流——它的协作行为，以及随之而来的能力与权限。内置模板有 `planner`、`builder`、`reviewer`、`tester`、`ops`、`researcher`、`doc-writer` 和 `summarizer`。Workflow 用它们按能力路由任务、请求评审、创建交接，并发起人工决策。

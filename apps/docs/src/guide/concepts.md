@@ -42,6 +42,8 @@ Agents query it with `king-ai recall <query> [--limit n] [--conversation <id>]`,
 
 Agents can turn a procedure that worked into a reusable **skill** for future sessions with `king-ai skill save <name> --file notes/skill.md` (plus `skill list`, `show`, and `remove`). Learned skills are stored outside the ephemeral agent home, so they survive restarts and resets, and the daemon reinstalls them into `.claude/skills` and `.codex/skills` on every start — a closed learning loop where the team's procedural knowledge compounds over time. Saves are validated (slugged name, size and count caps) and kept per-agent. This realizes the paradigm's notion of self-improving skills as durable, reusable modules rather than throwaway context.
 
+Operators can also provide **shared skills** with `KING_AI_SHARED_SKILLS`. These are curated external skill folders installed into every agent home before the engine starts. Shared skills solve a different problem from learned skills: they give the team a controlled baseline, such as an internal playbook or the AI Builder Club codebase-harness and loop-engineer skills, while learned skills capture procedures discovered by a specific agent during real work. Startup snapshots record which shared skill files were active for a run.
+
 ## Collaboration Layer
 
 King AI models work as a small team. **Role templates** are a small, domain-neutral vocabulary for *how* an agent participates in a workflow — its coordination behavior plus the capabilities and permissions that come with it. The built-in templates are `planner`, `builder`, `reviewer`, `tester`, `ops`, `researcher`, `doc-writer`, and `summarizer`. Workflows use them to route work by capability, request reviews, create handoffs, and ask for human decisions.

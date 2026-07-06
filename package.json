@@ -13,6 +13,7 @@
     "docs:build": "pnpm --filter @king-ai/docs build",
     "docs:preview": "pnpm --filter @king-ai/docs preview",
     "docs:deploy": "pnpm --filter @king-ai/docs run deploy",
+    "skills:aibc:env": "node scripts/aibc-shared-skills-env.mjs",
     "gui:dev": "pnpm --filter @king-ai/gui-worker dev",
     "gui:dev:lan": "pnpm --filter @king-ai/gui-worker dev:lan",
     "gui:clear-do": "pnpm --filter @king-ai/gui-worker run clear-do",

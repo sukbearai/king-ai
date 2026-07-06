@@ -50,11 +50,48 @@ KING_AI_CONFIG_DIR=/tmp/king-ai-dev king-ai agent computer --doctor
 - `KING_AI_TURN_TIMEOUT_MS`：一次性引擎运行的可选硬超时。默认关闭。
 - `KING_AI_TRADE_CONFIG`：覆盖交易配置文件路径（默认 `~/.king-ai/trade_config.json`）。
 - `KING_AI_ALERT_LOG`：覆盖 trade 规则写入的告警 JSONL 审计日志路径。
+- `KING_AI_SHARED_SKILLS`：一个或多个直接包含共享技能目录的根目录。多个根目录可以用系统路径分隔符或逗号分隔。daemon 会在启动本地引擎前，把每个包含 `SKILL.md` 的子目录复制到各智能体 home。
+- `KING_AI_SKILL_SNAPSHOTS_DIR`：可选的技能激活快照目录，用于记录某次运行实际安装的共享技能文件。
 
 
 ## 交易运行时
 
 交易信号使用 `~/.king-ai/trade/` 存放日志、scratchpad 状态、告警审计日志及 PANews 等 skill。安装 daemon 与规则配置见 [交易信号](/zh/guide/trade)。
+
+## 共享技能
+
+共享技能让操作者把一组外部流程挂载到每个本地智能体 home，而不需要把这些流程打包进 King AI 发布包。这适合私有团队技能，也适合 AI Builder Club 这类第三方 skill pack。
+
+`KING_AI_SHARED_SKILLS` 指向的目录必须直接包含技能目录：
+
+```text
+/path/to/shared-skills/
+├── dev-local-setup/
+│   └── SKILL.md
+└── new-loop/
+    └── SKILL.md
+```
+
+如果 AI Builder Club checkout 放在当前仓库旁边，可以这样启用：
+
+```sh
+eval "$(pnpm skills:aibc:env)"
+pnpm dev -- agent computer
+```
+
+在这台机器上，这个 helper 会解析为：
+
+```sh
+export KING_AI_SHARED_SKILLS='/Users/fayon/workspace/github/skills/skills/skills'
+```
+
+如果 checkout 在其他位置，可以显式传入根目录：
+
+```sh
+eval "$(pnpm skills:aibc:env /path/to/aibc/skills)"
+```
+
+启动时 daemon 会把共享技能安装到每个智能体 home 下的 `.claude/skills`、`.codex/skills` 和 `.grok/skills`。它也会把激活快照写到 `.king-ai/skill-snapshots`；如果配置了 `KING_AI_SKILL_SNAPSHOTS_DIR`，则写到该目录，便于审计某次运行实际拿到的技能内容。
 
 ## 本地引擎
 
