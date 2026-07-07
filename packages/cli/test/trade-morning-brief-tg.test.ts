@@ -5,6 +5,7 @@ import {
   parseTelegramChannels,
   parseTgRecentMessages,
   preprocessTelegramBody,
+  isTradeRelevantTweet,
   resolveBriefingPushTg
 } from "../src/trade/morning-brief.js";
 import { chunkTelegramMessage } from "../src/trade/telegram.js";
@@ -70,6 +71,24 @@ describe("resolveBriefingPushTg", () => {
     assert.equal(resolveBriefingPushTg({ briefing: { push_telegram: true } }), true);
     assert.equal(resolveBriefingPushTg({ briefing: { push_telegram: false } }), false);
     assert.equal(resolveBriefingPushTg({}), false);
+  });
+});
+
+describe("isTradeRelevantTweet", () => {
+  it("keeps market and regulatory items", () => {
+    assert.equal(isTradeRelevantTweet("证监会查实虚假信息扰乱证券市场，股票交易被暂停"), true);
+    assert.equal(isTradeRelevantTweet("NVIDIA earnings beat expectations; AI chips revenue rises"), true);
+    assert.equal(isTradeRelevantTweet("BTC突破64000美元，过去24小时全网合约爆仓扩大"), true);
+  });
+
+  it("filters low-value social noise", () => {
+    assert.equal(isTradeRelevantTweet("比利时 4 比 1 击败美国，球员攻入世界杯首球"), false);
+    assert.equal(isTradeRelevantTweet("HSBC Pulse卡内地消费返现4.4%，申卡攻略"), false);
+    assert.equal(isTradeRelevantTweet("relayrouter.io 提供 Fable 5 账号池七折优惠"), false);
+    assert.equal(isTradeRelevantTweet("OKX 推出世界杯竞猜活动，可赢取比特币奖励"), false);
+    assert.equal(isTradeRelevantTweet("TradingBox AI 交易信号 7 天免费试用推广"), false);
+    assert.equal(isTradeRelevantTweet("Juggling a football for a chance to earn Bitcoin rewards"), false);
+    assert.equal(isTradeRelevantTweet("Fable can be used again until July 12th but my quota is gone"), false);
   });
 });
 

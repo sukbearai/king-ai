@@ -54,6 +54,7 @@ Key config sections:
 | `alerts.rule_stagger_ms` | Delay between rules in one poll round (default `1000`) |
 | `briefing.enabled` | Morning brief sections, such as `market`, `stocks`, `telegram`, `twitter`, `leaderboard`, `pumpfun` |
 | `briefing.schedule_hour` | Morning brief cron hour (local, default `5`) |
+| `verify.step_timeout_ms` | Per-source timeout for `verify-tg` rules and brief sections (default `60000`) |
 | `data_sources.pumpfun` | Pump.fun section: `stage` (default `MIGRATED`), `limit`, market-cap/holder/volume/Top10 filters; human-readable lines plus LLM summary |
 | `data_sources.leaderboard` | Smart-money leaderboard: `chains`, `limit`, `time_frame`, `sort_by`; human-readable lines plus LLM summary |
 | `treasury` | Treasury stress: `^TYX` (30Y), `^TNX` (10Y), `TLT` price; period-high and basis-point spike alerts |
@@ -116,7 +117,9 @@ king-ai trade verify-tg --dry-run
 king-ai trade watchdog --kill
 ```
 
-`verify-tg` runs each enabled alert and brief source once (seven rules + the configured brief sections) and pushes one Telegram message per source. Trade AI summaries and PANews classification use the local agent CLI chain (`grok` → `claude` → `codex`) via `llm.default_backend`. If every local agent backend is unavailable, morning brief summaries fall back to compacted local text instead of sending the full raw feed.
+`verify-tg` runs each enabled alert rule and each configured morning-brief section once, then pushes one Telegram message per source. Each source is isolated by `verify.step_timeout_ms`, so one slow collector or LLM summary is reported as that source's failure instead of blocking the whole verification run. Trade AI summaries and PANews classification use the local agent CLI chain (`grok` → `claude` → `codex`) via `llm.default_backend`. If every local agent backend is unavailable, morning brief summaries fall back to compacted local text instead of sending the full raw feed.
+
+The Twitter brief applies a relevance filter by default, keeping market, macro, crypto, AI/chip, listed-company, and regulatory items while dropping low-value sports, credit-card, account-pool, VPN, and promotion noise. Set `data_sources.twitter.relevance_filter` to `false` to inspect the raw timeline.
 
 ## OpenCLI Browser Bridge
 

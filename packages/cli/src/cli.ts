@@ -19,7 +19,7 @@ import type { KingScenarioTemplate } from "./team-workflow.js";
 import type { EngineId } from "./types.js";
 
 import { runRuleLoop } from "./trade/alert-rule.js";
-import { runMorningBrief } from "./trade/morning-brief.js";
+import { runMorningBrief, type BriefSection } from "./trade/morning-brief.js";
 import { createRuleAsync, listRuleIds } from "./trade/rules/registry.js";
 import { runTradeDaemon } from "./trade/scheduler.js";
 
@@ -1727,13 +1727,13 @@ const tradeBriefCommand = command({
     help: { type: Boolean, alias: "h", description: "Show help" },
     pushTg: { type: Boolean, description: "Push brief to Telegram" },
     dryRun: { type: Boolean, description: "Print only" },
-    sections: { type: String, description: "Comma-separated sections: market,stocks,telegram,twitter" },
+    sections: { type: String, description: "Comma-separated sections: market,stocks,treasury,telegram,twitter,leaderboard,pumpfun" },
     hours: { type: Number, description: "Lookback hours for social sections" }
   },
   help: { description: "Daily morning brief" }
 }, async (argv) => {
   const sections = argv.flags.sections
-    ? argv.flags.sections.split(",").map((s) => s.trim()).filter(Boolean) as Array<"market" | "stocks" | "telegram" | "twitter">
+    ? argv.flags.sections.split(",").map((s) => s.trim()).filter(Boolean) as BriefSection[]
     : undefined;
   await runMorningBrief({
     sections,

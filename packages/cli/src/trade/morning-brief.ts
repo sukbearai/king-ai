@@ -35,6 +35,10 @@ const SECTION_FETCHERS: Record<BriefSection, (hours: number) => Promise<string>>
   pumpfun: fetchPumpfun
 };
 
+export function isBriefSection(section: string): section is BriefSection {
+  return section in SECTION_FETCHERS;
+}
+
 async function fetchMarketOverview(): Promise<string> {
   const config = await loadTradeConfig();
   const ds = (dotGet(config, "data_sources.market", {}) ?? {}) as Record<string, unknown>;
@@ -213,6 +217,7 @@ async function fetchTwitterSummary(hours: number): Promise<string> {
   );
   const maxDisplay = Number(ds.max_display) || 500;
   const perAuthorCap = Number(ds.per_author_cap) || 2;
+  const relevanceFilter = ds.relevance_filter !== false;
   const useLlm = dotGet(config, "briefing.llm_summarize", true) !== false;
   const cutoff = Date.now() - hours * 3600 * 1000;
   const lines: string[] = [`🐦 Twitter 时间线（最近 ${hours}h）\n`];
@@ -233,6 +238,7 @@ async function fetchTwitterSummary(hours: number): Promise<string> {
   let totalRecords = 0;
   let staleRecords = 0;
   let invalidTimeRecords = 0;
+  let filteredRecords = 0;
 
   for await (const entry of iterCacheRecords(cachePath)) {
     totalRecords += 1;
@@ -247,6 +253,10 @@ async function fetchTwitterSummary(hours: number): Promise<string> {
       staleRecords += 1;
       continue;
     }
+    if (relevanceFilter && !isTradeRelevantTweet(String(entry.text ?? ""))) {
+      filteredRecords += 1;
+      continue;
+    }
     const formatted = formatTweetLine(entry);
     if (formatted) tweets.push(formatted);
   }
@@ -255,7 +265,8 @@ async function fetchTwitterSummary(hours: number): Promise<string> {
     const diagnostics = totalRecords
       ? `缓存 ${totalRecords} 条，过期 ${staleRecords} 条，时间异常 ${invalidTimeRecords} 条`
       : `缓存为空或不存在：${cachePath}`;
-    lines.push(`暂无推文（${diagnostics}；需运行 twitter-collector 或检查 opencli 登录状态）`);
+    const filterNote = filteredRecords ? `，过滤低相关 ${filteredRecords} 条` : "";
+    lines.push(`暂无高相关推文（${diagnostics}${filterNote}；需运行 twitter-collector 或检查 opencli 登录状态）`);
     return lines.join("\n");
   }
 
@@ -274,12 +285,33 @@ async function fetchTwitterSummary(hours: number): Promise<string> {
   }
 
   if (useLlm) {
-    const summary = await llmSummarize(picked.slice(0, 30).join("\n"), "Twitter 时间线");
+    const summaryInput = [
+      "只摘要高置信交易相关内容；不要输出体育赛事、竞猜活动、账号服务、免费试用、交易信号广告、VPN/机场、信用卡或泛促销内容。",
+      ...picked.slice(0, 30)
+    ].join("\n");
+    const summary = await llmSummarize(
+      summaryInput,
+      "Twitter 时间线（只保留交易、宏观、加密、AI芯片、上市公司与监管相关信息）"
+    );
     lines.push(summary);
   } else {
     lines.push(...picked.slice(0, 30));
   }
   return lines.join("\n");
+}
+
+const TWITTER_RELEVANT_RE = /(\$[A-Za-z]{1,8}\b|\b[A-Z]{2,6}\b|btc|eth|sol|crypto|bitcoin|ethereum|binance|coinbase|okx|bybit|etf|fomc|fed|sec|cpi|pce|tariff|yield|treasury|bond|stock|nasdaq|s&p|dow|ipo|earnings|revenue|profit|guidance|chips?|semiconductor|nvidia|tesla|meta|apple|google|microsoft|openai|deepseek|字节|阿里|英伟达|特斯拉|美联储|降息|加息|通胀|收益率|美债|关税|制裁|监管|证监会|交易所|上新|暴跌|暴涨|爆仓|链上|巨鲸|钱包|代币|加密|比特币|以太坊|山寨|芯片|财报|营收|利润|上市|美股|港股|A股|纳指|标普|道指|股票)/i;
+const TWITTER_HARD_NOISE_RE = /(世界杯|football|soccer|the beautiful game|leaderboard|bitcoin rewards|outcomes campaign|足球|进球|比利时|信用卡|申卡|返现|hsbc|pulse卡|账号池|七折|relayrouter|vpn|机场|推广|广告|品牌套件|高考分数线|小语种|设备锁定|切换账号|account banned|quota|gopty|tmux|\bfable\b|mythos|竞猜活动|免费试用|free trial|trading signals?|交易信号)/i;
+const TWITTER_NOISE_RE = /(活动|抽奖|促销|教程|攻略|开户|办卡)/i;
+const TWITTER_NOISE_WITH_MARKET_RE = /(证监会|股票|市场|交易|美股|港股|A股|财报|营收|利润|监管|sec|stock|earnings|revenue|crypto|bitcoin|ethereum|币|链上|交易所)/i;
+
+export function isTradeRelevantTweet(text: string): boolean {
+  const cleaned = stripMarkdown(text).trim();
+  if (!cleaned) return false;
+  if (TWITTER_HARD_NOISE_RE.test(cleaned)) return false;
+  if (!TWITTER_RELEVANT_RE.test(cleaned)) return false;
+  if (TWITTER_NOISE_RE.test(cleaned) && !TWITTER_NOISE_WITH_MARKET_RE.test(cleaned)) return false;
+  return true;
 }
 
 async function fetchTelegramSummary(hours: number): Promise<string> {
@@ -405,8 +437,8 @@ export async function runMorningBrief(options: {
   const defaultSections: BriefSection[] = ["stocks", "telegram", "twitter"];
   const enabled = (dotGet(config, "briefing.enabled", defaultSections) as string[] | undefined) ?? defaultSections;
   const sections = options.sections?.length
-    ? options.sections.filter((s): s is BriefSection => s in SECTION_FETCHERS)
-    : enabled.filter((s): s is BriefSection => s in SECTION_FETCHERS);
+    ? options.sections.filter(isBriefSection)
+    : enabled.filter(isBriefSection);
   const hours = options.hours ?? (Number(dotGet(config, "briefing.hours_lookback", 24)) || 24);
 
   const parts = [`🌅 每日晨报 — ${formatDisplayTime()}\n`];
