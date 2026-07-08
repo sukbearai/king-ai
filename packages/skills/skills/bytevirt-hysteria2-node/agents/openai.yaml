@@ -1,0 +1,3 @@
+display_name: ByteVirt Hysteria2 Node
+short_description: Deploy ByteVirt Hysteria2 proxy nodes.
+default_prompt: Use $bytevirt-hysteria2-node to provision or audit a ByteVirt Debian VPS as a no-panel Hysteria2 UDP proxy node for Shadowrocket.
