@@ -39,6 +39,7 @@ import {
   shouldPublishEngineFailureNotice,
   shouldRetryEngineNoOutputTurn,
   shouldSkipPollWake,
+  shouldSteerLiveTurn,
   shouldStopEngineOnBeginStop,
   turnSessionScope,
   replaceWakeStreamController,
@@ -64,6 +65,17 @@ test("turnSessionScope isolates single-conversation turns", () => {
   assert.equal(turnSessionScope(null, ["IELTS"]), conversationSessionScope("IELTS"));
   assert.equal(turnSessionScope(null, ["IELTS", "雅思二"]), "default");
   assert.equal(turnSessionScope(null, []), "default");
+});
+
+test("shouldSteerLiveTurn suppresses cross-conversation live steering", () => {
+  const ieltsScope = conversationSessionScope("IELTS");
+  const secondScope = conversationSessionScope("雅思二");
+  assert.equal(shouldSteerLiveTurn(ieltsScope, "IELTS"), true);
+  assert.equal(shouldSteerLiveTurn(ieltsScope, "雅思二"), false);
+  assert.equal(shouldSteerLiveTurn(secondScope, "IELTS"), false);
+  assert.equal(shouldSteerLiveTurn("default", "IELTS"), false);
+  assert.equal(shouldSteerLiveTurn(ieltsScope, null), false);
+  assert.equal(shouldSteerLiveTurn(ieltsScope, "  "), false);
 });
 
 test("parseWakeEventInfo extracts conversation and delivery latency", () => {

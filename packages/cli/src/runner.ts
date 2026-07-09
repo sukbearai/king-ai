@@ -462,6 +462,13 @@ export function turnSessionScope(
   return ids.length === 1 ? conversationSessionScope(ids[0]) : DEFAULT_SESSION_SCOPE;
 }
 
+/** Live-steer only when the wake targets the conversation already bound to the active engine session. */
+export function shouldSteerLiveTurn(activeSessionScope: string, incomingConversationId?: string | null): boolean {
+  const incoming = incomingConversationId?.trim();
+  if (!incoming) return false;
+  return conversationSessionScope(incoming) === activeSessionScope;
+}
+
 export function agentSessionFile(agentId: string, engine: EngineId, scope = DEFAULT_SESSION_SCOPE): string {
   const suffix = scope === DEFAULT_SESSION_SCOPE ? "" : `.${sessionScopeFilePart(scope)}`;
   return join(SESSIONS_DIR, `${agentId}.${engine}${suffix}.session`);
@@ -911,6 +918,9 @@ export class AgentRunner {
   private async maybeSteer(conversationId: string): Promise<void> {
     const session = this.engineSession;
     if (!session?.alive || this.sideSteering) return;
+    // Cross-conversation wakes must not inject into the live engine session for another window;
+    // pendingRerun + turnSessionScope will process them under the correct scoped session.
+    if (!shouldSteerLiveTurn(this.sessionScope, conversationId)) return;
     this.sideSteering = true;
     try {
       const token = await this.ensureToken();
