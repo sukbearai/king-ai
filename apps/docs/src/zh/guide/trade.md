@@ -138,9 +138,11 @@ king-ai trade watchdog --kill
 
 `verify-tg` 会各跑一遍当前启用的告警规则和晨报板块；超时工具与 daemon 共用。未设置 `verify.step_timeout_ms` 时按规则默认预算（名人推更长）。摘要与 PANews 分类走本地 agent 链（`grok` → `claude` → `codex`）。
 
-`verify-celebrity --dry-run` 只检查 X 搜索页状态，不调 LLM、不推 Telegram。
+`verify-celebrity --dry-run` 只检查 X 搜索页状态，不调 LLM、不推 Telegram；`unknown` 表示搜索页已加载但没有识别到推文或无结果标记，会作为 warning 展示，登录、挑战和真正错误仍会让健康检查失败。
 
-Twitter 晨报默认相关性过滤；需要原始时间线时设 `data_sources.twitter.relevance_filter` 为 `false`。
+市场晨报会并发请求 OKX 现货/合约接口，并使用较短的单请求预算。网络环境特殊时可用 `data_sources.market.request_timeout_ms` 和 `data_sources.market.fallback_timeout_ms` 调整新鲜度与晨报耗时之间的取舍。
+
+Twitter 晨报默认相关性过滤；板块标题会显示过滤和展示上限后实际纳入的高相关推文数。需要原始时间线时设 `data_sources.twitter.relevance_filter` 为 `false`。
 
 ## OpenCLI Browser Bridge
 

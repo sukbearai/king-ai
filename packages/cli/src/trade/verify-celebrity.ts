@@ -71,10 +71,11 @@ export function formatCelebrityVerifyResults(results: CelebrityVerifyResult[]): 
   const stamp = formatDisplayTime(new Date(), "hm");
   const lines = [`🧪 名人推文监控验证 — ${stamp}`];
   for (const result of results) {
-    const icon = result.status === "ok" || result.status === "no-results" ? "✅" : "❌";
+    const icon =
+      result.status === "ok" || result.status === "no-results" ? "✅" : result.status === "unknown" ? "⚠️" : "❌";
     lines.push(`${icon} @${result.account} ${result.status} — ${result.detail}`);
   }
-  const failing = results.filter((result) => !["ok", "no-results"].includes(result.status)).length;
+  const failing = results.filter((result) => ["auth-required", "challenge", "error"].includes(result.status)).length;
   lines.push("", `summary: ${results.length - failing}/${results.length} readable`);
   return lines.join("\n");
 }
@@ -94,7 +95,7 @@ export async function runVerifyCelebrity(options: { dryRun?: boolean } = {}): Pr
   if (!options.dryRun) {
     process.stderr.write("[verify-celebrity] no Telegram push is sent; this command is browser health only\n");
   }
-  if (results.some((result) => !["ok", "no-results"].includes(result.status))) {
+  if (results.some((result) => ["auth-required", "challenge", "error"].includes(result.status))) {
     process.exitCode = 1;
   }
   return results;

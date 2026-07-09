@@ -15,21 +15,37 @@ export async function okxGet(
   path: string,
   params?: Record<string, string>,
   timeoutMs = 10_000,
+  attempts = 3,
 ): Promise<Record<string, unknown>> {
   const qs = params ? `?${new URLSearchParams(params)}` : "";
-  for (let attempt = 0; attempt < 3; attempt++) {
+  const url = `${OKX_BASE}${path}${qs}`;
+  for (let attempt = 0; attempt < attempts; attempt++) {
     try {
-      const res = await fetch(`${OKX_BASE}${path}${qs}`, {
+      const res = await fetch(url, {
         headers: { "User-Agent": OKX_UA },
         signal: AbortSignal.timeout(timeoutMs),
       });
       if (!res.ok) continue;
       return (await res.json()) as Record<string, unknown>;
     } catch {
-      if (attempt < 2) await new Promise((r) => setTimeout(r, 3000 + Math.random() * 2000));
+      if (attempt < attempts - 1) await new Promise((r) => setTimeout(r, 3000 + Math.random() * 2000));
     }
   }
-  return {};
+  return okxGetWithCurl(url, timeoutMs);
+}
+
+async function okxGetWithCurl(url: string, timeoutMs: number): Promise<Record<string, unknown>> {
+  try {
+    const maxTimeSeconds = String(Math.max(1, Math.ceil(timeoutMs / 1000)));
+    const { stdout } = await execFileP("curl", ["-fsSL", "--max-time", maxTimeSeconds, "-A", OKX_UA, url], {
+      timeout: timeoutMs + 1000,
+      maxBuffer: 2 * 1024 * 1024,
+      env: cliEnv(),
+    });
+    return JSON.parse(stdout) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
 }
 
 export function stripAnsi(text: string): string {
@@ -220,9 +236,9 @@ export async function fetchMajorPrices(): Promise<Record<string, number>> {
   return prices;
 }
 
-export async function surfMarketTicker(symbol: string): Promise<Record<string, unknown>> {
+export async function surfMarketTicker(symbol: string, timeoutMs = 15_000): Promise<Record<string, unknown>> {
   const pair = `${symbol.toUpperCase()}/USDT`;
-  const resp = await runSurf(["exchange-price", "--pair", pair, "--exchange", "okx"], 15_000);
+  const resp = await runSurf(["exchange-price", "--pair", pair, "--exchange", "okx"], timeoutMs);
   const row = extractSurfList(resp)[0];
   if (!row || typeof row !== "object") return {};
   const r = row as Record<string, unknown>;
@@ -236,9 +252,9 @@ export async function surfMarketTicker(symbol: string): Promise<Record<string, u
   };
 }
 
-export async function surfFundingRate(symbol: string): Promise<Record<string, unknown>> {
+export async function surfFundingRate(symbol: string, timeoutMs = 15_000): Promise<Record<string, unknown>> {
   const pair = `${symbol.toUpperCase()}/USDT`;
-  const resp = await runSurf(["exchange-perp", "--pair", pair, "--exchange", "okx", "--fields", "funding"], 15_000);
+  const resp = await runSurf(["exchange-perp", "--pair", pair, "--exchange", "okx", "--fields", "funding"], timeoutMs);
   const data = extractSurfObject(resp);
   const funding = (data.funding ?? {}) as Record<string, unknown>;
   return { fundingRate: funding.funding_rate ?? "" };

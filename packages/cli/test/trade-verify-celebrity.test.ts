@@ -43,11 +43,13 @@ describe("formatCelebrityVerifyResults", () => {
     const text = formatCelebrityVerifyResults([
       { account: "a", status: "ok", articles: 1, title: "", url: "", detail: "found 1 article(s)" },
       { account: "b", status: "no-results", articles: 0, title: "", url: "", detail: "search loaded" },
-      { account: "c", status: "challenge", articles: 0, title: "", url: "", detail: "challenge" },
+      { account: "c", status: "unknown", articles: 0, title: "", url: "", detail: "search loaded without marker" },
+      { account: "d", status: "challenge", articles: 0, title: "", url: "", detail: "challenge" },
     ]);
     assert.match(text, /@a ok/);
     assert.match(text, /@b no-results/);
-    assert.match(text, /@c challenge/);
-    assert.match(text, /summary: 2\/3 readable/);
+    assert.match(text, /@c unknown/);
+    assert.match(text, /@d challenge/);
+    assert.match(text, /summary: 3\/4 readable/);
   });
 });

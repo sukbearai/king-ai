@@ -140,9 +140,11 @@ king-ai trade watchdog --kill
 
 `verify-tg` runs each enabled alert rule and each configured morning-brief section once, then pushes one Telegram message per source. Each source is isolated by timeout (shared helper with the daemon). Celebrity verification has a longer default budget unless `verify.step_timeout_ms` is set. Trade AI summaries and PANews classification use the local agent CLI chain (`grok` → `claude` → `codex`) via `llm.default_backend`. If every local agent backend is unavailable, morning brief summaries fall back to compacted local text instead of sending the full raw feed.
 
-`verify-celebrity --dry-run` checks each configured celebrity account's X search page and reports readable, no-results, login-required, challenge, or error states without calling the LLM or Telegram.
+`verify-celebrity --dry-run` checks each configured celebrity account's X search page and reports readable, no-results, unknown, login-required, challenge, or error states without calling the LLM or Telegram. `unknown` means the search page loaded but did not expose a recognizable tweet/no-results marker; it is reported as a warning, while login-required, challenge, and error still fail the browser health check.
 
-The Twitter brief applies a relevance filter by default. Set `data_sources.twitter.relevance_filter` to `false` to inspect the raw timeline.
+The market brief queries OKX spot/perp endpoints concurrently with short per-request budgets. Tune `data_sources.market.request_timeout_ms` and `data_sources.market.fallback_timeout_ms` if your local network needs a different balance between freshness and brief latency.
+
+The Twitter brief applies a relevance filter by default. Its section title shows the number of high-relevance tweets included after filtering and display caps. Set `data_sources.twitter.relevance_filter` to `false` to inspect the raw timeline.
 
 ## OpenCLI Browser Bridge
 

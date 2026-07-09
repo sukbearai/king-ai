@@ -5,6 +5,7 @@ import {
   parseTelegramChannels,
   parseTgRecentMessages,
   preprocessTelegramBody,
+  formatTwitterSummaryHeading,
   isTradeRelevantTweet,
   resolveBriefingPushTg,
 } from "../src/trade/morning-brief.js";
@@ -71,6 +72,17 @@ describe("resolveBriefingPushTg", () => {
     assert.equal(resolveBriefingPushTg({ briefing: { push_telegram: true } }), true);
     assert.equal(resolveBriefingPushTg({ briefing: { push_telegram: false } }), false);
     assert.equal(resolveBriefingPushTg({}), false);
+  });
+});
+
+describe("formatTwitterSummaryHeading", () => {
+  it("includes the displayed tweet count when available", () => {
+    assert.equal(formatTwitterSummaryHeading(24, 17), "🐦 Twitter 时间线（最近 24h，共 17 条推文）\n");
+    assert.equal(formatTwitterSummaryHeading(24, 0), "🐦 Twitter 时间线（最近 24h，共 0 条推文）\n");
+  });
+
+  it("keeps the legacy heading shape when count is unknown", () => {
+    assert.equal(formatTwitterSummaryHeading(24), "🐦 Twitter 时间线（最近 24h）\n");
   });
 });
 

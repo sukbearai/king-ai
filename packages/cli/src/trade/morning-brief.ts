@@ -45,54 +45,76 @@ async function fetchMarketOverview(): Promise<string> {
   const instruments = (ds.instruments as string[] | undefined) ?? ["BTC-USDT", "ETH-USDT", "SOL-USDT"];
   const showFr = ds.show_funding_rate !== false;
   const showOi = ds.show_open_interest !== false;
+  const requestTimeoutMs = positiveInt(ds.request_timeout_ms, 4_000);
+  const fallbackTimeoutMs = positiveInt(ds.fallback_timeout_ms, 5_000);
   const lines = ["📊 市场概览\n"];
 
-  for (const inst of instruments) {
-    const symbol = inst.split("-")[0]!;
-    const resp = await okxGet("/api/v5/market/ticker", { instId: inst });
-    const ticker = ((resp.data as unknown[])?.[0] ?? {}) as Record<string, string>;
-    let last = ticker.last ?? "";
-    let open24 = ticker.open24h ?? "";
-    if (!last) {
-      const surf = await surfMarketTicker(symbol);
-      last = String(surf.last ?? "");
-      open24 = String(surf.open24h ?? "");
-    }
-
-    let priceStr = "N/A";
-    let changeStr = "";
-    const lastN = Number.parseFloat(last);
-    const openN = Number.parseFloat(open24);
-    if (Number.isFinite(lastN)) priceStr = `$${lastN.toLocaleString()}`;
-    if (Number.isFinite(lastN) && Number.isFinite(openN) && openN > 0) {
-      changeStr = ` (${(((lastN - openN) / openN) * 100).toFixed(1)}%)`;
-    }
-
-    let frStr = "";
-    if (showFr) {
-      const swapId = `${symbol}-USDT-SWAP`;
-      const frResp = await okxGet("/api/v5/public/funding-rate", { instId: swapId });
-      const fr = ((frResp.data as unknown[])?.[0] ?? {}) as Record<string, string>;
-      let rate = fr.fundingRate ?? "";
-      if (!rate) {
-        const surfFr = await surfFundingRate(symbol);
-        rate = String(surfFr.fundingRate ?? "");
-      }
-      const rateN = Number.parseFloat(rate);
-      if (Number.isFinite(rateN)) frStr = `  费率: ${(rateN * 100).toFixed(4)}%`;
-    }
-
-    let oiStr = "";
-    if (showOi) {
-      const oiResp = await okxGet("/api/v5/public/open-interest", { instType: "SWAP", instId: `${symbol}-USDT-SWAP` });
-      const oi = ((oiResp.data as unknown[])?.[0] ?? {}) as Record<string, string>;
-      const oiN = Number.parseFloat(oi.oiCcy ?? "");
-      if (Number.isFinite(oiN)) oiStr = `  OI: ${oiN.toLocaleString()}`;
-    }
-
-    lines.push(`  ${symbol}: ${priceStr}${changeStr}${frStr}${oiStr}`);
-  }
+  const rows = await Promise.all(
+    instruments.map((inst) => fetchMarketInstrument(inst, { showFr, showOi, requestTimeoutMs, fallbackTimeoutMs })),
+  );
+  lines.push(...rows);
   return lines.join("\n");
+}
+
+function positiveInt(value: unknown, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.trunc(n) : fallback;
+}
+
+async function fetchMarketInstrument(
+  inst: string,
+  options: { showFr: boolean; showOi: boolean; requestTimeoutMs: number; fallbackTimeoutMs: number },
+): Promise<string> {
+  const symbol = inst.split("-")[0]!;
+  const swapId = `${symbol}-USDT-SWAP`;
+  const emptyRecord: Record<string, unknown> = {};
+  const [tickerResp, frResp, oiResp] = await Promise.all([
+    okxGet("/api/v5/market/ticker", { instId: inst }, options.requestTimeoutMs, 1),
+    options.showFr
+      ? okxGet("/api/v5/public/funding-rate", { instId: swapId }, options.requestTimeoutMs, 1)
+      : Promise.resolve(emptyRecord),
+    options.showOi
+      ? okxGet("/api/v5/public/open-interest", { instType: "SWAP", instId: swapId }, options.requestTimeoutMs, 1)
+      : Promise.resolve(emptyRecord),
+  ]);
+
+  const ticker = ((tickerResp.data as unknown[])?.[0] ?? {}) as Record<string, string>;
+  const fr = ((frResp.data as unknown[])?.[0] ?? {}) as Record<string, string>;
+  const oi = ((oiResp.data as unknown[])?.[0] ?? {}) as Record<string, string>;
+  let last = ticker.last ?? "";
+  let open24 = ticker.open24h ?? "";
+  let rate = fr.fundingRate ?? "";
+
+  if (!last || (options.showFr && !rate)) {
+    const [surfTicker, surfFr] = await Promise.all([
+      !last ? surfMarketTicker(symbol, options.fallbackTimeoutMs) : Promise.resolve(emptyRecord),
+      options.showFr && !rate ? surfFundingRate(symbol, options.fallbackTimeoutMs) : Promise.resolve(emptyRecord),
+    ]);
+    if (!last) {
+      last = String(surfTicker.last ?? "");
+      open24 = String(surfTicker.open24h ?? "");
+    }
+    if (options.showFr && !rate) rate = String(surfFr.fundingRate ?? "");
+  }
+
+  let priceStr = "N/A";
+  let changeStr = "";
+  const lastN = Number.parseFloat(last);
+  const openN = Number.parseFloat(open24);
+  if (Number.isFinite(lastN)) priceStr = `$${lastN.toLocaleString()}`;
+  if (Number.isFinite(lastN) && Number.isFinite(openN) && openN > 0) {
+    changeStr = ` (${(((lastN - openN) / openN) * 100).toFixed(1)}%)`;
+  }
+
+  let frStr = "";
+  const rateN = Number.parseFloat(rate);
+  if (options.showFr && Number.isFinite(rateN)) frStr = `  费率: ${(rateN * 100).toFixed(4)}%`;
+
+  let oiStr = "";
+  const oiN = Number.parseFloat(oi.oiCcy ?? "");
+  if (options.showOi && Number.isFinite(oiN)) oiStr = `  OI: ${oiN.toLocaleString()}`;
+
+  return `  ${symbol}: ${priceStr}${changeStr}${frStr}${oiStr}`;
 }
 
 export function parseTelegramChannels(raw: Record<string, string>): Array<{ label: string; chat: string }> {
@@ -150,6 +172,11 @@ export function resolveBriefingPushTg(config: Record<string, unknown>, options: 
   if (options.pushTg === true) return true;
   if (options.pushTg === false) return false;
   return dotGet(config, "briefing.push_telegram", false) === true;
+}
+
+export function formatTwitterSummaryHeading(hours: number, tweetCount?: number): string {
+  const countSuffix = typeof tweetCount === "number" ? `，共 ${tweetCount} 条推文` : "";
+  return `🐦 Twitter 时间线（最近 ${hours}h${countSuffix}）\n`;
 }
 
 type TgChannelFetch = {
@@ -216,7 +243,7 @@ async function fetchTwitterSummary(hours: number): Promise<string> {
   const relevanceFilter = ds.relevance_filter !== false;
   const useLlm = dotGet(config, "briefing.llm_summarize", true) !== false;
   const cutoff = Date.now() - hours * 3600 * 1000;
-  const lines: string[] = [`🐦 Twitter 时间线（最近 ${hours}h）\n`];
+  const lines: string[] = [formatTwitterSummaryHeading(hours)];
 
   let cacheStats = await countRecentCacheRecords(hours, cachePath);
   if (cacheStats.recent === 0) {
@@ -258,6 +285,7 @@ async function fetchTwitterSummary(hours: number): Promise<string> {
   }
 
   if (!tweets.length) {
+    lines[0] = formatTwitterSummaryHeading(hours, 0);
     const diagnostics = totalRecords
       ? `缓存 ${totalRecords} 条，过期 ${staleRecords} 条，时间异常 ${invalidTimeRecords} 条`
       : `缓存为空或不存在：${cachePath}`;
@@ -280,10 +308,13 @@ async function fetchTwitterSummary(hours: number): Promise<string> {
     picked.push(tweet);
   }
 
+  const displayedTweets = picked.slice(0, 30);
+  lines[0] = formatTwitterSummaryHeading(hours, displayedTweets.length);
+
   if (useLlm) {
     const summaryInput = [
       "只摘要高置信交易相关内容；不要输出体育赛事、竞猜活动、账号服务、免费试用、交易信号广告、VPN/机场、信用卡或泛促销内容。",
-      ...picked.slice(0, 30),
+      ...displayedTweets,
     ].join("\n");
     const summary = await llmSummarize(
       summaryInput,
@@ -291,7 +322,7 @@ async function fetchTwitterSummary(hours: number): Promise<string> {
     );
     lines.push(summary);
   } else {
-    lines.push(...picked.slice(0, 30));
+    lines.push(...displayedTweets);
   }
   return lines.join("\n");
 }
@@ -325,12 +356,11 @@ async function fetchTelegramSummary(hours: number): Promise<string> {
   const fallbackHours = Number(dotGet(config, "briefing.telegram_fallback_hours", 168)) || 168;
   const lines = [`📰 Telegram 频道摘要（最近 ${hours}h）\n`];
   const channelRows = parseTelegramChannels(channels);
-  const fetched = await Promise.all(
-    channelRows.map(async ({ label, chat }) => {
-      const result = await fetchTgChannelMessages(chat, hours, msgLimit, fallbackHours);
-      return { label, ...result };
-    }),
-  );
+  const fetched: Array<{ label: string } & TgChannelFetch> = [];
+  for (const { label, chat } of channelRows) {
+    const result = await fetchTgChannelMessages(chat, hours, msgLimit, fallbackHours);
+    fetched.push({ label, ...result });
+  }
 
   const blocks: Array<{ label: string; text: string }> = [];
   for (const { label, messages, rawBytes, usedHours, stale, error } of fetched) {
