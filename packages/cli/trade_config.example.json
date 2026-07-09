@@ -11,7 +11,9 @@
     "cooldowns": {},
     "celebrity_tweet": {
       "accounts": ["realDonaldTrump", "elonmusk", "cz_binance"],
-      "fetch_limit": 10
+      "fetch_limit": 10,
+      "min_confidence_alert": 0.55,
+      "min_confidence_warning": 0.72
     }
   },
   "briefing": {

@@ -106,7 +106,7 @@ rule.check → regime 降级 → JSONL 审计 → 共振（仅 asset）→ TG �
 - daemon 每条规则有 tick 超时（如 celebrity `240s`、panews `120s`）；超时记 heartbeat `timeout` 并继续下一规则。
 - cooldown 持久化在 `~/.king-ai/trade/rule_state.json`。
 
-名人推文解析在本地 agent 未返回有效分类时会保留重试；非 alpha 短期静默后重检。X 搜索页先做状态分类，已加载无结果页直接返回空结果。
+名人 alpha 为 **LLM 全自动判定**（无人工审批）：本地 agent 决定 `is_alpha` / `alpha_type` / `confidence` / `entities`。代码只做账本约束——entity 须出现在推文正文、confidence 门槛（`alerts.celebrity_tweet.min_confidence_alert` / `min_confidence_warning`）、冷却与 JSONL 审计。解析失败短重试；非 alpha 短期静默后重检。X 搜索页先做状态分类，已加载无结果页直接返回空结果。
 
 ## Daemon Supervisor
 

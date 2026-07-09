@@ -5,8 +5,10 @@ import { parseMemeTradeAmount } from "../src/trade/rules/rule-e-meme.js";
 import {
   celebrityAlertSeverity,
   extractChainFmRefs,
+  groundEntitiesInText,
   isCelebritySeenRecordActive,
   isLikelyTweetUiFragment,
+  resolveCelebrityAlphaDecision,
 } from "../src/trade/rules/rule-t-celebrity.js";
 import { buildPanewsUnclassifiedAlert } from "../src/trade/rules/rule-q-panews.js";
 import { createRule, listRuleIds } from "../src/trade/rules/registry.js";
@@ -70,10 +72,55 @@ describe("celebrity rule helpers", () => {
     assert.match(refs[0]!.url, /chain\.fm\/token\/solana\/AbC123/);
   });
 
-  it("maps alpha type and entity count to severity", () => {
-    assert.equal(celebrityAlertSeverity("endorsement", 1), "warning");
-    assert.equal(celebrityAlertSeverity("naming", 3), "warning");
-    assert.equal(celebrityAlertSeverity("naming", 1), "info");
+  it("maps alpha type, entity count, and confidence to severity autonomously", () => {
+    assert.equal(celebrityAlertSeverity("endorsement", 1, 0.9), "warning");
+    assert.equal(celebrityAlertSeverity("endorsement", 1, 0.5), "info");
+    assert.equal(celebrityAlertSeverity("naming", 3, 0.8), "warning");
+    assert.equal(celebrityAlertSeverity("naming", 1, 0.95), "warning");
+    assert.equal(celebrityAlertSeverity("naming", 1, 0.8), "info");
+  });
+
+  it("grounds entities in tweet text and drops hallucinations", () => {
+    const { kept, dropped } = groundEntitiesInText("Just bought $PEPE and DOGE forever", [
+      "PEPE",
+      "DOGE",
+      "BONK",
+      "AI",
+    ]);
+    assert.deepEqual(kept, ["PEPE", "DOGE"]);
+    assert.ok(dropped.includes("BONK"));
+    assert.ok(dropped.includes("AI"));
+  });
+
+  it("resolveCelebrityAlphaDecision keeps LLM autonomy with ledger rails only", () => {
+    const ok = resolveCelebrityAlphaDecision(
+      {
+        is_alpha: true,
+        alpha_type: "endorsement",
+        confidence: 0.88,
+        reason: "点名买入",
+        entities: ["PEPE", "FAKE"],
+      },
+      "Elon says buy $PEPE now",
+    );
+    assert.equal(ok.meta.is_alpha, true);
+    assert.deepEqual(ok.entities, ["PEPE"]);
+    assert.ok(ok.meta.grounded_out?.includes("FAKE"));
+
+    const lowConf = resolveCelebrityAlphaDecision(
+      { is_alpha: true, alpha_type: "naming", confidence: 0.2, reason: "maybe", entities: ["PEPE"] },
+      "love $PEPE",
+    );
+    assert.equal(lowConf.meta.is_alpha, false);
+
+    const noEntity = resolveCelebrityAlphaDecision(
+      { is_alpha: true, alpha_type: "policy", confidence: 0.9, reason: "监管", entities: [] },
+      "crypto needs clarity",
+    );
+    assert.equal(noEntity.meta.is_alpha, false);
+
+    const parseFail = resolveCelebrityAlphaDecision(null, "x");
+    assert.equal(parseFail.meta.parse_failed, true);
   });
 
   it("filters browser UI fragments before LLM extraction", () => {

@@ -30,33 +30,44 @@ const ENTITY_BLACKLIST = new Set([
 ]);
 
 const WARNING_ALPHA_TYPES = new Set(["endorsement", "partnership", "ipo", "policy"]);
+/** LLM confidence at/above this can surface as warning when type/entities also qualify. */
+const DEFAULT_MIN_CONFIDENCE_WARNING = 0.72;
+/** Below this, treat as non-actionable even if model set is_alpha=true. */
+const DEFAULT_MIN_CONFIDENCE_ALERT = 0.55;
+const PARSE_FAIL_RETRY_SECONDS = 15 * 60;
 
-const ENTITY_PROMPT_TPL = `你是加密 meme 币 alpha 信号过滤器。判定这条推文是否描述了
-"会积聚资金/注意力到特定 token 或标的"的催化剂事件,仅当是真实 alpha
-事件时再提取相关 entity。
+const ENTITY_PROMPT_TPL = `你是全自动加密 alpha 判定引擎（无人工复核）。对下面推文自主做最终判定:
+是否会出现「资金/注意力向可交易标的集中」的催化剂。只输出 JSON,系统会原样执行你的判断。
 
-发推人: @{author} (注: 为 Trump/Musk/CZ 级影响力名人,他们的 endorse/购买
-/announcement 单独构成 alpha — 即使行文像随手发,也应识别为 endorsement)
-
+发推人: @{author}
 推文: "{text}"
 
-【is_alpha = true 的条件】(满足任一)
-  1. IPO / 上市 / launchpad 启动 / 新 token 发行
-  2. 命名 / 品牌 / 吉祥物事件
-  3. 给持仓人具体权益 / utility / perk
-  4. 重大合作 / 收购 / 投资 / 名人 endorse + 行动
-  5. 政府 / 监管 / 政策 → 特定 token 直接受益
-  6. 名人 + 具体动作 + 具体标的的组合
+【判定原则】
+- 你全权决定 is_alpha / alpha_type / confidence / entities;不要请示人类,不要写解释性散文。
+- confidence 必须是 0~1 的小数,反映你对「可交易 alpha」的把握;不确定就压低 confidence 或判 false。
+- entities 只能是推文里明确出现的可交易标的: $TICKER、token/项目名、合约相关名称;禁止抽人名账号、国家、口号、通用词(AI/CEO/FED 等)。
+- is_alpha=true 时至少给 1 个 entity;给不出具体标的就 is_alpha=false。
+- 名人随口点名若没有可交易标的或行动,不要抬成 endorsement。
 
-【is_alpha = false】(过滤掉)
-  - 段子 / 玩笑 / 吐槽 / 抒情 / 个人日常 / 泛泛政治讨论
+【is_alpha=true】(满足任一,且有可交易 entity)
+1. IPO / 上市 / launchpad / 新 token 发行
+2. 命名 / 品牌 / 吉祥物 → 明确 token 或 meme 标的
+3. 持仓权益 / utility / perk 指向具体 token
+4. 合作 / 收购 / 投资 / 购买 / endorse,且点名标的
+5. 政策/监管使具体 token 或明确板块直接受益
+6. 发推人 + 具体动作 + 具体标的
 
-【entities 提取】仅当 is_alpha=true 时提取,最多 5 个
+【is_alpha=false】
+段子/反讽/抒情/日常;泛政治或宏观无标的;旧闻复读无新信息;纯转发无增量;
+只有情绪没有标的;无法指出可买/可炒的对象。
 
-只返回 JSON,无 markdown:
-{"is_alpha":true|false,"alpha_type":"ipo|naming|utility|partnership|policy|endorsement|none","reason":"<15 字判定依据>","entities":["entity1"]}
+【alpha_type】ipo|naming|utility|partnership|policy|endorsement|none
+【reason】≤20 字中文依据
 
-is_alpha=false 时 entities 必须返回 [].`;
+只返回一行 JSON,无 markdown:
+{"is_alpha":true|false,"alpha_type":"endorsement","confidence":0.0,"reason":"...","entities":["TICKER"]}
+
+is_alpha=false 时: confidence 可保留,entities 必须 []。`;
 
 const TWEET_UI_FRAGMENT_RE =
   /^(?:@\w+|·|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}|\d{1,2}:\d{2}|\d+(?:\.\d+)?[KMB]?|\d+(?:\.\d+)?[KMB]?\s*(?:views?|likes?|reposts?)?)$/i;
@@ -203,31 +214,120 @@ async function fetchTweets(username: string, fetchLimit: number): Promise<Array<
   }
 }
 
+export interface CelebrityAlphaMeta {
+  is_alpha: boolean;
+  alpha_type: string;
+  confidence: number;
+  reason: string;
+  /** true when model JSON was unusable; caller should short-retry without treating as non-alpha. */
+  parse_failed?: boolean;
+  /** entities dropped by grounding/blacklist (for audit). */
+  grounded_out?: string[];
+}
+
+export interface CelebrityAlphaDecision {
+  entities: string[];
+  meta: CelebrityAlphaMeta;
+}
+
+/** Keep entities that appear in the tweet (case-insensitive) or as $TICKER. */
+export function groundEntitiesInText(text: string, entities: string[]): { kept: string[]; dropped: string[] } {
+  const hay = text.toLowerCase();
+  const kept: string[] = [];
+  const dropped: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of entities) {
+    if (typeof raw !== "string") continue;
+    const s = raw.trim().replace(/^\$/, "");
+    if (s.length < 2 || s.length > 30) {
+      dropped.push(String(raw));
+      continue;
+    }
+    const upper = s.toUpperCase();
+    if (ENTITY_BLACKLIST.has(upper)) {
+      dropped.push(s);
+      continue;
+    }
+    const needle = s.toLowerCase();
+    const inText = hay.includes(needle) || hay.includes(`$${needle}`);
+    if (!inText) {
+      dropped.push(s);
+      continue;
+    }
+    if (seen.has(upper)) continue;
+    seen.add(upper);
+    kept.push(s);
+  }
+  return { kept, dropped };
+}
+
+export function clampConfidence(value: unknown, fallback = 0): number {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  if (n < 0) return 0;
+  if (n > 1) return 1;
+  return n;
+}
+
+/**
+ * Turn raw LLM JSON into an executable autonomous decision.
+ * Code only grounds entities / clamps confidence — it does not ask a human.
+ */
+export function resolveCelebrityAlphaDecision(
+  parsed: Record<string, unknown> | null,
+  tweetText: string,
+  options: { minConfidenceAlert?: number } = {},
+): CelebrityAlphaDecision {
+  const minAlert = options.minConfidenceAlert ?? DEFAULT_MIN_CONFIDENCE_ALERT;
+  if (!parsed || typeof parsed !== "object" || typeof parsed.is_alpha !== "boolean") {
+    return {
+      entities: [],
+      meta: {
+        is_alpha: false,
+        alpha_type: "none",
+        confidence: 0,
+        reason: "parse_failed",
+        parse_failed: true,
+      },
+    };
+  }
+
+  const confidence = clampConfidence(parsed.confidence, parsed.is_alpha ? 0.6 : 0.2);
+  const alphaType = String(parsed.alpha_type ?? "none");
+  const reason = String(parsed.reason ?? "").slice(0, 80);
+  const rawEnts = Array.isArray(parsed.entities) ? parsed.entities.map(String) : [];
+  const { kept, dropped } = groundEntitiesInText(tweetText, rawEnts);
+
+  let isAlpha = Boolean(parsed.is_alpha);
+  // Autonomous consistency: no grounded tradable entity ⇒ not actionable alpha.
+  if (isAlpha && kept.length === 0) {
+    isAlpha = false;
+  }
+  if (isAlpha && confidence < minAlert) {
+    isAlpha = false;
+  }
+
+  return {
+    entities: isAlpha ? kept : [],
+    meta: {
+      is_alpha: isAlpha,
+      alpha_type: isAlpha ? alphaType : alphaType === "none" ? "none" : alphaType,
+      confidence,
+      reason: isAlpha ? reason : kept.length === 0 && parsed.is_alpha ? reason || "no_grounded_entity" : reason,
+      grounded_out: dropped.length ? dropped : undefined,
+    },
+  };
+}
+
 async function extractEntities(
   text: string,
   author: string,
-): Promise<{ entities: string[]; meta: Record<string, unknown> }> {
+  minConfidenceAlert: number,
+): Promise<CelebrityAlphaDecision> {
   const prompt = ENTITY_PROMPT_TPL.replace("{text}", text.slice(0, 500)).replace("{author}", author);
   const result = await runAgent(prompt, { timeoutMs: 45_000, task: "celebrity_extract" });
   const parsed = extractJsonFromText(result) as Record<string, unknown> | null;
-  if (!parsed || typeof parsed !== "object") return { entities: [], meta: {} };
-  if (typeof parsed.is_alpha !== "boolean") return { entities: [], meta: {} };
-  const meta = {
-    is_alpha: Boolean(parsed.is_alpha),
-    alpha_type: String(parsed.alpha_type ?? "none"),
-    reason: String(parsed.reason ?? "").slice(0, 80),
-  };
-  if (!meta.is_alpha) return { entities: [], meta };
-  const ents = Array.isArray(parsed.entities) ? parsed.entities : [];
-  const clean: string[] = [];
-  for (const e of ents) {
-    if (typeof e !== "string") continue;
-    const s = e.trim();
-    if (s.length < 2 || s.length > 30) continue;
-    if (ENTITY_BLACKLIST.has(s.toUpperCase())) continue;
-    clean.push(s);
-  }
-  return { entities: clean, meta };
+  return resolveCelebrityAlphaDecision(parsed, text, { minConfidenceAlert });
 }
 
 export function isLikelyTweetUiFragment(text: string, author: string): boolean {
@@ -245,8 +345,18 @@ export function isLikelyTweetUiFragment(text: string, author: string): boolean {
   return nonUi.length === 0;
 }
 
-export function celebrityAlertSeverity(alphaType: string, entityCount: number): Alert["severity"] {
-  if (WARNING_ALPHA_TYPES.has(alphaType) || entityCount >= 3) return "warning";
+/**
+ * Autonomous severity: LLM confidence + type drive push level; no human gate.
+ * warning → eligible for Telegram; info → JSONL audit only.
+ */
+export function celebrityAlertSeverity(
+  alphaType: string,
+  entityCount: number,
+  confidence = 1,
+  minConfidenceWarning = DEFAULT_MIN_CONFIDENCE_WARNING,
+): Alert["severity"] {
+  if (confidence < minConfidenceWarning) return "info";
+  if (WARNING_ALPHA_TYPES.has(alphaType) || entityCount >= 3 || confidence >= 0.9) return "warning";
   return "info";
 }
 
@@ -264,6 +374,14 @@ export function createRuleTCelebrity(): AlertRule {
       const cfg = (dotGet(config, "alerts.celebrity_tweet", {}) ?? {}) as Record<string, unknown>;
       accounts = Array.isArray(cfg.accounts) ? cfg.accounts.map(String) : [];
       fetchLimit = Number(cfg.fetch_limit ?? 10);
+      const minConfidenceAlert = clampConfidence(
+        cfg.min_confidence_alert ?? DEFAULT_MIN_CONFIDENCE_ALERT,
+        DEFAULT_MIN_CONFIDENCE_ALERT,
+      );
+      const minConfidenceWarning = clampConfidence(
+        cfg.min_confidence_warning ?? DEFAULT_MIN_CONFIDENCE_WARNING,
+        DEFAULT_MIN_CONFIDENCE_WARNING,
+      );
       seen = await loadSeenIds();
 
       const alerts: Alert[] = [];
@@ -285,13 +403,20 @@ export function createRuleTCelebrity(): AlertRule {
             continue;
           }
 
-          const { entities, meta } = await extractEntities(text, user);
-          if (!Object.keys(meta).length) continue;
+          // LLM autonomous decision; no human approval gate.
+          const { entities, meta } = await extractEntities(text, user, minConfidenceAlert);
+          if (meta.parse_failed) {
+            await markSeen(PARSE_FAIL_RETRY_SECONDS);
+            continue;
+          }
           if (!meta.is_alpha) {
             await markSeen(NON_ALPHA_RETRY_SECONDS);
             continue;
           }
-          if (!entities.length) continue;
+          if (!entities.length) {
+            await markSeen(NON_ALPHA_RETRY_SECONDS);
+            continue;
+          }
           if (!state.canAlert(`t_${tid}`, 600)) {
             await markSeen();
             continue;
@@ -299,15 +424,19 @@ export function createRuleTCelebrity(): AlertRule {
 
           const alphaType = String(meta.alpha_type ?? "none");
           const reason = String(meta.reason ?? "");
+          const confidence = meta.confidence;
           const chainRefs = extractChainFmRefs(text);
           const entityLabel = entities.slice(0, 3).join(", ");
-          const title = `@${user} [${alphaType}] → ${entityLabel}`;
+          const title = `@${user} [${alphaType} ${confidence.toFixed(2)}] → ${entityLabel}`;
           const lines = [
-            `⚡ alpha=${alphaType} — ${reason}`,
+            `⚡ alpha=${alphaType} conf=${confidence.toFixed(2)} — ${reason}`,
             `💬 ${text.slice(0, 200)}`,
             `🔗 ${String(tw.url ?? "")}`,
-            `🎯 抽取 entities: ${entities.join(", ")}`,
+            `🎯 entities: ${entities.join(", ")}`,
           ];
+          if (meta.grounded_out?.length) {
+            lines.push(`🧹 dropped(ungrounded): ${meta.grounded_out.join(", ")}`);
+          }
           if (chainRefs.length) {
             lines.push("", "📋 推文内 chain.fm 链接:");
             for (const ref of chainRefs) {
@@ -320,13 +449,14 @@ export function createRuleTCelebrity(): AlertRule {
           alerts.push(
             createAlert({
               ruleId: "celebrity",
-              severity: celebrityAlertSeverity(alphaType, entities.length),
+              severity: celebrityAlertSeverity(alphaType, entities.length, confidence, minConfidenceWarning),
               title,
               detail: lines.join("\n"),
               timestamp: nowDisplay(),
               asset: entities[0] ?? "",
               tokenContract: primaryRef?.address ?? "",
               tokenChain: primaryRef?.chain ?? "",
+              tags: ["celebrity", "llm_autonomous", `conf_${confidence.toFixed(2)}`],
             }),
           );
           await markSeen();

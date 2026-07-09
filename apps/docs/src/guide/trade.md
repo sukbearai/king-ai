@@ -108,7 +108,7 @@ rule.check → regime cap → JSONL audit → confluence (asset only) → TG sev
 - Daemon rule ticks use per-rule timeouts (e.g. celebrity `240s`, panews `120s`); a timeout sets heartbeat `status: timeout` and continues the round.
 - Cooldowns persist in `~/.king-ai/trade/rule_state.json`.
 
-Celebrity tweet parsing retries when the local agent cannot return a valid classification; non-alpha classifications are suppressed briefly and rechecked later. X search pages are classified before waiting for tweet articles, so a loaded no-results page returns an empty result instead of spending the full selector timeout.
+Celebrity alpha is **LLM-autonomous** (no human approval): the local agent decides `is_alpha` / `alpha_type` / `confidence` / `entities`. Code only enforces ledger rails — entity must appear in the tweet text, confidence floors (`alerts.celebrity_tweet.min_confidence_alert` / `min_confidence_warning`), cooldowns, and JSONL audit. Parse failures short-retry; non-alpha is suppressed briefly and rechecked later. X search pages are classified before waiting for tweet articles, so a loaded no-results page returns empty instead of burning the full selector timeout.
 
 ## Daemon Supervisor
 
