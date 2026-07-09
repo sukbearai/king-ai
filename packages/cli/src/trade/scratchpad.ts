@@ -24,7 +24,13 @@ const writeChains = new Map<string, Promise<unknown>>();
 function withLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
   const prev = writeChains.get(path) ?? Promise.resolve();
   const run = prev.then(fn, fn);
-  writeChains.set(path, run.then(() => undefined, () => undefined));
+  writeChains.set(
+    path,
+    run.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
   return run;
 }
 
@@ -58,12 +64,12 @@ export class Scratchpad {
           source: e.source,
           createdAt: e.createdAt,
           expiresAt: e.expiresAt,
-          tags: e.tags
+          tags: e.tags,
         };
       }
       const body: ScratchFile = {
         entries,
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       };
       await mkdir(dirname(this.path), { recursive: true });
       const tmp = `${this.path}.tmp.${process.pid}.${Date.now()}`;
@@ -75,7 +81,7 @@ export class Scratchpad {
   async write(
     key: string,
     data: Record<string, unknown>,
-    options: { source?: string; ttlHours?: number; tags?: string[] } = {}
+    options: { source?: string; ttlHours?: number; tags?: string[] } = {},
   ): Promise<void> {
     await this.load();
     const now = Date.now() / 1000;
@@ -86,7 +92,7 @@ export class Scratchpad {
       source: options.source ?? "",
       createdAt: now,
       expiresAt: ttlHours > 0 ? now + ttlHours * 3600 : 0,
-      tags: options.tags ?? []
+      tags: options.tags ?? [],
     });
     await this.save();
   }
@@ -121,7 +127,7 @@ export class Scratchpad {
     try {
       const tickerRes = await fetch("https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT", {
         headers: { "User-Agent": "king-ai/1.0" },
-        signal: AbortSignal.timeout(5000)
+        signal: AbortSignal.timeout(5000),
       });
       if (!tickerRes.ok) return null;
       const tickerBody = (await tickerRes.json()) as { data?: Array<{ last?: string }> };
@@ -143,11 +149,9 @@ export class Scratchpad {
       if (highs.length >= period + 1) {
         const trueRanges: number[] = [];
         for (let i = 1; i < highs.length; i++) {
-          trueRanges.push(Math.max(
-            highs[i]! - lows[i]!,
-            Math.abs(highs[i]! - closes[i - 1]!),
-            Math.abs(lows[i]! - closes[i - 1]!)
-          ));
+          trueRanges.push(
+            Math.max(highs[i]! - lows[i]!, Math.abs(highs[i]! - closes[i - 1]!), Math.abs(lows[i]! - closes[i - 1]!)),
+          );
         }
         let atr = trueRanges.slice(0, period).reduce((a, b) => a + b, 0) / period;
         for (const tr of trueRanges.slice(period)) {
@@ -159,7 +163,10 @@ export class Scratchpad {
       let rsiVal = 50;
       const rsiCandles = await fetchOkxCandles("BTC-USDT", "4H", 100);
       if (rsiCandles.length >= 15) {
-        const rsiCloses = [...rsiCandles].reverse().map((c) => Number.parseFloat(c[4] ?? "0")).filter(Number.isFinite);
+        const rsiCloses = [...rsiCandles]
+          .reverse()
+          .map((c) => Number.parseFloat(c[4] ?? "0"))
+          .filter(Number.isFinite);
         if (rsiCloses.length >= 15) rsiVal = calcRsi(rsiCloses);
       }
 
@@ -167,13 +174,19 @@ export class Scratchpad {
       let baseRegime: MarketRegime;
       if (price > ma200 * 1.05) {
         baseRegime = "risk_on";
-        reasonParts.push(`BTC $${price.toLocaleString()} > MA200 $${ma200.toLocaleString()} (+${((price / ma200 - 1) * 100).toFixed(1)}%)`);
+        reasonParts.push(
+          `BTC $${price.toLocaleString()} > MA200 $${ma200.toLocaleString()} (+${((price / ma200 - 1) * 100).toFixed(1)}%)`,
+        );
       } else if (price < ma200 * 0.95) {
         baseRegime = "risk_off";
-        reasonParts.push(`BTC $${price.toLocaleString()} < MA200 $${ma200.toLocaleString()} (${((price / ma200 - 1) * 100).toFixed(1)}%)`);
+        reasonParts.push(
+          `BTC $${price.toLocaleString()} < MA200 $${ma200.toLocaleString()} (${((price / ma200 - 1) * 100).toFixed(1)}%)`,
+        );
       } else {
         baseRegime = "neutral";
-        reasonParts.push(`BTC $${price.toLocaleString()} ≈ MA200 $${ma200.toLocaleString()} (${((price / ma200 - 1) * 100).toFixed(1)}%)`);
+        reasonParts.push(
+          `BTC $${price.toLocaleString()} ≈ MA200 $${ma200.toLocaleString()} (${((price / ma200 - 1) * 100).toFixed(1)}%)`,
+        );
       }
 
       reasonParts.push(`RSI(4H)=${rsiVal.toFixed(0)}`, `ATR=${atrPct.toFixed(1)}%`);
@@ -187,11 +200,15 @@ export class Scratchpad {
 
       await this.setRegime(regime, reasonParts.join(" | "), "auto_detect");
       const volLevel = atrPct > 4 ? "high" : atrPct > 2 ? "normal" : "low";
-      await this.write("market_volatility", {
-        atr_pct: Math.round(atrPct * 100) / 100,
-        level: volLevel,
-        rsi_4h: Math.round(rsiVal * 10) / 10
-      }, { source: "auto_detect", ttlHours: 6, tags: ["volatility"] });
+      await this.write(
+        "market_volatility",
+        {
+          atr_pct: Math.round(atrPct * 100) / 100,
+          level: volLevel,
+          rsi_4h: Math.round(rsiVal * 10) / 10,
+        },
+        { source: "auto_detect", ttlHours: 6, tags: ["volatility"] },
+      );
 
       return regime;
     } catch {
@@ -206,4 +223,3 @@ export function getScratchpad(): Scratchpad {
   if (!singleton) singleton = new Scratchpad();
   return singleton;
 }
-

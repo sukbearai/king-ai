@@ -43,18 +43,18 @@ const FTS_BODY_COLUMN_INDEX = 4; // (message_id, conversation_id, author, create
 export function ensureEpisodicSchema(sql: SqlLike): void {
   sql.exec("CREATE TABLE IF NOT EXISTS episodic_log (message_id TEXT PRIMARY KEY)");
   sql.exec(
-    "CREATE VIRTUAL TABLE IF NOT EXISTS episodic_fts USING fts5(message_id UNINDEXED, conversation_id UNINDEXED, author UNINDEXED, created_at UNINDEXED, body)"
+    "CREATE VIRTUAL TABLE IF NOT EXISTS episodic_fts USING fts5(message_id UNINDEXED, conversation_id UNINDEXED, author UNINDEXED, created_at UNINDEXED, body)",
   );
 }
 
 export function isRecallableMessage(message: EpisodicMessage): boolean {
   return Boolean(
     message.id &&
-    message.conversation_id &&
-    message.body &&
-    message.body.trim() &&
-    message.kind !== "system" &&
-    (message.author_kind === "agent" || message.author_kind === "human")
+      message.conversation_id &&
+      message.body &&
+      message.body.trim() &&
+      message.kind !== "system" &&
+      (message.author_kind === "agent" || message.author_kind === "human"),
   );
 }
 
@@ -73,7 +73,7 @@ export function indexEpisodicMessages(sql: SqlLike, messages: EpisodicMessage[])
       message.conversation_id,
       message.author_name ?? "",
       message.created_at ?? 0,
-      message.body
+      message.body,
     );
     indexed += 1;
   }
@@ -97,23 +97,27 @@ export function recallEpisodic(sql: SqlLike, query: string, options: RecallOptio
   const limit = Math.min(Math.max(Math.floor(options.limit ?? RECALL_DEFAULT_LIMIT), 1), RECALL_MAX_LIMIT);
   const snippet = `snippet(episodic_fts, ${FTS_BODY_COLUMN_INDEX}, '【', '】', '…', 12)`;
   const rows = options.conversationId
-    ? sql.exec(
-        `SELECT message_id, conversation_id, author, created_at, ${snippet} AS snip FROM episodic_fts WHERE episodic_fts MATCH ? AND conversation_id = ? ORDER BY rank LIMIT ?`,
-        match,
-        options.conversationId,
-        limit
-      ).toArray()
-    : sql.exec(
-        `SELECT message_id, conversation_id, author, created_at, ${snippet} AS snip FROM episodic_fts WHERE episodic_fts MATCH ? ORDER BY rank LIMIT ?`,
-        match,
-        limit
-      ).toArray();
+    ? sql
+        .exec(
+          `SELECT message_id, conversation_id, author, created_at, ${snippet} AS snip FROM episodic_fts WHERE episodic_fts MATCH ? AND conversation_id = ? ORDER BY rank LIMIT ?`,
+          match,
+          options.conversationId,
+          limit,
+        )
+        .toArray()
+    : sql
+        .exec(
+          `SELECT message_id, conversation_id, author, created_at, ${snippet} AS snip FROM episodic_fts WHERE episodic_fts MATCH ? ORDER BY rank LIMIT ?`,
+          match,
+          limit,
+        )
+        .toArray();
   return rows.map((row) => ({
     message_id: String(row.message_id ?? ""),
     conversation_id: String(row.conversation_id ?? ""),
     author: String(row.author ?? ""),
     created_at: Number(row.created_at ?? 0),
-    snippet: String(row.snip ?? "")
+    snippet: String(row.snip ?? ""),
   }));
 }
 
@@ -143,9 +147,7 @@ export function formatRecallHits(hits: RecallHit[], query: string): string {
   if (hits.length === 0) return `No episodic memory found for: ${query}`;
   return hits
     .map((hit) => {
-      const when = hit.created_at
-        ? new Date(hit.created_at).toISOString().replace("T", " ").slice(0, 16)
-        : "";
+      const when = hit.created_at ? new Date(hit.created_at).toISOString().replace("T", " ").slice(0, 16) : "";
       return `[${hit.conversation_id}]${when ? ` ${when}` : ""} ${hit.author}: ${hit.snippet}`;
     })
     .join("\n");

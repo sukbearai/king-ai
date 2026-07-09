@@ -16,7 +16,7 @@ export function parseCron(expression: string): ParsedCron {
     hours: parseCronField(parts[1] ?? "", 0, 23),
     daysOfMonth: parseCronField(parts[2] ?? "", 1, 31),
     months: parseCronField(parts[3] ?? "", 1, 12),
-    daysOfWeek: parseCronField(parts[4] ?? "", 0, 6)
+    daysOfWeek: parseCronField(parts[4] ?? "", 0, 6),
   };
 }
 
@@ -49,7 +49,8 @@ function addCronPart(values: Set<number>, part: string, min: number, max: number
   }
 
   for (let value = start; value <= end; value += step) {
-    if (value < min || value > max) throw new Error(`Invalid value in cron field: "${part}" (valid range: ${min}-${max})`);
+    if (value < min || value > max)
+      throw new Error(`Invalid value in cron field: "${part}" (valid range: ${min}-${max})`);
     values.add(value);
   }
 }

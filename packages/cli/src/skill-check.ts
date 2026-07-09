@@ -42,7 +42,7 @@ export const KNOWN_COMMANDS = new Set([
   "task",
   "unclaim",
   "watch",
-  "whoami"
+  "whoami",
 ]);
 
 export const KNOWN_SUBCOMMANDS: Record<string, Set<string>> = {
@@ -65,7 +65,7 @@ export const KNOWN_SUBCOMMANDS: Record<string, Set<string>> = {
   plan: new Set(["parse", "apply"]),
   review: new Set(["record", "list", "get"]),
   route: new Set(["set", "list", "delete", "remove", "emit"]),
-  task: new Set(["create", "list", "get", "update", "done"])
+  task: new Set(["create", "list", "get", "update", "done"]),
 };
 
 export interface SkillCheckResult {
@@ -113,7 +113,7 @@ export function checkSkill(filePath: string): SkillCheckResult {
     referencedCommands,
     invalidCommands,
     warnings,
-    valid: invalidCommands.length === 0
+    valid: invalidCommands.length === 0,
   };
 }
 
@@ -136,10 +136,7 @@ export function checkAllSkills(skillsDir: string): SkillCheckResult[] {
 }
 
 export function formatDashboard(results: SkillCheckResult[], commandName = "king-ai"): string {
-  const lines: string[] = [
-    `${commandName} skill-check - Skill command reference health`,
-    "=".repeat(56)
-  ];
+  const lines: string[] = [`${commandName} skill-check - Skill command reference health`, "=".repeat(56)];
   let passed = 0;
   let failed = 0;
   for (const result of results) {

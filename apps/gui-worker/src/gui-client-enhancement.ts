@@ -734,7 +734,7 @@ function isImageAttachment(attachment) {
 	  if (mime.indexOf('image/') === 0) return true;
 	  if (attachment && attachment.kind === 'image') return true;
 	  const name = String(attachment && attachment.name || '').toLowerCase();
-	  return /\.(jpe?g|png|gif|webp|bmp|svg|avif|heic|heif)$/i.test(name);
+	  return /.(jpe?g|png|gif|webp|bmp|svg|avif|heic|heif)$/i.test(name);
 	}
 	function attachmentFileTokenHtml(attachment) {
 	  const name = attachment.name || 'attachment';

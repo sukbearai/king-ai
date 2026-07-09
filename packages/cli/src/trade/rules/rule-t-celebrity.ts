@@ -13,8 +13,20 @@ const SEEN_TWEET_TTL_SECONDS = 86400 * 3;
 const NON_ALPHA_RETRY_SECONDS = 5 * 60;
 
 const ENTITY_BLACKLIST = new Set([
-  "USD", "USDT", "USDC", "AI", "CEO", "CFO", "IPO", "ETF",
-  "USA", "NEW", "NFT", "DEFI", "WEB3", "FED"
+  "USD",
+  "USDT",
+  "USDC",
+  "AI",
+  "CEO",
+  "CFO",
+  "IPO",
+  "ETF",
+  "USA",
+  "NEW",
+  "NFT",
+  "DEFI",
+  "WEB3",
+  "FED",
 ]);
 
 const WARNING_ALPHA_TYPES = new Set(["endorsement", "partnership", "ipo", "policy"]);
@@ -46,7 +58,8 @@ const ENTITY_PROMPT_TPL = `你是加密 meme 币 alpha 信号过滤器。判定�
 
 is_alpha=false 时 entities 必须返回 [].`;
 
-const TWEET_UI_FRAGMENT_RE = /^(?:@\w+|·|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}|\d{1,2}:\d{2}|\d+(?:\.\d+)?[KMB]?|\d+(?:\.\d+)?[KMB]?\s*(?:views?|likes?|reposts?)?)$/i;
+const TWEET_UI_FRAGMENT_RE =
+  /^(?:@\w+|·|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}|\d{1,2}:\d{2}|\d+(?:\.\d+)?[KMB]?|\d+(?:\.\d+)?[KMB]?\s*(?:views?|likes?|reposts?)?)$/i;
 
 interface ChainFmRef {
   chain: string;
@@ -64,10 +77,7 @@ function chainFmUrl(chain: string, address: string): string {
   return `https://chain.fm/token/${chain}/${address}`;
 }
 
-export function isCelebritySeenRecordActive(
-  record: SeenTweetRecord,
-  nowSeconds = Date.now() / 1000
-): boolean {
+export function isCelebritySeenRecordActive(record: SeenTweetRecord, nowSeconds = Date.now() / 1000): boolean {
   if (!record.id || !record.ts) return false;
   const ttl = Number(record.ttl_seconds ?? SEEN_TWEET_TTL_SECONDS);
   if (!Number.isFinite(ttl) || ttl <= 0) return false;
@@ -76,7 +86,12 @@ export function isCelebritySeenRecordActive(
 
 export function extractChainFmRefs(text: string): ChainFmRef[] {
   const chainMap: Record<string, string> = {
-    solana: "solana", sol: "solana", bsc: "bsc", ethereum: "ethereum", eth: "ethereum", base: "base"
+    solana: "solana",
+    sol: "solana",
+    bsc: "bsc",
+    ethereum: "ethereum",
+    eth: "ethereum",
+    base: "base",
   };
   const seen = new Set<string>();
   const refs: ChainFmRef[] = [];
@@ -89,7 +104,7 @@ export function extractChainFmRefs(text: string): ChainFmRef[] {
     refs.push({
       chain: chainMap[chainRaw] ?? chainRaw,
       address,
-      url: chainFmUrl(chainRaw, address)
+      url: chainFmUrl(chainRaw, address),
     });
   }
   return refs;
@@ -104,9 +119,7 @@ async function loadSeenIds(): Promise<Set<string>> {
       try {
         const rec = JSON.parse(line) as SeenTweetRecord;
         if (isCelebritySeenRecordActive(rec, now) && rec.id) ids.add(rec.id);
-      } catch {
-        continue;
-      }
+      } catch {}
     }
   } catch {
     // file may not exist
@@ -119,7 +132,7 @@ async function persistSeen(tid: string, ttlSeconds = SEEN_TWEET_TTL_SECONDS): Pr
   await appendFile(
     SEEN_TWEETS_DB,
     `${JSON.stringify({ id: tid, ts: Date.now() / 1000, ttl_seconds: ttlSeconds })}\n`,
-    "utf8"
+    "utf8",
   );
 }
 
@@ -162,19 +175,26 @@ async function fetchTweets(username: string, fetchLimit: number): Promise<Array<
 })()`;
     for (let attempt = 0; attempt < 3; attempt++) {
       await runOpencli(["browser", TWITTER_SEARCH_SESSION, "close"], 10_000);
-      const opened = await runOpencli(["browser", TWITTER_SEARCH_SESSION, "--window", "background", "open", url], 30_000);
+      const opened = await runOpencli(
+        ["browser", TWITTER_SEARCH_SESSION, "--window", "background", "open", url],
+        30_000,
+      );
       if (!opened.ok) continue;
       await runOpencli(["browser", TWITTER_SEARCH_SESSION, "--window", "background", "wait", "time", "5"], 10_000);
-      const evalResult = await runOpencli(["browser", TWITTER_SEARCH_SESSION, "--window", "background", "eval", js], 30_000);
+      const evalResult = await runOpencli(
+        ["browser", TWITTER_SEARCH_SESSION, "--window", "background", "eval", js],
+        30_000,
+      );
       if (!evalResult.ok) continue;
-      const page = evalResult.data.find((row): row is Record<string, unknown> => (
-        Boolean(row) && typeof row === "object" && !Array.isArray(row)
-      ));
+      const page = evalResult.data.find(
+        (row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row),
+      );
       const status = classifyCelebritySearchSnapshot(username, page ?? { url }).status;
       if (status === "no-results" || status === "auth-required" || status === "challenge") return [];
       const tweets = Array.isArray(page?.tweets) ? page.tweets : [];
-      const rows = tweets
-        .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row));
+      const rows = tweets.filter(
+        (row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row),
+      );
       if (rows.length) return rows;
     }
     return [];
@@ -183,7 +203,10 @@ async function fetchTweets(username: string, fetchLimit: number): Promise<Array<
   }
 }
 
-async function extractEntities(text: string, author: string): Promise<{ entities: string[]; meta: Record<string, unknown> }> {
+async function extractEntities(
+  text: string,
+  author: string,
+): Promise<{ entities: string[]; meta: Record<string, unknown> }> {
   const prompt = ENTITY_PROMPT_TPL.replace("{text}", text.slice(0, 500)).replace("{author}", author);
   const result = await runAgent(prompt, { timeoutMs: 45_000, task: "celebrity_extract" });
   const parsed = extractJsonFromText(result) as Record<string, unknown> | null;
@@ -192,7 +215,7 @@ async function extractEntities(text: string, author: string): Promise<{ entities
   const meta = {
     is_alpha: Boolean(parsed.is_alpha),
     alpha_type: String(parsed.alpha_type ?? "none"),
-    reason: String(parsed.reason ?? "").slice(0, 80)
+    reason: String(parsed.reason ?? "").slice(0, 80),
   };
   if (!meta.is_alpha) return { entities: [], meta };
   const ents = Array.isArray(parsed.entities) ? parsed.entities : [];
@@ -208,7 +231,10 @@ async function extractEntities(text: string, author: string): Promise<{ entities
 }
 
 export function isLikelyTweetUiFragment(text: string, author: string): boolean {
-  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
   if (!lines.length || lines.length > 12) return false;
   const authorRe = new RegExp(`^@?${author.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
   const nonUi = lines.filter((line) => {
@@ -280,7 +306,7 @@ export function createRuleTCelebrity(): AlertRule {
             `⚡ alpha=${alphaType} — ${reason}`,
             `💬 ${text.slice(0, 200)}`,
             `🔗 ${String(tw.url ?? "")}`,
-            `🎯 抽取 entities: ${entities.join(", ")}`
+            `🎯 抽取 entities: ${entities.join(", ")}`,
           ];
           if (chainRefs.length) {
             lines.push("", "📋 推文内 chain.fm 链接:");
@@ -291,20 +317,22 @@ export function createRuleTCelebrity(): AlertRule {
           }
 
           const primaryRef = chainRefs[0];
-          alerts.push(createAlert({
-            rule: "t",
-            severity: celebrityAlertSeverity(alphaType, entities.length),
-            title,
-            detail: lines.join("\n"),
-            timestamp: nowDisplay(),
-            asset: entities[0] ?? "",
-            tokenContract: primaryRef?.address ?? "",
-            tokenChain: primaryRef?.chain ?? ""
-          }));
+          alerts.push(
+            createAlert({
+              rule: "t",
+              severity: celebrityAlertSeverity(alphaType, entities.length),
+              title,
+              detail: lines.join("\n"),
+              timestamp: nowDisplay(),
+              asset: entities[0] ?? "",
+              tokenContract: primaryRef?.address ?? "",
+              tokenChain: primaryRef?.chain ?? "",
+            }),
+          );
           await markSeen();
         }
       }
       return alerts;
-    }
+    },
   };
 }

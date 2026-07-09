@@ -4,7 +4,18 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { anyRunnerBusy, clearLocalRuntimeState, doctorExitCode, formatDoctorReport, installLogTimestamps, missingEngineMessage, parsePairLocator, resolveHostName, shouldExitForUpdate, waitForRunnerIdle } from "../src/daemon.js";
+import {
+  anyRunnerBusy,
+  clearLocalRuntimeState,
+  doctorExitCode,
+  formatDoctorReport,
+  installLogTimestamps,
+  missingEngineMessage,
+  parsePairLocator,
+  resolveHostName,
+  shouldExitForUpdate,
+  waitForRunnerIdle,
+} from "../src/daemon.js";
 import { formatWorkerHealthProbe } from "../src/worker-health.js";
 
 test("anyRunnerBusy reports whether any runner is active", () => {
@@ -15,8 +26,18 @@ test("anyRunnerBusy reports whether any runner is active", () => {
 
 test("waitForRunnerIdle returns when runner becomes idle", async () => {
   let busy = true;
-  setTimeout(() => { busy = false; }, 50);
-  const idle = await waitForRunnerIdle({ get isBusy() { return busy; } }, 500, 10);
+  setTimeout(() => {
+    busy = false;
+  }, 50);
+  const idle = await waitForRunnerIdle(
+    {
+      get isBusy() {
+        return busy;
+      },
+    },
+    500,
+    10,
+  );
   assert.equal(idle, true);
 });
 
@@ -28,14 +49,17 @@ test("installLogTimestamps prefixes daemon log lines with an ISO wall-clock time
   const captured: unknown[][] = [];
   try {
     delete globalState[flag];
-    console.log = (...args: unknown[]) => { captured.push(args); };
+    console.log = (...args: unknown[]) => {
+      captured.push(args);
+    };
     installLogTimestamps(() => new Date("2026-06-10T08:02:02.913Z"));
     installLogTimestamps(); // idempotent: a second install must not double-wrap
     console.log("[dev/codex] SSE wake received");
     assert.deepEqual(captured, [["[2026-06-10T08:02:02.913Z]", "[dev/codex] SSE wake received"]]);
   } finally {
     console.log = originalLog;
-    if (originalFlag) globalState[flag] = originalFlag; else delete globalState[flag];
+    if (originalFlag) globalState[flag] = originalFlag;
+    else delete globalState[flag];
   }
 });
 
@@ -54,11 +78,13 @@ test("resolveHostName avoids localhost and uses platform names on macOS", () => 
 });
 
 test("parsePairLocator supports GUI-provided server and tenant", () => {
-  const locator = parsePairLocator("king-ai://pair?server=https%3A%2F%2Fgui.example.com%2F&tenant=user-octo&code=abc123");
+  const locator = parsePairLocator(
+    "king-ai://pair?server=https%3A%2F%2Fgui.example.com%2F&tenant=user-octo&code=abc123",
+  );
   assert.deepEqual(locator, {
     code: "abc123",
     serverUrl: "https://gui.example.com",
-    tenantId: "user-octo"
+    tenantId: "user-octo",
   });
   assert.deepEqual(parsePairLocator("plain-code"), { code: "plain-code" });
 });
@@ -80,7 +106,7 @@ test("clearLocalRuntimeState removes generated runtime state but keeps pairing c
     sessionsDir: join(dir, "sessions"),
     triageDir: join(dir, "triage"),
     runningStatePath: join(dir, "running.json"),
-    heartbeatPath: join(dir, "heartbeat.json")
+    heartbeatPath: join(dir, "heartbeat.json"),
   });
 
   assert.equal(existsSync(join(dir, "agents")), false);
@@ -108,10 +134,10 @@ test("formatDoctorReport summarizes brains, failures, and install guidance", () 
         installed: true,
         path: "/usr/bin/codex",
         big: { ok: true },
-        small: { ok: false, detail: "usage limit reached" }
-      }
+        small: { ok: false, detail: "usage limit reached" },
+      },
     ],
-    "1.2.3"
+    "1.2.3",
   );
 
   assert.match(report, /king-ai 1\.2\.3 engine doctor/);
@@ -133,8 +159,8 @@ test("formatDoctorReport omits unusable warning when one engine is healthy", () 
       installed: true,
       path: "claude",
       big: { ok: true },
-      small: { ok: true }
-    }
+      small: { ok: true },
+    },
   ]);
 
   assert.doesNotMatch(report, /no engine has BOTH brains healthy/);
@@ -147,19 +173,22 @@ test("doctorExitCode fails only when no engine has both brains healthy", () => {
 });
 
 test("formatWorkerHealthProbe compares worker and CLI versions", () => {
-  const mismatch = formatWorkerHealthProbe({
-    ok: true,
-    serverUrl: "https://king-ai.example",
-    version: "0.2.59",
-    runtimeFeatures: ["wake-dedup"]
-  }, "0.2.60");
+  const mismatch = formatWorkerHealthProbe(
+    {
+      ok: true,
+      serverUrl: "https://king-ai.example",
+      version: "0.2.59",
+      runtimeFeatures: ["wake-dedup"],
+    },
+    "0.2.60",
+  );
   assert.match(mismatch.join("\n"), /0\.2\.59 != local CLI 0\.2\.60/);
   assert.match(mismatch.join("\n"), /wake-dedup advertised/);
 
   const failed = formatWorkerHealthProbe({
     ok: false,
     serverUrl: "https://king-ai.example",
-    error: "fetch failed"
+    error: "fetch failed",
   });
   assert.match(failed.join("\n"), /fetch failed/);
 });

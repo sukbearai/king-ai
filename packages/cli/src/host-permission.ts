@@ -4,7 +4,7 @@ import {
   normalizeTeamRoleId,
   type KingTeamPermissionAction,
   type KingTeamPermissionRule,
-  type KingTeamSpec
+  type KingTeamSpec,
 } from "./team-workflow.js";
 
 export interface HostPermissionRequest {
@@ -40,7 +40,7 @@ const PERMISSION_ACTIONS: KingTeamPermissionAction[] = [
   "deploy-release",
   "view-audit",
   "manage-queue",
-  "view-cost"
+  "view-cost",
 ];
 
 export function hostCommandPermissionAction(command: string, input?: unknown): KingTeamPermissionAction | null {
@@ -87,7 +87,10 @@ export function hostCommandPermissionAction(command: string, input?: unknown): K
   }
 }
 
-export function resolveActorRole(request: HostPermissionRequest, env: NodeJS.ProcessEnv = process.env): string | undefined {
+export function resolveActorRole(
+  request: HostPermissionRequest,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
   return cleanString(request.actorRole) ?? cleanString(env.KING_AI_TEAM_ROLE);
 }
 
@@ -111,7 +114,12 @@ export function resolveTeamSpec(deps: HostPermissionDeps = {}): KingTeamSpec {
  * Governance is opt-in: when no role is resolved (request field or KING_AI_TEAM_ROLE), trusted local
  * automation proceeds exactly as before. This is not the host security boundary.
  */
-export function evaluateHostCommandPermission(command: string, input: unknown, request: HostPermissionRequest, deps: HostPermissionDeps = {}): HostPermissionOutcome {
+export function evaluateHostCommandPermission(
+  command: string,
+  input: unknown,
+  request: HostPermissionRequest,
+  deps: HostPermissionDeps = {},
+): HostPermissionOutcome {
   const role = resolveActorRole(request, deps.env ?? process.env);
   if (!role) return { enforced: false, action: null };
   const action = hostCommandPermissionAction(command, input);
@@ -151,7 +159,7 @@ function explicitPermissionAction(input: unknown): KingTeamPermissionAction | nu
   if (!input || typeof input !== "object") return null;
   const value = (input as { permissionAction?: unknown }).permissionAction;
   return typeof value === "string" && (PERMISSION_ACTIONS as string[]).includes(value)
-    ? value as KingTeamPermissionAction
+    ? (value as KingTeamPermissionAction)
     : null;
 }
 
@@ -187,10 +195,12 @@ function workflowUpdateAction(input: unknown): KingTeamPermissionAction {
 function isTeamSpec(value: unknown): value is KingTeamSpec {
   if (!value || typeof value !== "object") return false;
   const record = value as KingTeamSpec;
-  return typeof record.id === "string"
-    && Array.isArray(record.roles)
-    && Boolean(record.permissionPolicy)
-    && Array.isArray(record.permissionPolicy.rules);
+  return (
+    typeof record.id === "string" &&
+    Array.isArray(record.roles) &&
+    Boolean(record.permissionPolicy) &&
+    Array.isArray(record.permissionPolicy.rules)
+  );
 }
 
 function stringField(input: unknown, key: string): string | undefined {

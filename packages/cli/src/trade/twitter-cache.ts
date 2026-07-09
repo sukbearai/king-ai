@@ -78,7 +78,7 @@ export function entryTimestamp(entry: TwitterCacheEntry): Date | null {
 
 export async function countRecentCacheRecords(
   hours: number,
-  path = defaultTwitterCachePath()
+  path = defaultTwitterCachePath(),
 ): Promise<{ total: number; recent: number; stale: number; invalid: number }> {
   const cutoff = Date.now() - hours * 3600 * 1000;
   let total = 0;

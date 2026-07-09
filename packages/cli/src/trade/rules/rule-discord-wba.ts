@@ -14,7 +14,8 @@ async function readDiscordMessages(count = 20): Promise<Array<Record<string, str
     const currentUrl = check.data
       .map((row) => {
         if (typeof row === "string") return row;
-        if (row && typeof row === "object") return String((row as Record<string, unknown>).value ?? (row as Record<string, unknown>).stdout ?? "");
+        if (row && typeof row === "object")
+          return String((row as Record<string, unknown>).value ?? (row as Record<string, unknown>).stdout ?? "");
         return "";
       })
       .join("\n");
@@ -41,11 +42,16 @@ async function readDiscordMessages(count = 20): Promise<Array<Record<string, str
   try {
     const evalResult = await runOpencli(["browser", BROWSER_SESSION, "eval", js], 30_000);
     if (!evalResult.ok) return [];
-    const raw = evalResult.data.map((r) => {
-      if (typeof r === "string") return r;
-      if (r && typeof r === "object") return String((r as Record<string, unknown>).value ?? (r as Record<string, unknown>).stdout ?? JSON.stringify(r));
-      return "";
-    }).join("\n");
+    const raw = evalResult.data
+      .map((r) => {
+        if (typeof r === "string") return r;
+        if (r && typeof r === "object")
+          return String(
+            (r as Record<string, unknown>).value ?? (r as Record<string, unknown>).stdout ?? JSON.stringify(r),
+          );
+        return "";
+      })
+      .join("\n");
     if (!raw) return [];
     const jsonStart = raw.indexOf("[");
     if (jsonStart < 0) return [];
@@ -78,23 +84,28 @@ export function createRuleDiscordWba(): AlertRule {
         const ts = msg.time ?? "";
         if (!author.includes(TARGET_AUTHOR)) continue;
 
-        const msgHash = createHash("md5").update(`${ts}_${content.slice(0, 100)}`).digest("hex").slice(0, 12);
+        const msgHash = createHash("md5")
+          .update(`${ts}_${content.slice(0, 100)}`)
+          .digest("hex")
+          .slice(0, 12);
         if (seenHashes.has(msgHash)) continue;
         seenHashes.add(msgHash);
 
         const alertKey = `wba_${msgHash}`;
         if (!state.canAlert(alertKey, 86400)) continue;
 
-        alerts.push(createAlert({
-          rule: "王不爱喊单",
-          severity: "warning",
-          title: `王不爱: ${content.slice(0, 60)}`,
-          detail: `频道: 尊享財富密碼\n时间: ${ts}\n\n${content}`,
-          timestamp: nowDisplay(),
-          direction: 0,
-          strength: 0.8,
-          asset: "BTC"
-        }));
+        alerts.push(
+          createAlert({
+            rule: "王不爱喊单",
+            severity: "warning",
+            title: `王不爱: ${content.slice(0, 60)}`,
+            detail: `频道: 尊享財富密碼\n时间: ${ts}\n\n${content}`,
+            timestamp: nowDisplay(),
+            direction: 0,
+            strength: 0.8,
+            asset: "BTC",
+          }),
+        );
       }
 
       if (seenHashes.size > 200) {
@@ -104,6 +115,6 @@ export function createRuleDiscordWba(): AlertRule {
       }
 
       return alerts;
-    }
+    },
   };
 }

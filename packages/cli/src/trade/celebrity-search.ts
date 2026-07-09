@@ -18,7 +18,7 @@ export interface CelebrityVerifyResult {
 
 export function classifyCelebritySearchSnapshot(
   account: string,
-  snapshot: CelebritySearchSnapshot
+  snapshot: CelebritySearchSnapshot,
 ): CelebrityVerifyResult {
   const title = String(snapshot.title ?? "");
   const url = String(snapshot.url ?? "");
@@ -36,7 +36,21 @@ export function classifyCelebritySearchSnapshot(
     return { account, status: "auth-required", articles, title, url, detail: "X login required" };
   }
   if (haystack.includes(`no results for "from:${account.toLowerCase()}"`) || haystack.includes("no results for")) {
-    return { account, status: "no-results", articles, title, url, detail: "search loaded but returned no tweet articles" };
+    return {
+      account,
+      status: "no-results",
+      articles,
+      title,
+      url,
+      detail: "search loaded but returned no tweet articles",
+    };
   }
-  return { account, status: "unknown", articles, title, url, detail: "search loaded without recognizable articles or no-results marker" };
+  return {
+    account,
+    status: "unknown",
+    articles,
+    title,
+    url,
+    detail: "search loaded without recognizable articles or no-results marker",
+  };
 }

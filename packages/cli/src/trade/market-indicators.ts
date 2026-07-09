@@ -5,7 +5,7 @@ export async function fetchOkxCandles(instId: string, bar = "1H", limit = 30): P
   try {
     const res = await fetch(url, {
       headers: { "User-Agent": "king-ai/1.0" },
-      signal: AbortSignal.timeout(5000)
+      signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return [];
     const body = (await res.json()) as { data?: OkxCandle[] };

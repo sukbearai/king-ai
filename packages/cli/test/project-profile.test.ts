@@ -12,7 +12,7 @@ import {
   detectPackageManagers,
   detectTests,
   formatProjectProfile,
-  scanProject
+  scanProject,
 } from "../src/project-profile.js";
 
 test("scanProject detects local TypeScript repo profile signals", async () => {
@@ -21,13 +21,17 @@ test("scanProject detects local TypeScript repo profile signals", async () => {
     await mkdir(join(dir, "src"), { recursive: true });
     await mkdir(join(dir, "docs"), { recursive: true });
     await mkdir(join(dir, ".github", "workflows"), { recursive: true });
-    await writeFile(join(dir, "package.json"), JSON.stringify({
-      name: "demo-app",
-      description: "Demo app for takeover profiling.",
-      scripts: { build: "tsc", test: "node --test dist/test/*.js" },
-      dependencies: { hono: "^4.0.0" },
-      devDependencies: { typescript: "^5.0.0", vitest: "^3.0.0" }
-    }), "utf8");
+    await writeFile(
+      join(dir, "package.json"),
+      JSON.stringify({
+        name: "demo-app",
+        description: "Demo app for takeover profiling.",
+        scripts: { build: "tsc", test: "node --test dist/test/*.js" },
+        dependencies: { hono: "^4.0.0" },
+        devDependencies: { typescript: "^5.0.0", vitest: "^3.0.0" },
+      }),
+      "utf8",
+    );
     await writeFile(join(dir, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n", "utf8");
     await writeFile(join(dir, "tsconfig.json"), "{}", "utf8");
     await writeFile(join(dir, "README.md"), "# Demo App\n\nThis project has useful docs.\n", "utf8");
@@ -63,8 +67,14 @@ test("collectProjectDocs ranks root docs and manifests", async () => {
     await writeFile(join(dir, "package.json"), JSON.stringify({ name: "docs-demo" }), "utf8");
 
     const docs = collectProjectDocs(dir);
-    assert.deepEqual(docs.map((doc) => doc.path), ["README.md", "AGENTS.md", "package.json"]);
-    assert.deepEqual(docs.map((doc) => doc.kind), ["readme", "notes", "manifest"]);
+    assert.deepEqual(
+      docs.map((doc) => doc.path),
+      ["README.md", "AGENTS.md", "package.json"],
+    );
+    assert.deepEqual(
+      docs.map((doc) => doc.kind),
+      ["readme", "notes", "manifest"],
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

@@ -6,7 +6,21 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { runHostCommand } from "../src/host-control.js";
 import { listHostRunRequests } from "../src/host-runs.js";
-import { createBrowserHostSdk, createDefaultHostSdkRunOptions, createDefaultRunOptions, createEnvBackedHostSdk, createEnvBackedKingHostSdk, createHostSdk, createHostSdkTakeoverRunOptions, createRunOptions, createTakeoverRunOptions, createKingHostSdk, hostBaseUrlFromEnv, hostBaseUrlFromLocation, type KingHostSdkAdapters } from "../src/host-sdk.js";
+import {
+  createBrowserHostSdk,
+  createDefaultHostSdkRunOptions,
+  createDefaultRunOptions,
+  createEnvBackedHostSdk,
+  createEnvBackedKingHostSdk,
+  createHostSdk,
+  createHostSdkTakeoverRunOptions,
+  createRunOptions,
+  createTakeoverRunOptions,
+  createKingHostSdk,
+  hostBaseUrlFromEnv,
+  hostBaseUrlFromLocation,
+  type KingHostSdkAdapters,
+} from "../src/host-sdk.js";
 import { startHostStatusServer } from "../src/host-server.js";
 
 test("host SDK wraps localhost host server commands", async (t) => {
@@ -25,42 +39,47 @@ test("host SDK wraps localhost host server commands", async (t) => {
       startedAt: "2026-06-02T00:00:00.000Z",
       computerId: "demo-computer",
       agents: [],
-      events: [{ at: "2026-06-02T00:00:01.000Z", kind: "agent.started" }]
+      events: [{ at: "2026-06-02T00:00:01.000Z", kind: "agent.started" }],
     }),
     tokenBudget: () => null,
-    runCommand: (request) => runHostCommand(request, {
-      readState: async () => ({
-        version: "0.1.0",
-        pid: 123,
-        startedAt: "2026-06-02T00:00:00.000Z",
-        computerId: "demo-computer",
-        agents: [{
-          id: "demo-agent",
-          name: "Demo Agent",
-          engine: "codex",
-          updatedAt: "2026-06-02T00:00:01.000Z",
-          runStats: {
-            turns: 1,
-            completed: 1,
-            failed: 0,
-            inputTokens: 5,
-            cacheReadInputTokens: 2,
-            outputTokens: 8,
-            totalTokens: 15
-          }
-        }],
-        events: []
+    runCommand: (request) =>
+      runHostCommand(request, {
+        readState: async () => ({
+          version: "0.1.0",
+          pid: 123,
+          startedAt: "2026-06-02T00:00:00.000Z",
+          computerId: "demo-computer",
+          agents: [
+            {
+              id: "demo-agent",
+              name: "Demo Agent",
+              engine: "codex",
+              updatedAt: "2026-06-02T00:00:01.000Z",
+              runStats: {
+                turns: 1,
+                completed: 1,
+                failed: 0,
+                inputTokens: 5,
+                cacheReadInputTokens: 2,
+                outputTokens: 8,
+                totalTokens: 15,
+              },
+            },
+          ],
+          events: [],
+        }),
+        tokenBudget: () => 100,
+        collectDoctorResults: async () => [
+          {
+            id: "codex",
+            installed: true,
+            big: { ok: true, detail: "ok" },
+            small: { ok: true, detail: "ok" },
+          },
+        ],
+        availableEngines: () => ["codex"],
+        runsPath,
       }),
-      tokenBudget: () => 100,
-      collectDoctorResults: async () => [{
-        id: "codex",
-        installed: true,
-        big: { ok: true, detail: "ok" },
-        small: { ok: true, detail: "ok" }
-      }],
-      availableEngines: () => ["codex"],
-      runsPath
-    })
   });
   t.after(async () => {
     server.close();
@@ -116,7 +135,10 @@ test("host SDK wraps localhost host server commands", async (t) => {
   assert.equal(hostFrame.value.data.computerId, "demo-computer");
 
   const commands = await sdk.commands();
-  assert.equal(commands.commands.some((command) => command.name === "policy"), true);
+  assert.equal(
+    commands.commands.some((command) => command.name === "policy"),
+    true,
+  );
 
   const capabilities = await sdk.capabilities();
   assert.equal(capabilities.ok, true);
@@ -180,7 +202,13 @@ test("host SDK wraps localhost host server commands", async (t) => {
   assert.equal(run.json?.options.loops, 3);
   assert.equal(run.json?.options.engine, "codex");
 
-  const aliasRun = await sdk.run("ship alias feature", { runtime: "codex", codexModel: "gpt-alias", pollInterval: 7, output: "alias-out", keep: true });
+  const aliasRun = await sdk.run("ship alias feature", {
+    runtime: "codex",
+    codexModel: "gpt-alias",
+    pollInterval: 7,
+    output: "alias-out",
+    keep: true,
+  });
   assert.equal(aliasRun.ok, true);
   assert.equal(aliasRun.json?.options.engine, "codex");
   assert.equal(aliasRun.json?.options.model, "gpt-alias");
@@ -194,7 +222,7 @@ test("host SDK wraps localhost host server commands", async (t) => {
     workerUrl: "http://127.0.0.1:1234",
     workerModel: "local-model",
     workerKey: "worker-secret-key",
-    enableBrain: false
+    enableBrain: false,
   });
   assert.equal(workerAliasRun.ok, true);
   assert.equal(workerAliasRun.json?.options.configPath, "config.json");
@@ -204,17 +232,21 @@ test("host SDK wraps localhost host server commands", async (t) => {
   assert.equal(workerAliasRun.json?.options.noBrain, true);
   assert.equal(workerAliasRun.json?.summary.includes("worker-secret-key"), false);
 
-  const projectSpecRun = await sdk.run("ship project spec", { runtime: "codex" }, {
-    githubToken: "ghp_secret",
-    threadSync: {
-      threadId: "thread-1",
-      syncUrl: "https://sync.example/thread-1",
-      syncSecret: "sync-secret"
+  const projectSpecRun = await sdk.run(
+    "ship project spec",
+    { runtime: "codex" },
+    {
+      githubToken: "ghp_secret",
+      threadSync: {
+        threadId: "thread-1",
+        syncUrl: "https://sync.example/thread-1",
+        syncSecret: "sync-secret",
+      },
+      hooks: {
+        beforeRun: "prepare",
+      },
     },
-    hooks: {
-      beforeRun: "prepare"
-    }
-  });
+  );
   assert.equal(projectSpecRun.ok, true);
   assert.equal(projectSpecRun.json?.spec.githubToken, "ghp_secret");
   assert.equal(projectSpecRun.json?.spec.threadSync?.syncSecret, "sync-secret");
@@ -228,7 +260,11 @@ test("host SDK wraps localhost host server commands", async (t) => {
   assert.equal(takeover.json?.options.loopMode, "infinite");
   assert.equal(JSON.stringify(takeover).includes("null"), false);
 
-  const preparedTakeover = await sdk.prepareTakeover({ projectPath: process.cwd(), goalOverride: "prepare takeover", runtime: "codex" });
+  const preparedTakeover = await sdk.prepareTakeover({
+    projectPath: process.cwd(),
+    goalOverride: "prepare takeover",
+    runtime: "codex",
+  });
   assert.equal(preparedTakeover.preflight.ok, true);
   assert.equal(preparedTakeover.input.mode, "takeover");
   assert.equal(preparedTakeover.input.goal, "prepare takeover");
@@ -240,7 +276,7 @@ test("host SDK wraps localhost host server commands", async (t) => {
   const preparedWatch = sdk.executePreparedTakeover(
     preparedTakeover,
     { requestId: "sdk-prepared-takeover-1" },
-    { intervalMs: 1000, signal: preparedWatchController.signal }
+    { intervalMs: 1000, signal: preparedWatchController.signal },
   );
   const preparedSubmitted = await preparedWatch.next();
   assert.equal(preparedSubmitted.done, false);
@@ -257,7 +293,7 @@ test("host SDK wraps localhost host server commands", async (t) => {
   const preparedStateWatch = sdk.executePreparedTakeoverState(
     preparedTakeover,
     { requestId: "sdk-prepared-takeover-state-1" },
-    { intervalMs: 1000, signal: preparedStateWatchController.signal }
+    { intervalMs: 1000, signal: preparedStateWatchController.signal },
   );
   const preparedStateSubmitted = await preparedStateWatch.next();
   assert.equal(preparedStateSubmitted.done, false);
@@ -270,39 +306,71 @@ test("host SDK wraps localhost host server commands", async (t) => {
   assert.equal(preparedStateRun.value.event, "state");
   assert.equal(preparedStateRun.value.data.request?.id, "sdk-prepared-takeover-state-1");
 
-  const submitted = await sdk.submitRun({ goal: "queue this run", requestId: "sdk-request-1", options: { engine: "codex" } });
+  const submitted = await sdk.submitRun({
+    goal: "queue this run",
+    requestId: "sdk-request-1",
+    options: { engine: "codex" },
+  });
   assert.equal(submitted.ok, true);
   assert.equal(submitted.json?.request.id, "sdk-request-1");
 
   await mkdir(outputDir, { recursive: true });
-  await writeFile(join(outputDir, "loop-events.ndjson"), [
-    JSON.stringify({ type: "loop.classified", runId: "sdk-events-1", loop: 1, classification: "idle", timestamp: "2026-06-02T00:00:00.000Z" }),
-    JSON.stringify({ type: "loop.classified", runId: "sdk-events-1", loop: 2, classification: "productive", timestamp: "2026-06-02T00:00:01.000Z" })
-  ].join("\n") + "\n", "utf8");
+  await writeFile(
+    join(outputDir, "loop-events.ndjson"),
+    [
+      JSON.stringify({
+        type: "loop.classified",
+        runId: "sdk-events-1",
+        loop: 1,
+        classification: "idle",
+        timestamp: "2026-06-02T00:00:00.000Z",
+      }),
+      JSON.stringify({
+        type: "loop.classified",
+        runId: "sdk-events-1",
+        loop: 2,
+        classification: "productive",
+        timestamp: "2026-06-02T00:00:01.000Z",
+      }),
+    ].join("\n") + "\n",
+    "utf8",
+  );
   await mkdir(join(outputDir, ".king-ai"), { recursive: true });
-  await writeFile(join(outputDir, ".king-ai", "heartbeat.json"), JSON.stringify({
-    schema: "king-ai.host-run-heartbeat.v1",
-    status: "completed",
-    runId: "sdk-events-1",
-    lastTick: "2026-06-02T00:00:02.000Z",
-    updatedAt: "2026-06-02T00:00:02.000Z",
-    loopCount: 2,
-    outputDir
-  }) + "\n", "utf8");
-  await writeFile(join(outputDir, "meta.json"), JSON.stringify({
-    schema: "king-ai.host-run-meta.v1",
-    status: "prepared",
-    runId: "sdk-events-1",
-    goal: "queue event run",
-    preparedAt: "2026-06-02T00:00:00.000Z",
-    maxLoops: "infinite",
-    actualLoops: 0,
-    paths: {
+  await writeFile(
+    join(outputDir, ".king-ai", "heartbeat.json"),
+    JSON.stringify({
+      schema: "king-ai.host-run-heartbeat.v1",
+      status: "completed",
+      runId: "sdk-events-1",
+      lastTick: "2026-06-02T00:00:02.000Z",
+      updatedAt: "2026-06-02T00:00:02.000Z",
+      loopCount: 2,
       outputDir,
-      heartbeatPath: join(outputDir, ".king-ai", "heartbeat.json")
-    }
-  }) + "\n", "utf8");
-  const eventRun = await sdk.submitRun({ goal: "queue event run", requestId: "sdk-events-1", options: { engine: "codex", outputDir } });
+    }) + "\n",
+    "utf8",
+  );
+  await writeFile(
+    join(outputDir, "meta.json"),
+    JSON.stringify({
+      schema: "king-ai.host-run-meta.v1",
+      status: "prepared",
+      runId: "sdk-events-1",
+      goal: "queue event run",
+      preparedAt: "2026-06-02T00:00:00.000Z",
+      maxLoops: "infinite",
+      actualLoops: 0,
+      paths: {
+        outputDir,
+        heartbeatPath: join(outputDir, ".king-ai", "heartbeat.json"),
+      },
+    }) + "\n",
+    "utf8",
+  );
+  const eventRun = await sdk.submitRun({
+    goal: "queue event run",
+    requestId: "sdk-events-1",
+    options: { engine: "codex", outputDir },
+  });
   assert.equal(eventRun.ok, true);
   const runEvents = await sdk.runEvents("sdk-events-1", { classification: "productive" });
   assert.equal(runEvents.ok, true);
@@ -312,7 +380,7 @@ test("host SDK wraps localhost host server commands", async (t) => {
   const emittedSdkEvent = await sdk.emitRunEvent("sdk-events-1", {
     type: "app.note",
     message: "sdk reviewed",
-    payload: { view: "timeline" }
+    payload: { view: "timeline" },
   });
   assert.equal(emittedSdkEvent.ok, true);
   assert.equal(emittedSdkEvent.command, "emit-run-event");
@@ -345,7 +413,7 @@ test("host SDK wraps localhost host server commands", async (t) => {
   const submitWatchController = new AbortController();
   const submitWatch = sdk.submitAndWatchRun(
     { goal: "queue and watch", requestId: "sdk-watch-1", options: { engine: "codex" } },
-    { intervalMs: 1000, signal: submitWatchController.signal }
+    { intervalMs: 1000, signal: submitWatchController.signal },
   );
   const submitWatchSubmitted = await submitWatch.next();
   assert.equal(submitWatchSubmitted.done, false);
@@ -360,7 +428,7 @@ test("host SDK wraps localhost host server commands", async (t) => {
   const submitStateWatchController = new AbortController();
   const submitStateWatch = sdk.submitAndWatchRunState(
     { goal: "queue and watch state", requestId: "sdk-watch-state-1", options: { engine: "codex", outputDir } },
-    { intervalMs: 1000, signal: submitStateWatchController.signal }
+    { intervalMs: 1000, signal: submitStateWatchController.signal },
   );
   const submitStateSubmitted = await submitStateWatch.next();
   assert.equal(submitStateSubmitted.done, false);
@@ -379,7 +447,7 @@ test("host SDK wraps localhost host server commands", async (t) => {
     "queue friendly run",
     { engine: "codex", loops: 2, outputDir: "out" },
     { requestId: "sdk-run-watch-1" },
-    { intervalMs: 1000, signal: runWatchController.signal }
+    { intervalMs: 1000, signal: runWatchController.signal },
   );
   const runWatchSubmitted = await runWatch.next();
   assert.equal(runWatchSubmitted.done, false);
@@ -398,7 +466,7 @@ test("host SDK wraps localhost host server commands", async (t) => {
     "queue friendly state run",
     { engine: "codex", loops: 2, outputDir },
     { requestId: "sdk-run-watch-state-1" },
-    { intervalMs: 1000, signal: runStateWatchController.signal }
+    { intervalMs: 1000, signal: runStateWatchController.signal },
   );
   const runStateWatchSubmitted = await runStateWatch.next();
   assert.equal(runStateWatchSubmitted.done, false);
@@ -416,7 +484,7 @@ test("host SDK wraps localhost host server commands", async (t) => {
     { projectPath: process.cwd(), goalOverride: "watch takeover", engine: "codex" },
     {},
     { requestId: "sdk-takeover-watch-1" },
-    { intervalMs: 1000, signal: takeoverWatchController.signal }
+    { intervalMs: 1000, signal: takeoverWatchController.signal },
   );
   const takeoverWatchSubmitted = await takeoverWatch.next();
   assert.equal(takeoverWatchSubmitted.done, false);
@@ -435,7 +503,7 @@ test("host SDK wraps localhost host server commands", async (t) => {
     { projectPath: process.cwd(), goalOverride: "watch takeover state", engine: "codex", outputDir },
     {},
     { requestId: "sdk-takeover-watch-state-1" },
-    { intervalMs: 1000, signal: takeoverStateWatchController.signal }
+    { intervalMs: 1000, signal: takeoverStateWatchController.signal },
   );
   const takeoverStateSubmitted = await takeoverStateWatch.next();
   assert.equal(takeoverStateSubmitted.done, false);
@@ -450,24 +518,36 @@ test("host SDK wraps localhost host server commands", async (t) => {
 
   const requests = await sdk.runRequests(20);
   assert.equal(requests.ok, true);
-  assert.equal(requests.json?.requests.some((request) => request.id === "sdk-request-1"), true);
+  assert.equal(
+    requests.json?.requests.some((request) => request.id === "sdk-request-1"),
+    true,
+  );
 
   const runStreamController = new AbortController();
   const runStream = sdk.runRequestsStream({ intervalMs: 1000, limit: 20, signal: runStreamController.signal });
   const streamedRuns = await runStream.next();
   runStreamController.abort();
   assert.equal(streamedRuns.done, false);
-  assert.equal(streamedRuns.value.some((request) => request.id === "sdk-request-1"), true);
+  assert.equal(
+    streamedRuns.value.some((request) => request.id === "sdk-request-1"),
+    true,
+  );
 
   const singleRunStreamController = new AbortController();
-  const singleRunStream = sdk.runRequestStream("sdk-request-1", { intervalMs: 1000, signal: singleRunStreamController.signal });
+  const singleRunStream = sdk.runRequestStream("sdk-request-1", {
+    intervalMs: 1000,
+    signal: singleRunStreamController.signal,
+  });
   const streamedRun = await singleRunStream.next();
   singleRunStreamController.abort();
   assert.equal(streamedRun.done, false);
   assert.equal(streamedRun.value?.id, "sdk-request-1");
 
   const runStateStreamController = new AbortController();
-  const runStateStream = sdk.runStateStream("sdk-events-1", { intervalMs: 1000, signal: runStateStreamController.signal });
+  const runStateStream = sdk.runStateStream("sdk-events-1", {
+    intervalMs: 1000,
+    signal: runStateStreamController.signal,
+  });
   const streamedRunState = await runStateStream.next();
   runStateStreamController.abort();
   assert.equal(streamedRunState.done, false);
@@ -488,7 +568,10 @@ test("host SDK wraps localhost host server commands", async (t) => {
   assert.equal(waitedRequest.json?.request.status, "completed");
 
   const completedRequests = await sdk.runRequests(5, "completed");
-  assert.equal(completedRequests.json?.requests.some((request) => request.id === "sdk-request-1"), true);
+  assert.equal(
+    completedRequests.json?.requests.some((request) => request.id === "sdk-request-1"),
+    true,
+  );
 
   await sdk.submitRun({ goal: "complete helper", requestId: "sdk-complete-1", options: { engine: "codex" } });
   const completedHelper = await sdk.completeRun("sdk-complete-1", "accepted by app");
@@ -508,12 +591,13 @@ test("host SDK wraps localhost host server commands", async (t) => {
   assert.equal(cancelledHelper.json?.request.status, "cancelled");
   assert.equal(cancelledHelper.json?.request.detail, "cancelled by app");
 
-  const pending = await sdk.submitRun({ goal: "wait for pending run", requestId: "sdk-pending-1", options: { engine: "codex" } });
+  const pending = await sdk.submitRun({
+    goal: "wait for pending run",
+    requestId: "sdk-pending-1",
+    options: { engine: "codex" },
+  });
   assert.equal(pending.ok, true);
-  await assert.rejects(
-    () => sdk.waitForRun("sdk-pending-1", { timeoutMs: 20, intervalMs: 5 }),
-    /last status=pending/
-  );
+  await assert.rejects(() => sdk.waitForRun("sdk-pending-1", { timeoutMs: 20, intervalMs: 5 }), /last status=pending/);
 
   const executable = await sdk.submitRun({
     goal: "sdk execute status",
@@ -521,8 +605,8 @@ test("host SDK wraps localhost host server commands", async (t) => {
     executor: {
       kind: "host-command",
       command: "status",
-      format: "json"
-    }
+      format: "json",
+    },
   });
   assert.equal(executable.ok, true);
   const executed = await sdk.executeRun("sdk-exec-1");
@@ -535,8 +619,8 @@ test("host SDK wraps localhost host server commands", async (t) => {
     executor: {
       kind: "host-command",
       command: "usage",
-      format: "json"
-    }
+      format: "json",
+    },
   });
   assert.equal(submitAndExecuted.submitted.ok, true);
   assert.equal(submitAndExecuted.submitted.json?.request.id, "sdk-exec-2");
@@ -561,10 +645,21 @@ test("host SDK wraps localhost host server commands", async (t) => {
   assert.equal(exportPlan.ok, true);
   assert.equal(exportPlan.json?.workspaceFileCount, 1);
 
-  const exported = await sdk.exportArtifacts({ workspaceRoot, outputDir, runId: "sdk-export-1", confirmation: "allow:export" });
+  const exported = await sdk.exportArtifacts({
+    workspaceRoot,
+    outputDir,
+    runId: "sdk-export-1",
+    confirmation: "allow:export",
+  });
   assert.equal(exported.ok, true);
-  assert.equal(exported.json?.writtenFiles.some((file) => file.endsWith("workspace")), true);
-  assert.equal(exported.json?.writtenFiles.some((file) => file.endsWith("meta.json")), true);
+  assert.equal(
+    exported.json?.writtenFiles.some((file) => file.endsWith("workspace")),
+    true,
+  );
+  assert.equal(
+    exported.json?.writtenFiles.some((file) => file.endsWith("meta.json")),
+    true,
+  );
 
   const timeline = await sdk.timeline(5);
   assert.equal(timeline.ok, true);
@@ -601,7 +696,7 @@ test("host SDK run option helpers normalize King AI aliases", () => {
     workerUrl: " http://127.0.0.1:1234 ",
     workerModel: " local-model ",
     workerKey: " local-key ",
-    enableBrain: false
+    enableBrain: false,
   });
   assert.equal(aliases.engine, "codex");
   assert.equal(aliases.model, "gpt-test");
@@ -622,7 +717,7 @@ test("host SDK run option helpers normalize King AI aliases", () => {
     output: "alias-out",
     outputDir: "explicit-out",
     noBrain: false,
-    enableBrain: false
+    enableBrain: false,
   });
   assert.equal(explicit.engine, "codex");
   assert.equal(explicit.model, "gpt-explicit");
@@ -643,9 +738,9 @@ test("host SDK exposes helper names", async (t) => {
       startedAt: "2026-06-02T00:00:00.000Z",
       computerId: "king-ai-sdk",
       agents: [],
-      events: []
+      events: [],
     }),
-    tokenBudget: () => null
+    tokenBudget: () => null,
   });
   t.after(async () => {
     server.close();
@@ -690,13 +785,17 @@ test("host SDK supports King AI adapter factories", async () => {
         projectPath: options.projectPath ?? ".",
         goalOverride: options.goalOverride,
         runtime: options.runtime ?? "claude",
-        enableBrain: true
+        enableBrain: true,
       };
-    }
+    },
   };
 
   const sdk = createEnvBackedKingHostSdk({ CUSTOM_VAR: "custom-value" }, {}, adapters);
-  await sdk.run("ship adapter feature", { runtime: "codex", loops: 2, enableBrain: false, workerUrl: "http://127.0.0.1:1234" }, {});
+  await sdk.run(
+    "ship adapter feature",
+    { runtime: "codex", loops: 2, enableBrain: false, workerUrl: "http://127.0.0.1:1234" },
+    {},
+  );
   const runCall = calls.find((call) => call.name === "runGoal")?.value as {
     goal: string;
     options: { engine?: string; loops?: number; noBrain?: boolean; workerUrl?: string };
@@ -715,7 +814,7 @@ test("host SDK supports King AI adapter factories", async () => {
     projectPath: "/repo",
     goalOverride: "stabilize release",
     runtime: "claude",
-    enableBrain: true
+    enableBrain: true,
   });
 
   await sdk.executePreparedTakeover(plan, { loops: 3 });
@@ -737,9 +836,9 @@ test("host SDK can be configured from env", async (t) => {
       startedAt: "2026-06-02T00:00:00.000Z",
       computerId: "env-computer",
       agents: [],
-      events: []
+      events: [],
     }),
-    tokenBudget: () => null
+    tokenBudget: () => null,
   });
   t.after(async () => {
     server.close();
@@ -764,9 +863,9 @@ test("host SDK can be configured for browser localhost apps", async (t) => {
       startedAt: "2026-06-02T00:00:00.000Z",
       computerId: "browser-computer",
       agents: [],
-      events: []
+      events: [],
     }),
-    tokenBudget: () => null
+    tokenBudget: () => null,
   });
   t.after(async () => {
     server.close();
@@ -775,13 +874,31 @@ test("host SDK can be configured for browser localhost apps", async (t) => {
 
   const address = server.address();
   const port = typeof address === "object" && address ? address.port : 0;
-  assert.equal(hostBaseUrlFromLocation({ protocol: "http:", hostname: "localhost", port: "5173", origin: "http://localhost:5173" }, { port }), `http://localhost:${port}`);
-  assert.equal(hostBaseUrlFromLocation({ protocol: "http:", hostname: "example.com", port: "5173", origin: "http://example.com:5173" }, { port }), `http://127.0.0.1:${port}`);
-  assert.equal(hostBaseUrlFromLocation({ protocol: "http:", hostname: "localhost", port: "5173", origin: "http://localhost:5173" }, { useCurrentOrigin: true }), "http://localhost:5173");
+  assert.equal(
+    hostBaseUrlFromLocation(
+      { protocol: "http:", hostname: "localhost", port: "5173", origin: "http://localhost:5173" },
+      { port },
+    ),
+    `http://localhost:${port}`,
+  );
+  assert.equal(
+    hostBaseUrlFromLocation(
+      { protocol: "http:", hostname: "example.com", port: "5173", origin: "http://example.com:5173" },
+      { port },
+    ),
+    `http://127.0.0.1:${port}`,
+  );
+  assert.equal(
+    hostBaseUrlFromLocation(
+      { protocol: "http:", hostname: "localhost", port: "5173", origin: "http://localhost:5173" },
+      { useCurrentOrigin: true },
+    ),
+    "http://localhost:5173",
+  );
 
   const sdk = createBrowserHostSdk({
     location: { protocol: "http:", hostname: "127.0.0.1", port: "5173", origin: "http://127.0.0.1:5173" },
-    port
+    port,
   });
   assert.equal((await sdk.status()).computerId, "browser-computer");
 });
@@ -790,7 +907,7 @@ test("host SDK streams browser ReadableStream bodies", async () => {
   let released = false;
   const chunks = [
     Buffer.from("event: status\n"),
-    Buffer.from('data: {"ok":true,"version":"0.1.0","computerId":"browser-stream","agents":[],"events":[]}\n\n')
+    Buffer.from('data: {"ok":true,"version":"0.1.0","computerId":"browser-stream","agents":[],"events":[]}\n\n'),
   ];
   const body = {
     getReader: () => {
@@ -802,16 +919,16 @@ test("host SDK streams browser ReadableStream bodies", async () => {
         },
         releaseLock: () => {
           released = true;
-        }
+        },
       };
-    }
+    },
   };
   const fetchImpl = (async () => ({
     ok: true,
     status: 200,
     body,
     text: async () => "",
-    url: "http://127.0.0.1:8799/status/stream"
+    url: "http://127.0.0.1:8799/status/stream",
   })) as unknown as typeof fetch;
 
   const sdk = createHostSdk({ baseUrl: "http://127.0.0.1:8799", fetch: fetchImpl });
@@ -826,8 +943,5 @@ test("host SDK streams browser ReadableStream bodies", async () => {
 
 test("host SDK waitForReady reports timeout", async () => {
   const sdk = createHostSdk({ baseUrl: "http://127.0.0.1:1" });
-  await assert.rejects(
-    () => sdk.waitForReady({ timeoutMs: 20, intervalMs: 5 }),
-    /did not become ready/
-  );
+  await assert.rejects(() => sdk.waitForReady({ timeoutMs: 20, intervalMs: 5 }), /did not become ready/);
 });

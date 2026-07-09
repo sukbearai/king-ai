@@ -3,7 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { HOST_LOOP_RESULTS_HEADER, appendHostLoopEvent, buildLoopResultsRows, readHostLoopEvents, readHostLoopResults } from "../src/host-loop-events.js";
+import {
+  HOST_LOOP_RESULTS_HEADER,
+  appendHostLoopEvent,
+  buildLoopResultsRows,
+  readHostLoopEvents,
+  readHostLoopResults,
+} from "../src/host-loop-events.js";
 
 test("buildLoopResultsRows summarizes classified loops into TSV-ready rows", () => {
   const rows = buildLoopResultsRows([
@@ -11,32 +17,58 @@ test("buildLoopResultsRows summarizes classified loops into TSV-ready rows", () 
     { type: "task.transition", runId: "run-1", loop: 1, taskId: "t1", from: "pending", to: "done" },
     { type: "artifact.created", runId: "run-1", loop: 1, kind: "patch" },
     { type: "queue.backlog", runId: "run-1", loop: 1, pendingMessages: 3 },
-    { type: "loop.classified", runId: "run-1", loop: 1, classification: "productive", timestamp: "2026-06-02T00:00:00.000Z", completionRate: 0.5, reasons: ["task done"] }
+    {
+      type: "loop.classified",
+      runId: "run-1",
+      loop: 1,
+      classification: "productive",
+      timestamp: "2026-06-02T00:00:00.000Z",
+      completionRate: 0.5,
+      reasons: ["task done"],
+    },
   ]);
 
-  assert.deepEqual(rows, [{
-    runId: "run-1",
-    loop: 1,
-    timestamp: "2026-06-02T00:00:00.000Z",
-    classification: "productive",
-    tasksCreated: 1,
-    tasksDone: 1,
-    artifactsCreated: 1,
-    pendingMessages: 3,
-    completionRate: "0.5",
-    notes: "task done"
-  }]);
+  assert.deepEqual(rows, [
+    {
+      runId: "run-1",
+      loop: 1,
+      timestamp: "2026-06-02T00:00:00.000Z",
+      classification: "productive",
+      tasksCreated: 1,
+      tasksDone: 1,
+      artifactsCreated: 1,
+      pendingMessages: 3,
+      completionRate: "0.5",
+      notes: "task done",
+    },
+  ]);
 });
 
 test("readHostLoopEvents refreshes results.tsv from the complete event stream", async () => {
   const dir = await mkdtemp(join(tmpdir(), "king-ai-host-loop-events-"));
   const file = join(dir, "loop-events.ndjson");
   const resultsFile = join(dir, "results.tsv");
-  await writeFile(file, [
-    JSON.stringify({ type: "loop.classified", runId: "run-1", loop: 1, classification: "idle", timestamp: "2026-06-02T00:00:00.000Z" }),
-    JSON.stringify({ type: "task.transition", runId: "run-1", loop: 2, taskId: "t1", from: "pending", to: "done" }),
-    JSON.stringify({ type: "loop.classified", runId: "run-1", loop: 2, classification: "productive", timestamp: "2026-06-02T00:00:01.000Z" })
-  ].join("\n") + "\n", "utf8");
+  await writeFile(
+    file,
+    [
+      JSON.stringify({
+        type: "loop.classified",
+        runId: "run-1",
+        loop: 1,
+        classification: "idle",
+        timestamp: "2026-06-02T00:00:00.000Z",
+      }),
+      JSON.stringify({ type: "task.transition", runId: "run-1", loop: 2, taskId: "t1", from: "pending", to: "done" }),
+      JSON.stringify({
+        type: "loop.classified",
+        runId: "run-1",
+        loop: 2,
+        classification: "productive",
+        timestamp: "2026-06-02T00:00:01.000Z",
+      }),
+    ].join("\n") + "\n",
+    "utf8",
+  );
 
   const result = await readHostLoopEvents({ file, classification: "productive" });
 
@@ -60,8 +92,8 @@ test("appendHostLoopEvent appends readable NDJSON events", async () => {
       loop: 0,
       status: "running",
       timestamp: "2026-06-02T00:00:04.000Z",
-      detail: undefined
-    }
+      detail: undefined,
+    },
   });
 
   assert.equal(file, join(dir, "loop-events.ndjson"));
@@ -76,7 +108,11 @@ test("appendHostLoopEvent appends readable NDJSON events", async () => {
 test("readHostLoopResults reads existing TSV or derives rows from loop events", async () => {
   const dir = await mkdtemp(join(tmpdir(), "king-ai-host-loop-results-"));
   const resultsFile = join(dir, "results.tsv");
-  await writeFile(resultsFile, `${HOST_LOOP_RESULTS_HEADER}run-2\t3\t2026-06-02T00:00:02.000Z\tblocked\t0\t0\t0\t4\t\twaiting\n`, "utf8");
+  await writeFile(
+    resultsFile,
+    `${HOST_LOOP_RESULTS_HEADER}run-2\t3\t2026-06-02T00:00:02.000Z\tblocked\t0\t0\t0\t4\t\twaiting\n`,
+    "utf8",
+  );
 
   const existing = await readHostLoopResults({ outputDir: dir });
   assert.equal(existing.rows.length, 1);
@@ -84,10 +120,20 @@ test("readHostLoopResults reads existing TSV or derives rows from loop events", 
   assert.equal(existing.rows[0]?.pendingMessages, 4);
 
   const fallbackDir = await mkdtemp(join(tmpdir(), "king-ai-host-loop-results-fallback-"));
-  await writeFile(join(fallbackDir, "loop-events.ndjson"), [
-    JSON.stringify({ type: "artifact.created", runId: "run-3", loop: 1 }),
-    JSON.stringify({ type: "loop.classified", runId: "run-3", loop: 1, classification: "productive", timestamp: "2026-06-02T00:00:03.000Z" })
-  ].join("\n") + "\n", "utf8");
+  await writeFile(
+    join(fallbackDir, "loop-events.ndjson"),
+    [
+      JSON.stringify({ type: "artifact.created", runId: "run-3", loop: 1 }),
+      JSON.stringify({
+        type: "loop.classified",
+        runId: "run-3",
+        loop: 1,
+        classification: "productive",
+        timestamp: "2026-06-02T00:00:03.000Z",
+      }),
+    ].join("\n") + "\n",
+    "utf8",
+  );
 
   const fallback = await readHostLoopResults({ outputDir: fallbackDir });
   assert.equal(fallback.rows.length, 1);

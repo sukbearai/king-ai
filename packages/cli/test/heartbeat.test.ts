@@ -14,7 +14,7 @@ test("FileHeartbeat writes liveness data and increments loop count", async () =>
     runId: "run-1",
     version: "1.2.3",
     computerId: "computer-1",
-    serverUrl: "https://runtime.example"
+    serverUrl: "https://runtime.example",
   });
 
   const first = heartbeat.write();
@@ -34,21 +34,24 @@ test("FileHeartbeat writes liveness data and increments loop count", async () =>
     serverUrl: string;
     lastTick: string;
   };
-  assert.deepEqual({
-    pid: saved.pid,
-    runId: saved.runId,
-    loopCount: saved.loopCount,
-    version: saved.version,
-    computerId: saved.computerId,
-    serverUrl: saved.serverUrl
-  }, {
-    pid: 123,
-    runId: "run-1",
-    loopCount: 1,
-    version: "1.2.3",
-    computerId: "computer-1",
-    serverUrl: "https://runtime.example"
-  });
+  assert.deepEqual(
+    {
+      pid: saved.pid,
+      runId: saved.runId,
+      loopCount: saved.loopCount,
+      version: saved.version,
+      computerId: saved.computerId,
+      serverUrl: saved.serverUrl,
+    },
+    {
+      pid: 123,
+      runId: "run-1",
+      loopCount: 1,
+      version: "1.2.3",
+      computerId: "computer-1",
+      serverUrl: "https://runtime.example",
+    },
+  );
   assert.match(saved.lastTick, /^\d{4}-\d{2}-\d{2}T/);
   assert.equal((await stat(path)).mode & 0o777, 0o600);
 });

@@ -7,7 +7,7 @@ import {
   workflowCardFromTask,
   workflowReadiness,
   type WorkflowCard,
-  type WorkflowTaskLike
+  type WorkflowTaskLike,
 } from "@suwujs/king-ai/workflow-core";
 import type { WakeResolveContext } from "./runtime-helpers.js";
 
@@ -121,7 +121,7 @@ export function createGuiKanbanDraft(input: GuiKanbanCreateInput, now = Date.now
     column: input.column ?? "todo",
     assignee,
     allowedPaths: input.allowedPaths?.length ? [...input.allowedPaths] : undefined,
-    created_at: now
+    created_at: now,
   };
 }
 
@@ -149,7 +149,7 @@ export function applyGuiKanbanRelease(card: GuiKanbanCardLike): void {
 export function applyGuiKanbanMove(
   card: GuiKanbanCardLike,
   column: GuiKanbanColumn,
-  options?: { owner?: string; clearClaimOnDone?: boolean }
+  options?: { owner?: string; clearClaimOnDone?: boolean },
 ): void {
   card.column = column;
   if (options?.owner?.trim()) {
@@ -186,7 +186,7 @@ export function createGuiTaskDraft(input: GuiTaskCreateInput, now = Date.now()):
     coordinatorAgentId: input.coordinatorAgentId,
     reviewerAgentId: input.reviewerAgentId,
     created_at: now,
-    updated_at: now
+    updated_at: now,
   };
 }
 
@@ -198,7 +198,15 @@ export function workflowStatusToGuiTaskStatus(status: string): GuiTaskStatus {
   if (status === "open") return "pending";
   if (status === "waiting_human") return "review";
   if (status === "cancelled") return "failed";
-  if (status === "pending" || status === "assigned" || status === "in_progress" || status === "review" || status === "done" || status === "failed" || status === "blocked") {
+  if (
+    status === "pending" ||
+    status === "assigned" ||
+    status === "in_progress" ||
+    status === "review" ||
+    status === "done" ||
+    status === "failed" ||
+    status === "blocked"
+  ) {
     return status;
   }
   return "pending";
@@ -273,19 +281,27 @@ export function applyGuiTaskWritePatch(task: GuiTaskLike, patch: GuiTaskWritePat
   if (reviewedAt !== undefined) task.reviewedAt = reviewedAt;
 }
 
-export function addGuiTaskToState(state: { tasks: GuiTaskLike[] }, input: GuiTaskCreateInput, now = Date.now()): GuiTaskLike {
+export function addGuiTaskToState(
+  state: { tasks: GuiTaskLike[] },
+  input: GuiTaskCreateInput,
+  now = Date.now(),
+): GuiTaskLike {
   const task = createGuiTaskDraft(input, now);
   state.tasks.push(task);
   return task;
 }
 
-export function updateGuiTaskFromPatch(task: GuiTaskLike, patch: GuiTaskWritePatch, now = Date.now()): GuiTaskWriteResult {
+export function updateGuiTaskFromPatch(
+  task: GuiTaskLike,
+  patch: GuiTaskWritePatch,
+  now = Date.now(),
+): GuiTaskWriteResult {
   const previousStatus = workflowStatusToGuiTaskStatus(task.status);
   applyGuiTaskWritePatch(task, patch, now);
   const nextStatus = workflowStatusToGuiTaskStatus(task.status);
   return {
     previousStatus,
-    statusChanged: previousStatus !== nextStatus
+    statusChanged: previousStatus !== nextStatus,
   };
 }
 
@@ -308,7 +324,7 @@ export function applyGuiTaskDone(task: GuiTaskLike, options: GuiTaskDoneOptions)
   const transition = taskDoneTransition(guiTaskToWorkflowCard(task), options.actorId, {
     coordinatorId: options.coordinatorId,
     reviewerId: options.reviewerId,
-    hasConversation: options.hasConversation
+    hasConversation: options.hasConversation,
   });
   task.status = transition.status === "review" ? "review" : "done";
   task.assignee = transition.assignee;
@@ -322,11 +338,14 @@ export function applyGuiTaskDone(task: GuiTaskLike, options: GuiTaskDoneOptions)
   return {
     previousStatus,
     statusChanged: previousStatus !== task.status,
-    outcome: task.status === "review" ? "review" : "done"
+    outcome: task.status === "review" ? "review" : "done",
   };
 }
 
-export function applyGuiTaskChangesRequested(task: GuiTaskLike, options: GuiTaskChangesRequestedOptions): GuiTaskStatus {
+export function applyGuiTaskChangesRequested(
+  task: GuiTaskLike,
+  options: GuiTaskChangesRequestedOptions,
+): GuiTaskStatus {
   const now = options.now ?? Date.now();
   const previousStatus = workflowStatusToGuiTaskStatus(task.status);
   task.reviewResult = "changes_requested";
@@ -350,13 +369,10 @@ export function taskWorkflowStatus(task: GuiTaskLike, doneTaskIds: string[]): st
   return readiness.blockedBy.length > 0 ? "blocked" : task.status;
 }
 
-export function listGuiWorkflowCards(args: {
-  tasks: GuiTaskLike[];
-  kanban: GuiKanbanCardLike[];
-}): WorkflowCard[] {
+export function listGuiWorkflowCards(args: { tasks: GuiTaskLike[]; kanban: GuiKanbanCardLike[] }): WorkflowCard[] {
   return [
     ...args.tasks.map((task) => guiTaskToWorkflowCard(task)),
-    ...args.kanban.map((card) => workflowCardFromKanban(card))
+    ...args.kanban.map((card) => workflowCardFromKanban(card)),
   ];
 }
 
@@ -381,7 +397,7 @@ export function buildGuiAgendaBrief(args: {
     doneTaskIds: args.doneTaskIds,
     taskStatusFor: (task) => taskWorkflowStatus(task as GuiTaskLike, args.doneTaskIds),
     now: args.now,
-    cronMatches: args.cronMatches
+    cronMatches: args.cronMatches,
   });
 }
 
@@ -398,7 +414,12 @@ export function wakeResolveContextFromState(state: {
   agents: Array<{ id: string }>;
   cards: GuiKanbanCardLike[];
   tasks: Array<{ id: string; assignee?: string }>;
-  conversations: Array<{ id: string; coordinatorAgentId?: string; teamMode?: "single" | "team" | "custom"; kind?: "direct" | "group" }>;
+  conversations: Array<{
+    id: string;
+    coordinatorAgentId?: string;
+    teamMode?: "single" | "team" | "custom";
+    kind?: "direct" | "group";
+  }>;
   defaultConversationId: string;
   defaultCoordinatorAgentId: string;
 }): WakeResolveContext {
@@ -411,6 +432,6 @@ export function wakeResolveContextFromState(state: {
     fallbackAgentId: fallback?.id ?? state.defaultCoordinatorAgentId,
     cards: state.cards,
     tasks: state.tasks,
-    conversations: state.conversations
+    conversations: state.conversations,
   };
 }

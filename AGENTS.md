@@ -37,7 +37,8 @@ Use `pnpm verify` before handing off code changes.
 
 Use TypeScript ES modules with explicit `.js` extensions in relative imports, matching the existing files. Keep two-space indentation, concise functions, and clear named exports. Prefer small modules with direct responsibilities over broad utility files. Use `camelCase` for variables/functions, `PascalCase` for classes and exported interfaces, and uppercase constants for environment-derived timing/config values.
 
-No formatter or linter is currently configured, so preserve the existing style manually.
+Biome is configured in `biome.json`; run `pnpm lint` to check formatting/linting and `pnpm lint:fix` for mechanical fixes.
+CI enforces `pnpm lint` before verification.
 
 ## Testing Guidelines
 

@@ -54,20 +54,21 @@ export function resolveHostRunHeartbeatPath(input: HostRunHeartbeatReadInput = {
 export async function readHostRunHeartbeat(input: HostRunHeartbeatReadInput = {}): Promise<HostRunHeartbeatReadResult> {
   const file = resolveHostRunHeartbeatPath(input);
   const text = await readFile(file, "utf8").catch((err: unknown) => {
-    if (err && typeof err === "object" && "code" in err && (err as { code?: string }).code === "ENOENT") return undefined;
+    if (err && typeof err === "object" && "code" in err && (err as { code?: string }).code === "ENOENT")
+      return undefined;
     throw err;
   });
   if (text === undefined) {
     return {
       file,
       heartbeat: null,
-      exists: false
+      exists: false,
     };
   }
   return {
     file,
     heartbeat: parseHostRunHeartbeat(text),
-    exists: true
+    exists: true,
   };
 }
 
@@ -79,9 +80,13 @@ export function formatHostRunHeartbeat(result: HostRunHeartbeatReadResult): stri
     `status: ${result.heartbeat.status}`,
     `last tick: ${result.heartbeat.lastTick}`,
     `loops: ${result.heartbeat.loopCount}`,
-    result.heartbeat.command ? `command: ${result.heartbeat.command}${result.heartbeat.exitCode !== undefined ? ` exit=${result.heartbeat.exitCode}` : ""}` : "",
-    result.heartbeat.detail ? `detail: ${result.heartbeat.detail}` : ""
-  ].filter(Boolean).join("\n");
+    result.heartbeat.command
+      ? `command: ${result.heartbeat.command}${result.heartbeat.exitCode !== undefined ? ` exit=${result.heartbeat.exitCode}` : ""}`
+      : "",
+    result.heartbeat.detail ? `detail: ${result.heartbeat.detail}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export async function writeHostRunHeartbeat(input: HostRunHeartbeatInput): Promise<HostRunHeartbeatData> {
@@ -97,10 +102,13 @@ export async function writeHostRunHeartbeat(input: HostRunHeartbeatInput): Promi
     pid: input.pid,
     detail: cleanString(input.detail),
     command: cleanString(input.command),
-    exitCode: normalizeExitCode(input.exitCode)
+    exitCode: normalizeExitCode(input.exitCode),
   };
   await mkdir(dirname(input.path), { recursive: true });
-  await writeFile(input.path, `${JSON.stringify(dropUndefined({ ...data }), null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  await writeFile(input.path, `${JSON.stringify(dropUndefined({ ...data }), null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
   return data;
 }
 
@@ -130,7 +138,7 @@ function parseHostRunHeartbeat(text: string): HostRunHeartbeatData | null {
       pid: typeof parsed.pid === "number" ? parsed.pid : undefined,
       detail: typeof parsed.detail === "string" ? parsed.detail : undefined,
       command: typeof parsed.command === "string" ? parsed.command : undefined,
-      exitCode: typeof parsed.exitCode === "number" ? parsed.exitCode : undefined
+      exitCode: typeof parsed.exitCode === "number" ? parsed.exitCode : undefined,
     };
   } catch {
     return null;
@@ -138,7 +146,9 @@ function parseHostRunHeartbeat(text: string): HostRunHeartbeatData | null {
 }
 
 function isHostRunHeartbeatStatus(value: unknown): value is HostRunHeartbeatStatus {
-  return value === "prepared" || value === "running" || value === "completed" || value === "failed" || value === "cancelled";
+  return (
+    value === "prepared" || value === "running" || value === "completed" || value === "failed" || value === "cancelled"
+  );
 }
 
 function dropUndefined<T extends Record<string, unknown>>(value: T): T {

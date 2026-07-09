@@ -4,22 +4,25 @@ import {
   resolveVerifyBriefSections,
   verifyRuleTimeoutMs,
   verifyStepTimeoutMs,
-  withVerifyTimeout
+  withVerifyTimeout,
 } from "../src/trade/verify-signals.js";
 
 describe("resolveVerifyBriefSections", () => {
   it("uses configured brief sections and includes market", () => {
     const sections = resolveVerifyBriefSections({
-      briefing: { enabled: ["market", "treasury", "stocks", "telegram", "twitter", "unknown"] }
+      briefing: { enabled: ["market", "treasury", "stocks", "telegram", "twitter", "unknown"] },
     });
     assert.deepEqual(sections, ["market", "treasury", "stocks", "telegram", "twitter"]);
   });
 
   it("falls back to all core brief sections when config is missing or invalid", () => {
-    assert.deepEqual(
-      resolveVerifyBriefSections({ briefing: { enabled: ["unknown"] } }),
-      ["market", "stocks", "treasury", "telegram", "twitter"]
-    );
+    assert.deepEqual(resolveVerifyBriefSections({ briefing: { enabled: ["unknown"] } }), [
+      "market",
+      "stocks",
+      "treasury",
+      "telegram",
+      "twitter",
+    ]);
   });
 });
 
@@ -44,8 +47,9 @@ describe("verifyRuleTimeoutMs", () => {
 describe("withVerifyTimeout", () => {
   it("fails the step when the timeout is exceeded", async () => {
     await assert.rejects(
-      () => withVerifyTimeout("brief:twitter", 1, () => new Promise((resolve) => setTimeout(() => resolve("late"), 20))),
-      /brief:twitter timed out after 1ms/
+      () =>
+        withVerifyTimeout("brief:twitter", 1, () => new Promise((resolve) => setTimeout(() => resolve("late"), 20))),
+      /brief:twitter timed out after 1ms/,
     );
   });
 });

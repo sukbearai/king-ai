@@ -16,5 +16,8 @@ test("host policy requires confirmation for destructive commands", () => {
   assert.match(formatHostPolicyCheck(check), /confirmation required/);
 
   assert.equal(checkHostCommandPolicy("export", true, { confirmed: true }).decision, "allow");
-  assert.equal(checkHostCommandPolicy("export", true, { confirmation: requiredHostConfirmation("export") }).decision, "allow");
+  assert.equal(
+    checkHostCommandPolicy("export", true, { confirmation: requiredHostConfirmation("export") }).decision,
+    "allow",
+  );
 });

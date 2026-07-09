@@ -4,14 +4,15 @@ import { delimiter, resolve } from "node:path";
 
 const explicitRoots = process.argv.slice(2);
 const envRoot = process.env.AIBC_SKILLS_ROOT;
-const candidateRoots = explicitRoots.length > 0
-  ? explicitRoots
-  : [
-      envRoot,
-      resolve(process.cwd(), "../../skills/skills/skills"),
-      resolve(process.cwd(), "../skills/skills/skills"),
-      resolve(process.cwd(), "skills/skills/skills")
-    ].filter(Boolean);
+const candidateRoots =
+  explicitRoots.length > 0
+    ? explicitRoots
+    : [
+        envRoot,
+        resolve(process.cwd(), "../../skills/skills/skills"),
+        resolve(process.cwd(), "../skills/skills/skills"),
+        resolve(process.cwd(), "skills/skills/skills"),
+      ].filter(Boolean);
 
 const validRoots = candidateRoots.filter((root) => existsSync(root));
 

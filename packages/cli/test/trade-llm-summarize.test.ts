@@ -10,7 +10,7 @@ describe("stripMarkdown", () => {
       "**NTFS**：市值 $330M",
       "- TripleT +239%",
       "`9qNdHgJd`",
-      "[官网](https://ntfs.world/)"
+      "[官网](https://ntfs.world/)",
     ].join("\n");
 
     const out = stripMarkdown(input);
@@ -25,7 +25,7 @@ describe("stripMarkdown", () => {
   });
 
   it("unwraps fenced code blocks", () => {
-    const out = stripMarkdown("```json\n{\"ok\":true}\n```");
-    assert.equal(out, "{\"ok\":true}");
+    const out = stripMarkdown('```json\n{"ok":true}\n```');
+    assert.equal(out, '{"ok":true}');
   });
 });

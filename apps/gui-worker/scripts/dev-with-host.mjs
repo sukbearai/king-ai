@@ -25,7 +25,7 @@ function spawnChild(label, command, args, options = {}) {
   const child = spawn(command, args, {
     cwd: options.cwd || process.cwd(),
     env: { ...process.env, ...options.env },
-    stdio: "inherit"
+    stdio: "inherit",
   });
   children.add(child);
   child.on("error", (err) => {
@@ -42,7 +42,7 @@ function spawnChild(label, command, args, options = {}) {
 async function hostReady(url) {
   try {
     const response = await fetch(new URL("/health", url), {
-      signal: AbortSignal.timeout(1000)
+      signal: AbortSignal.timeout(1000),
     });
     if (!response.ok) return false;
     const body = await response.json().catch(() => undefined);
@@ -90,12 +90,18 @@ if (initialPpid !== 1) {
 }
 
 if (process.env.KING_AI_GUI_DEV_DRY_RUN === "1") {
-  console.log(JSON.stringify({
-    hostUrl,
-    shouldAutostartHost,
-    hostArgs,
-    wranglerArgs: guiArgs
-  }, null, 2));
+  console.log(
+    JSON.stringify(
+      {
+        hostUrl,
+        shouldAutostartHost,
+        hostArgs,
+        wranglerArgs: guiArgs,
+      },
+      null,
+      2,
+    ),
+  );
   process.exit(0);
 }
 
@@ -106,13 +112,17 @@ if (shouldAutostartHost) {
     console.log(`[gui] starting King AI host server at ${hostUrl}`);
     spawnChild("host", pnpm, hostArgs);
     if (!(await waitForHost(hostUrl))) {
-      console.warn(`[gui] King AI host server was not ready within ${HOST_READY_TIMEOUT_MS}ms; GUI will keep retrying through ${hostUrl}`);
+      console.warn(
+        `[gui] King AI host server was not ready within ${HOST_READY_TIMEOUT_MS}ms; GUI will keep retrying through ${hostUrl}`,
+      );
     }
   }
 } else if (!process.env.KING_AI_HOST_URL) {
-  console.warn("[gui] KING_AI_HOST_AUTOSTART=0 set without KING_AI_HOST_URL; host bridge features will be unavailable.");
+  console.warn(
+    "[gui] KING_AI_HOST_AUTOSTART=0 set without KING_AI_HOST_URL; host bridge features will be unavailable.",
+  );
 }
 
 spawnChild("gui", pnpm, guiArgs, {
-  env: { KING_AI_HOST_URL: hostUrl }
+  env: { KING_AI_HOST_URL: hostUrl },
 });

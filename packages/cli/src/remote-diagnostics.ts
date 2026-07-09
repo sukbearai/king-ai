@@ -44,7 +44,7 @@ export function formatRemoteResult(result: RemoteExecResult): string {
     result.stdout.trim(),
     result.stderr.trim() ? `stderr:\n${result.stderr.trim()}` : "",
     result.truncated ? "(output truncated)" : "",
-    result.error ? `error: ${result.error}` : ""
+    result.error ? `error: ${result.error}` : "",
   ].filter(Boolean);
   return parts.join("\n");
 }
@@ -52,7 +52,12 @@ export function formatRemoteResult(result: RemoteExecResult): string {
 export function formatRemoteDevices(config: RemoteDevicesConfig): string {
   const rows = listRemoteDeviceSummaries(config);
   if (rows.length === 0) return "no remote test devices configured";
-  return rows.map((device) => `${device.id}\t${device.user}@${device.host}:${device.port ?? 22}\t${device.name ?? ""}\t${device.auth}`).join("\n");
+  return rows
+    .map(
+      (device) =>
+        `${device.id}\t${device.user}@${device.host}:${device.port ?? 22}\t${device.name ?? ""}\t${device.auth}`,
+    )
+    .join("\n");
 }
 
 export async function remoteProbe(input: unknown, deps: RemoteDeviceCommandDeps): Promise<RemoteExecResult> {
@@ -66,7 +71,9 @@ export async function remoteProfile(input: unknown, deps: RemoteDeviceCommandDep
   const device = findRemoteDevice(deps.config, parsed.device);
   const markers = Object.values(device.apps ?? {}).flatMap((app) => app.installMarkers ?? []);
   const markerScript = markers.length
-    ? markers.map((marker) => `if [ -f ${sh(marker)} ]; then echo "marker ${marker}=$(cat ${sh(marker)} 2>/dev/null)"; fi`).join("\n")
+    ? markers
+        .map((marker) => `if [ -f ${sh(marker)} ]; then echo "marker ${marker}=$(cat ${sh(marker)} 2>/dev/null)"; fi`)
+        .join("\n")
     : "true";
   const logRoots = Object.values(device.apps ?? {}).flatMap((app) => app.logRoots ?? []);
   const logScript = logRoots.length
@@ -82,10 +89,13 @@ export async function remoteProfile(input: unknown, deps: RemoteDeviceCommandDep
     "echo '[services]'",
     "command -v systemctl >/dev/null 2>&1 && systemctl list-units --type=service --state=running --no-pager --no-legend 2>/dev/null | head -50 || ps -ef | head -30",
     "echo '[logs]'",
-    logScript
+    logScript,
   ].join("\n");
   const result = await sshExec(device, command, execOptions(parsed, deps));
-  return { ...result, evidence: [{ kind: "profile", source: `${device.user}@${device.host}`, text: "remote environment profile" }] };
+  return {
+    ...result,
+    evidence: [{ kind: "profile", source: `${device.user}@${device.host}`, text: "remote environment profile" }],
+  };
 }
 
 export async function remoteRun(input: unknown, deps: RemoteDeviceCommandDeps): Promise<RemoteExecResult> {
@@ -103,7 +113,16 @@ export async function remoteLogs(input: unknown, deps: RemoteDeviceCommandDeps):
     ? `tail -n ${parsed.tail} ${sh(parsed.path)}`
     : `f=$(${target}); if [ -n "$f" ]; then echo "==> $f <=="; tail -n ${parsed.tail} "$f"; else echo "no log file found"; exit 2; fi`;
   const result = await sshExec(device, command, execOptions(parsed, deps));
-  return { ...result, evidence: [{ kind: "log", source: parsed.path || parsed.app || device.defaultApp || "logs", text: result.stdout.slice(0, 2000) }] };
+  return {
+    ...result,
+    evidence: [
+      {
+        kind: "log",
+        source: parsed.path || parsed.app || device.defaultApp || "logs",
+        text: result.stdout.slice(0, 2000),
+      },
+    ],
+  };
 }
 
 export async function remoteFindLogs(input: unknown, deps: RemoteDeviceCommandDeps): Promise<RemoteExecResult> {
@@ -117,9 +136,13 @@ export async function remoteFindLogs(input: unknown, deps: RemoteDeviceCommandDe
   const command = [
     `echo "pattern=${parsed.pattern}${since}"`,
     `for p in ${sources.map(sh).join(" ")}; do`,
-    "  if [ -f \"$p\" ]; then grep -E -n --color=never " + sh(parsed.pattern) + " \"$p\" | tail -n " + parsed.tail + "; fi",
-    "  if [ -d \"$p\" ]; then find \"$p\" -type f -maxdepth 2 2>/dev/null | xargs grep -E -n --color=never " + sh(parsed.pattern) + " 2>/dev/null | tail -n " + parsed.tail + "; fi",
-    "done"
+    '  if [ -f "$p" ]; then grep -E -n --color=never ' + sh(parsed.pattern) + ' "$p" | tail -n ' + parsed.tail + "; fi",
+    '  if [ -d "$p" ]; then find "$p" -type f -maxdepth 2 2>/dev/null | xargs grep -E -n --color=never ' +
+      sh(parsed.pattern) +
+      " 2>/dev/null | tail -n " +
+      parsed.tail +
+      "; fi",
+    "done",
   ].join("\n");
   const result = await sshExec(device, command, execOptions(parsed, deps));
   return { ...result, evidence: [{ kind: "log", source: sources.join(","), text: result.stdout.slice(0, 2000) }] };
@@ -147,12 +170,15 @@ export async function remoteRedis(input: unknown, deps: RemoteDeviceCommandDeps)
   return { ...result, evidence: [{ kind: "redis", source: name, text: parsed.cmd }] };
 }
 
-function execOptions(input: { timeoutMs?: number; maxOutputBytes?: number }, deps: RemoteDeviceCommandDeps): RemoteExecOptions {
+function execOptions(
+  input: { timeoutMs?: number; maxOutputBytes?: number },
+  deps: RemoteDeviceCommandDeps,
+): RemoteExecOptions {
   return {
     timeoutMs: input.timeoutMs,
     maxOutputBytes: input.maxOutputBytes,
     env: deps.env,
-    executor: deps.executor
+    executor: deps.executor,
   };
 }
 
@@ -161,38 +187,70 @@ function normalizeRemoteCommandInput(input: unknown): { device?: string; timeout
   return {
     device: optionalString(record.device),
     timeoutMs: optionalPositiveInt(record.timeoutMs, "timeoutMs"),
-    maxOutputBytes: optionalPositiveInt(record.maxOutputBytes, "maxOutputBytes")
+    maxOutputBytes: optionalPositiveInt(record.maxOutputBytes, "maxOutputBytes"),
   };
 }
 
-function normalizeRemoteRunInput(input: unknown): { device?: string; cmd: string; timeoutMs?: number; maxOutputBytes?: number } {
+function normalizeRemoteRunInput(input: unknown): {
+  device?: string;
+  cmd: string;
+  timeoutMs?: number;
+  maxOutputBytes?: number;
+} {
   const base = normalizeRemoteCommandInput(input);
   const record = objectInput(input);
   return { ...base, cmd: requiredString(record.cmd, "cmd") };
 }
 
-function normalizeRemoteLogsInput(input: unknown): { device?: string; app?: string; path?: string; tail: number; timeoutMs?: number; maxOutputBytes?: number } {
+function normalizeRemoteLogsInput(input: unknown): {
+  device?: string;
+  app?: string;
+  path?: string;
+  tail: number;
+  timeoutMs?: number;
+  maxOutputBytes?: number;
+} {
   const base = normalizeRemoteCommandInput(input);
   const record = objectInput(input);
   return {
     ...base,
     app: optionalString(record.app),
     path: optionalString(record.path),
-    tail: optionalPositiveInt(record.tail, "tail") ?? 200
+    tail: optionalPositiveInt(record.tail, "tail") ?? 200,
   };
 }
 
-function normalizeRemoteFindLogsInput(input: unknown): { device?: string; app?: string; path?: string; pattern: string; since?: string; tail: number; timeoutMs?: number; maxOutputBytes?: number } {
+function normalizeRemoteFindLogsInput(input: unknown): {
+  device?: string;
+  app?: string;
+  path?: string;
+  pattern: string;
+  since?: string;
+  tail: number;
+  timeoutMs?: number;
+  maxOutputBytes?: number;
+} {
   const base = normalizeRemoteLogsInput(input);
   const record = objectInput(input);
   return {
     ...base,
     pattern: requiredString(record.pattern, "pattern"),
-    since: optionalString(record.since)
+    since: optionalString(record.since),
   };
 }
 
-function normalizeRemoteServiceInput(input: unknown, field: "sql" | "cmd"): { device?: string; db?: string; name?: string; sql: string; cmd: string; timeoutMs?: number; maxOutputBytes?: number } {
+function normalizeRemoteServiceInput(
+  input: unknown,
+  field: "sql" | "cmd",
+): {
+  device?: string;
+  db?: string;
+  name?: string;
+  sql: string;
+  cmd: string;
+  timeoutMs?: number;
+  maxOutputBytes?: number;
+} {
   const base = normalizeRemoteCommandInput(input);
   const record = objectInput(input);
   const value = requiredString(record[field], field);
@@ -201,7 +259,7 @@ function normalizeRemoteServiceInput(input: unknown, field: "sql" | "cmd"): { de
     db: optionalString(record.db),
     name: optionalString(record.name),
     sql: field === "sql" ? value : "",
-    cmd: field === "cmd" ? value : ""
+    cmd: field === "cmd" ? value : "",
   };
 }
 

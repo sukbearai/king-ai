@@ -11,13 +11,17 @@ export function nowDisplay(): string {
   return formatDisplayTime(new Date(), "hm");
 }
 
-export async function okxGet(path: string, params?: Record<string, string>, timeoutMs = 10_000): Promise<Record<string, unknown>> {
+export async function okxGet(
+  path: string,
+  params?: Record<string, string>,
+  timeoutMs = 10_000,
+): Promise<Record<string, unknown>> {
   const qs = params ? `?${new URLSearchParams(params)}` : "";
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const res = await fetch(`${OKX_BASE}${path}${qs}`, {
         headers: { "User-Agent": OKX_UA },
-        signal: AbortSignal.timeout(timeoutMs)
+        signal: AbortSignal.timeout(timeoutMs),
       });
       if (!res.ok) continue;
       return (await res.json()) as Record<string, unknown>;
@@ -37,7 +41,7 @@ function cliEnv(): NodeJS.ProcessEnv {
     ...process.env,
     NO_COLOR: "1",
     CLICOLOR: "0",
-    FORCE_COLOR: "0"
+    FORCE_COLOR: "0",
   };
 }
 
@@ -46,15 +50,11 @@ interface ExecFileError extends Error {
   stderr?: string;
 }
 
-async function runCli(
-  bin: string,
-  args: string[],
-  timeoutMs: number
-): Promise<string> {
+async function runCli(bin: string, args: string[], timeoutMs: number): Promise<string> {
   const { stdout } = await execFileP(bin, args, {
     timeout: timeoutMs,
     maxBuffer: 10 * 1024 * 1024,
-    env: cliEnv()
+    env: cliEnv(),
   });
   return stdout;
 }
@@ -69,9 +69,7 @@ function parseCliJson(stdout: string): unknown {
     for (let i = lines.length - 1; i >= 0; i--) {
       try {
         return JSON.parse(lines[i]!);
-      } catch {
-        continue;
-      }
+      } catch {}
     }
   }
   return {};
@@ -125,11 +123,7 @@ function onchainosError(parsed: unknown): string | undefined {
   return undefined;
 }
 
-export async function runOnchainos(
-  args: string[],
-  timeoutMs = 15_000,
-  attempts = 3
-): Promise<CliRunResult<unknown>> {
+export async function runOnchainos(args: string[], timeoutMs = 15_000, attempts = 3): Promise<CliRunResult<unknown>> {
   let lastError = "onchainos call failed";
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
@@ -177,11 +171,13 @@ export async function yahooFinanceQuote(symbol: string): Promise<{ price: number
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1d`;
     const res = await fetch(url, {
       headers: { "User-Agent": OKX_UA },
-      signal: AbortSignal.timeout(10_000)
+      signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) return { price: 0 };
     const body = (await res.json()) as {
-      chart?: { result?: Array<{ meta?: { regularMarketPrice?: number; previousClose?: number; chartPreviousClose?: number } }> };
+      chart?: {
+        result?: Array<{ meta?: { regularMarketPrice?: number; previousClose?: number; chartPreviousClose?: number } }>;
+      };
     };
     const meta = body.chart?.result?.[0]?.meta;
     const price = meta?.regularMarketPrice ?? 0;
@@ -232,12 +228,11 @@ export async function surfMarketTicker(symbol: string): Promise<Record<string, u
   const r = row as Record<string, unknown>;
   const last = Number(r.last ?? 0);
   const changePct = Number(r.change_24h_pct ?? 0);
-  const open24h = Number.isFinite(last) && Number.isFinite(changePct) && changePct !== 0
-    ? last / (1 + changePct / 100)
-    : last;
+  const open24h =
+    Number.isFinite(last) && Number.isFinite(changePct) && changePct !== 0 ? last / (1 + changePct / 100) : last;
   return {
     last: String(last),
-    open24h: String(open24h)
+    open24h: String(open24h),
   };
 }
 
@@ -253,7 +248,7 @@ export async function sqliteQuery(dbPath: string, sql: string): Promise<unknown[
   try {
     const { stdout } = await execFileP("sqlite3", ["-json", dbPath, sql], {
       timeout: 10_000,
-      maxBuffer: 5 * 1024 * 1024
+      maxBuffer: 5 * 1024 * 1024,
     });
     const trimmed = stdout.trim();
     if (!trimmed) return [];

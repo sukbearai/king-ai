@@ -6,7 +6,7 @@ import {
   classifyYieldRiseSeverity,
   formatTreasuryBriefLine,
   parseTreasuryConfig,
-  yieldChangeBps
+  yieldChangeBps,
 } from "../src/trade/treasury-helpers.js";
 import { createRuleB } from "../src/trade/rules/rule-b-treasury.js";
 
@@ -47,7 +47,7 @@ describe("treasury helpers", () => {
       null,
       { symbol: "^TYX", yield_pct: 5.177, change_bps: 8.2, prev_yield_pct: 5.095 },
       buildYieldHighContext("^TYX", 5.177, 5.15, 5, 5),
-      cfg
+      cfg,
     );
     assert.match(line, /30年期收益率/);
     assert.match(line, /5\.177%/);

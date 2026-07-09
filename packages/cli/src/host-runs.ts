@@ -85,7 +85,7 @@ export async function submitHostRunRequest(
     env?: NodeJS.ProcessEnv;
     availableEngines?: EngineId[];
     now?: () => Date;
-  } = {}
+  } = {},
 ): Promise<HostRunSubmitResult> {
   const createdAt = (options.now ?? (() => new Date()))().toISOString();
   const launchPlan = createHostLaunchPlan(input, options.env ?? process.env, options.availableEngines);
@@ -97,19 +97,19 @@ export async function submitHostRunRequest(
     ready: launchPlan.ready,
     effectiveEngine: launchPlan.effectiveEngine,
     summary: formatHostLaunchPlanSummary(launchPlan),
-    executor: normalizeExecutor(input.executor)
+    executor: normalizeExecutor(input.executor),
   };
   await appendHostRunRequest(request, options.path);
   return {
     request,
     launchPlan: toJsonSafeHostLaunchPlan(launchPlan),
-    summary: formatHostRunRequestSummary(request)
+    summary: formatHostRunRequestSummary(request),
   };
 }
 
 export async function listHostRunRequests(
   input: HostRunListInput = {},
-  path = HOST_RUNS_PATH
+  path = HOST_RUNS_PATH,
 ): Promise<HostRunRequest[]> {
   const limit = normalizeLimit(input.limit);
   const requests = await readMergedHostRunRequests(path);
@@ -129,7 +129,7 @@ export async function updateHostRunRequest(
   options: {
     path?: string;
     now?: () => Date;
-  } = {}
+  } = {},
 ): Promise<HostRunUpdateResult> {
   const id = cleanRequiredId(input.id, "run request id");
   const status = normalizeStatus(input.status, false) as HostRunRequestUpdate["status"];
@@ -140,13 +140,13 @@ export async function updateHostRunRequest(
     status,
     updatedAt: (options.now ?? (() => new Date()))().toISOString(),
     detail: cleanString(input.detail),
-    result: normalizeExecutionResult(input.result)
+    result: normalizeExecutionResult(input.result),
   };
   await appendHostRunRecord(update, options.path);
   const request = applyHostRunUpdate(existing, update);
   return {
     request,
-    summary: formatHostRunRequestSummary(request)
+    summary: formatHostRunRequestSummary(request),
   };
 }
 
@@ -164,16 +164,23 @@ export function formatHostRunRequestSummary(request: HostRunRequest): string {
     `effective engine: ${request.effectiveEngine ?? "(none)"}`,
     request.detail ? `detail: ${request.detail}` : "",
     request.executor ? `executor: ${request.executor.kind} ${request.executor.command}` : "",
-    request.result ? `result: ${request.result.command} ${request.result.ok ? "ok" : "failed"} exit=${request.result.exitCode}` : "",
-    request.summary
-  ].filter(Boolean).join("\n");
+    request.result
+      ? `result: ${request.result.command} ${request.result.ok ? "ok" : "failed"} exit=${request.result.exitCode}`
+      : "",
+    request.summary,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 async function appendHostRunRequest(request: HostRunRequest, path = HOST_RUNS_PATH): Promise<void> {
   await appendHostRunRecord(request, path);
 }
 
-async function appendHostRunRecord(record: HostRunRequest | HostRunRequestUpdate, path = HOST_RUNS_PATH): Promise<void> {
+async function appendHostRunRecord(
+  record: HostRunRequest | HostRunRequestUpdate,
+  path = HOST_RUNS_PATH,
+): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${JSON.stringify(record)}\n`, { encoding: "utf8", flag: "a" });
 }
@@ -184,7 +191,10 @@ async function readMergedHostRunRequests(path = HOST_RUNS_PATH): Promise<HostRun
     throw err;
   });
   const byId = new Map<string, HostRunRequest>();
-  for (const line of text.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean)) {
+  for (const line of text
+    .split(/\r?\n/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)) {
     const parsed = JSON.parse(line) as unknown;
     if (isHostRunRequest(parsed)) {
       byId.set(parsed.id, parsed);
@@ -204,7 +214,7 @@ function applyHostRunUpdate(request: HostRunRequest, update: HostRunRequestUpdat
     status: update.status,
     updatedAt: update.updatedAt,
     detail: update.detail ?? request.detail,
-    result: update.result ?? request.result
+    result: update.result ?? request.result,
   };
 }
 
@@ -217,7 +227,10 @@ function normalizeLimit(value: unknown): number {
 
 function cleanId(value: unknown): string | undefined {
   if (typeof value !== "string" || !value.trim()) return undefined;
-  return value.trim().replace(/[^a-zA-Z0-9_.:-]+/g, "-").slice(0, 80);
+  return value
+    .trim()
+    .replace(/[^a-zA-Z0-9_.:-]+/g, "-")
+    .slice(0, 80);
 }
 
 function cleanRequiredId(value: unknown, label: string): string {
@@ -243,7 +256,7 @@ function normalizeExecutor(value: unknown): HostRunExecutorSpec | undefined {
     input: executor.input,
     format: executor.format === "json" ? "json" : "text",
     actorRole: cleanString(executor.actorRole),
-    trusted: executor.trusted === true
+    trusted: executor.trusted === true,
   };
 }
 
@@ -258,7 +271,7 @@ function normalizeExecutionResult(value: unknown): HostRunExecutionResult | unde
     ok: result.ok,
     exitCode: Number.isFinite(exitCode) ? Math.floor(exitCode) : result.ok ? 0 : 1,
     textPreview: cleanString(result.textPreview),
-    error: cleanString(result.error)
+    error: cleanString(result.error),
   };
 }
 
@@ -266,24 +279,30 @@ function normalizeStatus(value: unknown, allowPending: boolean): HostRunRequestS
   if (value === undefined) return undefined;
   if (value === "pending" && allowPending) return value;
   if (value === "running" || value === "completed" || value === "failed" || value === "cancelled") return value;
-  throw new Error(`host run request status must be ${allowPending ? "pending, " : ""}running, completed, failed, or cancelled`);
+  throw new Error(
+    `host run request status must be ${allowPending ? "pending, " : ""}running, completed, failed, or cancelled`,
+  );
 }
 
 function isHostRunRequest(value: unknown): value is HostRunRequest {
-  return Boolean(value) &&
+  return (
+    Boolean(value) &&
     typeof value === "object" &&
     typeof (value as HostRunRequest).id === "string" &&
     (value as HostRunRequest).status === "pending" &&
     typeof (value as HostRunRequest).createdAt === "string" &&
     typeof (value as HostRunRequest).ready === "boolean" &&
-    typeof (value as HostRunRequest).summary === "string";
+    typeof (value as HostRunRequest).summary === "string"
+  );
 }
 
 function isHostRunRequestUpdate(value: unknown): value is HostRunRequestUpdate {
   const status = (value as HostRunRequestUpdate | undefined)?.status;
-  return Boolean(value) &&
+  return (
+    Boolean(value) &&
     typeof value === "object" &&
     typeof (value as HostRunRequestUpdate).id === "string" &&
     typeof (value as HostRunRequestUpdate).updatedAt === "string" &&
-    (status === "running" || status === "completed" || status === "failed" || status === "cancelled");
+    (status === "running" || status === "completed" || status === "failed" || status === "cancelled")
+  );
 }

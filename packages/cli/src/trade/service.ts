@@ -20,7 +20,7 @@ export function tradeServiceNames() {
   return {
     packageName: serviceNames().packageName,
     serviceLabel: TRADE_SERVICE_LABEL,
-    displayName: "King AI Trade"
+    displayName: "King AI Trade",
   };
 }
 
@@ -53,7 +53,16 @@ function darwinPlistPath(): string {
 }
 
 function proxyEnvEntries(): Array<[string, string]> {
-  const keys = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy"];
+  const keys = [
+    "HTTPS_PROXY",
+    "https_proxy",
+    "HTTP_PROXY",
+    "http_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+    "NO_PROXY",
+    "no_proxy",
+  ];
   const entries: Array<[string, string]> = [];
   for (const key of keys) {
     const value = process.env[key];
@@ -63,19 +72,11 @@ function proxyEnvEntries(): Array<[string, string]> {
 }
 
 function xmlEscape(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 function buildDarwinPlist(args: string[], logPath: string): string {
-  const envEntries = [
-    ["PATH", process.env.PATH ?? ""],
-    ["KING_AI_SUPERVISED", "1"],
-    ...proxyEnvEntries()
-  ];
+  const envEntries = [["PATH", process.env.PATH ?? ""], ["KING_AI_SUPERVISED", "1"], ...proxyEnvEntries()];
   const envXml = envEntries
     .map(([key, value]) => `<key>${xmlEscape(key)}</key><string>${xmlEscape(value)}</string>`)
     .join("");
@@ -201,7 +202,7 @@ export async function printTradeServiceStatus(): Promise<void> {
       console.log(
         status.pid
           ? `service: installed; running (pid ${status.pid})`
-          : `service: installed; NOT running${status.lastExitStatus != null ? ` (last exit ${status.lastExitStatus})` : ""}`
+          : `service: installed; NOT running${status.lastExitStatus != null ? ` (last exit ${status.lastExitStatus})` : ""}`,
       );
     } catch {
       console.log(`service: installed; not loaded (try: launchctl load ${darwinPlistPath()})`);

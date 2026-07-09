@@ -16,7 +16,7 @@ export class FileHeartbeat {
 
   constructor(
     private readonly path: string,
-    private readonly data: Omit<HeartbeatData, "lastTick" | "loopCount">
+    private readonly data: Omit<HeartbeatData, "lastTick" | "loopCount">,
   ) {
     mkdirSync(dirname(this.path), { recursive: true });
   }
@@ -29,7 +29,7 @@ export class FileHeartbeat {
     const data: HeartbeatData = {
       ...this.data,
       lastTick: new Date().toISOString(),
-      loopCount: this.loopCount
+      loopCount: this.loopCount,
     };
     writeFileSync(this.path, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
     return data;

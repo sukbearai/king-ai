@@ -4,7 +4,7 @@ import {
   engineInstallAdvice,
   engineRemediationAdvice,
   formatRemediationAdvice,
-  formatRemediationBlock
+  formatRemediationBlock,
 } from "../src/remediation.js";
 
 test("engineInstallAdvice renders missing PATH remediation", () => {
@@ -18,7 +18,10 @@ test("engineInstallAdvice renders missing PATH remediation", () => {
 test("engineRemediationAdvice classifies auth, quota, rate, context, and unknown failures", () => {
   assert.equal(engineRemediationAdvice("claude", "not logged in").category, "auth");
   assert.equal(engineRemediationAdvice("codex", "usage limit reached").category, "quota");
-  assert.equal(engineRemediationAdvice("codex", "codex engine produced no output for 300s after session.send").category, "quota");
+  assert.equal(
+    engineRemediationAdvice("codex", "codex engine produced no output for 300s after session.send").category,
+    "quota",
+  );
   assert.equal(engineRemediationAdvice("claude", "You've hit your session limit").category, "quota");
   assert.equal(engineRemediationAdvice("codex", "HTTP 429 too many requests").category, "rate_limit");
   assert.equal(engineRemediationAdvice("codex", "context_length_exceeded").category, "context");

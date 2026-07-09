@@ -5,7 +5,7 @@ import {
   fetchTreasuryYieldQuote,
   fetchYieldPeriodHigh,
   formatTreasuryBriefLine,
-  parseTreasuryConfig
+  parseTreasuryConfig,
 } from "./treasury-helpers.js";
 
 export async function fetchTreasurySection(): Promise<string> {
@@ -29,7 +29,7 @@ export async function fetchTreasurySection(): Promise<string> {
           quote.yield_pct,
           periodHigh,
           cfg.yield_high_lookback_years,
-          cfg.yield_near_high_bps
+          cfg.yield_near_high_bps,
         );
       }
     }

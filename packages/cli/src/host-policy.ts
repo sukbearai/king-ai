@@ -17,13 +17,17 @@ export function requiredHostConfirmation(command: string): string {
   return `allow:${command}`;
 }
 
-export function checkHostCommandPolicy(command: string, destructive: boolean, input?: HostPolicyInput): HostPolicyCheck {
+export function checkHostCommandPolicy(
+  command: string,
+  destructive: boolean,
+  input?: HostPolicyInput,
+): HostPolicyCheck {
   if (!destructive) {
     return {
       command,
       destructive,
       decision: "allow",
-      reason: "read-only host command"
+      reason: "read-only host command",
     };
   }
 
@@ -34,7 +38,7 @@ export function checkHostCommandPolicy(command: string, destructive: boolean, in
       destructive,
       decision: "allow",
       reason: "destructive host command explicitly confirmed",
-      requiredConfirmation
+      requiredConfirmation,
     };
   }
 
@@ -43,7 +47,7 @@ export function checkHostCommandPolicy(command: string, destructive: boolean, in
     destructive,
     decision: "confirm_required",
     reason: "destructive host command requires explicit confirmation",
-    requiredConfirmation
+    requiredConfirmation,
   };
 }
 

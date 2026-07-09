@@ -29,7 +29,7 @@ export type RunAgentsCommandDeps<S extends { agents: GuiCliAgent[] }, A extends 
 export function runAgentsCommand<S extends { agents: GuiCliAgent[] }, A extends GuiCliAgentStateSummary>(
   state: S,
   args: string[],
-  deps: RunAgentsCommandDeps<S, A>
+  deps: RunAgentsCommandDeps<S, A>,
 ): string {
   const cmd = args[0];
   if (cmd === "spawn") return "agent spawn is not supported by this gui runtime";

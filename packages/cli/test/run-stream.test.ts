@@ -1,11 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import {
-  initialRunStreamState,
-  reduceRunStream,
-  renderRunStreamCard,
-  renderRunStreamText
-} from "../src/run-stream.js";
+import { initialRunStreamState, reduceRunStream, renderRunStreamCard, renderRunStreamText } from "../src/run-stream.js";
 
 test("run stream state tracks reasoning, tools, message, and terminal status", () => {
   let state = initialRunStreamState();
@@ -20,7 +15,10 @@ test("run stream state tracks reasoning, tools, message, and terminal status", (
   assert.match(renderRunStreamText(state), /done/);
   const card = renderRunStreamCard(state);
   assert.equal(card.summary, "Completed");
-  assert.equal(card.sections.some((section) => section.kind === "tool"), true);
+  assert.equal(
+    card.sections.some((section) => section.kind === "tool"),
+    true,
+  );
 });
 
 test("run stream records attempt retries separately from final terminal state", () => {

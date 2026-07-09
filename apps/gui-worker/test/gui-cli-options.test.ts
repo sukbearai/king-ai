@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { State } from "../src/gui-types.js";
-import { parseAllowedPaths, pathConflict, readBooleanOption, readOption, stripOptions } from "../src/gui-cli-options.js";
+import {
+  parseAllowedPaths,
+  pathConflict,
+  readBooleanOption,
+  readOption,
+  stripOptions,
+} from "../src/gui-cli-options.js";
 
 test("readOption and stripOptions parse runtime CLI flags", () => {
   const args = ["create", "Ship", "--paths", "src/,lib", "--assign", "dev"];
@@ -19,10 +25,12 @@ test("readBooleanOption treats bare flags as true", () => {
 
 test("pathConflict reports overlapping kanban claims", () => {
   const state = {
-    cards: [{ id: "card-1", title: "A", column: "doing" as const, claimedBy: "dev", allowedPaths: ["src"], created_at: 0 }],
+    cards: [
+      { id: "card-1", title: "A", column: "doing" as const, claimedBy: "dev", allowedPaths: ["src"], created_at: 0 },
+    ],
     claims: [],
     tasks: [],
-    capsules: []
+    capsules: [],
   } as unknown as State;
   assert.match(pathConflict(state, ["src/app"], "reviewer") ?? "", /card-1 claimed by dev/);
   assert.equal(pathConflict(state, ["docs"], "reviewer"), null);

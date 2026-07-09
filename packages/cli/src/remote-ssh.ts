@@ -29,16 +29,24 @@ export interface RemoteEvidence {
   time?: string;
 }
 
-export type RemoteCommandExecutor = (program: string, args: string[], options: {
-  env: NodeJS.ProcessEnv;
-  timeoutMs: number;
-  maxOutputBytes: number;
-}) => Promise<Omit<RemoteExecResult, "device" | "host" | "command" | "evidence">>;
+export type RemoteCommandExecutor = (
+  program: string,
+  args: string[],
+  options: {
+    env: NodeJS.ProcessEnv;
+    timeoutMs: number;
+    maxOutputBytes: number;
+  },
+) => Promise<Omit<RemoteExecResult, "device" | "host" | "command" | "evidence">>;
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 200 * 1024;
 
-export async function sshExec(device: RemoteDevice, command: string, options: RemoteExecOptions = {}): Promise<RemoteExecResult> {
+export async function sshExec(
+  device: RemoteDevice,
+  command: string,
+  options: RemoteExecOptions = {},
+): Promise<RemoteExecResult> {
   const timeoutMs = normalizePositiveInt(options.timeoutMs, DEFAULT_TIMEOUT_MS);
   const maxOutputBytes = normalizePositiveInt(options.maxOutputBytes, DEFAULT_MAX_OUTPUT_BYTES);
   const env = { ...process.env, ...(options.env ?? {}) };
@@ -55,15 +63,21 @@ export async function sshExec(device: RemoteDevice, command: string, options: Re
     host: device.host,
     command,
     durationMs: result.durationMs || Date.now() - started,
-    evidence: [{
-      kind: "command",
-      source: `${device.user}@${device.host}`,
-      text: command
-    }]
+    evidence: [
+      {
+        kind: "command",
+        source: `${device.user}@${device.host}`,
+        text: command,
+      },
+    ],
   };
 }
 
-export function buildSshCommand(device: RemoteDevice, command: string, env: NodeJS.ProcessEnv = process.env): {
+export function buildSshCommand(
+  device: RemoteDevice,
+  command: string,
+  env: NodeJS.ProcessEnv = process.env,
+): {
   program: string;
   args: string[];
   env: NodeJS.ProcessEnv;
@@ -71,10 +85,14 @@ export function buildSshCommand(device: RemoteDevice, command: string, env: Node
   const port = String(device.port ?? 22);
   const target = `${device.user}@${device.host}`;
   const baseArgs = [
-    "-o", "StrictHostKeyChecking=no",
-    "-o", "UserKnownHostsFile=/dev/null",
-    "-o", "ConnectTimeout=5",
-    "-p", port
+    "-o",
+    "StrictHostKeyChecking=no",
+    "-o",
+    "UserKnownHostsFile=/dev/null",
+    "-o",
+    "ConnectTimeout=5",
+    "-p",
+    port,
   ];
   if (device.identityFile) baseArgs.push("-i", device.identityFile);
   const password = remotePassword(device, env);
@@ -82,13 +100,13 @@ export function buildSshCommand(device: RemoteDevice, command: string, env: Node
     return {
       program: "sshpass",
       args: ["-e", "ssh", ...baseArgs, target, command],
-      env: { ...env, SSHPASS: password }
+      env: { ...env, SSHPASS: password },
     };
   }
   return {
     program: "ssh",
     args: [...baseArgs, target, command],
-    env
+    env,
   };
 }
 
@@ -99,22 +117,28 @@ export function remotePassword(device: RemoteDevice, env: NodeJS.ProcessEnv = pr
 
 export function redactRemoteSecrets(text: string, device: RemoteDevice, env: NodeJS.ProcessEnv = process.env): string {
   let redacted = text;
-  for (const secret of [device.password, device.passwordEnv ? env[device.passwordEnv] : undefined].filter(Boolean) as string[]) {
+  for (const secret of [device.password, device.passwordEnv ? env[device.passwordEnv] : undefined].filter(
+    Boolean,
+  ) as string[]) {
     redacted = redacted.split(secret).join("<redacted>");
   }
   return redacted;
 }
 
-async function spawnCapture(program: string, args: string[], options: {
-  env: NodeJS.ProcessEnv;
-  timeoutMs: number;
-  maxOutputBytes: number;
-}): Promise<Omit<RemoteExecResult, "device" | "host" | "command" | "evidence">> {
+async function spawnCapture(
+  program: string,
+  args: string[],
+  options: {
+    env: NodeJS.ProcessEnv;
+    timeoutMs: number;
+    maxOutputBytes: number;
+  },
+): Promise<Omit<RemoteExecResult, "device" | "host" | "command" | "evidence">> {
   const started = Date.now();
   return await new Promise((resolve) => {
     const child = spawn(program, args, {
       env: options.env,
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
@@ -149,7 +173,7 @@ async function spawnCapture(program: string, args: string[], options: {
         stderr,
         truncated,
         durationMs: Date.now() - started,
-        error: err.message
+        error: err.message,
       });
     });
     child.once("close", (code, signal) => {
@@ -162,7 +186,11 @@ async function spawnCapture(program: string, args: string[], options: {
         stderr,
         truncated,
         durationMs: Date.now() - started,
-        ...(timedOut ? { error: `remote command timed out after ${options.timeoutMs}ms` } : code === 0 ? {} : { error: `remote command exited with code ${code}` })
+        ...(timedOut
+          ? { error: `remote command timed out after ${options.timeoutMs}ms` }
+          : code === 0
+            ? {}
+            : { error: `remote command exited with code ${code}` }),
       });
     });
   });

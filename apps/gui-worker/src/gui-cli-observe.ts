@@ -33,6 +33,6 @@ export function runObserveCommand<S>(state: S, args: string[], deps: RunObserveC
     `openCapsules=${snapshot.counts.openCapsules}`,
     `inReviewCapsules=${snapshot.counts.inReviewCapsules}`,
     `artifacts=${snapshot.counts.artifacts}`,
-    `failedRuns=${snapshot.counts.failedRuns}`
+    `failedRuns=${snapshot.counts.failedRuns}`,
   ].join("\n");
 }

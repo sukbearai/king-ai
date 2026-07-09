@@ -9,7 +9,7 @@ import {
   formatPumpfunToken,
   passesPumpfunFilters,
   parsePumpfunFilters,
-  shortenAddress
+  shortenAddress,
 } from "../src/trade/morning-brief-onchain.js";
 
 const SAMPLE_PUMP_TOKEN = {
@@ -20,17 +20,17 @@ const SAMPLE_PUMP_TOKEN = {
   market: {
     marketCapUsd: "4099.609520217396694073",
     volumeUsd1h: "141.41353022588",
-    txCount1h: "4"
+    txCount1h: "4",
   },
   tags: {
     totalHolders: "3",
-    top10HoldingsPercent: "51.2014"
+    top10HoldingsPercent: "51.2014",
   },
   social: {
     x: "",
     telegram: "",
-    website: ""
-  }
+    website: "",
+  },
 };
 
 const SAMPLE_LEADERBOARD_ENTRY = {
@@ -44,9 +44,9 @@ const SAMPLE_LEADERBOARD_ENTRY = {
     {
       tokenSymbol: "TripleT",
       tokenPnLPercent: "239.27374189743676",
-      tokenPnLUsd: "13737.95104077069"
-    }
-  ]
+      tokenPnLUsd: "13737.95104077069",
+    },
+  ],
 };
 
 describe("formatCompactUsd", () => {
@@ -68,7 +68,7 @@ describe("passesPumpfunFilters", () => {
     const good = {
       ...SAMPLE_PUMP_TOKEN,
       market: { marketCapUsd: "50000", volumeUsd1h: "200" },
-      tags: { totalHolders: "120", top10HoldingsPercent: "35" }
+      tags: { totalHolders: "120", top10HoldingsPercent: "35" },
     };
     assert.equal(passesPumpfunFilters(good, filters), true);
   });
@@ -76,12 +76,15 @@ describe("passesPumpfunFilters", () => {
 
 describe("formatPumpfunToken", () => {
   it("renders readable token lines", () => {
-    const line = formatPumpfunToken({
-      ...SAMPLE_PUMP_TOKEN,
-      market: { marketCapUsd: "330845212.66", volumeUsd1h: "15350.35" },
-      tags: { totalHolders: "136", top10HoldingsPercent: "9.9751" },
-      social: { x: "https://x.com/ntfsofficial", website: "https://ntfs.world/" }
-    }, 1);
+    const line = formatPumpfunToken(
+      {
+        ...SAMPLE_PUMP_TOKEN,
+        market: { marketCapUsd: "330845212.66", volumeUsd1h: "15350.35" },
+        tags: { totalHolders: "136", top10HoldingsPercent: "9.9751" },
+        social: { x: "https://x.com/ntfsofficial", website: "https://ntfs.world/" },
+      },
+      1,
+    );
     assert.match(line, /1\. MEYH CAT \(\$MEYHCAT\)/);
     assert.match(line, /市值 \$330\.85M/);
     assert.match(line, /持有人 136/);
@@ -102,10 +105,7 @@ describe("formatLeaderboardEntry", () => {
 
 describe("formatPumpfunSection", () => {
   it("filters junk tokens before formatting", () => {
-    const { lines, stage } = formatPumpfunSection(
-      { ok: true, data: [SAMPLE_PUMP_TOKEN] },
-      { stage: "NEW", limit: 5 }
-    );
+    const { lines, stage } = formatPumpfunSection({ ok: true, data: [SAMPLE_PUMP_TOKEN] }, { stage: "NEW", limit: 5 });
     assert.equal(stage, "NEW");
     assert.deepEqual(lines, []);
   });
@@ -113,10 +113,7 @@ describe("formatPumpfunSection", () => {
 
 describe("formatLeaderboardSection", () => {
   it("extracts rows from onchainos envelope", () => {
-    const lines = formatLeaderboardSection(
-      { ok: true, data: [SAMPLE_LEADERBOARD_ENTRY] },
-      3
-    );
+    const lines = formatLeaderboardSection({ ok: true, data: [SAMPLE_LEADERBOARD_ENTRY] }, 3);
     assert.equal(lines.length, 1);
     assert.match(lines[0]!, /5qx7yV4C/);
   });
@@ -131,9 +128,6 @@ describe("extractOnchainosRows", () => {
 
 describe("shortenAddress", () => {
   it("shortens long addresses", () => {
-    assert.equal(
-      shortenAddress("4Ljjrv3CodNfmTmxRdnvga7bjsfe87zkh7FdPEo9pump"),
-      "4Ljjrv3C…o9pump"
-    );
+    assert.equal(shortenAddress("4Ljjrv3CodNfmTmxRdnvga7bjsfe87zkh7FdPEo9pump"), "4Ljjrv3C…o9pump");
   });
 });

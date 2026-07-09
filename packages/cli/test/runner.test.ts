@@ -46,7 +46,7 @@ import {
   swallowTurnRejection,
   unreadBatchKey,
   visibleEngineError,
-  wakeEventKey
+  wakeEventKey,
 } from "../src/runner.js";
 
 test("agentSessionFile scopes session ids by engine", () => {
@@ -75,18 +75,24 @@ test("parseWakeEventInfo extracts conversation and delivery latency", () => {
     agentId: null,
     sentAt: null,
     deliveryLatencyMs: null,
-    resetState: false
+    resetState: false,
   });
-  assert.deepEqual(parseWakeEventInfo(JSON.stringify({ conversationId: "demo-convo", agentId: "dev", messageId: "msg-1", taskId: "task-1", at: 1500 }), 2000), {
-    conversationId: "demo-convo",
-    requestId: "msg-1",
-    messageId: "msg-1",
-    taskId: "task-1",
-    agentId: "dev",
-    sentAt: 1500,
-    deliveryLatencyMs: 500,
-    resetState: false
-  });
+  assert.deepEqual(
+    parseWakeEventInfo(
+      JSON.stringify({ conversationId: "demo-convo", agentId: "dev", messageId: "msg-1", taskId: "task-1", at: 1500 }),
+      2000,
+    ),
+    {
+      conversationId: "demo-convo",
+      requestId: "msg-1",
+      messageId: "msg-1",
+      taskId: "task-1",
+      agentId: "dev",
+      sentAt: 1500,
+      deliveryLatencyMs: 500,
+      resetState: false,
+    },
+  );
   assert.deepEqual(parseWakeEventInfo("not json", 2000), {
     conversationId: null,
     requestId: null,
@@ -95,7 +101,7 @@ test("parseWakeEventInfo extracts conversation and delivery latency", () => {
     agentId: null,
     sentAt: null,
     deliveryLatencyMs: null,
-    resetState: false
+    resetState: false,
   });
   assert.equal(parseWakeEventInfo(JSON.stringify({ at: 2500 }), 2000).deliveryLatencyMs, 0);
   assert.equal(parseWakeEventInfo(JSON.stringify({ resetState: true }), 2000).resetState, true);
@@ -123,16 +129,24 @@ test("shouldPreWarmEngineForWake only prewarms on SSE and reconnect wakes", () =
 
 test("wakeEventKey dedupes stable routed events without suppressing anonymous wakes", () => {
   assert.equal(
-    wakeEventKey("wake", parseWakeEventInfo(JSON.stringify({ conversationId: "group", messageId: "msg-1", requestId: "req-1", taskId: "task-1" }))),
-    "wake:group:msg-1"
+    wakeEventKey(
+      "wake",
+      parseWakeEventInfo(
+        JSON.stringify({ conversationId: "group", messageId: "msg-1", requestId: "req-1", taskId: "task-1" }),
+      ),
+    ),
+    "wake:group:msg-1",
   );
   assert.equal(
-    wakeEventKey("steer", parseWakeEventInfo(JSON.stringify({ conversationId: "group", requestId: "req-1", taskId: "task-1" }))),
-    "steer:group:req-1"
+    wakeEventKey(
+      "steer",
+      parseWakeEventInfo(JSON.stringify({ conversationId: "group", requestId: "req-1", taskId: "task-1" })),
+    ),
+    "steer:group:req-1",
   );
   assert.equal(
     wakeEventKey("wake", parseWakeEventInfo(JSON.stringify({ conversationId: "group", taskId: "task-1" }))),
-    "wake:group:task-1"
+    "wake:group:task-1",
   );
   assert.equal(wakeEventKey("wake", parseWakeEventInfo(JSON.stringify({ conversationId: "group" }))), null);
   assert.equal(wakeEventKey("wake", parseWakeEventInfo(JSON.stringify({ messageId: "msg-1" }))), null);
@@ -182,7 +196,7 @@ test("selectSteerMessage picks direct pings and dedupes by latest id", () => {
       conversation_kind: "group",
       author_name: "Peer",
       author_kind: "agent",
-      body: "status update"
+      body: "status update",
     },
     {
       id: "m2",
@@ -190,7 +204,7 @@ test("selectSteerMessage picks direct pings and dedupes by latest id", () => {
       conversation_kind: "group",
       author_name: "Human",
       author_kind: "human",
-      body: "can you check this?"
+      body: "can you check this?",
     },
     {
       id: "m3",
@@ -198,8 +212,8 @@ test("selectSteerMessage picks direct pings and dedupes by latest id", () => {
       conversation_kind: "direct",
       author_name: "Demo Human",
       author_kind: "human",
-      body: "quick ping"
-    }
+      body: "quick ping",
+    },
   ];
 
   assert.equal(selectSteerMessage(rows, "group", "demo-agent", null)?.id, "m2");
@@ -207,14 +221,30 @@ test("selectSteerMessage picks direct pings and dedupes by latest id", () => {
   assert.equal(selectSteerMessage(rows, "dm", "demo-agent", null)?.id, "m3");
   assert.equal(selectSteerMessage([{ ...rows[0], body: "@demo-agent ping" }], "group", "demo-agent", null)?.id, "m1");
   assert.equal(selectSteerMessage([rows[0]], "group", "demo-agent", null), null);
-  assert.equal(selectSteerMessage([
-    { ...rows[0], id: "m4" },
-    { ...rows[0], id: "m5", message_type: "blocker", to_agent_id: "demo-agent", body: "blocked on deploy" }
-  ], "group", "demo-agent", null)?.id, "m5");
-  assert.equal(selectSteerMessage([
-    { ...rows[0], id: "m6", priority: "steer", body: "@demo-agent urgent" },
-    { ...rows[0], id: "m7", author_kind: "human", body: "later but less urgent" }
-  ], "group", "demo-agent", "m6")?.id, "m7");
+  assert.equal(
+    selectSteerMessage(
+      [
+        { ...rows[0], id: "m4" },
+        { ...rows[0], id: "m5", message_type: "blocker", to_agent_id: "demo-agent", body: "blocked on deploy" },
+      ],
+      "group",
+      "demo-agent",
+      null,
+    )?.id,
+    "m5",
+  );
+  assert.equal(
+    selectSteerMessage(
+      [
+        { ...rows[0], id: "m6", priority: "steer", body: "@demo-agent urgent" },
+        { ...rows[0], id: "m7", author_kind: "human", body: "later but less urgent" },
+      ],
+      "group",
+      "demo-agent",
+      "m6",
+    )?.id,
+    "m7",
+  );
 });
 
 test("formatSteerPrompt asks for a brief reply then resume", () => {
@@ -223,9 +253,9 @@ test("formatSteerPrompt asks for a brief reply then resume", () => {
       id: "m1",
       conversation_id: "demo-convo",
       author_name: "Demo Human",
-      body: "hello\nthere"
+      body: "hello\nthere",
     },
-    "demo-convo"
+    "demo-convo",
   );
   assert.match(prompt, /Answer it briefly/);
   assert.match(prompt, /resume your current task/);
@@ -269,7 +299,7 @@ test("buildChatDelta carries fetched inbox, roster, and response mode guidance",
     responseMode: "one-of-us",
     promptNote: "reply once",
     reason: "direct ask",
-    source: "local"
+    source: "local",
   });
   assert.match(delta, /ALREADY FETCHED/);
   assert.match(delta, /no need to re-run king-ai inbox or messages/);
@@ -292,7 +322,10 @@ test("buildChatDelta adds simple-turn fast path only for directed work", () => {
   const directed = buildChatDelta("Human: ack?", "memory", "dev\tDev", { actionable: true, responseMode: "me" });
   assert.match(directed, /Fast path for simple routed work/);
 
-  const shared = buildChatDelta("Human: any thoughts?", "memory", "dev\tDev", { actionable: true, responseMode: "one-of-us" });
+  const shared = buildChatDelta("Human: any thoughts?", "memory", "dev\tDev", {
+    actionable: true,
+    responseMode: "one-of-us",
+  });
   assert.doesNotMatch(shared, /Fast path for simple routed work/);
   assert.equal(simpleTurnFastPathInstruction({ actionable: false, responseMode: "me" }), "");
 });
@@ -364,17 +397,17 @@ test("no-output engine failures reset persistent sessions", () => {
   assert.deepEqual(planEngineFailureAttempt({ error, attempts: 0 }), {
     retry: true,
     publishFailureNotice: false,
-    nextAttempts: 1
+    nextAttempts: 1,
   });
   assert.deepEqual(planEngineFailureAttempt({ error, attempts: 1 }), {
     retry: false,
     publishFailureNotice: true,
-    nextAttempts: 1
+    nextAttempts: 1,
   });
   assert.deepEqual(planEngineFailureAttempt({ error: "not logged in", attempts: 0 }), {
     retry: false,
     publishFailureNotice: true,
-    nextAttempts: 0
+    nextAttempts: 0,
   });
 });
 
@@ -398,7 +431,7 @@ test("engine status payload carries and clears remediation", () => {
     category: "quota" as const,
     severity: "error" as const,
     summary: "claude quota or billing limit is blocking runs",
-    actions: ["Open claude locally"]
+    actions: ["Open claude locally"],
   };
   assert.deepEqual(engineStatusPayload("thinking", remediation), { status: "thinking", remediation });
   assert.deepEqual(engineStatusPayload("avail", null), { status: "avail", remediation: null });
@@ -410,7 +443,7 @@ test("visibleEngineError redacts local home paths before publishing", () => {
     "codex",
     "/Users/fayon/.king-ai/agents/demo-agent",
     1,
-    "failed in /Users/fayon/.king-ai/agents/demo-agent/workspace and /Users/fayon/private.txt"
+    "failed in /Users/fayon/.king-ai/agents/demo-agent/workspace and /Users/fayon/private.txt",
   );
   assert.match(message, /^local codex failed \(exit 1\):/);
   assert.doesNotMatch(message, /\/Users\/fayon\/\.king-ai/);
@@ -436,7 +469,7 @@ test("sanitizeNestedEngineEnv removes outer runtime controls before spawning eng
     KING_AI_AGENT_SKILL_SNAPSHOT_MANIFEST: "outer",
     ORCA_SESSION_ID: "outer",
     OPENAI_CODEX_TRACE: "outer",
-    KEEP_ME: "yes"
+    KEEP_ME: "yes",
   } as NodeJS.ProcessEnv);
 
   assert.equal(clean.PATH, "/bin");
@@ -494,23 +527,84 @@ test("no-state-action streak grants a grace turn before fallback-acking unread",
 });
 
 test("pending reruns only continue when fresh unread work remains", () => {
-  assert.equal(shouldContinuePendingRerun({ pendingRerun: false, hasRealUnread: true, hasAgendaWork: false, hasPinnedTask: false, stopped: false }), false);
-  assert.equal(shouldContinuePendingRerun({ pendingRerun: true, hasRealUnread: false, hasAgendaWork: false, hasPinnedTask: false, stopped: false }), false);
-  assert.equal(shouldContinuePendingRerun({ pendingRerun: true, hasRealUnread: true, hasAgendaWork: false, hasPinnedTask: false, stopped: true }), false);
-  assert.equal(shouldContinuePendingRerun({ pendingRerun: true, hasRealUnread: true, hasAgendaWork: false, hasPinnedTask: false, stopped: false }), true);
-  assert.equal(shouldContinuePendingRerun({ pendingRerun: true, hasRealUnread: false, hasAgendaWork: true, hasPinnedTask: false, stopped: false }), true);
-  assert.equal(shouldContinuePendingRerun({ pendingRerun: true, hasRealUnread: false, hasAgendaWork: false, hasPinnedTask: true, stopped: false }), true);
+  assert.equal(
+    shouldContinuePendingRerun({
+      pendingRerun: false,
+      hasRealUnread: true,
+      hasAgendaWork: false,
+      hasPinnedTask: false,
+      stopped: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldContinuePendingRerun({
+      pendingRerun: true,
+      hasRealUnread: false,
+      hasAgendaWork: false,
+      hasPinnedTask: false,
+      stopped: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldContinuePendingRerun({
+      pendingRerun: true,
+      hasRealUnread: true,
+      hasAgendaWork: false,
+      hasPinnedTask: false,
+      stopped: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldContinuePendingRerun({
+      pendingRerun: true,
+      hasRealUnread: true,
+      hasAgendaWork: false,
+      hasPinnedTask: false,
+      stopped: false,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldContinuePendingRerun({
+      pendingRerun: true,
+      hasRealUnread: false,
+      hasAgendaWork: true,
+      hasPinnedTask: false,
+      stopped: false,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldContinuePendingRerun({
+      pendingRerun: true,
+      hasRealUnread: false,
+      hasAgendaWork: false,
+      hasPinnedTask: true,
+      stopped: false,
+    }),
+    true,
+  );
 });
 
 test("unreadBatchKey changes when the unread batch changes", () => {
   assert.equal(
-    unreadBatchKey(new Map([["b", "2"], ["a", "1"]])),
-    unreadBatchKey(new Map([["a", "1"], ["b", "2"]]))
+    unreadBatchKey(
+      new Map([
+        ["b", "2"],
+        ["a", "1"],
+      ]),
+    ),
+    unreadBatchKey(
+      new Map([
+        ["a", "1"],
+        ["b", "2"],
+      ]),
+    ),
   );
-  assert.notEqual(
-    unreadBatchKey(new Map([["demo", "msg-1"]])),
-    unreadBatchKey(new Map([["demo", "msg-2"]]))
-  );
+  assert.notEqual(unreadBatchKey(new Map([["demo", "msg-1"]])), unreadBatchKey(new Map([["demo", "msg-2"]])));
 });
 
 test("no-state-action streak resets when the unread batch changes", () => {

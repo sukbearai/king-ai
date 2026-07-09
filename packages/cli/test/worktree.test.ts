@@ -16,7 +16,7 @@ import {
   isGitHubRepoUrl,
   planAgentWorktrees,
   prepareWorktreePlans,
-  safeBranchSegment
+  safeBranchSegment,
 } from "../src/worktree.js";
 
 test("safeBranchSegment normalizes agent ids for git branches", () => {
@@ -34,11 +34,24 @@ test("planAgentWorktrees creates non-executing git worktree plans for git repos"
   assert.equal(isGitRepo(repo), true);
   assert.equal(isGitRepo(plain), false);
 
-  const plans = planAgentWorktrees({ agentId: "demo/agent", workspaces: [repo, plain], baseRoot: join(dir, "agents", "demo-agent") });
+  const plans = planAgentWorktrees({
+    agentId: "demo/agent",
+    workspaces: [repo, plain],
+    baseRoot: join(dir, "agents", "demo-agent"),
+  });
   assert.equal(plans.length, 1);
   assert.equal(plans[0]?.branch, "agent/demo-agent");
   assert.equal(plans[0]?.worktreePath, join(dir, "agents", "demo-agent", "repo"));
-  assert.deepEqual(plans[0]?.command, ["git", "-C", repo, "worktree", "add", "-B", "agent/demo-agent", plans[0]?.worktreePath]);
+  assert.deepEqual(plans[0]?.command, [
+    "git",
+    "-C",
+    repo,
+    "worktree",
+    "add",
+    "-B",
+    "agent/demo-agent",
+    plans[0]?.worktreePath,
+  ]);
   assert.match(formatWorktreePlanForPrompt(plans), /Planned git worktree isolation/);
 });
 
@@ -63,17 +76,21 @@ test("planAgentWorktrees includes valid GitHub origin metadata", async () => {
   const dir = await mkdtemp(join(tmpdir(), "king-ai-worktree-origin-"));
   const repo = join(dir, "repo");
   await mkdir(join(repo, ".git"), { recursive: true });
-  await writeFile(join(repo, ".git", "config"), [
-    '[remote "origin"]',
-    "  url = git@github.com:acme/repo.git"
-  ].join("\n"), "utf8");
+  await writeFile(
+    join(repo, ".git", "config"),
+    ['[remote "origin"]', "  url = git@github.com:acme/repo.git"].join("\n"),
+    "utf8",
+  );
 
   assert.equal(gitOriginUrl(repo), "git@github.com:acme/repo.git");
   assert.equal(githubRepoUrl(repo), "git@github.com:acme/repo.git");
   const [plan] = planAgentWorktrees({ agentId: "demo-agent", workspaces: [repo] });
   assert.equal(plan?.repoUrl, "git@github.com:acme/repo.git");
   assert.match(formatWorktreePlanForPrompt(plan ? [plan] : []), /from git@github\.com:acme\/repo\.git/);
-  assert.match(formatWorktreePreparationResults(plan ? await prepareWorktreePlans([plan]) : []), /origin: git@github\.com:acme\/repo\.git/);
+  assert.match(
+    formatWorktreePreparationResults(plan ? await prepareWorktreePlans([plan]) : []),
+    /origin: git@github\.com:acme\/repo\.git/,
+  );
 });
 
 test("commandText quotes shell-sensitive worktree commands", () => {
@@ -84,7 +101,11 @@ test("prepareWorktreePlans dry-runs plans and can create missing worktrees", asy
   const dir = await mkdtemp(join(tmpdir(), "king-ai-worktree-prepare-"));
   const repo = join(dir, "repo");
   await mkdir(join(repo, ".git"), { recursive: true });
-  const [plan] = planAgentWorktrees({ agentId: "demo-agent", workspaces: [repo], baseRoot: join(dir, "agents", "demo-agent") });
+  const [plan] = planAgentWorktrees({
+    agentId: "demo-agent",
+    workspaces: [repo],
+    baseRoot: join(dir, "agents", "demo-agent"),
+  });
   assert.ok(plan);
 
   const dryRun = await prepareWorktreePlans([plan]);
@@ -96,7 +117,7 @@ test("prepareWorktreePlans dry-runs plans and can create missing worktrees", asy
     execute: true,
     executor: async (file, args) => {
       calls.push([file, args]);
-    }
+    },
   });
   assert.equal(executed[0]?.status, "created");
   assert.deepEqual(calls, [["git", ["-C", repo, "worktree", "add", "-B", "agent/demo-agent", plan.worktreePath]]]);
@@ -106,7 +127,11 @@ test("prepareWorktreePlans skips existing worktree paths", async () => {
   const dir = await mkdtemp(join(tmpdir(), "king-ai-worktree-existing-"));
   const repo = join(dir, "repo");
   await mkdir(join(repo, ".git"), { recursive: true });
-  const [plan] = planAgentWorktrees({ agentId: "demo-agent", workspaces: [repo], baseRoot: join(dir, "agents", "demo-agent") });
+  const [plan] = planAgentWorktrees({
+    agentId: "demo-agent",
+    workspaces: [repo],
+    baseRoot: join(dir, "agents", "demo-agent"),
+  });
   assert.ok(plan);
   await mkdir(plan.worktreePath, { recursive: true });
 
@@ -115,7 +140,7 @@ test("prepareWorktreePlans skips existing worktree paths", async () => {
     execute: true,
     executor: async (file, args) => {
       calls.push([file, args]);
-    }
+    },
   });
   assert.equal(result[0]?.status, "exists");
   assert.equal(calls.length, 0);
@@ -125,7 +150,11 @@ test("cleanupWorktreePlans dry-runs and removes existing planned worktrees", asy
   const dir = await mkdtemp(join(tmpdir(), "king-ai-worktree-cleanup-"));
   const repo = join(dir, "repo");
   await mkdir(join(repo, ".git"), { recursive: true });
-  const [plan] = planAgentWorktrees({ agentId: "demo-agent", workspaces: [repo], baseRoot: join(dir, "agents", "demo-agent") });
+  const [plan] = planAgentWorktrees({
+    agentId: "demo-agent",
+    workspaces: [repo],
+    baseRoot: join(dir, "agents", "demo-agent"),
+  });
   assert.ok(plan);
   await mkdir(plan.worktreePath, { recursive: true });
 
@@ -139,7 +168,7 @@ test("cleanupWorktreePlans dry-runs and removes existing planned worktrees", asy
     execute: true,
     executor: async (file, args) => {
       calls.push([file, args]);
-    }
+    },
   });
   assert.equal(executed[0]?.status, "removed");
   assert.deepEqual(calls, [["git", ["-C", repo, "worktree", "remove", "--force", plan.worktreePath]]]);
@@ -149,7 +178,11 @@ test("cleanupWorktreePlans skips missing paths", async () => {
   const dir = await mkdtemp(join(tmpdir(), "king-ai-worktree-cleanup-missing-"));
   const repo = join(dir, "repo");
   await mkdir(join(repo, ".git"), { recursive: true });
-  const [plan] = planAgentWorktrees({ agentId: "demo-agent", workspaces: [repo], baseRoot: join(dir, "agents", "demo-agent") });
+  const [plan] = planAgentWorktrees({
+    agentId: "demo-agent",
+    workspaces: [repo],
+    baseRoot: join(dir, "agents", "demo-agent"),
+  });
   assert.ok(plan);
 
   const calls: Array<[string, string[]]> = [];
@@ -157,7 +190,7 @@ test("cleanupWorktreePlans skips missing paths", async () => {
     execute: true,
     executor: async (file, args) => {
       calls.push([file, args]);
-    }
+    },
   });
   assert.equal(result[0]?.status, "missing");
   assert.equal(calls.length, 0);

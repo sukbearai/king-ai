@@ -65,49 +65,54 @@ export const PROVIDER_CAPABILITIES: ProviderCapability[] = [
     engines: ["codex"],
     usage: "local_tokens",
     pricing: "env_pricing",
-    notes: ["King AI records CLI-reported token usage when available.", "Set KING_AI_USAGE_PRICING for estimated local cost."]
+    notes: [
+      "King AI records CLI-reported token usage when available.",
+      "Set KING_AI_USAGE_PRICING for estimated local cost.",
+    ],
   },
   {
     provider: "Anthropic",
     engines: ["claude"],
     usage: "local_tokens",
     pricing: "env_pricing",
-    notes: ["King AI records Claude CLI usage fields when the engine returns them.", "Set KING_AI_USAGE_PRICING for estimated local cost."]
+    notes: [
+      "King AI records Claude CLI usage fields when the engine returns them.",
+      "Set KING_AI_USAGE_PRICING for estimated local cost.",
+    ],
   },
   {
     provider: "xAI",
     engines: ["grok"],
     usage: "local_tokens",
     pricing: "env_pricing",
-    notes: ["King AI records Grok CLI usage fields when headless JSON returns them.", "Set KING_AI_USAGE_PRICING for estimated local cost."]
+    notes: [
+      "King AI records Grok CLI usage fields when headless JSON returns them.",
+      "Set KING_AI_USAGE_PRICING for estimated local cost.",
+    ],
   },
   {
     provider: "OpenRouter",
     engines: ["openrouter"],
     usage: "unavailable",
     pricing: "env_pricing",
-    notes: ["No first-class King AI engine adapter is wired yet.", "Pricing can still be represented with KING_AI_USAGE_PRICING once an adapter records usage."]
-  }
+    notes: [
+      "No first-class King AI engine adapter is wired yet.",
+      "Pricing can still be represented with KING_AI_USAGE_PRICING once an adapter records usage.",
+    ],
+  },
 ];
 
-export const RUNTIME_RESULTS_HEADER = [
-  "agent",
-  "engine",
-  "run_id",
-  "source",
-  "status",
-  "duration_ms",
-  "tokens",
-  "classification",
-  "reason"
-].join("\t") + "\n";
+export const RUNTIME_RESULTS_HEADER =
+  ["agent", "engine", "run_id", "source", "status", "duration_ms", "tokens", "classification", "reason"].join("\t") +
+  "\n";
 
 export function formatProviderCapabilities(capabilities: ProviderCapability[] = PROVIDER_CAPABILITIES): string {
   return [
     "provider capabilities:",
-    ...capabilities.map((capability) =>
-      `  - ${capability.provider}: engines=${capability.engines.join(",") || "none"} usage=${capability.usage} pricing=${capability.pricing}`
-    )
+    ...capabilities.map(
+      (capability) =>
+        `  - ${capability.provider}: engines=${capability.engines.join(",") || "none"} usage=${capability.usage} pricing=${capability.pricing}`,
+    ),
   ].join("\n");
 }
 
@@ -135,7 +140,12 @@ export function buildRuntimeResultsRows(state: RunningState | null): RuntimeResu
   for (const agent of state?.agents ?? []) {
     if (!agent.runStats || agent.runStats.turns === 0) continue;
     const latestEvent = [...events].reverse().find((event) => event.detail?.includes(agent.id)) ?? events.at(-1);
-    const classified = latestEvent ? classifyRuntimeEvent(latestEvent) : { classification: agent.runStats.failed > 0 ? "error" as const : "idle" as const, reason: "run stats only" };
+    const classified = latestEvent
+      ? classifyRuntimeEvent(latestEvent)
+      : {
+          classification: agent.runStats.failed > 0 ? ("error" as const) : ("idle" as const),
+          reason: "run stats only",
+        };
     rows.push({
       agent: agent.id,
       engine: agent.engine,
@@ -145,29 +155,39 @@ export function buildRuntimeResultsRows(state: RunningState | null): RuntimeResu
       durationMs: agent.runStats.lastDurationMs ?? 0,
       tokens: agent.runStats.totalTokens,
       classification: classified.classification,
-      reason: classified.reason
+      reason: classified.reason,
     });
   }
   return rows.sort((left, right) => left.agent.localeCompare(right.agent));
 }
 
 export function formatRuntimeResultsTable(rows: RuntimeResultsRow[]): string {
-  return RUNTIME_RESULTS_HEADER + rows.map((row) => [
-    row.agent,
-    row.engine,
-    row.runId,
-    row.source,
-    row.status,
-    String(row.durationMs),
-    String(row.tokens),
-    row.classification,
-    row.reason
-  ].map(tsvCell).join("\t")).join("\n") + (rows.length ? "\n" : "");
+  return (
+    RUNTIME_RESULTS_HEADER +
+    rows
+      .map((row) =>
+        [
+          row.agent,
+          row.engine,
+          row.runId,
+          row.source,
+          row.status,
+          String(row.durationMs),
+          String(row.tokens),
+          row.classification,
+          row.reason,
+        ]
+          .map(tsvCell)
+          .join("\t"),
+      )
+      .join("\n") +
+    (rows.length ? "\n" : "")
+  );
 }
 
 export function buildUsageRuntimeData(
   state: RunningState | null,
-  options: { budget?: number | null; pricingRules?: UsagePricingRule[]; generatedAt?: string } = {}
+  options: { budget?: number | null; pricingRules?: UsagePricingRule[]; generatedAt?: string } = {},
 ): UsageRuntimeDataFile {
   const usage = summarizeAgentUsage(state?.agents ?? [], options.budget, options.pricingRules ?? []);
   const warnings: string[] = [];
@@ -180,7 +200,7 @@ export function buildUsageRuntimeData(
       mode: "daemon-state",
       generatedAt: options.generatedAt ?? new Date().toISOString(),
       secretValuesIncluded: false,
-      warnings
+      warnings,
     },
     usage,
     providerCapabilities: PROVIDER_CAPABILITIES,
@@ -200,10 +220,10 @@ export function buildUsageRuntimeData(
         status: agent.status,
         model: agent.model,
         workspaceRoot: agent.workspaceRoot,
-        updatedAt: agent.updatedAt
+        updatedAt: agent.updatedAt,
       })),
-      events: state?.events ?? []
-    }
+      events: state?.events ?? [],
+    },
   });
 }
 

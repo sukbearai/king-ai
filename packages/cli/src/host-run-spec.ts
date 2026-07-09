@@ -173,7 +173,7 @@ export function createDefaultHostRunOptions(overrides: Partial<HostRunOptions> =
     noBrain: overrides.noBrain ?? false,
     keepArtifacts: overrides.keepArtifacts ?? false,
     outputDir: overrides.outputDir ? resolve(overrides.outputDir) : resolve("deliverables"),
-    errorLimit: Math.max(1, Math.floor(overrides.errorLimit ?? 20))
+    errorLimit: Math.max(1, Math.floor(overrides.errorLimit ?? 20)),
   };
 }
 
@@ -184,7 +184,7 @@ export function createHostRunPlan(input: HostRunSpecInput, env: NodeJS.ProcessEn
   const projectDir = resolveOptionalDir(input.projectDir, "projectDir");
   const repoSourceDir = resolveOptionalDir(input.repoSourceDir ?? projectDir, "repoSourceDir");
   const workspaceRoot = input.workspaceRoot ? resolve(input.workspaceRoot) : env.KING_AI_AGENT_WORKSPACE_ROOT;
-  const gitRoot = input.gitRoot ? resolve(input.gitRoot) : repoSourceDir ?? projectDir;
+  const gitRoot = input.gitRoot ? resolve(input.gitRoot) : (repoSourceDir ?? projectDir);
   const options = createDefaultHostRunOptions(input.options);
   const explicitRunId = cleanString(input.runId);
   const spec: HostProjectRunSpec = {
@@ -195,48 +195,50 @@ export function createHostRunPlan(input: HostRunSpecInput, env: NodeJS.ProcessEn
     repoCloneUrl: cleanString(input.repoCloneUrl),
     workspaceRoot: workspaceRoot ? resolve(workspaceRoot) : undefined,
     gitRoot,
-    sourceLabel: cleanString(input.sourceLabel) || sourceLabel({ projectDir, repoSourceDir, repoCloneUrl: input.repoCloneUrl }),
+    sourceLabel:
+      cleanString(input.sourceLabel) || sourceLabel({ projectDir, repoSourceDir, repoCloneUrl: input.repoCloneUrl }),
     bootstrapScript: cleanString(input.bootstrapScript),
     githubToken: cleanString(input.githubToken),
     threadSync: normalizeThreadSync(input.threadSync),
     roleProfile: normalizeRoleProfile(input.roleProfile),
     hooks: input.hooks,
-    attachments: normalizeRuntimeAttachments(input.attachments)
+    attachments: normalizeRuntimeAttachments(input.attachments),
   };
   const rejectedRequired = requiredAttachmentsRejected(spec.attachments);
   if (rejectedRequired.length) {
-    throw new Error(`required attachment rejected: ${rejectedRequired.map((attachment) => `${attachment.name} (${attachment.rejectionReason ?? attachment.decision})`).join(", ")}`);
+    throw new Error(
+      `required attachment rejected: ${rejectedRequired.map((attachment) => `${attachment.name} (${attachment.rejectionReason ?? attachment.decision})`).join(", ")}`,
+    );
   }
   return {
     runId: explicitRunId ? safeFilenameSegment(explicitRunId, "runId") : buildHostRunId(goal),
     spec,
     options,
-    summary: formatHostRunPlanSummary({ spec, options })
+    summary: formatHostRunPlanSummary({ spec, options }),
   };
 }
 
 export function createHostLaunchPlan(
   input: HostRunSpecInput,
   env: NodeJS.ProcessEnv = process.env,
-  availableEngines = detectAvailableHostEngines(env)
+  availableEngines = detectAvailableHostEngines(env),
 ): HostLaunchPlan {
   const plan = createHostRunPlan(input, env);
   const issues: HostLaunchIssue[] = [];
-  const effectiveEngine = plan.options.engine && availableEngines.includes(plan.options.engine)
-    ? plan.options.engine
-    : availableEngines[0];
+  const effectiveEngine =
+    plan.options.engine && availableEngines.includes(plan.options.engine) ? plan.options.engine : availableEngines[0];
 
   if (availableEngines.length === 0) {
     issues.push({
       severity: "error",
       code: "no-engine",
-      message: "No supported local engine is available on PATH. Install and sign in to Claude Code, Codex, or Grok."
+      message: "No supported local engine is available on PATH. Install and sign in to Claude Code, Codex, or Grok.",
     });
   } else if (plan.options.engine && !availableEngines.includes(plan.options.engine)) {
     issues.push({
       severity: "warning",
       code: "engine-unavailable",
-      message: `${plan.options.engine} was requested but is not available; ${effectiveEngine ?? "the runtime default"} would be used instead.`
+      message: `${plan.options.engine} was requested but is not available; ${effectiveEngine ?? "the runtime default"} would be used instead.`,
     });
   }
 
@@ -244,21 +246,21 @@ export function createHostLaunchPlan(
     issues.push({
       severity: "error",
       code: "takeover-source-required",
-      message: "Takeover mode requires projectDir, repoSourceDir, or repoCloneUrl."
+      message: "Takeover mode requires projectDir, repoSourceDir, or repoCloneUrl.",
     });
   }
   if (plan.spec.projectDir && !isGitRepo(plan.spec.projectDir)) {
     issues.push({
       severity: "warning",
       code: "project-not-git",
-      message: "The selected project directory is not a git repository; worktree and patch planning will be limited."
+      message: "The selected project directory is not a git repository; worktree and patch planning will be limited.",
     });
   }
   if (!plan.spec.workspaceRoot) {
     issues.push({
       severity: "info",
       code: "default-agent-workspace",
-      message: "No explicit workspaceRoot was provided; agents will use their private workspace directories."
+      message: "No explicit workspaceRoot was provided; agents will use their private workspace directories.",
     });
   }
 
@@ -275,7 +277,7 @@ export function createHostLaunchPlan(
     ready: !issues.some((issue) => issue.severity === "error"),
     issues,
     suggestedCommands: suggestedCommands(plan),
-    launchSummary: ""
+    launchSummary: "",
   };
   launchPlan.launchSummary = formatHostLaunchPlanSummary(launchPlan);
   return launchPlan;
@@ -288,10 +290,11 @@ export function formatHostRunPlanSummary(plan: Pick<HostRunPlan, "spec" | "optio
     `engine: ${plan.options.engine ?? "runtime default"} model=${plan.options.model ?? "default"} fast=${plan.options.fastModel ?? "default"}`,
     `brain: ${plan.options.noBrain ? "disabled" : "enabled"} worker=${plan.options.workerUrl ? "configured" : "default"} workerModel=${plan.options.workerModel ?? "default"} config=${plan.options.configPath ? "configured" : "default"}`,
     `loops: ${plan.options.loopMode === "infinite" ? "infinite" : plan.options.loops} poll=${plan.options.pollIntervalSeconds}s errors=${plan.options.errorLimit}`,
-    `output: ${plan.options.outputDir}`
+    `output: ${plan.options.outputDir}`,
   ];
   if (plan.spec.projectDir) lines.push(`project: ${plan.spec.projectDir}`);
-  if (plan.spec.repoSourceDir && plan.spec.repoSourceDir !== plan.spec.projectDir) lines.push(`repo source: ${plan.spec.repoSourceDir}`);
+  if (plan.spec.repoSourceDir && plan.spec.repoSourceDir !== plan.spec.projectDir)
+    lines.push(`repo source: ${plan.spec.repoSourceDir}`);
   if (plan.spec.workspaceRoot) lines.push(`workspace root: ${plan.spec.workspaceRoot}`);
   if (plan.spec.gitRoot) lines.push(`git root: ${plan.spec.gitRoot}`);
   if (plan.spec.threadSync) lines.push(`thread sync: ${plan.spec.threadSync.threadId}`);
@@ -312,7 +315,7 @@ export function formatHostLaunchPlanSummary(plan: HostLaunchPlan): string {
     `workspace: ${plan.layout.workspaceRoot}`,
     `ready: ${plan.ready ? "yes" : "no"}`,
     `available engines: ${plan.availableEngines.join(", ") || "(none)"}`,
-    `effective engine: ${plan.effectiveEngine ?? "(none)"}`
+    `effective engine: ${plan.effectiveEngine ?? "(none)"}`,
   ];
   if (plan.issues.length) {
     lines.push("preflight:");
@@ -331,7 +334,7 @@ export function createHostRunEnvironmentPlan(plan: HostRunPlan): HostRunEnvironm
     envFilePath,
     envFileExists: !!envFilePath && existsSync(envFilePath),
     envLoading: "not-loaded",
-    note: "Project .env files are detected for app visibility but are not loaded by host preflight or layout preparation."
+    note: "Project .env files are detected for app visibility but are not loaded by host preflight or layout preparation.",
   };
 }
 
@@ -343,7 +346,7 @@ export function createHostRunGitPlan(plan: HostRunPlan): HostRunGitPlan {
     gitRoot,
     isGitRepo: true,
     ...parsed,
-    prUrl: detectPullRequestUrl(gitRoot, parsed.activeBranch)
+    prUrl: detectPullRequestUrl(gitRoot, parsed.activeBranch),
   };
 }
 
@@ -353,7 +356,7 @@ export function parseHostGitStatus(raw: string): Omit<HostRunGitPlan, "gitRoot" 
     hasUpstream: false,
     branchAhead: 0,
     branchBehind: 0,
-    modifiedFiles: []
+    modifiedFiles: [],
   };
   const seen = new Set<string>();
   for (const line of raw.split(/\r?\n/)) {
@@ -386,12 +389,14 @@ export function parseHostGitStatus(raw: string): Omit<HostRunGitPlan, "gitRoot" 
 
 function readHostGitStatus(gitRoot: string): Omit<HostRunGitPlan, "gitRoot" | "isGitRepo" | "prUrl"> {
   try {
-    return parseHostGitStatus(execFileSync("git", ["status", "--porcelain=v2", "--branch", "--untracked-files=all"], {
-      cwd: gitRoot,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 5000
-    }));
+    return parseHostGitStatus(
+      execFileSync("git", ["status", "--porcelain=v2", "--branch", "--untracked-files=all"], {
+        cwd: gitRoot,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 5000,
+      }),
+    );
   } catch {
     return emptyHostRunGitPlan(gitRoot, true);
   }
@@ -415,7 +420,7 @@ function detectPullRequestUrl(gitRoot: string, branch?: string): string | undefi
       cwd: gitRoot,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
-      timeout: 5000
+      timeout: 5000,
     }).trim();
     if (!raw) return undefined;
     const parsed = JSON.parse(raw) as Array<{ url?: unknown }>;
@@ -432,7 +437,7 @@ function emptyHostRunGitPlan(gitRoot: string, isGitRepo: boolean): HostRunGitPla
     hasUpstream: false,
     branchAhead: 0,
     branchBehind: 0,
-    modifiedFiles: []
+    modifiedFiles: [],
   };
 }
 
@@ -449,8 +454,8 @@ export function toJsonSafeHostLaunchPlan(plan: HostLaunchPlan): JsonSafeHostLaun
     ...plan,
     options: {
       ...plan.options,
-      loops: plan.options.loopMode === "infinite" ? "infinite" : plan.options.loops
-    }
+      loops: plan.options.loopMode === "infinite" ? "infinite" : plan.options.loops,
+    },
   };
 }
 
@@ -461,7 +466,7 @@ export function createHostRunConfigPlan(plan: HostRunPlan): HostRunConfigPlan {
       label: basename(path),
       source: "explicit",
       path,
-      exists: existsSync(path)
+      exists: existsSync(path),
     };
   }
 
@@ -471,18 +476,21 @@ export function createHostRunConfigPlan(plan: HostRunPlan): HostRunConfigPlan {
       label: "agents.json (project)",
       source: "project",
       path,
-      exists: existsSync(path)
+      exists: existsSync(path),
     };
   }
 
   return {
     label: "built-in-local-agents.json",
     source: "default",
-    exists: true
+    exists: true,
   };
 }
 
-export function createHostRunLocalLayoutPlan(plan: HostRunPlan, config = createHostRunConfigPlan(plan)): HostRunLocalLayoutPlan {
+export function createHostRunLocalLayoutPlan(
+  plan: HostRunPlan,
+  config = createHostRunConfigPlan(plan),
+): HostRunLocalLayoutPlan {
   const outputDir = resolve(plan.options.outputDir);
   const baseDir = join(outputDir, ".king-ai-local", plan.runId);
   return {
@@ -502,7 +510,7 @@ export function createHostRunLocalLayoutPlan(plan: HostRunPlan, config = createH
     workflowPath: join(outputDir, "workflow.jsonl"),
     feedbackPath: join(outputDir, "run-feedback.jsonl"),
     sourceConfigPath: config.path,
-    exists: existsSync(baseDir)
+    exists: existsSync(baseDir),
   };
 }
 
@@ -532,7 +540,7 @@ export function createHostRunSessionPlan(plan: HostRunPlan, effectiveEngine?: En
     llmModeLabel,
     codexConfigLabel: shouldShowCodexConfig
       ? `${plan.options.model ?? "default"} / ${plan.options.codexReasoningEffort ?? "default"}`
-      : null
+      : null,
   };
 }
 
@@ -562,7 +570,7 @@ function normalizeThreadSync(value: HostProjectRunSpec["threadSync"]): HostProje
   return {
     threadId: value.threadId.trim(),
     syncUrl: cleanString(value.syncUrl),
-    syncSecret: cleanString(value.syncSecret)
+    syncSecret: cleanString(value.syncSecret),
   };
 }
 
@@ -585,7 +593,7 @@ function commandExists(command: string, env: NodeJS.ProcessEnv): boolean {
     execFileSync(process.platform === "win32" ? "where" : "which", [command], {
       env,
       stdio: "ignore",
-      timeout: 3000
+      timeout: 3000,
     });
     return true;
   } catch {
@@ -617,6 +625,11 @@ function sourceLabel(input: { projectDir?: string; repoSourceDir?: string; repoC
 
 function buildHostRunId(goal: string): string {
   const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  const slug = goal.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24).toLowerCase() || "goal";
+  const slug =
+    goal
+      .replace(/[^a-zA-Z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 24)
+      .toLowerCase() || "goal";
   return `host-run-${ts}-${slug}`;
 }

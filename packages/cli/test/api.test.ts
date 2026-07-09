@@ -13,7 +13,7 @@ test("runtime strict helpers throw on runtime HTTP failures", async () => {
 
     await assert.rejects(
       () => runtimeGetStrict("https://runtime.example", "/inbox", "token"),
-      /GET \/inbox -> HTTP 503 unavailable/
+      /GET \/inbox -> HTTP 503 unavailable/,
     );
   } finally {
     globalThis.fetch = originalFetch;
@@ -37,7 +37,7 @@ test("runtime strict post sends tenant headers and parses JSON", async () => {
       "/conversation/mark-read",
       "token",
       { conversationId: "room", upToMessageId: "msg-1" },
-      "tenant-a"
+      "tenant-a",
     );
     assert.deepEqual(result, { ok: true });
   } finally {

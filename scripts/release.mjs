@@ -10,7 +10,7 @@ const allowedReleases = new Set([
   "premajor",
   "preminor",
   "prepatch",
-  "prerelease"
+  "prerelease",
 ]);
 const publishArgSet = new Set(extraArgs);
 const skipPush = publishArgSet.has("--skip-push");
@@ -24,7 +24,7 @@ if (!allowedReleases.has(release)) {
 function run(command, args) {
   const result = spawnSync(command, args, {
     stdio: "inherit",
-    shell: false
+    shell: false,
   });
 
   return result.status ?? 1;
@@ -47,7 +47,7 @@ const args = [
   "Release v%s",
   "--tag",
   "v%s",
-  "--no-push"
+  "--no-push",
 ];
 
 if (release) {

@@ -8,7 +8,7 @@ export {
   classifyCelebritySearchSnapshot,
   type CelebritySearchSnapshot,
   type CelebrityVerifyResult,
-  type CelebrityVerifyStatus
+  type CelebrityVerifyStatus,
 } from "./celebrity-search.js";
 
 const TWITTER_SEARCH_SESSION = "trade-twitter-search";
@@ -31,19 +31,32 @@ async function inspectCelebrityAccount(account: string, timeoutMs: number): Prom
       let lastOpenError = "opencli open failed";
       for (let attempt = 0; attempt < 2; attempt++) {
         await runOpencli(["browser", TWITTER_SEARCH_SESSION, "close"], 10_000);
-        const opened = await runOpencli(["browser", TWITTER_SEARCH_SESSION, "--window", "background", "open", url], 30_000);
+        const opened = await runOpencli(
+          ["browser", TWITTER_SEARCH_SESSION, "--window", "background", "open", url],
+          30_000,
+        );
         if (!opened.ok) {
           lastOpenError = opened.error ?? lastOpenError;
           continue;
         }
         await runOpencli(["browser", TWITTER_SEARCH_SESSION, "--window", "background", "wait", "time", "5"], 10_000);
-        const evalResult = await runOpencli(["browser", TWITTER_SEARCH_SESSION, "--window", "background", "eval", js], 30_000);
+        const evalResult = await runOpencli(
+          ["browser", TWITTER_SEARCH_SESSION, "--window", "background", "eval", js],
+          30_000,
+        );
         if (!evalResult.ok) {
-          return { account, status: "error", articles: 0, title: "", url, detail: evalResult.error ?? "opencli eval failed" };
+          return {
+            account,
+            status: "error",
+            articles: 0,
+            title: "",
+            url,
+            detail: evalResult.error ?? "opencli eval failed",
+          };
         }
-        const row = evalResult.data.find((item): item is Record<string, unknown> => (
-          Boolean(item) && typeof item === "object" && !Array.isArray(item)
-        ));
+        const row = evalResult.data.find(
+          (item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item),
+        );
         return classifyCelebritySearchSnapshot(account, row ?? { url });
       }
       return { account, status: "error", articles: 0, title: "", url, detail: lastOpenError };

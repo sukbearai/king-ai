@@ -32,7 +32,7 @@ export async function runTradeDaemon(options: TradeDaemonOptions = {}): Promise<
   const ruleSchedulerLoop = runUnifiedRuleScheduler({
     pushTg,
     dryRun: options.dryRun,
-    onStatus
+    onStatus,
   });
 
   const briefHour = Number(dotGet(config, "briefing.schedule_hour", 5)) || 5;
@@ -46,8 +46,8 @@ export async function runTradeDaemon(options: TradeDaemonOptions = {}): Promise<
       run: async () => {
         process.stderr.write("[scheduler] morning_brief\n");
         await runMorningBrief({ pushTg, dryRun: options.dryRun });
-      }
-    }
+      },
+    },
   ];
 
   let lastRegime = 0;
@@ -102,9 +102,7 @@ export async function runTradeDaemon(options: TradeDaemonOptions = {}): Promise<
   setInterval(() => void tick(), 30_000);
   await tick();
 
-  process.stderr.write(
-    `trade daemon started — rules=[${[...enabled].join(",")}] pushTg=${!!pushTg}\n`
-  );
+  process.stderr.write(`trade daemon started — rules=[${[...enabled].join(",")}] pushTg=${!!pushTg}\n`);
 
   await ruleSchedulerLoop;
 }

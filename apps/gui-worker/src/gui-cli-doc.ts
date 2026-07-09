@@ -35,7 +35,7 @@ export function runDocCommand<S extends { docs: GuiCliDoc[] }>(state: S, args: s
       id: `doc-${Date.now()}-${Math.random().toString(36).slice(2)}`,
       title,
       body,
-      created_at: Date.now()
+      created_at: Date.now(),
     };
     state.docs.push(doc);
     return `doc created ${doc.id}`;

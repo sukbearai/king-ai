@@ -14,7 +14,7 @@ import {
   materializeTeamScenario,
   normalizeComputerArgs,
   shouldRunAfterPair,
-  versionText
+  versionText,
 } from "../src/cli.js";
 import { listHostWorkflowCards } from "../src/host-ledger.js";
 import { CURRENT_VERSION } from "../src/paths.js";
@@ -65,7 +65,9 @@ test("versionText includes the command name", () => {
 });
 
 test("CURRENT_VERSION matches the package metadata", async () => {
-  const pkg = JSON.parse(await readFile(new URL("package.json", `file://${process.cwd()}/`), "utf8")) as { version?: string };
+  const pkg = JSON.parse(await readFile(new URL("package.json", `file://${process.cwd()}/`), "utf8")) as {
+    version?: string;
+  };
   assert.equal(CURRENT_VERSION, pkg.version);
 });
 

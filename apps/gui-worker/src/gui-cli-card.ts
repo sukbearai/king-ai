@@ -3,7 +3,7 @@ import {
   applyGuiKanbanMove,
   applyGuiKanbanRelease,
   type GuiKanbanCardLike,
-  type GuiKanbanColumn
+  type GuiKanbanColumn,
 } from "./workflow-state.js";
 
 export type GuiCliCard = GuiKanbanCardLike & {
@@ -23,7 +23,7 @@ export type RunCardCommandDeps<S extends { cards: GuiCliCard[] }> = {
 export function runCardCommand<S extends { cards: GuiCliCard[] }>(
   state: S,
   args: string[],
-  deps: RunCardCommandDeps<S>
+  deps: RunCardCommandDeps<S>,
 ): string {
   const cmd = args[0] || "list";
   if (cmd === "list") return JSON.stringify(state.cards, null, 2);
@@ -63,7 +63,8 @@ export function runCardCommand<S extends { cards: GuiCliCard[] }>(
     const column = args[2] as GuiKanbanColumn | undefined;
     const card = state.cards.find((row) => row.id === id);
     if (!card) return `card not found: ${id}`;
-    if (column !== "todo" && column !== "doing" && column !== "done") return "usage: king-ai card move <id> todo|doing|done";
+    if (column !== "todo" && column !== "doing" && column !== "done")
+      return "usage: king-ai card move <id> todo|doing|done";
     applyGuiKanbanMove(card, column);
     return `card moved ${card.id} ${column}`;
   }

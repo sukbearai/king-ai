@@ -8,9 +8,19 @@ test("saveConfig writes loadable 0600 config", async () => {
   const dir = await mkdtemp(join(tmpdir(), "king-ai-config-"));
   process.env.KING_AI_CONFIG_DIR = dir;
   const mod = await import(`../src/config.js?case=${Date.now()}`);
-  await mod.saveConfig({ serverUrl: "https://runtime.test", computerId: "c1", deviceToken: "secret", tenantId: "user-alice" });
+  await mod.saveConfig({
+    serverUrl: "https://runtime.test",
+    computerId: "c1",
+    deviceToken: "secret",
+    tenantId: "user-alice",
+  });
   const loaded = await mod.loadConfig();
-  assert.deepEqual(loaded, { serverUrl: "https://runtime.test", computerId: "c1", deviceToken: "secret", tenantId: "user-alice" });
+  assert.deepEqual(loaded, {
+    serverUrl: "https://runtime.test",
+    computerId: "c1",
+    deviceToken: "secret",
+    tenantId: "user-alice",
+  });
   const mode = (await stat(join(dir, "computer.json"))).mode & 0o777;
   assert.equal(mode, 0o600);
 });

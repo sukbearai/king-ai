@@ -16,14 +16,16 @@ export type RunEvalCommandDeps<S extends { evaluations: GuiCliEvaluation[] }, E 
 export function runEvalCommand<S extends { evaluations: GuiCliEvaluation[] }, E extends GuiCliEvaluation>(
   state: S,
   args: string[],
-  deps: RunEvalCommandDeps<S, E>
+  deps: RunEvalCommandDeps<S, E>,
 ): string {
   const cmd = args[0] || "list";
   if (cmd === "list") {
     const approvalOnly = args.includes("--approval-required");
     const rows = state.evaluations.filter((evaluation) => !approvalOnly || evaluation.requiresHumanApproval) as E[];
     if (rows.length === 0) return "No evaluations found.";
-    return rows.map((evaluation) => deps.formatEvaluationLine(evaluation)).join("\n") + `\n\n${rows.length} evaluation(s)`;
+    return (
+      rows.map((evaluation) => deps.formatEvaluationLine(evaluation)).join("\n") + `\n\n${rows.length} evaluation(s)`
+    );
   }
   if (cmd === "get") {
     const evaluation = deps.findEvaluation(state, args[1]);
@@ -36,7 +38,7 @@ export function runEvalCommand<S extends { evaluations: GuiCliEvaluation[] }, E 
   try {
     evaluation = deps.parseEvaluationRecord(deps.firstJsonArg(args.slice(1)) || "", {
       artifactId: deps.readOption(args, "--artifact"),
-      initiativeId: deps.readOption(args, "--initiative")
+      initiativeId: deps.readOption(args, "--initiative"),
     });
   } catch (err) {
     return err instanceof Error ? err.message : String(err);

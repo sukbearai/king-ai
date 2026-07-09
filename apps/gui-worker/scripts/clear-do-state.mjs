@@ -44,7 +44,7 @@ function parseArgs(argv) {
     cookie: process.env.KING_AI_GUI_COOKIE || "",
     yes: false,
     dryRun: false,
-    help: false
+    help: false,
   };
 
   for (let index = 0; index < args.length; index += 1) {
@@ -162,7 +162,7 @@ async function resetRemoteDoState(options) {
 
   const response = await fetch(`${base}/gui/reset-state`, {
     method: "POST",
-    headers
+    headers,
   });
   const body = await response.text();
   if (!response.ok) {

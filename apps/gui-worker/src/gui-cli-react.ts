@@ -10,7 +10,7 @@ export type GuiCliReactActor = { id: string };
 export function runReactCommand<S extends { reactions: GuiCliReaction[] }, A extends GuiCliReactActor>(
   state: S,
   args: string[],
-  actor: A
+  actor: A,
 ): string {
   const messageId = args[0];
   const emoji = args[1] || "(ok)";

@@ -40,6 +40,6 @@ export function runtimeCliHelp(): string {
     "  king-ai context get|set|list|delete <key> [value]",
     "  king-ai hypothesis create|list|update [--status <status>] [--evidence artifact-ids]",
     "  king-ai plan parse|apply '<json plan>' [--assign agent-id] [--initiative id]",
-    "  king-ai safety check|request|list|get|approve|deny <action|approvalId>"
+    "  king-ai safety check|request|list|get|approve|deny <action|approvalId>",
   ].join("\n");
 }

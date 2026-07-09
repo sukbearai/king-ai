@@ -68,8 +68,8 @@ export const DEFAULT_ATTACHMENT_POLICY: AttachmentPolicy = {
     "text/tsx",
     "text/xml",
     "application/xml",
-    "application/xhtml+xml"
-  ]
+    "application/xhtml+xml",
+  ],
 };
 
 const SAFE_EXT_BY_MIME: Record<string, string> = {
@@ -93,12 +93,12 @@ const SAFE_EXT_BY_MIME: Record<string, string> = {
   "text/tsx": "tsx",
   "text/xml": "xml",
   "application/xml": "xml",
-  "application/xhtml+xml": "html"
+  "application/xhtml+xml": "html",
 };
 
 export function normalizeRuntimeAttachments(
   input: unknown,
-  policy: Partial<AttachmentPolicy> = {}
+  policy: Partial<AttachmentPolicy> = {},
 ): RuntimeAttachment[] {
   const merged = { ...DEFAULT_ATTACHMENT_POLICY, ...policy };
   const rows = Array.isArray(input) ? input : [];
@@ -147,7 +147,7 @@ export function mediaCacheDir(root = CONFIG_DIR): string {
 
 export async function cacheLocalAttachment(
   attachment: RuntimeAttachment,
-  root = mediaCacheDir()
+  root = mediaCacheDir(),
 ): Promise<RuntimeAttachment> {
   if (attachment.decision !== "accepted") return attachment;
   if (attachment.filePath) return cacheFilePathAttachment(attachment, root);
@@ -155,10 +155,7 @@ export async function cacheLocalAttachment(
   return attachment;
 }
 
-async function cacheFilePathAttachment(
-  attachment: RuntimeAttachment,
-  root: string
-): Promise<RuntimeAttachment> {
+async function cacheFilePathAttachment(attachment: RuntimeAttachment, root: string): Promise<RuntimeAttachment> {
   const filePath = attachment.filePath;
   if (!filePath) return attachment;
   const source = resolve(filePath);
@@ -166,7 +163,7 @@ async function cacheFilePathAttachment(
   if (!sourceStat.isFile()) {
     return { ...attachment, decision: "rejected", rejectionReason: "not-a-file" };
   }
-  const sha256 = attachment.sha256 ?? await hashFile(source);
+  const sha256 = attachment.sha256 ?? (await hashFile(source));
   const ext = safeExtensionForMime(attachment.mime);
   const target = join(root, `${sha256}.${ext}`);
   await mkdir(root, { recursive: true });
@@ -180,14 +177,11 @@ async function cacheFilePathAttachment(
     ...attachment,
     size: sourceStat.size,
     sha256,
-    localPath: target
+    localPath: target,
   };
 }
 
-async function cacheUrlAttachment(
-  attachment: RuntimeAttachment,
-  root: string
-): Promise<RuntimeAttachment> {
+async function cacheUrlAttachment(attachment: RuntimeAttachment, root: string): Promise<RuntimeAttachment> {
   const url = parseDownloadUrl(attachment.url);
   if (!url) return { ...attachment, decision: "rejected", rejectionReason: "invalid-url" };
   const res = await fetch(url, { redirect: "follow" });
@@ -197,12 +191,14 @@ async function cacheUrlAttachment(
     return { ...attachment, decision: "rejected", rejectionReason: "mime-mismatch" };
   }
   const contentLength = Number(res.headers.get("Content-Length") ?? "");
-  const maxBytes = attachment.kind === "image" ? DEFAULT_ATTACHMENT_POLICY.imageMaxBytes : DEFAULT_ATTACHMENT_POLICY.maxFileBytes;
+  const maxBytes =
+    attachment.kind === "image" ? DEFAULT_ATTACHMENT_POLICY.imageMaxBytes : DEFAULT_ATTACHMENT_POLICY.maxFileBytes;
   if (Number.isFinite(contentLength) && contentLength > maxBytes) {
     return { ...attachment, decision: "rejected", rejectionReason: "download-too-large" };
   }
   const bytes = new Uint8Array(await res.arrayBuffer());
-  if (bytes.byteLength > maxBytes) return { ...attachment, decision: "rejected", rejectionReason: "download-too-large" };
+  if (bytes.byteLength > maxBytes)
+    return { ...attachment, decision: "rejected", rejectionReason: "download-too-large" };
   const expectedSize = attachment.size > 0 ? attachment.size : bytes.byteLength;
   if (bytes.byteLength !== expectedSize) {
     return { ...attachment, decision: "rejected", rejectionReason: "size-mismatch" };
@@ -225,13 +221,13 @@ async function cacheUrlAttachment(
     ...attachment,
     size: bytes.byteLength,
     sha256,
-    localPath: target
+    localPath: target,
   };
 }
 
 export async function cacheLocalAttachments(
   attachments: readonly RuntimeAttachment[],
-  root = mediaCacheDir()
+  root = mediaCacheDir(),
 ): Promise<RuntimeAttachment[]> {
   const out: RuntimeAttachment[] = [];
   for (const attachment of attachments) {
@@ -258,7 +254,7 @@ export async function gcMediaCache(root = mediaCacheDir(), maxAgeMs = 24 * 60 * 
 }
 
 function normalizeRuntimeAttachment(value: unknown, index: number): RuntimeAttachment {
-  const row = value && typeof value === "object" ? value as RuntimeAttachmentInput : {};
+  const row = value && typeof value === "object" ? (value as RuntimeAttachmentInput) : {};
   const name = cleanString(row.name) || (row.filePath ? basename(row.filePath) : `attachment-${index + 1}`);
   const mime = normalizeAttachmentMime(cleanString(row.mime), name);
   const kind = normalizeAttachmentKind(row.kind, mime);
@@ -274,7 +270,7 @@ function normalizeRuntimeAttachment(value: unknown, index: number): RuntimeAttac
     filePath: cleanString(row.filePath),
     source: cleanString(row.source),
     required: row.required === true,
-    decision: "accepted"
+    decision: "accepted",
   };
 }
 
@@ -282,15 +278,19 @@ function attachmentDecision(
   attachment: RuntimeAttachment,
   policy: AttachmentPolicy,
   acceptedCount: number,
-  acceptedBytes: number
+  acceptedBytes: number,
 ): { decision: AttachmentDecision; reason: string } | null {
   if (!attachment.filePath && !attachment.url) return { decision: "rejected", reason: "missing-location" };
-  if (attachment.kind === "audio" || attachment.kind === "video") return { decision: "skipped", reason: "unsupported-kind" };
-  if (attachment.kind === "image" && !policy.allowedImageMimes.includes(attachment.mime)) return { decision: "rejected", reason: "unsupported-image-mime" };
-  if (attachment.kind === "file" && !policy.allowedFileMimes.includes(attachment.mime)) return { decision: "rejected", reason: "unsupported-file-mime" };
+  if (attachment.kind === "audio" || attachment.kind === "video")
+    return { decision: "skipped", reason: "unsupported-kind" };
+  if (attachment.kind === "image" && !policy.allowedImageMimes.includes(attachment.mime))
+    return { decision: "rejected", reason: "unsupported-image-mime" };
+  if (attachment.kind === "file" && !policy.allowedFileMimes.includes(attachment.mime))
+    return { decision: "rejected", reason: "unsupported-file-mime" };
   if (acceptedCount >= policy.maxCount) return { decision: "rejected", reason: "too-many-attachments" };
   if (attachment.size > policy.maxFileBytes) return { decision: "rejected", reason: "file-too-large" };
-  if (attachment.kind === "image" && attachment.size > policy.imageMaxBytes) return { decision: "rejected", reason: "image-too-large" };
+  if (attachment.kind === "image" && attachment.size > policy.imageMaxBytes)
+    return { decision: "rejected", reason: "image-too-large" };
   if (acceptedBytes + attachment.size > policy.maxBytes) return { decision: "rejected", reason: "run-too-large" };
   return null;
 }
@@ -316,23 +316,25 @@ function normalizeAttachmentMime(value: string | undefined, name: string): strin
 
 function mimeFromName(name: string): string | undefined {
   const ext = name.toLowerCase().split(".").pop();
-  return ({
-    css: "text/css",
-    csv: "text/csv",
-    htm: "text/html",
-    html: "text/html",
-    js: "text/javascript",
-    json: "application/json",
-    jsx: "text/jsx",
-    md: "text/markdown",
-    mjs: "text/javascript",
-    ts: "application/typescript",
-    tsx: "text/tsx",
-    tsv: "text/tsv",
-    txt: "text/plain",
-    xhtml: "application/xhtml+xml",
-    xml: "text/xml"
-  } as Record<string, string | undefined>)[ext ?? ""];
+  return (
+    {
+      css: "text/css",
+      csv: "text/csv",
+      htm: "text/html",
+      html: "text/html",
+      js: "text/javascript",
+      json: "application/json",
+      jsx: "text/jsx",
+      md: "text/markdown",
+      mjs: "text/javascript",
+      ts: "application/typescript",
+      tsx: "text/tsx",
+      tsv: "text/tsv",
+      txt: "text/plain",
+      xhtml: "application/xhtml+xml",
+      xml: "text/xml",
+    } as Record<string, string | undefined>
+  )[ext ?? ""];
 }
 
 function cleanString(value: unknown): string | undefined {
@@ -370,7 +372,7 @@ async function listFiles(root: string): Promise<string[]> {
   const files: string[] = [];
   for (const entry of entries) {
     const full = join(root, entry.name);
-    if (entry.isDirectory()) files.push(...await listFiles(full));
+    if (entry.isDirectory()) files.push(...(await listFiles(full)));
     else if (entry.isFile()) files.push(full);
   }
   return files;

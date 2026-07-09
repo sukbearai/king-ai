@@ -8,6 +8,8 @@
     "build": "pnpm --filter @suwujs/king-ai build && pnpm --filter @king-ai/gui-worker build && pnpm --filter @king-ai/docs build",
     "test": "pnpm --filter @suwujs/king-ai test && pnpm --filter @king-ai/gui-worker test && pnpm --filter @king-ai/skills validate",
     "verify": "pnpm build && pnpm test",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
     "dev": "node scripts/dev-cli.mjs",
     "docs:dev": "pnpm --filter @king-ai/docs dev",
     "docs:build": "pnpm --filter @king-ai/docs build",
@@ -25,7 +27,7 @@
   },
   "packageManager": "pnpm@9.15.0",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.13.0"
   },
   "pnpm": {
     "overrides": {
@@ -33,6 +35,7 @@
     }
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.3",
     "bumpp": "^10.4.1",
     "typescript": "^5.7.2"
   }

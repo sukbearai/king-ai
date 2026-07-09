@@ -38,13 +38,23 @@ export function resolveHostHomeEntry(entry: string, home = homedir()): { name: s
   return { name, source };
 }
 
-export async function linkHostHomeEntries(agentHome: string, env: NodeJS.ProcessEnv = process.env, home = homedir()): Promise<HostHomeEntry[]> {
+export async function linkHostHomeEntries(
+  agentHome: string,
+  env: NodeJS.ProcessEnv = process.env,
+  home = homedir(),
+): Promise<HostHomeEntry[]> {
   const entries: HostHomeEntry[] = [];
   await mkdir(agentHome, { recursive: true });
   for (const raw of resolveHostHomeEntryNames(env)) {
     const resolved = resolveHostHomeEntry(raw, home);
     if (!resolved) {
-      entries.push({ name: raw, source: raw, target: "", linked: false, reason: "entry must be a single host-home dotfile or dot directory" });
+      entries.push({
+        name: raw,
+        source: raw,
+        target: "",
+        linked: false,
+        reason: "entry must be a single host-home dotfile or dot directory",
+      });
       continue;
     }
     const target = join(agentHome, resolved.name);

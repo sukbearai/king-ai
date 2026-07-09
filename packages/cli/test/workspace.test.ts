@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
 import { delimiter, resolve } from "node:path";
 import { test } from "node:test";
-import { agentWorkspaceRoot, detectLocalCapabilities, formatWorkspacePolicy, resolveWorkspaceAllowlist } from "../src/workspace.js";
+import {
+  agentWorkspaceRoot,
+  detectLocalCapabilities,
+  formatWorkspacePolicy,
+  resolveWorkspaceAllowlist,
+} from "../src/workspace.js";
 
 test("resolveWorkspaceAllowlist parses KING_AI_WORKSPACES with path delimiter and commas", () => {
   const paths = resolveWorkspaceAllowlist({
-    KING_AI_WORKSPACES: [`~/workspace/github`, "/tmp/one,/tmp/two", "/tmp/one"].join(delimiter)
+    KING_AI_WORKSPACES: [`~/workspace/github`, "/tmp/one,/tmp/two", "/tmp/one"].join(delimiter),
   } as NodeJS.ProcessEnv);
 
   assert.equal(paths[0].endsWith("/workspace/github"), true);
@@ -24,10 +29,19 @@ test("formatWorkspacePolicy explains allowed and unconfigured workspaces", () =>
 });
 
 test("agentWorkspaceRoot uses configured per-agent base or private home workspace", () => {
-  assert.equal(agentWorkspaceRoot("demo-agent", "/tmp/home/demo-agent", {} as NodeJS.ProcessEnv), resolve("/tmp/home/demo-agent/workspace"));
   assert.equal(
-    agentWorkspaceRoot("demo-agent", "/tmp/home/demo-agent", { KING_AI_AGENT_WORKSPACE_ROOT: "/tmp/agent-worktrees" } as NodeJS.ProcessEnv),
-    resolve("/tmp/agent-worktrees/demo-agent")
+    agentWorkspaceRoot("demo-agent", "/tmp/home/demo-agent", {} as NodeJS.ProcessEnv),
+    resolve("/tmp/home/demo-agent/workspace"),
   );
-  assert.equal(detectLocalCapabilities({ KING_AI_AGENT_WORKSPACE_ROOT: "/tmp/agent-worktrees" } as NodeJS.ProcessEnv).agentWorkspaceRoot, resolve("/tmp/agent-worktrees"));
+  assert.equal(
+    agentWorkspaceRoot("demo-agent", "/tmp/home/demo-agent", {
+      KING_AI_AGENT_WORKSPACE_ROOT: "/tmp/agent-worktrees",
+    } as NodeJS.ProcessEnv),
+    resolve("/tmp/agent-worktrees/demo-agent"),
+  );
+  assert.equal(
+    detectLocalCapabilities({ KING_AI_AGENT_WORKSPACE_ROOT: "/tmp/agent-worktrees" } as NodeJS.ProcessEnv)
+      .agentWorkspaceRoot,
+    resolve("/tmp/agent-worktrees"),
+  );
 });

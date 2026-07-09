@@ -19,7 +19,7 @@ export function runClaimCommand<S extends { claims: GuiCliClaim[] }>(
   state: S,
   args: string[],
   actor: GuiCliClaimActor,
-  deps: RunClaimCommandDeps<S>
+  deps: RunClaimCommandDeps<S>,
 ): string {
   const name = args[0] || "work";
   const inIdx = args.indexOf("--in");
@@ -37,7 +37,7 @@ export function runClaimCommand<S extends { claims: GuiCliClaim[] }>(
     conversationId,
     owner,
     allowedPaths,
-    created_at: Date.now()
+    created_at: Date.now(),
   };
   state.claims.push(claim);
   return `claim created ${claim.id}${allowedPaths.length ? ` paths=${allowedPaths.join(",")}` : ""}`;

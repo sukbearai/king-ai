@@ -14,13 +14,13 @@ async function collect(input: string[]): Promise<unknown[]> {
 test("parseSseStream parses split SSE blocks", async () => {
   const events = await collect([
     "event: wake\n",
-    "data: {\"conversationId\":\"c1\"}\n\n",
+    'data: {"conversationId":"c1"}\n\n',
     ": keepalive\n\n",
-    "id: 2\nevent: steer\ndata: {}\n\n"
+    "id: 2\nevent: steer\ndata: {}\n\n",
   ]);
   assert.deepEqual(events, [
-    { event: "wake", data: "{\"conversationId\":\"c1\"}" },
-    { id: "2", event: "steer", data: "{}" }
+    { event: "wake", data: '{"conversationId":"c1"}' },
+    { id: "2", event: "steer", data: "{}" },
   ]);
 });
 
@@ -30,12 +30,9 @@ test("parseSseStream rejects an unterminated frame beyond the buffer limit", asy
     yield "1234567890";
   }
 
-  await assert.rejects(
-    async () => {
-      for await (const _ of parseSseStream(chunks(), { maxBufferBytes: 8 })) {
-        // Drain the stream.
-      }
-    },
-    /SSE frame exceeded 8 bytes/
-  );
+  await assert.rejects(async () => {
+    for await (const _ of parseSseStream(chunks(), { maxBufferBytes: 8 })) {
+      // Drain the stream.
+    }
+  }, /SSE frame exceeded 8 bytes/);
 });

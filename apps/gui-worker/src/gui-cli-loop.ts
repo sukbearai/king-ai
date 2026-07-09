@@ -19,10 +19,7 @@ export type RunLoopCommandDeps<S extends GuiCliLoopState> = {
   parseEventPayload: (args: string[]) => unknown;
   normalizePositiveInt: (value: string | undefined, fallback: number) => number;
   isLoopEventType: (value: string | undefined) => boolean;
-  pushLoopEvent: (
-    state: S,
-    event: Record<string, unknown>
-  ) => GuiCliLoopEvent;
+  pushLoopEvent: (state: S, event: Record<string, unknown>) => GuiCliLoopEvent;
   buildEventLoopSnapshot: (state: S) => {
     runId?: string;
     loop?: number;
@@ -36,7 +33,7 @@ export type RunLoopCommandDeps<S extends GuiCliLoopState> = {
 export function runLoopCommand<S extends GuiCliLoopState>(
   state: S,
   args: string[],
-  deps: RunLoopCommandDeps<S>
+  deps: RunLoopCommandDeps<S>,
 ): string {
   const cmd = args[0] || "recent";
   if (cmd === "tick") {
@@ -63,7 +60,7 @@ export function runLoopCommand<S extends GuiCliLoopState>(
       path: deps.readOption(args, "--path"),
       tokens: deps.readNumberOption(args, "--tokens"),
       budget: deps.readNumberOption(args, "--budget"),
-      payload: deps.parseEventPayload(args.slice(2))
+      payload: deps.parseEventPayload(args.slice(2)),
     });
     return `loop event ${event.type} recorded loop=${event.loop}`;
   }
@@ -72,7 +69,7 @@ export function runLoopCommand<S extends GuiCliLoopState>(
     deps.pushLoopEvent(state, {
       type: "loop.classified",
       classification: snapshot.classification,
-      reasons: snapshot.reasons
+      reasons: snapshot.reasons,
     });
     return `loop classified ${snapshot.classification}: ${snapshot.reasons.join("; ")}`;
   }
@@ -85,7 +82,7 @@ export function runLoopCommand<S extends GuiCliLoopState>(
           `loop=${snapshot.loop}`,
           `classification=${snapshot.classification}`,
           `reasons=${snapshot.reasons.join("; ")}`,
-          `events=${snapshot.recentEvents?.length ?? 0}`
+          `events=${snapshot.recentEvents?.length ?? 0}`,
         ].join("\n");
   }
   if (cmd === "recent" || cmd === "list") {

@@ -1,4 +1,12 @@
-export type KingRoleTemplateId = "planner" | "builder" | "reviewer" | "tester" | "ops" | "researcher" | "doc-writer" | "summarizer";
+export type KingRoleTemplateId =
+  | "planner"
+  | "builder"
+  | "reviewer"
+  | "tester"
+  | "ops"
+  | "researcher"
+  | "doc-writer"
+  | "summarizer";
 export type KingRoutingMode = "one-of-us" | "each" | "review-required" | "human-decision";
 export type KingWorkflowObjectType = "initiative" | "task" | "handoff" | "review" | "decision" | "artifact";
 export type KingTeamPermissionAction =
@@ -90,51 +98,54 @@ export const KING_AI_ROLE_TEMPLATES: KingRoleTemplate[] = [
   {
     id: "planner",
     name: "Planner",
-    responsibility: "Break ambiguous goals into ordered work, assign owners, track dependencies, and decide when human input is needed.",
+    responsibility:
+      "Break ambiguous goals into ordered work, assign owners, track dependencies, and decide when human input is needed.",
     defaultRoutingMode: "one-of-us",
-    capabilityHints: ["planning", "triage", "coordination"]
+    capabilityHints: ["planning", "triage", "coordination"],
   },
   {
     id: "builder",
     name: "Builder",
-    responsibility: "Implement assigned product, code, document, or analysis changes and report exact artifacts produced.",
+    responsibility:
+      "Implement assigned product, code, document, or analysis changes and report exact artifacts produced.",
     defaultRoutingMode: "one-of-us",
-    capabilityHints: ["implementation", "code", "docs"]
+    capabilityHints: ["implementation", "code", "docs"],
   },
   {
     id: "reviewer",
     name: "Reviewer",
     responsibility: "Review scope, risks, correctness, and acceptance evidence before work is marked done.",
     defaultRoutingMode: "review-required",
-    capabilityHints: ["review", "quality", "risk"]
+    capabilityHints: ["review", "quality", "risk"],
   },
   {
     id: "tester",
     name: "Tester",
     responsibility: "Design and run verification, regression, and release-readiness checks with reproducible commands.",
     defaultRoutingMode: "review-required",
-    capabilityHints: ["testing", "verification", "regression"]
+    capabilityHints: ["testing", "verification", "regression"],
   },
   {
     id: "ops",
     name: "Ops",
     responsibility: "Handle environment, queue, release, deployment, audit, and operational safety work.",
     defaultRoutingMode: "human-decision",
-    capabilityHints: ["ops", "release", "deployment", "audit"]
+    capabilityHints: ["ops", "release", "deployment", "audit"],
   },
   {
     id: "researcher",
     name: "Researcher",
-    responsibility: "Collect evidence, compare options, preserve source quality, and turn findings into structured artifacts.",
+    responsibility:
+      "Collect evidence, compare options, preserve source quality, and turn findings into structured artifacts.",
     defaultRoutingMode: "each",
-    capabilityHints: ["research", "evidence", "analysis"]
+    capabilityHints: ["research", "evidence", "analysis"],
   },
   {
     id: "doc-writer",
     name: "Doc Writer",
     responsibility: "Turn verified decisions and artifacts into user-facing documentation, release notes, and briefs.",
     defaultRoutingMode: "one-of-us",
-    capabilityHints: ["documentation", "release-notes", "summary"]
+    capabilityHints: ["documentation", "release-notes", "summary"],
   },
   {
     // Loop-closing role. Concrete rosters may fold this into the planner/coordinator
@@ -144,8 +155,8 @@ export const KING_AI_ROLE_TEMPLATES: KingRoleTemplate[] = [
     name: "Summarizer",
     responsibility: "Close loops with concise status, residual risks, decisions, and artifact links.",
     defaultRoutingMode: "one-of-us",
-    capabilityHints: ["summary", "handoff", "status"]
-  }
+    capabilityHints: ["summary", "handoff", "status"],
+  },
 ];
 
 export function defaultTeamSpec(id = "default-team", name = "Default Team"): KingTeamSpec {
@@ -160,8 +171,8 @@ export function defaultTeamSpec(id = "default-team", name = "Default Team"): Kin
         mode: base.defaultRoutingMode,
         reviewerRole: template === "builder" ? "reviewer" : undefined,
         escalation: template === "ops" ? "human" : "coordinator",
-        acceptanceRequired: template === "builder" || template === "reviewer" || template === "tester"
-      }
+        acceptanceRequired: template === "builder" || template === "reviewer" || template === "tester",
+      },
     };
   };
   return {
@@ -175,31 +186,73 @@ export function defaultTeamSpec(id = "default-team", name = "Default Team"): Kin
       role("ops"),
       role("researcher"),
       role("doc-writer"),
-      role("summarizer")
+      role("summarizer"),
     ],
     routingPolicy: {
       defaultMode: "one-of-us",
       capabilityFirst: true,
       reviewRequiredFor: ["code", "release", "ops", "external"],
-      humanDecisionFor: ["production-deploy", "scope-change", "spend", "security-risk"]
+      humanDecisionFor: ["production-deploy", "scope-change", "spend", "security-risk"],
     },
     permissionPolicy: {
       defaultDecision: "deny",
       rules: [
-        { role: "planner", allow: ["assign-task", "claim-task", "create-artifact", "create-decision", "close-task", "change-scope", "view-audit", "manage-queue", "view-cost"], requireHumanDecision: ["change-scope"] },
+        {
+          role: "planner",
+          allow: [
+            "assign-task",
+            "claim-task",
+            "create-artifact",
+            "create-decision",
+            "close-task",
+            "change-scope",
+            "view-audit",
+            "manage-queue",
+            "view-cost",
+          ],
+          requireHumanDecision: ["change-scope"],
+        },
         { role: "builder", allow: ["claim-task", "create-artifact"], requireReviewBy: "reviewer" },
-        { role: "reviewer", allow: ["claim-task", "create-artifact", "create-decision", "approve-decision", "close-task", "view-audit", "view-cost"] },
+        {
+          role: "reviewer",
+          allow: [
+            "claim-task",
+            "create-artifact",
+            "create-decision",
+            "approve-decision",
+            "close-task",
+            "view-audit",
+            "view-cost",
+          ],
+        },
         { role: "tester", allow: ["claim-task", "create-artifact", "create-decision", "view-audit"] },
-        { role: "ops", allow: ["claim-task", "create-artifact", "create-decision", "approve-decision", "deploy-release", "view-audit", "manage-queue", "view-cost"], requireHumanDecision: ["deploy-release"] },
+        {
+          role: "ops",
+          allow: [
+            "claim-task",
+            "create-artifact",
+            "create-decision",
+            "approve-decision",
+            "deploy-release",
+            "view-audit",
+            "manage-queue",
+            "view-cost",
+          ],
+          requireHumanDecision: ["deploy-release"],
+        },
         { role: "researcher", allow: ["claim-task", "create-artifact", "view-audit"] },
         { role: "doc-writer", allow: ["claim-task", "create-artifact", "view-audit"] },
-        { role: "summarizer", allow: ["claim-task", "create-artifact", "view-audit"] }
-      ]
-    }
+        { role: "summarizer", allow: ["claim-task", "create-artifact", "view-audit"] },
+      ],
+    },
   };
 }
 
-export function checkTeamPermission(team: KingTeamSpec, role: string, action: KingTeamPermissionAction): {
+export function checkTeamPermission(
+  team: KingTeamSpec,
+  role: string,
+  action: KingTeamPermissionAction,
+): {
   decision: "allow" | "deny" | "human-decision";
   rule?: KingTeamPermissionRule;
 } {
@@ -220,7 +273,7 @@ export function normalizeTeamRoleId(role: string): string {
     devops: "ops",
     feedback: "researcher",
     marketing: "doc-writer",
-    docs: "doc-writer"
+    docs: "doc-writer",
   };
   return aliases[value] ?? value;
 }
@@ -243,7 +296,10 @@ export function roleTemplateForAgent(agent: KingAgentRoleLike): KingRoleTemplate
 }
 
 function isRuntimeLogPaste(text: string): boolean {
-  const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+  const lines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
   if (lines.length < 3) return false;
   const logLines = lines.filter((line) => /^\[\d{4}-\d{2}-\d{2}T/.test(line) && /\[[\w-]+\/[\w-]+\]/.test(line));
   return logLines.length >= 3 || (logLines.length >= 2 && logLines.length / lines.length >= 0.5);
@@ -263,8 +319,10 @@ export function hasExplicitImplementationIntent(text: string): boolean {
 
   if (/请.*(?:团队|大家|dev).*(?:实现|开发|修复|做|完成)/.test(body)) return true;
   if (/(?:实现|开发|修复|编写|添加).{0,24}(?:功能|模块|接口|命令|适配|层|bug|feature)/i.test(body)) return true;
-  if (/\b(implement|build|fix|create|add|write)\b.+\b(feature|bug|module|api|endpoint|adapter|command)\b/i.test(value)) return true;
-  if (/\bphase\s*\d+\b/i.test(value) && /\b(implement|build|add|create|adapter|materialize)\b/i.test(value)) return true;
+  if (/\b(implement|build|fix|create|add|write)\b.+\b(feature|bug|module|api|endpoint|adapter|command)\b/i.test(value))
+    return true;
+  if (/\bphase\s*\d+\b/i.test(value) && /\b(implement|build|add|create|adapter|materialize)\b/i.test(value))
+    return true;
 
   return false;
 }
@@ -293,7 +351,8 @@ export function isPlannerGuidanceText(text: string): boolean {
 
   if (/(怎么|如何).{0,8}(验证|验收|发布|提交|部署)/.test(body)) return true;
   if (/(要不要|需要|是否).{0,8}(发布|提交|部署)/.test(body)) return true;
-  if (/\b(how (to )?verify|need (to )?(publish|release|deploy)|should (i|we) (publish|release|deploy))\b/i.test(value)) return true;
+  if (/\b(how (to )?verify|need (to )?(publish|release|deploy)|should (i|we) (publish|release|deploy))\b/i.test(value))
+    return true;
 
   if (/^(go|yes|ok|收到|确认|拍板)/i.test(body)) return true;
   if (/(拍板|确认开工|落盘吧)/.test(body)) return true;
@@ -308,15 +367,28 @@ export function isPlannerGuidanceText(text: string): boolean {
 export function requiredCapabilitiesForText(text: string): string[] {
   const value = text.toLowerCase();
   if (isPlannerGuidanceText(text)) return ["coordination"];
-  if (/\b(everyone|everybody|all hands|team)\b/.test(value) && /\b(roll call|presence check|attendance check|reply with \d+)\b/.test(value)) return ["coordination"];
+  if (
+    /\b(everyone|everybody|all hands|team)\b/.test(value) &&
+    /\b(roll call|presence check|attendance check|reply with \d+)\b/.test(value)
+  )
+    return ["coordination"];
   if (/(所有人|大家|全员).*(回个?|回复|报个?)\s*\d+/.test(text)) return ["coordination"];
   if (/(有人|都|还).{0,6}(在吗|在不在)/.test(text)) return ["coordination"];
   if (/^(你在[吗么]?|在吗|在不在)[?.!？!]*$/u.test(text.trim())) return ["coordination"];
   if (/轮流报数|按顺序报数?|接龙报数|顺序报数|依次报数/.test(text)) return ["coordination"];
   if (/(轮流|按顺序|依次|接龙).{0,8}(报数|报个?数|数数)/.test(text)) return ["coordination"];
   if (/(大家|所有人|全员).{0,8}(轮流|按顺序|依次).{0,8}(报|回|回复)/.test(text)) return ["coordination"];
-  if (/\b(round[- ]?robin|count in order|sequential count|take turns)\b/i.test(value) && /\b(count|number|reply|say)\b/i.test(value)) return ["coordination"];
-  if (/\b(everyone|everybody|team)\b/i.test(value) && /\b(count|number)\b/i.test(value) && /\b(order|sequence|turns?)\b/i.test(value)) return ["coordination"];
+  if (
+    /\b(round[- ]?robin|count in order|sequential count|take turns)\b/i.test(value) &&
+    /\b(count|number|reply|say)\b/i.test(value)
+  )
+    return ["coordination"];
+  if (
+    /\b(everyone|everybody|team)\b/i.test(value) &&
+    /\b(count|number)\b/i.test(value) &&
+    /\b(order|sequence|turns?)\b/i.test(value)
+  )
+    return ["coordination"];
   if (/\b(test|verify|verification|regression|qa)\b/.test(value)) return ["testing", "verification"];
   if (/\b(release|deploy|queue|approval|audit|ops|devops)\b/.test(value)) return ["ops", "release", "audit"];
   if (/\b(research|compare|brief|market|source|evidence)\b/.test(value)) return ["research", "evidence"];
@@ -339,7 +411,7 @@ export function scenarioTemplate(id: KingScenarioTemplate["id"]): KingScenarioTe
   const commonAcceptance = [
     "Every task has an owner role and acceptance evidence.",
     "Review-required work has a reviewer role before completion.",
-    "Human decisions are represented as decision workflow objects."
+    "Human decisions are represented as decision workflow objects.",
   ];
   const scenarios: Record<KingScenarioTemplate["id"], KingScenarioTemplate> = {
     "repo-takeover": {
@@ -349,10 +421,27 @@ export function scenarioTemplate(id: KingScenarioTemplate["id"]): KingScenarioTe
       team,
       acceptance: [...commonAcceptance, "Repository structure, build/test commands, and risk areas are captured."],
       tasks: [
-        { title: "Map repository structure and ownership boundaries", ownerRole: "researcher", reviewerRole: "planner", acceptance: ["Key modules and commands are documented."] },
-        { title: "Create takeover backlog and capsule boundaries", ownerRole: "planner", reviewerRole: "reviewer", dependsOn: ["task-1"], acceptance: ["Backlog has ordered tasks and scoped capsules."] },
-        { title: "Verify build and test entrypoints", ownerRole: "tester", reviewerRole: "ops", dependsOn: ["task-1"], acceptance: ["Verification commands and failures are recorded."] }
-      ]
+        {
+          title: "Map repository structure and ownership boundaries",
+          ownerRole: "researcher",
+          reviewerRole: "planner",
+          acceptance: ["Key modules and commands are documented."],
+        },
+        {
+          title: "Create takeover backlog and capsule boundaries",
+          ownerRole: "planner",
+          reviewerRole: "reviewer",
+          dependsOn: ["task-1"],
+          acceptance: ["Backlog has ordered tasks and scoped capsules."],
+        },
+        {
+          title: "Verify build and test entrypoints",
+          ownerRole: "tester",
+          reviewerRole: "ops",
+          dependsOn: ["task-1"],
+          acceptance: ["Verification commands and failures are recorded."],
+        },
+      ],
     },
     "bug-investigation": {
       id,
@@ -361,10 +450,27 @@ export function scenarioTemplate(id: KingScenarioTemplate["id"]): KingScenarioTe
       team,
       acceptance: [...commonAcceptance, "Root cause is linked to code/runtime evidence."],
       tasks: [
-        { title: "Reproduce and isolate symptom", ownerRole: "tester", reviewerRole: "researcher", acceptance: ["Reproduction or strongest available evidence is recorded."] },
-        { title: "Trace root cause and candidate fix", ownerRole: "builder", reviewerRole: "reviewer", dependsOn: ["task-1"], acceptance: ["Cause and changed files are identified."] },
-        { title: "Verify fix and summarize residual risk", ownerRole: "reviewer", reviewerRole: "planner", dependsOn: ["task-2"], acceptance: ["Regression evidence and risk summary are recorded."] }
-      ]
+        {
+          title: "Reproduce and isolate symptom",
+          ownerRole: "tester",
+          reviewerRole: "researcher",
+          acceptance: ["Reproduction or strongest available evidence is recorded."],
+        },
+        {
+          title: "Trace root cause and candidate fix",
+          ownerRole: "builder",
+          reviewerRole: "reviewer",
+          dependsOn: ["task-1"],
+          acceptance: ["Cause and changed files are identified."],
+        },
+        {
+          title: "Verify fix and summarize residual risk",
+          ownerRole: "reviewer",
+          reviewerRole: "planner",
+          dependsOn: ["task-2"],
+          acceptance: ["Regression evidence and risk summary are recorded."],
+        },
+      ],
     },
     "product-design": {
       id,
@@ -373,10 +479,27 @@ export function scenarioTemplate(id: KingScenarioTemplate["id"]): KingScenarioTe
       team,
       acceptance: [...commonAcceptance, "Design decisions are explicit and unresolved choices are escalated."],
       tasks: [
-        { title: "Research user goals and competing workflows", ownerRole: "researcher", reviewerRole: "planner", acceptance: ["Insights and assumptions are captured."] },
-        { title: "Define user flow and acceptance criteria", ownerRole: "planner", reviewerRole: "reviewer", dependsOn: ["task-1"], acceptance: ["Flow, scope, and non-goals are written."] },
-        { title: "Draft implementation-facing design artifact", ownerRole: "doc-writer", reviewerRole: "builder", dependsOn: ["task-2"], acceptance: ["Artifact is ready for build planning."] }
-      ]
+        {
+          title: "Research user goals and competing workflows",
+          ownerRole: "researcher",
+          reviewerRole: "planner",
+          acceptance: ["Insights and assumptions are captured."],
+        },
+        {
+          title: "Define user flow and acceptance criteria",
+          ownerRole: "planner",
+          reviewerRole: "reviewer",
+          dependsOn: ["task-1"],
+          acceptance: ["Flow, scope, and non-goals are written."],
+        },
+        {
+          title: "Draft implementation-facing design artifact",
+          ownerRole: "doc-writer",
+          reviewerRole: "builder",
+          dependsOn: ["task-2"],
+          acceptance: ["Artifact is ready for build planning."],
+        },
+      ],
     },
     "release-check": {
       id,
@@ -385,10 +508,27 @@ export function scenarioTemplate(id: KingScenarioTemplate["id"]): KingScenarioTe
       team,
       acceptance: [...commonAcceptance, "Release decision is represented as an approval or decision object."],
       tasks: [
-        { title: "Run release verification checklist", ownerRole: "tester", reviewerRole: "ops", acceptance: ["Commands, pass/fail state, and gaps are recorded."] },
-        { title: "Review operational and regression risk", ownerRole: "reviewer", reviewerRole: "ops", dependsOn: ["task-1"], acceptance: ["Risks and mitigations are recorded."] },
-        { title: "Prepare release notes and human decision", ownerRole: "doc-writer", reviewerRole: "planner", dependsOn: ["task-2"], acceptance: ["Release notes and approval question exist."] }
-      ]
+        {
+          title: "Run release verification checklist",
+          ownerRole: "tester",
+          reviewerRole: "ops",
+          acceptance: ["Commands, pass/fail state, and gaps are recorded."],
+        },
+        {
+          title: "Review operational and regression risk",
+          ownerRole: "reviewer",
+          reviewerRole: "ops",
+          dependsOn: ["task-1"],
+          acceptance: ["Risks and mitigations are recorded."],
+        },
+        {
+          title: "Prepare release notes and human decision",
+          ownerRole: "doc-writer",
+          reviewerRole: "planner",
+          dependsOn: ["task-2"],
+          acceptance: ["Release notes and approval question exist."],
+        },
+      ],
     },
     "research-brief": {
       id,
@@ -397,15 +537,35 @@ export function scenarioTemplate(id: KingScenarioTemplate["id"]): KingScenarioTe
       team,
       acceptance: [...commonAcceptance, "Claims include source quality and confidence."],
       tasks: [
-        { title: "Collect evidence and competing viewpoints", ownerRole: "researcher", reviewerRole: "reviewer", acceptance: ["Artifacts include source and confidence."] },
-        { title: "Synthesize brief and recommendations", ownerRole: "doc-writer", reviewerRole: "planner", dependsOn: ["task-1"], acceptance: ["Brief includes recommendation and caveats."] },
-        { title: "Record decision points and follow-up tasks", ownerRole: "planner", reviewerRole: "reviewer", dependsOn: ["task-2"], acceptance: ["Open decisions and next tasks are explicit."] }
-      ]
-    }
+        {
+          title: "Collect evidence and competing viewpoints",
+          ownerRole: "researcher",
+          reviewerRole: "reviewer",
+          acceptance: ["Artifacts include source and confidence."],
+        },
+        {
+          title: "Synthesize brief and recommendations",
+          ownerRole: "doc-writer",
+          reviewerRole: "planner",
+          dependsOn: ["task-1"],
+          acceptance: ["Brief includes recommendation and caveats."],
+        },
+        {
+          title: "Record decision points and follow-up tasks",
+          ownerRole: "planner",
+          reviewerRole: "reviewer",
+          dependsOn: ["task-2"],
+          acceptance: ["Open decisions and next tasks are explicit."],
+        },
+      ],
+    },
   };
   return scenarios[id];
 }
 
 function titleCase(value: string): string {
-  return value.split("-").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
+  return value
+    .split("-")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }

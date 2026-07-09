@@ -8,7 +8,7 @@ import { dotGet, loadTradeConfig } from "./config.js";
 const execFileP = promisify(execFile);
 
 const AGENT_BACKENDS = ["grok", "claude", "codex"] as const;
-type AgentBackend = typeof AGENT_BACKENDS[number];
+type AgentBackend = (typeof AGENT_BACKENDS)[number];
 
 const PROMPT_ARG_MAX = 4000;
 const BACKEND_BLOCK_MS = 10 * 60 * 1000;
@@ -24,7 +24,7 @@ interface ExecFileError extends Error {
 async function execFileClosedStdin(
   file: string,
   args: string[],
-  options: { timeout: number; maxBuffer?: number; env?: NodeJS.ProcessEnv }
+  options: { timeout: number; maxBuffer?: number; env?: NodeJS.ProcessEnv },
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = execFile(file, args, options, (err, stdout, stderr) => {
@@ -39,7 +39,7 @@ async function execFileWithStdin(
   file: string,
   args: string[],
   stdinText: string,
-  options: { timeout: number; maxBuffer?: number; env?: NodeJS.ProcessEnv }
+  options: { timeout: number; maxBuffer?: number; env?: NodeJS.ProcessEnv },
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = execFile(file, args, options, (err, stdout, stderr) => {
@@ -105,12 +105,11 @@ export function summarizeAgentError(err: unknown): string {
   const e = err as ExecFileError;
   const stdout = e.stdout ? String(e.stdout) : "";
   const stderr = e.stderr ? String(e.stderr) : "";
-  const raw = [
-    err instanceof Error ? err.message : String(err),
-    stdout,
-    stderr
-  ].filter(Boolean).join("\n");
-  const compact = raw.replace(/\x1b\[[0-9;]*m/g, "").replace(/\s+/g, " ").trim();
+  const raw = [err instanceof Error ? err.message : String(err), stdout, stderr].filter(Boolean).join("\n");
+  const compact = raw
+    .replace(/\x1b\[[0-9;]*m/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
   if (/personal-team-blocked:spending-limit|run out of credits|need a Grok subscription/i.test(compact)) {
     return "quota blocked: Grok credits or subscription required";
   }
@@ -126,8 +125,20 @@ export function summarizeAgentError(err: unknown): string {
   const parts: string[] = [];
   if (e.code !== undefined) parts.push(`exit=${e.code}`);
   if (e.signal) parts.push(`signal=${e.signal}`);
-  if (stderr.trim()) parts.push(`stderr=${stderr.replace(/\x1b\[[0-9;]*m/g, "").replace(/\s+/g, " ").trim()}`);
-  if (stdout.trim()) parts.push(`stdout=${stdout.replace(/\x1b\[[0-9;]*m/g, "").replace(/\s+/g, " ").trim()}`);
+  if (stderr.trim())
+    parts.push(
+      `stderr=${stderr
+        .replace(/\x1b\[[0-9;]*m/g, "")
+        .replace(/\s+/g, " ")
+        .trim()}`,
+    );
+  if (stdout.trim())
+    parts.push(
+      `stdout=${stdout
+        .replace(/\x1b\[[0-9;]*m/g, "")
+        .replace(/\s+/g, " ")
+        .trim()}`,
+    );
   if (!parts.length) parts.push(compact);
   const detailed = parts.join(" ");
   return detailed.length > 1000 ? `${detailed.slice(0, 997)}...` : detailed;
@@ -154,7 +165,7 @@ async function runAgentBackend(
   name: AgentBackend,
   prompt: string,
   llmCfg: Record<string, unknown>,
-  timeoutMs: number
+  timeoutMs: number,
 ): Promise<string> {
   if (name === "claude") {
     const model = String(llmCfg.claude_model ?? "");
@@ -164,7 +175,7 @@ async function runAgentBackend(
     const execOpts = {
       timeout: timeoutMs,
       maxBuffer: 5 * 1024 * 1024,
-      env: process.env
+      env: process.env,
     };
     const { stdout } = useStdin
       ? await execFileWithStdin("claude", args, prompt, execOpts)
@@ -174,7 +185,10 @@ async function runAgentBackend(
 
   if (name === "codex") {
     const model = String(llmCfg.codex_model ?? "");
-    const outputFile = join(tmpdir(), `king-ai-llm-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`);
+    const outputFile = join(
+      tmpdir(),
+      `king-ai-llm-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`,
+    );
     const useStdin = promptNeedsFileDelivery(prompt);
     const args = ["exec", "--sandbox", "read-only", "--output-last-message", outputFile, "--ephemeral"];
     if (model) args.push("-m", model);
@@ -182,7 +196,7 @@ async function runAgentBackend(
     const execOpts = {
       timeout: timeoutMs,
       maxBuffer: 5 * 1024 * 1024,
-      env: process.env
+      env: process.env,
     };
     try {
       const { stdout } = useStdin
@@ -205,13 +219,13 @@ async function runAgentBackend(
       "--no-alt-screen",
       ...(usePromptFile ? ["--prompt-file", promptFile] : ["-p", prompt]),
       "--output-format",
-      "plain"
+      "plain",
     ];
     if (model) args.unshift("-m", model);
     const { stdout } = await execFileP("grok", args, {
       timeout: timeoutMs,
       maxBuffer: 5 * 1024 * 1024,
-      env: process.env
+      env: process.env,
     });
     return stdout.trim();
   } finally {
@@ -219,19 +233,15 @@ async function runAgentBackend(
   }
 }
 
-export async function runAgent(
-  prompt: string,
-  options: { timeoutMs?: number; task?: string } = {}
-): Promise<string> {
+export async function runAgent(prompt: string, options: { timeoutMs?: number; task?: string } = {}): Promise<string> {
   const config = await loadTradeConfig();
   const llmCfg = (dotGet(config, "llm", {}) ?? {}) as Record<string, unknown>;
   const task = options.task ?? "summarize";
   const tasks = (dotGet(config, "llm.agent_tasks", {}) ?? {}) as Record<string, unknown>;
   const taskCfg = (tasks[task] ?? {}) as Record<string, unknown>;
   const configuredTimeout = Number(taskCfg.timeout_ms);
-  const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0
-    ? configuredTimeout
-    : options.timeoutMs ?? 60_000;
+  const timeoutMs =
+    Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : (options.timeoutMs ?? 60_000);
   const backends = agentBackendOrder(llmCfg, String(taskCfg.backend ?? ""));
 
   for (const name of backends) {

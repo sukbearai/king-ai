@@ -8,10 +8,14 @@ import { engagementScore, entryTimestamp, formatTweetLine, iterCacheRecords } fr
 test("iterCacheRecords parses JSONL tweets", async () => {
   const dir = await mkdtemp(join(tmpdir(), "twitter-cache-"));
   const path = join(dir, "cache.jsonl");
-  await writeFile(path, [
-    '{"id":"1","author":"alice","text":"$BTC pump","likes":10,"views":1000,"created_at":"Wed Jun 11 10:00:00 +0000 2026"}',
-    '{"id":"2","author":"bob","text":"hello","likes":1,"created_at":"2026-06-11T11:00:00Z"}'
-  ].join("\n"), "utf8");
+  await writeFile(
+    path,
+    [
+      '{"id":"1","author":"alice","text":"$BTC pump","likes":10,"views":1000,"created_at":"Wed Jun 11 10:00:00 +0000 2026"}',
+      '{"id":"2","author":"bob","text":"hello","likes":1,"created_at":"2026-06-11T11:00:00Z"}',
+    ].join("\n"),
+    "utf8",
+  );
 
   const rows = [];
   for await (const entry of iterCacheRecords(path)) rows.push(entry);
@@ -25,7 +29,7 @@ test("formatTweetLine and engagementScore include metrics", () => {
     author: "cz",
     text: "test",
     likes: 5,
-    views: 200
+    views: 200,
   });
   assert.match(line, /@cz: test/);
   assert.match(line, /5❤️/);

@@ -6,7 +6,8 @@ import type { SqlLike } from "../src/episodic.js";
 // real FTS5 runs in production).
 export function createFakeSql(): SqlLike {
   const indexed = new Set<string>();
-  const rows: Array<{ message_id: string; conversation_id: string; author: string; created_at: number; body: string }> = [];
+  const rows: Array<{ message_id: string; conversation_id: string; author: string; created_at: number; body: string }> =
+    [];
   return {
     exec(query: string, ...bindings: unknown[]) {
       if (query.includes("CREATE")) return { toArray: () => [], rowsWritten: 0 };
@@ -22,7 +23,7 @@ export function createFakeSql(): SqlLike {
           conversation_id: String(bindings[1]),
           author: String(bindings[2]),
           created_at: Number(bindings[3]),
-          body: String(bindings[4])
+          body: String(bindings[4]),
         });
         return { toArray: () => [], rowsWritten: 1 };
       }
@@ -42,11 +43,11 @@ export function createFakeSql(): SqlLike {
             conversation_id: row.conversation_id,
             author: row.author,
             created_at: row.created_at,
-            snip: row.body.slice(0, 60)
+            snip: row.body.slice(0, 60),
           }));
         return { toArray: () => hits, rowsWritten: 0 };
       }
       return { toArray: () => [], rowsWritten: 0 };
-    }
+    },
   };
 }

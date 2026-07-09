@@ -32,7 +32,7 @@ export type RunMergeCommandDeps<
     capsules: GuiCliMergeCapsule[];
     tasks: GuiCliMergeTask[];
   },
-  M extends GuiCliMergeRequest
+  M extends GuiCliMergeRequest,
 > = {
   defaultAgentId: string;
   findMergeRequest: (state: S, id: string | undefined) => M | undefined;
@@ -50,14 +50,16 @@ export function runMergeCommand<
     capsules: GuiCliMergeCapsule[];
     tasks: GuiCliMergeTask[];
   },
-  M extends GuiCliMergeRequest
+  M extends GuiCliMergeRequest,
 >(state: S, args: string[], deps: RunMergeCommandDeps<S, M>): string {
   const cmd = args[0] || "list";
   if (cmd === "list") {
     const status = deps.readOption(args, "--status");
     const rows = state.mergeQueue.filter((request) => !status || request.status === status) as M[];
     if (rows.length === 0) return "No merge requests found.";
-    return rows.map((request) => deps.formatMergeRequestLine(request)).join("\n") + `\n\n${rows.length} merge request(s)`;
+    return (
+      rows.map((request) => deps.formatMergeRequestLine(request)).join("\n") + `\n\n${rows.length} merge request(s)`
+    );
   }
   if (cmd === "get") {
     const request = deps.findMergeRequest(state, args[1]);
@@ -67,12 +69,18 @@ export function runMergeCommand<
     const capsule = deps.findCapsule(state, deps.readOption(args, "--capsule"));
     const branch = deps.readOption(args, "--branch") || (capsule as { branch?: string } | undefined)?.branch;
     const taskId = deps.readOption(args, "--task") || (capsule as { taskId?: string } | undefined)?.taskId;
-    const agentId = deps.readOption(args, "--agent") || (capsule as { ownerAgent?: string } | undefined)?.ownerAgent || deps.defaultAgentId;
+    const agentId =
+      deps.readOption(args, "--agent") ||
+      (capsule as { ownerAgent?: string } | undefined)?.ownerAgent ||
+      deps.defaultAgentId;
     const targetBranch = deps.readOption(args, "--target") || "main";
-    if (!branch) return "usage: king-ai merge enqueue --branch <name> [--task id] [--capsule id] [--agent id] [--target main]";
+    if (!branch)
+      return "usage: king-ai merge enqueue --branch <name> [--task id] [--capsule id] [--agent id] [--target main]";
     if (!deps.isSafeBranchName(branch)) return `invalid branch name: ${branch}`;
     if (!deps.isSafeBranchName(targetBranch)) return `invalid branch name: ${targetBranch}`;
-    const existing = state.mergeQueue.find((request) => request.branch === branch && request.status !== "merged" && request.status !== "failed");
+    const existing = state.mergeQueue.find(
+      (request) => request.branch === branch && request.status !== "merged" && request.status !== "failed",
+    );
     if (existing) return `merge request already queued ${existing.id}`;
     const now = Date.now();
     const request = {
@@ -84,7 +92,7 @@ export function runMergeCommand<
       targetBranch,
       status: "queued",
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
     } as M;
     state.mergeQueue.push(request);
     if (capsule && capsule.status === "open") {
@@ -97,7 +105,8 @@ export function runMergeCommand<
     const request = deps.findMergeRequest(state, args[1]);
     const status = args[2];
     if (!request) return `merge request not found: ${args[1] || ""}`;
-    if (!deps.isMergeStatus(status)) return "usage: king-ai merge mark <id> queued|testing|merged|conflict|failed [--error text]";
+    if (!deps.isMergeStatus(status))
+      return "usage: king-ai merge mark <id> queued|testing|merged|conflict|failed [--error text]";
     request.status = status;
     request.updatedAt = Date.now();
     request.error = deps.readOption(args, "--error") ?? request.error;

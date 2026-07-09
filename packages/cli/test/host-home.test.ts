@@ -7,7 +7,10 @@ import { linkHostHomeEntries, resolveHostHomeEntry, resolveHostHomeEntryNames } 
 
 test("resolveHostHomeEntryNames reads KING entries", () => {
   assert.deepEqual(resolveHostHomeEntryNames({} as NodeJS.ProcessEnv), []);
-  assert.deepEqual(resolveHostHomeEntryNames({ KING_AI_HOST_HOME_ENTRIES: `.gitconfig${delimiter}.npmrc,.ssh` } as NodeJS.ProcessEnv), [".gitconfig", ".npmrc", ".ssh"]);
+  assert.deepEqual(
+    resolveHostHomeEntryNames({ KING_AI_HOST_HOME_ENTRIES: `.gitconfig${delimiter}.npmrc,.ssh` } as NodeJS.ProcessEnv),
+    [".gitconfig", ".npmrc", ".ssh"],
+  );
 });
 
 test("resolveHostHomeEntry accepts only single host-home dot entries", async () => {
@@ -15,11 +18,11 @@ test("resolveHostHomeEntry accepts only single host-home dot entries", async () 
   try {
     assert.deepEqual(resolveHostHomeEntry(".gitconfig", home), {
       name: ".gitconfig",
-      source: join(home, ".gitconfig")
+      source: join(home, ".gitconfig"),
     });
     assert.deepEqual(resolveHostHomeEntry("~/.gitconfig", home), {
       name: ".gitconfig",
-      source: join(home, ".gitconfig")
+      source: join(home, ".gitconfig"),
     });
     assert.equal(resolveHostHomeEntry("notes.txt", home), null);
     assert.equal(resolveHostHomeEntry("../.ssh", home), null);
@@ -37,16 +40,23 @@ test("linkHostHomeEntries symlinks explicit existing entries and records skips",
     await mkdir(join(home, ".ssh"));
     await writeFile(join(home, ".ssh", "config"), "Host *\n", "utf8");
 
-    const entries = await linkHostHomeEntries(agentHome, {
-      KING_AI_HOST_HOME_ENTRIES: `.gitconfig,.ssh,.missing,notes.txt`
-    } as NodeJS.ProcessEnv, home);
+    const entries = await linkHostHomeEntries(
+      agentHome,
+      {
+        KING_AI_HOST_HOME_ENTRIES: `.gitconfig,.ssh,.missing,notes.txt`,
+      } as NodeJS.ProcessEnv,
+      home,
+    );
 
-    assert.deepEqual(entries.map((entry) => [entry.name, entry.linked]), [
-      [".gitconfig", true],
-      [".ssh", true],
-      [".missing", false],
-      ["notes.txt", false]
-    ]);
+    assert.deepEqual(
+      entries.map((entry) => [entry.name, entry.linked]),
+      [
+        [".gitconfig", true],
+        [".ssh", true],
+        [".missing", false],
+        ["notes.txt", false],
+      ],
+    );
     assert.equal((await lstat(join(agentHome, ".gitconfig"))).isSymbolicLink(), true);
     assert.equal((await lstat(join(agentHome, ".ssh"))).isSymbolicLink(), true);
     assert.equal(await readFile(join(agentHome, ".gitconfig"), "utf8"), "[user]\n");

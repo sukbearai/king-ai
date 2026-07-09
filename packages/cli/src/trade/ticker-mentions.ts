@@ -8,10 +8,31 @@ export const MENTIONS_DB_PATH = TRADE_MENTIONS_DB_PATH;
 
 const TICKER_RE = /\$([A-Z]{2,6})\b/g;
 const TICKER_BLOCKLIST = new Set([
-  "USD", "USDT", "USDC", "EUR", "GBP", "JPY", "CNY", "HKD",
-  "WIN", "LOL", "GG", "FOMO", "HODL", "FUD",
-  "API", "URL", "CEO", "AI", "ML", "GPT", "LLM", "FYI", "TLDR", "WTF",
-  "ETF"
+  "USD",
+  "USDT",
+  "USDC",
+  "EUR",
+  "GBP",
+  "JPY",
+  "CNY",
+  "HKD",
+  "WIN",
+  "LOL",
+  "GG",
+  "FOMO",
+  "HODL",
+  "FUD",
+  "API",
+  "URL",
+  "CEO",
+  "AI",
+  "ML",
+  "GPT",
+  "LLM",
+  "FYI",
+  "TLDR",
+  "WTF",
+  "ETF",
 ]);
 
 function extractTickers(text: string): Set<string> {

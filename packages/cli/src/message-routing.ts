@@ -38,7 +38,8 @@ function isMentioned(row: RuntimeMessageLike, agentId: string): boolean {
 
 export function normalizeMessageType(row: RuntimeMessageLike): RuntimeMessageType {
   const explicit = lower(row.message_type);
-  if (explicit === "decision" || explicit === "blocker" || explicit === "approval" || explicit === "message") return explicit;
+  if (explicit === "decision" || explicit === "blocker" || explicit === "approval" || explicit === "message")
+    return explicit;
   if (explicit === "system") return "system";
   if (row.kind === "system" || row.author_kind === "system") return "system";
   const body = lower(row.body);
@@ -118,7 +119,10 @@ export function routeRuntimeMessage(row: RuntimeMessageLike, agentId: string): R
   return { row, score, priority, type, route, reasons };
 }
 
-export function sortRuntimeMessages<T extends RuntimeMessageLike>(rows: T[], agentId: string): RoutedRuntimeMessage<T>[] {
+export function sortRuntimeMessages<T extends RuntimeMessageLike>(
+  rows: T[],
+  agentId: string,
+): RoutedRuntimeMessage<T>[] {
   return rows
     .map((row) => routeRuntimeMessage(row, agentId) as RoutedRuntimeMessage<T>)
     .sort((a, b) => {

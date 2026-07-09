@@ -65,7 +65,7 @@ async function sendChunk(botToken: string, chatId: string, text: string): Promis
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body,
-        signal: AbortSignal.timeout(15_000)
+        signal: AbortSignal.timeout(15_000),
       });
       if (res.ok) return true;
     } catch {
@@ -80,7 +80,7 @@ async function sendChunk(botToken: string, chatId: string, text: string): Promis
 }
 
 export async function sendTelegram(text: string, config?: TradeConfig): Promise<boolean> {
-  const cfg = config ?? await loadTradeConfig();
+  const cfg = config ?? (await loadTradeConfig());
   const { botToken, chatId } = telegramFromConfig(cfg);
   if (!botToken || !chatId) return false;
 
@@ -102,11 +102,7 @@ export function formatAlertTelegramMessage(alerts: Array<{ format(): string }>, 
   return parts.join("\n");
 }
 
-export function chunkAlertMessages(
-  alerts: Array<{ format(): string }>,
-  header: string,
-  maxLen = TG_MAX_LEN
-): string[] {
+export function chunkAlertMessages(alerts: Array<{ format(): string }>, header: string, maxLen = TG_MAX_LEN): string[] {
   const full = formatAlertTelegramMessage(alerts, header);
   if (full.length <= maxLen) return [full];
 

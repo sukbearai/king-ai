@@ -160,10 +160,22 @@ export function selectOwnerRole(team: KingTeamSpec, requiredCapabilities: string
 }
 
 export function normalizeReviewVerdict(result?: string): ReviewVerdict | undefined {
-  const value = result?.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const value = result
+    ?.trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
   if (!value) return undefined;
-  if (value === "approved" || value === "approve" || value === "accepted" || value === "pass" || value === "passed") return "approved";
-  if (value === "changes_requested" || value === "change_requested" || value === "rejected" || value === "needs_work" || value === "fail" || value === "failed") return "changes_requested";
+  if (value === "approved" || value === "approve" || value === "accepted" || value === "pass" || value === "passed")
+    return "approved";
+  if (
+    value === "changes_requested" ||
+    value === "change_requested" ||
+    value === "rejected" ||
+    value === "needs_work" ||
+    value === "fail" ||
+    value === "failed"
+  )
+    return "changes_requested";
   return undefined;
 }
 
@@ -172,19 +184,21 @@ export function planHandoff(card: WorkflowCard, team: KingTeamSpec): WorkflowHan
   if (card.kind === "decision") return [];
   const verdict = card.kind === "review" ? normalizeReviewVerdict(card.result) : undefined;
   if (verdict === "changes_requested" && card.sourceId && card.sourceOwnerRole) {
-    return [{
-      reason: "next-role",
-      card: {
-        kind: "handoff",
-        title: `Changes requested for ${card.sourceId}`,
-        status: "assigned",
-        ownerRole: card.sourceOwnerRole,
-        targetRole: card.sourceOwnerRole,
-        sourceId: card.id,
-        dependsOn: [card.id],
-        detail: `Review ${card.id} requested changes on ${card.sourceId}; route back to ${card.sourceOwnerRole}.`
-      }
-    }];
+    return [
+      {
+        reason: "next-role",
+        card: {
+          kind: "handoff",
+          title: `Changes requested for ${card.sourceId}`,
+          status: "assigned",
+          ownerRole: card.sourceOwnerRole,
+          targetRole: card.sourceOwnerRole,
+          sourceId: card.id,
+          dependsOn: [card.id],
+          detail: `Review ${card.id} requested changes on ${card.sourceId}; route back to ${card.sourceOwnerRole}.`,
+        },
+      },
+    ];
   }
   const policy = card.handoffPolicy ?? roleHandoffPolicy(team, card.ownerRole);
   if (!policy) return [];
@@ -193,81 +207,91 @@ export function planHandoff(card: WorkflowCard, team: KingTeamSpec): WorkflowHan
   const owner = card.ownerRole ?? "owner";
 
   if (policy.acceptanceRequired && reviewer && card.kind !== "review") {
-    return [{
-      reason: "review",
-      card: {
-        kind: "review",
-        title: `Review ${card.id}`,
-        status: "review",
-        ownerRole: reviewer,
-        reviewerRole: reviewer,
-        targetRole: reviewer,
-        sourceId: card.id,
-        dependsOn: [card.id],
-        detail: `Auto-routed for review by ${reviewer} after ${owner} completed ${card.id}.`,
-        handoffPolicy: {
-          mode: policy.mode,
-          nextRole: policy.nextRole,
-          escalation: policy.escalation,
-          acceptanceRequired: false
-        }
-      }
-    }];
+    return [
+      {
+        reason: "review",
+        card: {
+          kind: "review",
+          title: `Review ${card.id}`,
+          status: "review",
+          ownerRole: reviewer,
+          reviewerRole: reviewer,
+          targetRole: reviewer,
+          sourceId: card.id,
+          dependsOn: [card.id],
+          detail: `Auto-routed for review by ${reviewer} after ${owner} completed ${card.id}.`,
+          handoffPolicy: {
+            mode: policy.mode,
+            nextRole: policy.nextRole,
+            escalation: policy.escalation,
+            acceptanceRequired: false,
+          },
+        },
+      },
+    ];
   }
 
   if (policy.escalation === "human" || policy.mode === "human-decision") {
-    return [{
-      reason: "human-escalation",
-      card: {
-        kind: "decision",
-        title: `Decision after ${card.id}`,
-        status: "waiting_human",
-        ownerRole: card.ownerRole,
-        sourceId: card.id,
-        dependsOn: [card.id],
-        decisionBy: "human",
-        detail: `Auto-routed: ${owner} completed ${card.id}; a human decision is required before continuing.`
-      }
-    }];
+    return [
+      {
+        reason: "human-escalation",
+        card: {
+          kind: "decision",
+          title: `Decision after ${card.id}`,
+          status: "waiting_human",
+          ownerRole: card.ownerRole,
+          sourceId: card.id,
+          dependsOn: [card.id],
+          decisionBy: "human",
+          detail: `Auto-routed: ${owner} completed ${card.id}; a human decision is required before continuing.`,
+        },
+      },
+    ];
   }
 
   if (policy.nextRole) {
-    return [{
-      reason: "next-role",
-      card: {
-        kind: "handoff",
-        title: `Handoff to ${policy.nextRole} after ${card.id}`,
-        status: "assigned",
-        ownerRole: policy.nextRole,
-        targetRole: policy.nextRole,
-        sourceId: card.id,
-        dependsOn: [card.id],
-        detail: `Auto-routed from ${owner} to ${policy.nextRole} after ${card.id}.`
-      }
-    }];
+    return [
+      {
+        reason: "next-role",
+        card: {
+          kind: "handoff",
+          title: `Handoff to ${policy.nextRole} after ${card.id}`,
+          status: "assigned",
+          ownerRole: policy.nextRole,
+          targetRole: policy.nextRole,
+          sourceId: card.id,
+          dependsOn: [card.id],
+          detail: `Auto-routed from ${owner} to ${policy.nextRole} after ${card.id}.`,
+        },
+      },
+    ];
   }
 
   return [];
 }
 
-export function taskDoneTransition(card: WorkflowCard, actorId: string, options: { coordinatorId?: string; reviewerId?: string; hasConversation?: boolean } = {}): WorkflowTransition {
+export function taskDoneTransition(
+  card: WorkflowCard,
+  actorId: string,
+  options: { coordinatorId?: string; reviewerId?: string; hasConversation?: boolean } = {},
+): WorkflowTransition {
   if (card.status === "review" || (options.reviewerId && actorId === options.reviewerId)) {
     return {
       status: "done",
       assignee: options.coordinatorId,
       reviewResult: "approved",
-      reviewedBy: actorId
+      reviewedBy: actorId,
     };
   }
   if (options.reviewerId) {
     return {
       status: "review",
-      assignee: options.reviewerId
+      assignee: options.reviewerId,
     };
   }
   return {
     status: "done",
-    assignee: options.hasConversation ? options.coordinatorId : card.assignee
+    assignee: options.hasConversation ? options.coordinatorId : card.assignee,
   };
 }
 
@@ -287,7 +311,7 @@ export function workflowReadiness(card: WorkflowCard, doneIds: Iterable<string>)
     ready: blockedBy.length === 0 && !missingEvidence && !missingReviewVerdict,
     blockedBy,
     missingEvidence,
-    missingReviewVerdict
+    missingReviewVerdict,
   };
 }
 
@@ -303,7 +327,7 @@ export function workflowCardFromTask(task: WorkflowTaskLike): WorkflowCard {
     result: task.result,
     dependsOn: task.dependsOn,
     acceptance: task.acceptance,
-    artifactPath: task.artifactPath
+    artifactPath: task.artifactPath,
   };
   return dropUndefined(card);
 }
@@ -317,7 +341,8 @@ export function normalizeKanbanWorkflowStatus(column: string): WorkflowStatus | 
 
 export function kanbanColumnFromWorkflowStatus(status: string): "todo" | "doing" | "done" {
   if (status === "done") return "done";
-  if (status === "in_progress" || status === "assigned" || status === "review" || status === "waiting_human") return "doing";
+  if (status === "in_progress" || status === "assigned" || status === "review" || status === "waiting_human")
+    return "doing";
   return "todo";
 }
 
@@ -327,7 +352,7 @@ export function workflowCardFromKanban(card: WorkflowKanbanLike): WorkflowCard {
     kind: "task",
     status: normalizeKanbanWorkflowStatus(card.column),
     title: card.title,
-    assignee: card.assignee ?? card.claimedBy
+    assignee: card.assignee ?? card.claimedBy,
   };
   return dropUndefined(mapped);
 }
@@ -345,7 +370,7 @@ export function workflowCardFromHostRecord(record: WorkflowHostRecordLike): Work
     sourceId: record.sourceId,
     dependsOn: record.dependsOn,
     acceptance: record.acceptance,
-    result: record.result
+    result: record.result,
   };
   return dropUndefined(mapped);
 }
@@ -366,13 +391,11 @@ export function buildWorkflowAgendaBrief(lines: WorkflowAgendaLine[]): WorkflowA
   // Focus priority is Task > Card > Calendar regardless of display order, matching the
   // runtime agenda. Fall back to the first line for lines without an explicit kind.
   const focusLine =
-    lines.find((line) => line.kind === "task") ??
-    lines.find((line) => line.kind === "card") ??
-    lines[0];
+    lines.find((line) => line.kind === "task") ?? lines.find((line) => line.kind === "card") ?? lines[0];
   return {
     actionable: true,
     focus: focusLine.id,
-    brief: lines.map((line) => line.label).join("\n")
+    brief: lines.map((line) => line.label).join("\n"),
   };
 }
 
@@ -397,7 +420,7 @@ export function workflowAgendaLines(args: {
     lines.push({
       id: item.id,
       kind: "calendar",
-      label: `Calendar due: ${item.title}${item.cron ? ` [cron ${item.cron}]` : ""}${item.prompt ? ` — ${item.prompt}` : ""}`
+      label: `Calendar due: ${item.title}${item.cron ? ` [cron ${item.cron}]` : ""}${item.prompt ? ` — ${item.prompt}` : ""}`,
     });
   }
   for (const card of args.kanban) {
@@ -407,7 +430,7 @@ export function workflowAgendaLines(args: {
     lines.push({
       id: card.id,
       kind: "card",
-      label: `Board card: ${card.id} [${card.column}] ${card.title ?? ""}`.trim()
+      label: `Board card: ${card.id} [${card.column}] ${card.title ?? ""}`.trim(),
     });
   }
   for (const task of args.tasks) {
@@ -419,7 +442,7 @@ export function workflowAgendaLines(args: {
     lines.push({
       id: task.id,
       kind: "task",
-      label: `Task: ${task.id} [${status}] ${task.title ?? ""}`.trim()
+      label: `Task: ${task.id} [${status}] ${task.title ?? ""}`.trim(),
     });
   }
   return buildWorkflowAgendaBrief(lines);
@@ -438,7 +461,7 @@ export function workflowCardFromCapsule(capsule: WorkflowCapsuleLike): WorkflowC
       ? capsule.acceptance
       : capsule.acceptance
         ? [capsule.acceptance]
-        : undefined
+        : undefined,
   };
   return dropUndefined(card);
 }
@@ -451,7 +474,14 @@ export function normalizeCapsuleWorkflowStatus(status: string): WorkflowStatus |
 }
 
 function normalizeWorkflowObjectKind(kind: string | undefined, decisionBy: string | undefined): KingWorkflowObjectType {
-  if (kind === "initiative" || kind === "task" || kind === "handoff" || kind === "review" || kind === "decision" || kind === "artifact") {
+  if (
+    kind === "initiative" ||
+    kind === "task" ||
+    kind === "handoff" ||
+    kind === "review" ||
+    kind === "decision" ||
+    kind === "artifact"
+  ) {
     return kind;
   }
   if (decisionBy) return "decision";

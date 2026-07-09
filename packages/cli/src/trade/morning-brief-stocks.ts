@@ -8,7 +8,7 @@ const DEFAULT_WATCHLIST: Record<string, string> = {
   "01810": "小米",
   RKLB: "Rocket Lab",
   TSLA: "特斯拉",
-  NVDA: "英伟达"
+  NVDA: "英伟达",
 };
 
 const ETF_SYMBOLS = new Set(["GLD", "SH000001", "SZ399001"]);

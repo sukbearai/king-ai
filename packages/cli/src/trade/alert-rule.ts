@@ -36,7 +36,7 @@ export function createAlert(partial: Partial<Alert> & Pick<Alert, "rule" | "seve
     tokenChain: "",
     tokenMcap: 0,
     tags: [],
-    ...partial
+    ...partial,
   };
 }
 
@@ -53,19 +53,19 @@ export const COOLDOWN_DEFAULTS: Record<string, number> = {
   t: 600,
   tm: 86400,
   q: 86400,
-  discord_wba: 300
+  discord_wba: 300,
 };
 
 const TG_SEVERITY_ORDER: Record<AlertSeverity, number> = { info: 0, warning: 1, critical: 2 };
 const MIN_TG_SEVERITY: AlertSeverity = "warning";
 const DAILY_PUSH_CAP: Record<string, number> = {
-  "PANews事件": 5,
+  PANews事件: 5,
   "Meme 大额": 8,
-  "股票异动": 3,
-  "美债抛售": 4,
-  "提及加速": 5,
-  "王不爱喊单": 5,
-  t: 5
+  股票异动: 3,
+  美债抛售: 4,
+  提及加速: 5,
+  王不爱喊单: 5,
+  t: 5,
 };
 const DEFAULT_DAILY_CAP = 10;
 
@@ -132,7 +132,7 @@ async function writeAlertsJsonl(alerts: Alert[], ruleKey: string): Promise<void>
       token_contract: alert.tokenContract,
       token_chain: alert.tokenChain,
       token_mcap: alert.tokenMcap,
-      regime
+      regime,
     });
   }
 }
@@ -160,7 +160,11 @@ async function applyRegimeCap(alerts: Alert[]): Promise<void> {
   const regime = await getScratchpad().getRegime();
   if (regime !== "risk_on") return;
   for (const alert of alerts) {
-    if (alert.direction < 0 && (alert.severity === "warning" || alert.severity === "critical") && !alert.tags.includes("regime_gated")) {
+    if (
+      alert.direction < 0 &&
+      (alert.severity === "warning" || alert.severity === "critical") &&
+      !alert.tags.includes("regime_gated")
+    ) {
       alert.severity = "info";
     }
   }
@@ -176,7 +180,7 @@ export function directionLabel(alert: Alert): string {
 export async function promoteConfluenceAlerts(
   alerts: Alert[],
   ruleKey: string,
-  options: { windowSeconds: number; enabled: boolean }
+  options: { windowSeconds: number; enabled: boolean },
 ): Promise<void> {
   if (!options.enabled) return;
   const store = getRuleStateStore();
@@ -206,11 +210,7 @@ export interface RunRuleTickOptions {
   confluenceWindowSeconds?: number;
 }
 
-export async function runRuleTick(
-  rule: AlertRule,
-  state: AlertState,
-  options: RunRuleTickOptions = {}
-): Promise<void> {
+export async function runRuleTick(rule: AlertRule, state: AlertState, options: RunRuleTickOptions = {}): Promise<void> {
   const config = await loadTradeConfig();
   const store = getRuleStateStore();
   const alertDir = dirname(TRADE_ALERT_LOG_PATH);
@@ -226,7 +226,7 @@ export async function runRuleTick(
         ruleName: rule.name,
         lastCheck: Date.now() / 1000,
         status: "ok",
-        durationMs: elapsedMs
+        durationMs: elapsedMs,
       };
     });
 
@@ -244,11 +244,11 @@ export async function runRuleTick(
     await writeFile(join(alertDir, "latest_alert.txt"), message, "utf8");
     await writeAlertsJsonl(alerts, rule.ruleKey);
 
-    const confluenceWindow = options.confluenceWindowSeconds
-      ?? (Number(dotGet(config, "alerts.confluence_window_seconds", 900)) || 900);
+    const confluenceWindow =
+      options.confluenceWindowSeconds ?? (Number(dotGet(config, "alerts.confluence_window_seconds", 900)) || 900);
     await promoteConfluenceAlerts(alerts, rule.ruleKey, {
       windowSeconds: confluenceWindow,
-      enabled: options.confluenceEnabled !== false
+      enabled: options.confluenceEnabled !== false,
     });
 
     if (options.pushTg) {
@@ -257,7 +257,7 @@ export async function runRuleTick(
         const header = `🔔 交易告警 — ${formatDisplayTime(new Date(), "hm")}`;
         const chunks = chunkAlertMessages(
           tgAlerts.map((a) => ({ format: () => formatAlert(a) })),
-          header
+          header,
         );
         for (const chunk of chunks) {
           await sendTelegram(chunk, config);
@@ -272,7 +272,7 @@ export async function runRuleTick(
         ruleName: rule.name,
         lastCheck: Date.now() / 1000,
         status: "error",
-        durationMs: 0
+        durationMs: 0,
       };
     });
   }
@@ -305,7 +305,7 @@ export async function runRuleLoop(rule: AlertRule, options: RunRuleLoopOptions =
       pushTg: options.pushTg,
       dryRun: options.dryRun,
       onStatus: options.onStatus,
-      confluenceEnabled: dotGet(config, "alerts.confluence_enabled", true) !== false
+      confluenceEnabled: dotGet(config, "alerts.confluence_enabled", true) !== false,
     });
     if (!options.dryRun) await store.saveAlertCooldowns(sharedCooldowns);
     if (options.runOnce) break;

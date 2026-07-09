@@ -7,7 +7,7 @@ import {
   TRADE_SERVICE_LABEL,
   TRADE_WATCHDOG_HEALTH_PATH,
   TRADE_WATCHDOG_LOG_PATH,
-  TRADE_WATCHDOG_SERVICE_PATH
+  TRADE_WATCHDOG_SERVICE_PATH,
 } from "../paths.js";
 import { loadTradeConfig } from "./config.js";
 import { sendTelegram } from "./telegram.js";
@@ -26,19 +26,11 @@ const LOAD_AVG_CLEAR = 8;
 const HIGH_CPU_PROCS_ALERT = 3;
 const SERVICE_ALERT_COOLDOWN = 1800;
 
-const ORPHAN_PATTERNS = [
-  /shell-snapshots\/snapshot-/,
-  /CODEX_COMPANION_SESSION_ID/,
-  /claude-\d+-cwd/
-];
-const KNOWN_LEAKERS = [
-  /bun\s+.*server\.ts/,
-  /bun\s+run\s+--cwd.*plugins/,
-  /bun.*worker-service\.cjs/
-];
+const ORPHAN_PATTERNS = [/shell-snapshots\/snapshot-/, /CODEX_COMPANION_SESSION_ID/, /claude-\d+-cwd/];
+const KNOWN_LEAKERS = [/bun\s+.*server\.ts/, /bun\s+run\s+--cwd.*plugins/, /bun.*worker-service\.cjs/];
 
 const MONITORED_SERVICES: Record<string, { keepAlive: boolean; label: string; skipAlert?: boolean }> = {
-  [TRADE_SERVICE_LABEL]: { keepAlive: true, label: "King AI Trade Daemon" }
+  [TRADE_SERVICE_LABEL]: { keepAlive: true, label: "King AI Trade Daemon" },
 };
 
 function parseElapsed(elapsed: string): number {
@@ -58,7 +50,9 @@ async function appendLog(lines: string[]): Promise<void> {
   await appendFile(LOG_PATH, `${lines.join("\n")}\n`, "utf8");
 }
 
-async function findOrphans(): Promise<Array<{ pid: number; cpu: number; age_min: number; cmd: string; reason: string }>> {
+async function findOrphans(): Promise<
+  Array<{ pid: number; cpu: number; age_min: number; cmd: string; reason: string }>
+> {
   const { stdout } = await execFileP("ps", ["-eo", "pid,ppid,pcpu,etime,command"]);
   const orphans: Array<{ pid: number; cpu: number; age_min: number; cmd: string; reason: string }> = [];
   for (const line of stdout.trim().split("\n").slice(1)) {
@@ -117,7 +111,7 @@ async function checkHealth(pushTg: boolean): Promise<string[]> {
     top.push({
       pid: Number.parseInt(parts[0] ?? "", 10),
       cpu: Number.parseFloat(parts[1] ?? "0"),
-      name: (parts[3] ?? "").split("/").pop()?.slice(0, 30) ?? ""
+      name: (parts[3] ?? "").split("/").pop()?.slice(0, 30) ?? "",
     });
   }
   const highCpu = top.filter((p) => p.cpu > 80).length;
@@ -129,9 +123,9 @@ async function checkHealth(pushTg: boolean): Promise<string[]> {
   if (isHigh && prev === "clear") {
     const procs = top.map((p) => `  ${p.name} (PID ${p.pid}) — CPU ${p.cpu.toFixed(0)}%`).join("\n");
     alerts.push(
-      `[Watchdog] System load alert @ ${now}\n`
-      + `Load avg: ${load1.toFixed(1)} / ${load5.toFixed(1)} / ${load15.toFixed(1)}\n`
-      + `Top processes:\n${procs}`
+      `[Watchdog] System load alert @ ${now}\n` +
+        `Load avg: ${load1.toFixed(1)} / ${load5.toFixed(1)} / ${load15.toFixed(1)}\n` +
+        `Top processes:\n${procs}`,
     );
     await writeFile(HEALTH_STATE_PATH, "alerted", "utf8");
   } else if (!isHigh && prev === "alerted" && load5 < LOAD_AVG_CLEAR) {
@@ -190,12 +184,9 @@ async function checkServices(pushTg: boolean): Promise<string[]> {
   return alerts;
 }
 
-export async function runProcessWatchdog(options: {
-  kill?: boolean;
-  pushTg?: boolean;
-  log?: boolean;
-  healthOnly?: boolean;
-} = {}): Promise<number> {
+export async function runProcessWatchdog(
+  options: { kill?: boolean; pushTg?: boolean; log?: boolean; healthOnly?: boolean } = {},
+): Promise<number> {
   const timestamp = new Date().toISOString();
   const logLines: string[] = [];
 
@@ -229,10 +220,7 @@ export async function runProcessWatchdog(options: {
 
   if (options.kill && options.pushTg && tgParts.length >= 3) {
     const config = await loadTradeConfig();
-    await sendTelegram(
-      `🔪 [Watchdog] 清理 ${tgParts.length} 个孤儿进程\n\n${tgParts.join("\n\n")}`,
-      config
-    );
+    await sendTelegram(`🔪 [Watchdog] 清理 ${tgParts.length} 个孤儿进程\n\n${tgParts.join("\n\n")}`, config);
   }
 
   if (options.kill) {

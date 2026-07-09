@@ -1,10 +1,7 @@
 import { normalizeAgentLifecycle } from "./lifecycle.js";
 import type { AgentConfig, EngineId } from "./types.js";
 
-export type AgentConfigWarningCode =
-  | "idle-cached-without-resume"
-  | "missing-preferred-engine"
-  | "unknown-lifecycle";
+export type AgentConfigWarningCode = "idle-cached-without-resume" | "missing-preferred-engine" | "unknown-lifecycle";
 
 export interface AgentConfigWarning {
   code: AgentConfigWarningCode;
@@ -13,7 +10,11 @@ export interface AgentConfigWarning {
   detail: string;
 }
 
-export function validateAgentConfig(agent: AgentConfig, effectiveEngine: EngineId | string, availableEngines: EngineId[] = []): AgentConfigWarning[] {
+export function validateAgentConfig(
+  agent: AgentConfig,
+  effectiveEngine: EngineId | string,
+  availableEngines: EngineId[] = [],
+): AgentConfigWarning[] {
   const warnings: AgentConfigWarning[] = [];
   const lifecycle = normalizeAgentLifecycle(agent.lifecycle);
   if (agent.lifecycle && agent.lifecycle !== lifecycle) {
@@ -21,7 +22,7 @@ export function validateAgentConfig(agent: AgentConfig, effectiveEngine: EngineI
       code: "unknown-lifecycle",
       severity: "warning",
       summary: `unknown lifecycle ${agent.lifecycle} normalized to ${lifecycle}`,
-      detail: "The daemon only understands on-demand, 24/7, idle_cached, and disabled."
+      detail: "The daemon only understands on-demand, 24/7, idle_cached, and disabled.",
     });
   }
   if (agent.engine && !availableEngines.includes(agent.engine)) {
@@ -29,7 +30,7 @@ export function validateAgentConfig(agent: AgentConfig, effectiveEngine: EngineI
       code: "missing-preferred-engine",
       severity: "warning",
       summary: `${agent.engine} is requested but not installed on this machine`,
-      detail: `The daemon will use ${effectiveEngine || "the first available engine"} until ${agent.engine} is available.`
+      detail: `The daemon will use ${effectiveEngine || "the first available engine"} until ${agent.engine} is available.`,
     });
   }
   if (lifecycle === "idle_cached" && effectiveEngine !== "claude" && effectiveEngine !== "grok") {
@@ -37,7 +38,8 @@ export function validateAgentConfig(agent: AgentConfig, effectiveEngine: EngineI
       code: "idle-cached-without-resume",
       severity: "warning",
       summary: "idle_cached has engine-specific resume semantics",
-      detail: "Claude and Grok use CLI session resume. Codex may reuse an app-server thread when available, but the daemon treats it as best-effort and falls back to a fresh thread."
+      detail:
+        "Claude and Grok use CLI session resume. Codex may reuse an app-server thread when available, but the daemon treats it as best-effort and falls back to a fresh thread.",
     });
   }
   return warnings;

@@ -16,7 +16,7 @@ export {
   isMessageInboxSettled,
   agentReplyForMessage,
   applyAgentReadUpTo,
-  settleTaskInboxForAgents
+  settleTaskInboxForAgents,
 } from "./gui-state-do.js";
 
 export { default } from "./gui-state-do.js";

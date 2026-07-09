@@ -49,12 +49,18 @@ export function createRuleE(minUsd = 1500): AlertRule {
             if (!state.canAlert(`meme_large_${contentHash}`, 3600)) continue;
 
             const detailParts = [trimmed.slice(0, 500)];
-            const tokenMatch = trimmed.match(/\[([A-Za-z][A-Za-z0-9_]{1,15})\]\(https?:\/\/chain\.fm\/token\//)
-              ?? trimmed.match(/(?:bought|buy|sold|sell|swap)\s+\$?([A-Za-z][A-Za-z0-9_]{1,15})/i)
-              ?? trimmed.match(/\$([A-Za-z][A-Za-z0-9_]{1,15})/);
+            const tokenMatch =
+              trimmed.match(/\[([A-Za-z][A-Za-z0-9_]{1,15})\]\(https?:\/\/chain\.fm\/token\//) ??
+              trimmed.match(/(?:bought|buy|sold|sell|swap)\s+\$?([A-Za-z][A-Za-z0-9_]{1,15})/i) ??
+              trimmed.match(/\$([A-Za-z][A-Za-z0-9_]{1,15})/);
             const chainFm = trimmed.match(/chain\.fm\/token\/(\w+)\/([0-9a-zA-Z]+)/);
             const chainMap: Record<string, string> = {
-              solana: "solana", sol: "solana", bsc: "bsc", ethereum: "ethereum", eth: "ethereum", base: "base"
+              solana: "solana",
+              sol: "solana",
+              bsc: "bsc",
+              ethereum: "ethereum",
+              eth: "ethereum",
+              base: "base",
             };
 
             let tokenChain = "";
@@ -67,26 +73,26 @@ export function createRuleE(minUsd = 1500): AlertRule {
             }
 
             const severity: Alert["severity"] = amount >= 5000 ? "critical" : "warning";
-            alerts.push(createAlert({
-              rule: "Meme 大额",
-              severity,
-              title: `链上大额交易 $${amount.toLocaleString()}`,
-              detail: detailParts.join("\n"),
-              timestamp: nowDisplay(),
-              direction: -0.7,
-              strength: Math.min(amount / 5000, 1),
-              asset: tokenMatch?.[1] ?? "",
-              tokenContract,
-              tokenChain,
-              tokenMcap: 0,
-              tags: ["meme_distribution_risk"]
-            }));
-          } catch {
-            continue;
-          }
+            alerts.push(
+              createAlert({
+                rule: "Meme 大额",
+                severity,
+                title: `链上大额交易 $${amount.toLocaleString()}`,
+                detail: detailParts.join("\n"),
+                timestamp: nowDisplay(),
+                direction: -0.7,
+                strength: Math.min(amount / 5000, 1),
+                asset: tokenMatch?.[1] ?? "",
+                tokenContract,
+                tokenChain,
+                tokenMcap: 0,
+                tags: ["meme_distribution_risk"],
+              }),
+            );
+          } catch {}
         }
       }
       return alerts;
-    }
+    },
   };
 }

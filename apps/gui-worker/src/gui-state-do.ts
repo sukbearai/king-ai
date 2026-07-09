@@ -17,7 +17,7 @@ import {
   stateForRequest,
   stateForTenant,
   tenantForGuiRequest,
-  tenantFromRequest
+  tenantFromRequest,
 } from "./gui-auth.js";
 import { encode, json, requestKeepAlive } from "./gui-http.js";
 import { createGuiApp } from "./gui-routes.js";
@@ -51,7 +51,7 @@ import {
   TRIAGE_LOG_CAPACITY,
   TYPING_LOG_CAPACITY,
   WAKE_LOG_CAPACITY,
-  WORKFLOW_TEMPLATES
+  WORKFLOW_TEMPLATES,
 } from "./gui-types.js";
 import type {
   Agent,
@@ -118,7 +118,7 @@ import type {
   TaskReviewResult,
   TaskStatus,
   UploadedAttachment,
-  WorkflowTemplate
+  WorkflowTemplate,
 } from "./gui-types.js";
 import {
   resolveWakeEvent,
@@ -134,13 +134,13 @@ import {
   isMessageInboxSettled,
   agentReplyForMessage,
   applyAgentReadUpTo,
-  settleTaskInboxForAgents
+  settleTaskInboxForAgents,
 } from "./runtime-helpers.js";
 import {
   addGuiTaskToState as workflowAddGuiTaskToState,
   createGuiTaskDraft as workflowCreateGuiTaskDraft,
   updateGuiTaskFromPatch as workflowUpdateGuiTaskFromPatch,
-  wakeResolveContextFromState
+  wakeResolveContextFromState,
 } from "./workflow-state.js";
 import { runAgentsCommand } from "./gui-cli-agents.js";
 import { runCalendarCommand } from "./gui-cli-calendar.js";
@@ -154,12 +154,7 @@ import { runFeedbackCommand } from "./gui-cli-feedback.js";
 import { runInitiativeCommand } from "./gui-cli-initiative.js";
 import { runLoopCommand } from "./gui-cli-loop.js";
 import { runMergeCommand } from "./gui-cli-merge.js";
-import {
-  runDmCommand,
-  runEscalateCommand,
-  runRecvCommand,
-  runSendCommand
-} from "./gui-cli-messaging.js";
+import { runDmCommand, runEscalateCommand, runRecvCommand, runSendCommand } from "./gui-cli-messaging.js";
 import { runObserveCommand } from "./gui-cli-observe.js";
 import { runHypothesisCommand } from "./gui-cli-hypothesis.js";
 import { runPlanCommand } from "./gui-cli-plan.js";
@@ -179,7 +174,7 @@ import {
   formatArtifactLine as formatArtifactLineHelper,
   formatArtifactQualityCheck as formatArtifactQualityCheckHelper,
   parseMetadataJson as parseMetadataJsonHelper,
-  STANDARD_ARTIFACT_KINDS
+  STANDARD_ARTIFACT_KINDS,
 } from "./artifact-helpers.js";
 import { cronMatches, parseCron } from "@suwujs/king-ai/cron";
 import { normalizeRuntimeAttachments } from "@suwujs/king-ai/attachments";
@@ -197,7 +192,9 @@ async function sha256Hex(value: string): Promise<string> {
 function displayNameForHuman(state: State, user: AuthUser | undefined): string {
   const fromAuth = displayNameForAuthUser(user);
   if (fromAuth !== "King AI Human") return fromAuth;
-  const fromMessages = [...state.messages].reverse().find((message) => message.author_kind === "human" && message.author_name.trim());
+  const fromMessages = [...state.messages]
+    .reverse()
+    .find((message) => message.author_kind === "human" && message.author_name.trim());
   return fromMessages?.author_name.trim() || fromAuth;
 }
 
@@ -219,7 +216,10 @@ function normalizeRuntimeRemediation(value: unknown): RuntimeRemediation | null 
   const summary = typeof record.summary === "string" ? record.summary.trim().slice(0, 240) : "";
   if (!summary) return undefined;
   const actions = Array.isArray(record.actions)
-    ? record.actions.filter((action): action is string => typeof action === "string" && Boolean(action.trim())).map((action) => action.trim().slice(0, 240)).slice(0, 4)
+    ? record.actions
+        .filter((action): action is string => typeof action === "string" && Boolean(action.trim()))
+        .map((action) => action.trim().slice(0, 240))
+        .slice(0, 4)
     : [];
   return {
     engine: typeof record.engine === "string" ? record.engine.slice(0, 40) : undefined,
@@ -227,7 +227,7 @@ function normalizeRuntimeRemediation(value: unknown): RuntimeRemediation | null 
     severity: typeof record.severity === "string" ? record.severity.slice(0, 40) : "warning",
     summary,
     detail: typeof record.detail === "string" ? record.detail.trim().slice(0, 500) : undefined,
-    actions
+    actions,
   };
 }
 
@@ -240,7 +240,7 @@ const app = createGuiApp({
   authForRequest,
   splitPairCode,
   sanitizeTenantId,
-  tenantFromRequest
+  tenantFromRequest,
 });
 
 export class GuiState implements DurableObject {
@@ -273,10 +273,12 @@ export class GuiState implements DurableObject {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
-    if (path === "/pair") return this.pair(await request.json().catch(() => ({})) as PairPayload, request);
+    if (path === "/pair") return this.pair((await request.json().catch(() => ({}))) as PairPayload, request);
     if (path === "/agents") return this.authDevice(request, async () => json((await this.get()).agents));
-    if (path === "/heartbeat") return this.authDevice(request, async () => this.heartbeat(await request.json().catch(() => ({}))));
-    if (path.startsWith("/runtime-token/")) return this.authDevice(request, async () => this.runtimeToken(path.split("/")[2]));
+    if (path === "/heartbeat")
+      return this.authDevice(request, async () => this.heartbeat(await request.json().catch(() => ({}))));
+    if (path.startsWith("/runtime-token/"))
+      return this.authDevice(request, async () => this.runtimeToken(path.split("/")[2]));
     if (path === "/wake-stream") return this.authRuntime(request, async (agentId) => this.wakeStream(agentId));
     if (path === "/inbox") return this.authRuntime(request, async (agentId) => this.inbox(agentId));
     if (path === "/triage") return this.authRuntime(request, async (agentId) => this.triage(agentId));
@@ -287,9 +289,15 @@ export class GuiState implements DurableObject {
       return this.authRuntime(request, async (agentId) => {
         try {
           return await this.cli({
-            ...await request.json() as { argv?: string[]; agentId?: string; engine?: string; runId?: string; contract?: unknown },
+            ...((await request.json()) as {
+              argv?: string[];
+              agentId?: string;
+              engine?: string;
+              runId?: string;
+              contract?: unknown;
+            }),
             tokenAgentId: agentId,
-            authUser: authUserFromRequest(request)
+            authUser: authUserFromRequest(request),
           });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
@@ -297,19 +305,48 @@ export class GuiState implements DurableObject {
         }
       });
     }
-    if (path === "/mark-read") return this.authRuntime(request, async (agentId) => this.markRead(await request.json() as { conversationId?: string; upToMessageId?: string }, agentId));
-    if (path === "/status") return this.authRuntime(request, async (agentId) => this.status(await request.json() as { status?: string; remediation?: unknown }, agentId));
-    if (path === "/typing") return this.authRuntime(request, async (agentId) => this.typing(await request.json() as { conversationId?: string; done?: boolean }, agentId));
-    if (path === "/thinking/mark") return this.authRuntime(request, async (agentId) => this.thinking("mark", await request.json() as { conversationIds?: string[] }, agentId));
-    if (path === "/thinking/unmark") return this.authRuntime(request, async (agentId) => this.thinking("unmark", await request.json() as { conversationIds?: string[] }, agentId));
-    if (path === "/events") return this.authRuntime(request, async () => this.events(await request.json().catch(() => null)));
-    if (path === "/notices") return this.authRuntime(request, async () => this.logBody("noticeLog", await request.json().catch(() => null)));
-    if (path === "/triage-log") return this.authRuntime(request, async () => this.logBody("triageLog", await request.json().catch(() => null)));
-    if (path === "/runs") return this.authRuntime(request, async () => this.startRun(await request.json().catch(() => null)));
-    if (path.startsWith("/runs/") && path.endsWith("/heartbeat")) return this.authRuntime(request, async (agentId) => this.runAction(path.split("/")[2] || "run", "heartbeat", await request.json().catch(() => null), agentId));
-    if (path.startsWith("/runs/") && path.endsWith("/finish")) return this.authRuntime(request, async (agentId) => this.runAction(path.split("/")[2] || "run", "finish", await request.json().catch(() => null), agentId));
-    if (path.startsWith("/runs/") && path.endsWith("/attempts")) return this.authRuntime(request, async (agentId) => this.runAttempt(path.split("/")[2] || "run", await request.json().catch(() => null), agentId));
-    if (path.startsWith("/runs/") && path.endsWith("/actions")) return this.authRuntime(request, async (agentId) => this.runActions(path.split("/")[2] || "run", agentId));
+    if (path === "/mark-read")
+      return this.authRuntime(request, async (agentId) =>
+        this.markRead((await request.json()) as { conversationId?: string; upToMessageId?: string }, agentId),
+      );
+    if (path === "/status")
+      return this.authRuntime(request, async (agentId) =>
+        this.status((await request.json()) as { status?: string; remediation?: unknown }, agentId),
+      );
+    if (path === "/typing")
+      return this.authRuntime(request, async (agentId) =>
+        this.typing((await request.json()) as { conversationId?: string; done?: boolean }, agentId),
+      );
+    if (path === "/thinking/mark")
+      return this.authRuntime(request, async (agentId) =>
+        this.thinking("mark", (await request.json()) as { conversationIds?: string[] }, agentId),
+      );
+    if (path === "/thinking/unmark")
+      return this.authRuntime(request, async (agentId) =>
+        this.thinking("unmark", (await request.json()) as { conversationIds?: string[] }, agentId),
+      );
+    if (path === "/events")
+      return this.authRuntime(request, async () => this.events(await request.json().catch(() => null)));
+    if (path === "/notices")
+      return this.authRuntime(request, async () => this.logBody("noticeLog", await request.json().catch(() => null)));
+    if (path === "/triage-log")
+      return this.authRuntime(request, async () => this.logBody("triageLog", await request.json().catch(() => null)));
+    if (path === "/runs")
+      return this.authRuntime(request, async () => this.startRun(await request.json().catch(() => null)));
+    if (path.startsWith("/runs/") && path.endsWith("/heartbeat"))
+      return this.authRuntime(request, async (agentId) =>
+        this.runAction(path.split("/")[2] || "run", "heartbeat", await request.json().catch(() => null), agentId),
+      );
+    if (path.startsWith("/runs/") && path.endsWith("/finish"))
+      return this.authRuntime(request, async (agentId) =>
+        this.runAction(path.split("/")[2] || "run", "finish", await request.json().catch(() => null), agentId),
+      );
+    if (path.startsWith("/runs/") && path.endsWith("/attempts"))
+      return this.authRuntime(request, async (agentId) =>
+        this.runAttempt(path.split("/")[2] || "run", await request.json().catch(() => null), agentId),
+      );
+    if (path.startsWith("/runs/") && path.endsWith("/actions"))
+      return this.authRuntime(request, async (agentId) => this.runActions(path.split("/")[2] || "run", agentId));
     if (path === "/gui-events") return this.guiEvents();
     if (path === "/gui-state") return json(await stateForGui(await this.get(), url.searchParams.get("redact") === "1"));
     if (path === "/gui-messages") return this.guiMessages(request);
@@ -319,25 +356,55 @@ export class GuiState implements DurableObject {
     if (path === "/gui-export-state") return json(this.snapshot(await this.get()));
     if (path === "/gui-import-state") return this.importSnapshot(await request.json().catch(() => null));
     if (path === "/gui-reset-state") return this.resetState();
-    if (path === "/gui-message") return this.guiMessage(request, await request.json() as { body?: string; conversationId?: string; attachments?: unknown });
-    if (path === "/gui-attachments" && request.method === "POST") return this.guiAttachment(request, await request.json().catch(() => ({})));
-    if (path.startsWith("/gui-attachments/") && request.method === "GET") return this.guiAttachmentFile(new URL(request.url), decodeURIComponent(path.slice("/gui-attachments/".length)));
-    if (path === "/gui-conversations") return this.guiConversation(await request.json().catch(() => ({})) as GuiConversationPayload);
-    if (path.startsWith("/gui-conversations/") && path.endsWith("/team")) return this.guiUpdateConversationTeam(path.split("/")[2], await request.json().catch(() => ({})) as GuiConversationPayload);
-    if (path.startsWith("/gui-workflows/") && path.endsWith("/agents")) return this.guiUpdateWorkflowAgents(path.split("/")[2], await request.json().catch(() => ({})) as GuiWorkflowAgentsPayload);
-    if (path.startsWith("/gui-conversations/") && path.endsWith("/delete")) return this.guiDeleteConversation(path.split("/")[2]);
-    if (path === "/gui-clear-messages") return this.clearMessages(await request.json().catch(() => ({})) as { conversationId?: string });
-    if (path === "/gui-agent-config") return this.agentConfig(await request.json() as AgentConfigPayload);
-    if (path === "/gui-card") return this.createCard(await request.json().catch(() => ({})) as { title?: string; assignee?: string; allowedPaths?: string[] });
-    if (path === "/gui-task") return this.createTask(await request.json().catch(() => ({})) as GuiTaskPayload);
-    if (path.startsWith("/gui-task/") && path.endsWith("/update")) return this.updateTask(path.split("/")[2], await request.json().catch(() => ({})) as GuiTaskUpdatePayload);
-    if (path.startsWith("/gui-card/") && path.endsWith("/move")) return this.moveCard(path.split("/")[2], await request.json().catch(() => ({})) as GuiCardMovePayload);
-    if (path === "/gui-conversation/mark-read") return this.guiMarkRead(await request.json().catch(() => ({})) as { conversationId?: string; upToMessageId?: string });
+    if (path === "/gui-message")
+      return this.guiMessage(
+        request,
+        (await request.json()) as { body?: string; conversationId?: string; attachments?: unknown },
+      );
+    if (path === "/gui-attachments" && request.method === "POST")
+      return this.guiAttachment(request, await request.json().catch(() => ({})));
+    if (path.startsWith("/gui-attachments/") && request.method === "GET")
+      return this.guiAttachmentFile(new URL(request.url), decodeURIComponent(path.slice("/gui-attachments/".length)));
+    if (path === "/gui-conversations")
+      return this.guiConversation((await request.json().catch(() => ({}))) as GuiConversationPayload);
+    if (path.startsWith("/gui-conversations/") && path.endsWith("/team"))
+      return this.guiUpdateConversationTeam(
+        path.split("/")[2],
+        (await request.json().catch(() => ({}))) as GuiConversationPayload,
+      );
+    if (path.startsWith("/gui-workflows/") && path.endsWith("/agents"))
+      return this.guiUpdateWorkflowAgents(
+        path.split("/")[2],
+        (await request.json().catch(() => ({}))) as GuiWorkflowAgentsPayload,
+      );
+    if (path.startsWith("/gui-conversations/") && path.endsWith("/delete"))
+      return this.guiDeleteConversation(path.split("/")[2]);
+    if (path === "/gui-clear-messages")
+      return this.clearMessages((await request.json().catch(() => ({}))) as { conversationId?: string });
+    if (path === "/gui-agent-config") return this.agentConfig((await request.json()) as AgentConfigPayload);
+    if (path === "/gui-card")
+      return this.createCard(
+        (await request.json().catch(() => ({}))) as { title?: string; assignee?: string; allowedPaths?: string[] },
+      );
+    if (path === "/gui-task") return this.createTask((await request.json().catch(() => ({}))) as GuiTaskPayload);
+    if (path.startsWith("/gui-task/") && path.endsWith("/update"))
+      return this.updateTask(path.split("/")[2], (await request.json().catch(() => ({}))) as GuiTaskUpdatePayload);
+    if (path.startsWith("/gui-card/") && path.endsWith("/move"))
+      return this.moveCard(path.split("/")[2], (await request.json().catch(() => ({}))) as GuiCardMovePayload);
+    if (path === "/gui-conversation/mark-read")
+      return this.guiMarkRead(
+        (await request.json().catch(() => ({}))) as { conversationId?: string; upToMessageId?: string },
+      );
     if (path === "/gui-wake") return this.guiWake(await request.json().catch(() => ({})));
     if (path === "/gui-remote-assist/share") return this.remoteAssistShare(request);
     if (path === "/gui-remote-assist/revoke") return this.remoteAssistRevoke();
-    if (path === "/remote-assist/auth") return this.remoteAssistAuth(await request.json().catch(() => ({})) as { token?: unknown });
-    if (path.startsWith("/gui-approval/") && path.endsWith("/resolve")) return this.resolveApproval(path.split("/")[2] || "", await request.json().catch(() => ({})) as { decision?: string; reason?: string });
+    if (path === "/remote-assist/auth")
+      return this.remoteAssistAuth((await request.json().catch(() => ({}))) as { token?: unknown });
+    if (path.startsWith("/gui-approval/") && path.endsWith("/resolve"))
+      return this.resolveApproval(
+        path.split("/")[2] || "",
+        (await request.json().catch(() => ({}))) as { decision?: string; reason?: string },
+      );
     return json({ error: "not found" }, { status: 404 });
   }
 
@@ -353,7 +420,11 @@ export class GuiState implements DurableObject {
   }
 
   private async hydrateEntityState(base: State): Promise<State> {
-    const entries = await Promise.all(GUI_ENTITY_STATE_KEYS.map(async (key) => [key, await this.state.storage.get<State[typeof key]>(entityStateStorageKey(key))] as const));
+    const entries = await Promise.all(
+      GUI_ENTITY_STATE_KEYS.map(
+        async (key) => [key, await this.state.storage.get<State[typeof key]>(entityStateStorageKey(key))] as const,
+      ),
+    );
     const state = { ...base };
     this.persistedStateFingerprint.set(GUI_BASE_STATE_KEY, stableStorageValue(base));
     for (const [key, value] of entries) {
@@ -385,14 +456,16 @@ export class GuiState implements DurableObject {
   private async clearEntityState(): Promise<void> {
     await Promise.all([
       this.state.storage.delete(GUI_BASE_STATE_KEY),
-      ...GUI_ENTITY_STATE_KEYS.map((key) => this.state.storage.delete(entityStateStorageKey(key)))
+      ...GUI_ENTITY_STATE_KEYS.map((key) => this.state.storage.delete(entityStateStorageKey(key))),
     ]);
     this.persistedStateFingerprint.clear();
   }
 
   private async storageDebug(): Promise<Response> {
     const keys = [GUI_BASE_STATE_KEY, ...GUI_ENTITY_STATE_KEYS.map(entityStateStorageKey)];
-    const rows = await Promise.all(keys.map(async (key) => ({ key, present: (await this.state.storage.get(key)) !== undefined })));
+    const rows = await Promise.all(
+      keys.map(async (key) => ({ key, present: (await this.state.storage.get(key)) !== undefined })),
+    );
     const base = await this.state.storage.get<Record<string, unknown>>(GUI_BASE_STATE_KEY);
     return json({ rows, baseKeys: Object.keys(base ?? {}).sort() });
   }
@@ -400,9 +473,11 @@ export class GuiState implements DurableObject {
   private queueStateWrite(writes: Promise<unknown>[], key: string, value: unknown, force = false): void {
     const fingerprint = stableStorageValue(value);
     if (!force && this.persistedStateFingerprint.get(key) === fingerprint) return;
-    writes.push(this.state.storage.put(key, value).then(() => {
-      this.persistedStateFingerprint.set(key, fingerprint);
-    }));
+    writes.push(
+      this.state.storage.put(key, value).then(() => {
+        this.persistedStateFingerprint.set(key, fingerprint);
+      }),
+    );
   }
 
   private freshState(): State {
@@ -413,11 +488,11 @@ export class GuiState implements DurableObject {
       runtimeTokens: {},
       runtimeTokenMeta: {},
       pairingCode: crypto.randomUUID(),
-	      availableEngines: [],
-	      capabilities: { workspaces: [] },
-	      agents: defaultTeamAgents(),
-	      workflowAgentIds: normalizeWorkflowAgentIds(undefined, defaultTeamAgents()),
-	      conversations: [{ ...DEFAULT_CONVERSATION, created_at: Date.now(), updated_at: Date.now() }],
+      availableEngines: [],
+      capabilities: { workspaces: [] },
+      agents: defaultTeamAgents(),
+      workflowAgentIds: normalizeWorkflowAgentIds(undefined, defaultTeamAgents()),
+      conversations: [{ ...DEFAULT_CONVERSATION, created_at: Date.now(), updated_at: Date.now() }],
       messages: [],
       cliLog: [],
       statusLog: [],
@@ -452,12 +527,12 @@ export class GuiState implements DurableObject {
       artifacts: [],
       context: [],
       hypotheses: [],
-	      reactions: [],
-	      composing: [],
-	      approvals: [],
-	      uploads: {},
-	      remoteAssist: undefined
-	    };
+      reactions: [],
+      composing: [],
+      approvals: [],
+      uploads: {},
+      remoteAssist: undefined,
+    };
     return initial;
   }
 
@@ -483,10 +558,10 @@ export class GuiState implements DurableObject {
     saved.artifacts ??= [];
     saved.context ??= [];
     saved.hypotheses ??= [];
-	    saved.reactions ??= [];
-	    saved.composing ??= [];
-	    saved.uploads ??= {};
-	    saved.runtimeTokens = normalizeRuntimeTokens(saved.runtimeTokens);
+    saved.reactions ??= [];
+    saved.composing ??= [];
+    saved.uploads ??= {};
+    saved.runtimeTokens = normalizeRuntimeTokens(saved.runtimeTokens);
     saved.runtimeTokenMeta = normalizeRuntimeTokenMeta(saved.runtimeTokenMeta, saved.runtimeTokens);
     saved.remoteAssist = normalizeRemoteAssistGrant(saved.remoteAssist);
     saved.agents = normalizeAgents(saved.agents);
@@ -510,13 +585,19 @@ export class GuiState implements DurableObject {
       conversation.teamMode = team.teamMode;
       conversation.coordinatorAgentId = team.coordinatorAgentId;
       conversation.teamAgentIds = team.teamAgentIds;
-      conversation.teamSnapshot = buildConversationTeamSnapshot(saved, team, {}, conversation.teamSnapshot?.createdAt ?? (conversation.created_at || Date.now()));
+      conversation.teamSnapshot = buildConversationTeamSnapshot(
+        saved,
+        team,
+        {},
+        conversation.teamSnapshot?.createdAt ?? (conversation.created_at || Date.now()),
+      );
     }
     saved.cliLog = (saved.cliLog ?? []).slice(-CLI_LOG_CAPACITY).map((row) => ({
       ...row,
-      result: typeof row.result === "string" && row.result.length > CLI_LOG_RESULT_MAX_CHARS
-        ? `${row.result.slice(0, CLI_LOG_RESULT_MAX_CHARS)}…`
-        : row.result
+      result:
+        typeof row.result === "string" && row.result.length > CLI_LOG_RESULT_MAX_CHARS
+          ? `${row.result.slice(0, CLI_LOG_RESULT_MAX_CHARS)}…`
+          : row.result,
     }));
     saved.statusLog = (saved.statusLog ?? []).slice(-STATUS_LOG_CAPACITY);
     saved.typingLog = (saved.typingLog ?? []).slice(-TYPING_LOG_CAPACITY);
@@ -540,12 +621,13 @@ export class GuiState implements DurableObject {
     return {
       schema: "king-ai.gui-state.v1",
       exportedAt: Date.now(),
-      state
+      state,
     };
   }
 
   private async importSnapshot(payload: unknown): Promise<Response> {
-    if (!payload || typeof payload !== "object") return json({ error: "expected state snapshot JSON" }, { status: 400 });
+    if (!payload || typeof payload !== "object")
+      return json({ error: "expected state snapshot JSON" }, { status: 400 });
     const record = payload as Partial<StateSnapshot> & { state?: unknown };
     if (record.schema !== "king-ai.gui-state.v1" || !record.state || typeof record.state !== "object") {
       return json({ error: "unsupported or malformed state snapshot" }, { status: 400 });
@@ -571,7 +653,9 @@ export class GuiState implements DurableObject {
     if (typeof payload?.code !== "string" || payload.code !== state.pairingCode) {
       return json({ error: "invalid pairing code" }, { status: 401 });
     }
-    state.availableEngines = Array.isArray(payload?.engines) ? payload.engines.filter((engine): engine is string => typeof engine === "string") : [];
+    state.availableEngines = Array.isArray(payload?.engines)
+      ? payload.engines.filter((engine): engine is string => typeof engine === "string")
+      : [];
     state.capabilities = normalizeCapabilities(payload?.capabilities);
     state.pairingCode = crypto.randomUUID();
     await this.putBaseState(state);
@@ -595,13 +679,14 @@ export class GuiState implements DurableObject {
 
   private async heartbeat(payload?: unknown): Promise<Response> {
     const state = await this.get();
-    const body = payload && typeof payload === "object" ? payload as { version?: unknown; capabilities?: unknown } : {};
+    const body =
+      payload && typeof payload === "object" ? (payload as { version?: unknown; capabilities?: unknown }) : {};
     const capabilities = normalizeCapabilities(body.capabilities);
     state.capabilities = capabilities;
     state.lastHeartbeat = {
       at: Date.now(),
       version: typeof body.version === "string" ? body.version : undefined,
-      capabilities
+      capabilities,
     };
     await this.put(state);
     return json({ ok: true, at: state.lastHeartbeat.at });
@@ -620,7 +705,7 @@ export class GuiState implements DurableObject {
         state.messages[index] = {
           ...message,
           body_html: rendered.body_html,
-          body_render_key: rendered.body_render_key
+          body_render_key: rendered.body_render_key,
         };
         dirty = true;
       }
@@ -635,8 +720,14 @@ export class GuiState implements DurableObject {
     const agent = defaultAgentFor(state);
     const agentSummary = agentStateSummary(state, agent);
     const observation = buildLoopSnapshot(state);
-    const lastRunStart = state.runLog.slice().reverse().find((row) => row.action === "start");
-    const lastRunFinish = state.runLog.slice().reverse().find((row) => row.action === "finish");
+    const lastRunStart = state.runLog
+      .slice()
+      .reverse()
+      .find((row) => row.action === "start");
+    const lastRunFinish = state.runLog
+      .slice()
+      .reverse()
+      .find((row) => row.action === "finish");
     const lastHeartbeatAt = state.lastHeartbeat?.at;
     const paired = state.availableEngines.length > 0;
     const online = Boolean(lastHeartbeatAt && Date.now() - lastHeartbeatAt < 90_000);
@@ -645,9 +736,13 @@ export class GuiState implements DurableObject {
     const encodedPairingCode = tenantId === "global" ? state.pairingCode : `${tenantId}:${state.pairingCode}`;
     const publicBase = request.headers.get("X-King-AI-Public-Base") || new URL(request.url).origin;
     const remoteAssist = activeRemoteAssistGrant(state);
-    const isRemoteAssist = Boolean(new URL(request.url).searchParams.get("assist") || request.headers.get("X-King-AI-Assist-Token"));
+    const isRemoteAssist = Boolean(
+      new URL(request.url).searchParams.get("assist") || request.headers.get("X-King-AI-Assist-Token"),
+    );
     const requestedConversationId = new URL(request.url).searchParams.get("conversationId") || DEFAULT_CONVERSATION.id;
-    const activeConversation = state.conversations.find((row) => row.id === requestedConversationId) ?? state.conversations.find((row) => row.id === DEFAULT_CONVERSATION.id);
+    const activeConversation =
+      state.conversations.find((row) => row.id === requestedConversationId) ??
+      state.conversations.find((row) => row.id === DEFAULT_CONVERSATION.id);
     const activeAgents = teamAgentsFor(state, activeConversation);
     return json({
       connection: {
@@ -655,14 +750,16 @@ export class GuiState implements DurableObject {
         online,
         computerId: state.computerId,
         lastHeartbeatAt,
-        version: state.lastHeartbeat?.version
+        version: state.lastHeartbeat?.version,
       },
       tenantId,
       remoteAssist: remoteAssist ? remoteAssistSummary(remoteAssist) : { active: false },
       access: { remoteAssist: isRemoteAssist },
       currentUser: authUserFromRequest(request),
       pairingCode: isRemoteAssist ? undefined : encodedPairingCode,
-      pairingLocator: isRemoteAssist ? undefined : pairingLocator({ serverUrl: publicBase, tenantId, code: state.pairingCode }),
+      pairingLocator: isRemoteAssist
+        ? undefined
+        : pairingLocator({ serverUrl: publicBase, tenantId, code: state.pairingCode }),
       rawPairingCode: isRemoteAssist ? undefined : state.pairingCode,
       pairCommandTenantArg: "",
       conversations: conversationSummaries(state),
@@ -679,8 +776,8 @@ export class GuiState implements DurableObject {
       agentConfigUpdatedAt: state.agentConfigUpdatedAt,
       lastRun: {
         start: lastRunStart,
-        finish: lastRunFinish
-      }
+        finish: lastRunFinish,
+      },
     });
   }
 
@@ -692,57 +789,59 @@ export class GuiState implements DurableObject {
         type: `message.${message.author_kind}`,
         at: message.created_at,
         summary: `${message.author_name}: ${message.body}`,
-        body: message
+        body: message,
       })),
       ...state.statusLog.map((row) => ({
         type: "runtime.status",
         at: row.at,
         summary: row.status,
-        body: row
+        body: row,
       })),
       ...state.typingLog.map((row) => ({
         type: row.done ? "typing.done" : "typing.start",
         at: row.at,
         summary: row.conversationId || "conversation",
-        body: row
+        body: row,
       })),
       ...state.thinkingLog.map((row) => ({
         type: `thinking.${row.action}`,
         at: row.at,
         summary: row.conversationIds.join(", ") || "conversation",
-        body: row
+        body: row,
       })),
       ...state.runLog.map((row) => ({
         type: `run.${row.action}`,
         at: row.at,
         summary: `${row.runId}${runtimeBodyStatus(row.body) ? ` ${runtimeBodyStatus(row.body)}` : ""}`,
-        body: row
+        body: row,
       })),
       ...state.cliLog.map((row) => ({
         type: "runtime.cli",
         at: row.at,
         summary: `${row.argv.join(" ")} -> ${row.result}`,
-        body: row
+        body: row,
       })),
       ...state.noticeLog.map((row) => ({
         type: "runtime.notice",
         at: row.at,
         summary: formatNoticeSummary(row.body),
-        body: row
+        body: row,
       })),
       ...state.triageLog.map((row) => ({
         type: "runtime.triage",
         at: row.at,
         summary: summarizeUnknown(row.body),
-        body: row
+        body: row,
       })),
       ...state.loopEvents.map((row) => ({
         type: row.type,
         at: Date.parse(row.timestamp) || Date.now(),
         summary: formatLoopEventLine(row),
-        body: row
-      }))
-    ].sort((a, b) => b.at - a.at).slice(0, limit);
+        body: row,
+      })),
+    ]
+      .sort((a, b) => b.at - a.at)
+      .slice(0, limit);
     return json({ rows });
   }
 
@@ -770,8 +869,8 @@ export class GuiState implements DurableObject {
       headers: {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
-        "Connection": "keep-alive"
-      }
+        Connection: "keep-alive",
+      },
     });
   }
 
@@ -788,8 +887,8 @@ export class GuiState implements DurableObject {
       headers: {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
-        "Connection": "keep-alive"
-      }
+        Connection: "keep-alive",
+      },
     });
   }
 
@@ -798,7 +897,7 @@ export class GuiState implements DurableObject {
     const unread = unreadMessagesFor(state, agentId);
     return json({
       rows: sortRuntimeMessages(unread, agentId).map((item) => item.row),
-      routeSummary: formatMessageRouteSummary(unread, agentId)
+      routeSummary: formatMessageRouteSummary(unread, agentId),
     });
   }
 
@@ -809,16 +908,21 @@ export class GuiState implements DurableObject {
     const top = routed[0];
     const replyConversationId = top?.row.conversation_id || DEFAULT_CONVERSATION.id;
     return json({
-      instructions: "Return strict JSON: {\"actionable\": boolean, \"reason\": string, \"promptNote\": string, \"routeHint\": \"ignore|monitor|respond|steer\", \"priority\": \"normal|steer|urgent\"}. Mark human messages actionable and prioritize blocker, approval, decision, direct, and @mention messages.",
-      input: routed.map((item) => `${messageRouteTag(item)} score=${item.score} ${item.row.author_name}: ${item.row.body}`).join("\n"),
+      instructions:
+        'Return strict JSON: {"actionable": boolean, "reason": string, "promptNote": string, "routeHint": "ignore|monitor|respond|steer", "priority": "normal|steer|urgent"}. Mark human messages actionable and prioritize blocker, approval, decision, direct, and @mention messages.',
+      input: routed
+        .map((item) => `${messageRouteTag(item)} score=${item.score} ${item.row.author_name}: ${item.row.body}`)
+        .join("\n"),
       routeSummary: formatMessageRouteSummary(unread, agentId),
-      verdict: unread.length ? {
-        actionable: top ? top.route !== "ignore" : true,
-        reason: top ? `gui unread message routed ${messageRouteTag(top)}` : "gui unread message",
-        promptNote: `Handle the highest-priority routed message first. Reply through king-ai reply ${replyConversationId} --file notes/reply.md or a short inline reply.`,
-        routeHint: top?.route,
-        priority: top?.priority
-      } : { actionable: false, reason: "inbox empty", routeHint: "ignore", priority: "normal" }
+      verdict: unread.length
+        ? {
+            actionable: top ? top.route !== "ignore" : true,
+            reason: top ? `gui unread message routed ${messageRouteTag(top)}` : "gui unread message",
+            promptNote: `Handle the highest-priority routed message first. Reply through king-ai reply ${replyConversationId} --file notes/reply.md or a short inline reply.`,
+            routeHint: top?.route,
+            priority: top?.priority,
+          }
+        : { actionable: false, reason: "inbox empty", routeHint: "ignore", priority: "normal" },
     });
   }
 
@@ -828,7 +932,7 @@ export class GuiState implements DurableObject {
     return json({
       roster: agentStates.map(formatRosterAgent).join("\n"),
       agentStates,
-      agents: state.agents
+      agents: state.agents,
     });
   }
 
@@ -839,132 +943,173 @@ export class GuiState implements DurableObject {
         agentId: params.get("agent") || DEFAULT_AGENT.id,
         reason: params.get("reason") || "wake",
         runId: params.get("runId") || undefined,
-        steerReason: params.get("steerReason") || undefined
-      })
+        steerReason: params.get("steerReason") || undefined,
+      }),
     });
   }
 
   private async agenda(agentId: string): Promise<Response> {
     const state = await this.get();
     const now = new Date();
-    const due = state.calendar.filter((item) =>
-      item.assignee === agentId &&
-      (Date.parse(item.at) <= now.getTime() || (item.cron ? cronMatches(item.cron, now) : false))
+    const due = state.calendar.filter(
+      (item) =>
+        item.assignee === agentId &&
+        (Date.parse(item.at) <= now.getTime() || (item.cron ? cronMatches(item.cron, now) : false)),
     );
     const card = state.cards.find((row) => row.column !== "done" && (!row.assignee || row.assignee === agentId));
-    const task = state.tasks.find((row) => taskVisibleStatus(state, row) !== "done" && taskVisibleStatus(state, row) !== "blocked" && (!row.assignee || row.assignee === agentId));
+    const task = state.tasks.find(
+      (row) =>
+        taskVisibleStatus(state, row) !== "done" &&
+        taskVisibleStatus(state, row) !== "blocked" &&
+        (!row.assignee || row.assignee === agentId),
+    );
     if (!due.length && !card && !task) return json({ actionable: false });
     const lines = [
-      ...due.map((item) => `Calendar due: ${item.title}${item.cron ? ` [cron ${item.cron}]` : ""}${item.prompt ? ` — ${item.prompt}` : ""}`),
+      ...due.map(
+        (item) =>
+          `Calendar due: ${item.title}${item.cron ? ` [cron ${item.cron}]` : ""}${item.prompt ? ` — ${item.prompt}` : ""}`,
+      ),
       ...(card ? [`Board card: ${card.id} [${card.column}] ${card.title}`] : []),
-      ...(task ? [`Task: ${task.id} [${task.status}] ${task.title}`] : [])
+      ...(task ? [`Task: ${task.id} [${task.status}] ${task.title}`] : []),
     ];
     return json({
       actionable: true,
       focus: task?.id ?? card?.id ?? due[0]?.id,
-      brief: lines.join("\n")
+      brief: lines.join("\n"),
     } satisfies AgendaPayload);
   }
 
-  private async cli(payload: { argv?: string[]; agentId?: string; tokenAgentId?: string; engine?: string; runId?: string; contract?: unknown; authUser?: AuthUser }): Promise<Response> {
+  private async cli(payload: {
+    argv?: string[];
+    agentId?: string;
+    tokenAgentId?: string;
+    engine?: string;
+    runId?: string;
+    contract?: unknown;
+    authUser?: AuthUser;
+  }): Promise<Response> {
     const argv = payload.argv ?? [];
     const state = await this.get();
     const actor = findAgent(state, payload.agentId) ?? findAgent(state, payload.tokenAgentId) ?? defaultAgentFor(state);
-    const authorEngine = activeRunEngine(state) ?? normalizeEngineId(payload.engine) ?? actor.engine ?? DEFAULT_AGENT.engine ?? "grok";
+    const authorEngine =
+      activeRunEngine(state) ?? normalizeEngineId(payload.engine) ?? actor.engine ?? DEFAULT_AGENT.engine ?? "grok";
     const runContract = resolveRunContract(state, payload.runId, payload.contract);
     // Snapshot task routing and message ids before the command mutates state, so we can push a
     // targeted SSE wake to any agent that just gained routed work (e.g. a reviewer the actor handed
     // off to via `task done`). Without this, agent->agent handoffs only surfaced on the recipient's
     // inbox poll fallback (~5s by default), which is the main reason downstream agents responded slowly.
-    const taskRoutingBefore = new Map((state.tasks ?? []).map((task) => [task.id, { assignee: task.assignee, status: task.status as string }] as const));
+    const taskRoutingBefore = new Map(
+      (state.tasks ?? []).map((task) => [task.id, { assignee: task.assignee, status: task.status as string }] as const),
+    );
     const messageIdsBefore = new Set((state.messages ?? []).map((message) => message.id));
-    const outcome = await dispatchRuntimeCli({
-      argv,
-      state,
-      actor,
-      authorEngine,
-      runContract,
-      payload
-    }, {
-      defaultAgentId: DEFAULT_AGENT.id,
-      findConversation,
-      validateRunContractAction: (currentState, contract, currentActor, action) => {
-        if (action.command !== "reply" && action.command !== "task") return undefined;
-        return validateRunContractAction(currentState, contract as RunContract | undefined, currentActor, {
-          command: action.command,
-          conversationId: action.conversationId,
-          taskId: action.taskId
-        }) ?? undefined;
+    const outcome = await dispatchRuntimeCli(
+      {
+        argv,
+        state,
+        actor,
+        authorEngine,
+        runContract,
+        payload,
       },
-      unreadMessagesFor,
-      isRuntimeVisibleMessage: (message) => isRuntimeVisibleMessage(message as Message),
-      pendingBelongsToAgent: (message, currentActor) => pendingBelongsToAgent(message as Message, currentActor),
-      recordRunAction: (currentState, runId, contract, currentActor, action, detail) => {
-        if (action !== "reply" && action !== "task" && action !== "ignore") return;
-        recordRunAction(currentState, runId, contract as RunContract | undefined, currentActor, action, detail);
-      },
-      agentStateSummary,
-      formatRosterAgent: (summary) => formatRosterAgent(summary as AgentStateSummary),
-      buildRuntimePreamble,
-      readOption,
-      displayNameForHuman: (currentState, user) => displayNameForHuman(currentState, user ? { id: user.email ?? user.name ?? "gui-human", ...user } : undefined),
-      isTaskMutationCommand,
-      isCliUsageOrError,
-      stateCommand: (currentState, commandArgs) => this.stateCommand(currentState, commandArgs),
-      agentsCommand: (currentState, commandArgs) => this.agentsCommand(currentState, commandArgs),
-      observeCommand: (currentState, commandArgs) => this.observeCommand(currentState, commandArgs),
-      loopCommand: (currentState, commandArgs) => this.loopCommand(currentState, commandArgs),
-      cardCommand: (currentState, commandArgs) => this.cardCommand(currentState, commandArgs),
-      taskCommand: (currentState, commandArgs, currentActor) => this.taskCommand(currentState, commandArgs, currentActor),
-      initiativeCommand: (currentState, commandArgs) => this.initiativeCommand(currentState, commandArgs),
-      capsuleCommand: (currentState, commandArgs) => this.capsuleCommand(currentState, commandArgs),
-      mergeCommand: (currentState, commandArgs) => this.mergeCommand(currentState, commandArgs),
-      evalCommand: (currentState, commandArgs) => this.evalCommand(currentState, commandArgs),
-      feedbackCommand: (currentState, commandArgs) => this.feedbackCommand(currentState, commandArgs),
-      reviewCommand: (currentState, commandArgs) => this.reviewCommand(currentState, commandArgs),
-      routeCommand: (currentState, commandArgs) => this.routeCommand(currentState, commandArgs),
-      calendarCommand: (currentState, commandArgs) => this.calendarCommand(currentState, commandArgs),
-      claimCommand: (currentState, commandArgs, currentActor) => this.claimCommand(currentState, commandArgs, currentActor),
-      unclaimCommand: (currentState, commandArgs) => this.unclaimCommand(currentState, commandArgs),
-      dmCommand: (currentState, commandArgs, currentActor) => this.dmCommand(currentState, commandArgs, currentActor),
-      reactCommand: (currentState, commandArgs, currentActor) => this.reactCommand(currentState, commandArgs, currentActor),
-      docCommand: (currentState, commandArgs) => this.docCommand(currentState, commandArgs),
-      artifactCommand: (currentState, commandArgs, currentActor) => this.artifactCommand(currentState, commandArgs, currentActor),
-      contextCommand: (currentState, commandArgs, currentActor) => this.contextCommand(currentState, commandArgs, currentActor),
-      hypothesisCommand: (currentState, commandArgs, currentActor) => this.hypothesisCommand(currentState, commandArgs, currentActor),
-      planCommand: (currentState, commandArgs) => this.planCommand(currentState, commandArgs),
-      safetyCommand: (currentState, commandArgs) => this.safetyCommand(currentState, commandArgs),
-      sendCommand: (currentState, commandArgs, currentActor) => this.sendCommand(currentState, commandArgs, currentActor),
-      recvCommand: (currentState, commandArgs) => this.recvCommand(currentState, commandArgs),
-      recallCommand: (commandArgs) => runRecallCommand(this.episodicSql(), commandArgs),
-      escalateCommand: (currentState, commandArgs, currentActor) => this.escalateCommand(currentState, commandArgs, currentActor),
-      agendaJson: async (agentId) => (await this.agenda(agentId).then((res) => res.json())) as AgendaPayload,
-      getStateField: {
-        messages: (currentState) => currentState.messages,
-        pushMessage: (currentState, message) => { currentState.messages.push(message as Message); },
-        agents: (currentState) => currentState.agents,
-        composing: (currentState) => currentState.composing,
-        setComposing: (currentState, composing) => {
-          currentState.composing = composing.map((claim) => ({
-            ...claim,
-            agentId: currentState.composing.find((row) =>
-              row.conversationId === claim.conversationId &&
-              row.agentName === claim.agentName &&
-              row.claimed_at === claim.claimed_at
-            )?.agentId ?? claim.agentName
-          }));
+      {
+        defaultAgentId: DEFAULT_AGENT.id,
+        findConversation,
+        validateRunContractAction: (currentState, contract, currentActor, action) => {
+          if (action.command !== "reply" && action.command !== "task") return undefined;
+          return (
+            validateRunContractAction(currentState, contract as RunContract | undefined, currentActor, {
+              command: action.command,
+              conversationId: action.conversationId,
+              taskId: action.taskId,
+            }) ?? undefined
+          );
         },
-        claims: (currentState) => currentState.claims.filter((claim): claim is Claim & { conversationId: string } => typeof claim.conversationId === "string"),
-        statusLog: (currentState) => currentState.statusLog,
-        availableEngines: (currentState) => currentState.availableEngines
+        unreadMessagesFor,
+        isRuntimeVisibleMessage: (message) => isRuntimeVisibleMessage(message as Message),
+        pendingBelongsToAgent: (message, currentActor) => pendingBelongsToAgent(message as Message, currentActor),
+        recordRunAction: (currentState, runId, contract, currentActor, action, detail) => {
+          if (action !== "reply" && action !== "task" && action !== "ignore") return;
+          recordRunAction(currentState, runId, contract as RunContract | undefined, currentActor, action, detail);
+        },
+        agentStateSummary,
+        formatRosterAgent: (summary) => formatRosterAgent(summary as AgentStateSummary),
+        buildRuntimePreamble,
+        readOption,
+        displayNameForHuman: (currentState, user) =>
+          displayNameForHuman(currentState, user ? { id: user.email ?? user.name ?? "gui-human", ...user } : undefined),
+        isTaskMutationCommand,
+        isCliUsageOrError,
+        stateCommand: (currentState, commandArgs) => this.stateCommand(currentState, commandArgs),
+        agentsCommand: (currentState, commandArgs) => this.agentsCommand(currentState, commandArgs),
+        observeCommand: (currentState, commandArgs) => this.observeCommand(currentState, commandArgs),
+        loopCommand: (currentState, commandArgs) => this.loopCommand(currentState, commandArgs),
+        cardCommand: (currentState, commandArgs) => this.cardCommand(currentState, commandArgs),
+        taskCommand: (currentState, commandArgs, currentActor) =>
+          this.taskCommand(currentState, commandArgs, currentActor),
+        initiativeCommand: (currentState, commandArgs) => this.initiativeCommand(currentState, commandArgs),
+        capsuleCommand: (currentState, commandArgs) => this.capsuleCommand(currentState, commandArgs),
+        mergeCommand: (currentState, commandArgs) => this.mergeCommand(currentState, commandArgs),
+        evalCommand: (currentState, commandArgs) => this.evalCommand(currentState, commandArgs),
+        feedbackCommand: (currentState, commandArgs) => this.feedbackCommand(currentState, commandArgs),
+        reviewCommand: (currentState, commandArgs) => this.reviewCommand(currentState, commandArgs),
+        routeCommand: (currentState, commandArgs) => this.routeCommand(currentState, commandArgs),
+        calendarCommand: (currentState, commandArgs) => this.calendarCommand(currentState, commandArgs),
+        claimCommand: (currentState, commandArgs, currentActor) =>
+          this.claimCommand(currentState, commandArgs, currentActor),
+        unclaimCommand: (currentState, commandArgs) => this.unclaimCommand(currentState, commandArgs),
+        dmCommand: (currentState, commandArgs, currentActor) => this.dmCommand(currentState, commandArgs, currentActor),
+        reactCommand: (currentState, commandArgs, currentActor) =>
+          this.reactCommand(currentState, commandArgs, currentActor),
+        docCommand: (currentState, commandArgs) => this.docCommand(currentState, commandArgs),
+        artifactCommand: (currentState, commandArgs, currentActor) =>
+          this.artifactCommand(currentState, commandArgs, currentActor),
+        contextCommand: (currentState, commandArgs, currentActor) =>
+          this.contextCommand(currentState, commandArgs, currentActor),
+        hypothesisCommand: (currentState, commandArgs, currentActor) =>
+          this.hypothesisCommand(currentState, commandArgs, currentActor),
+        planCommand: (currentState, commandArgs) => this.planCommand(currentState, commandArgs),
+        safetyCommand: (currentState, commandArgs) => this.safetyCommand(currentState, commandArgs),
+        sendCommand: (currentState, commandArgs, currentActor) =>
+          this.sendCommand(currentState, commandArgs, currentActor),
+        recvCommand: (currentState, commandArgs) => this.recvCommand(currentState, commandArgs),
+        recallCommand: (commandArgs) => runRecallCommand(this.episodicSql(), commandArgs),
+        escalateCommand: (currentState, commandArgs, currentActor) =>
+          this.escalateCommand(currentState, commandArgs, currentActor),
+        agendaJson: async (agentId) => (await this.agenda(agentId).then((res) => res.json())) as AgendaPayload,
+        getStateField: {
+          messages: (currentState) => currentState.messages,
+          pushMessage: (currentState, message) => {
+            currentState.messages.push(message as Message);
+          },
+          agents: (currentState) => currentState.agents,
+          composing: (currentState) => currentState.composing,
+          setComposing: (currentState, composing) => {
+            currentState.composing = composing.map((claim) => ({
+              ...claim,
+              agentId:
+                currentState.composing.find(
+                  (row) =>
+                    row.conversationId === claim.conversationId &&
+                    row.agentName === claim.agentName &&
+                    row.claimed_at === claim.claimed_at,
+                )?.agentId ?? claim.agentName,
+            }));
+          },
+          claims: (currentState) =>
+            currentState.claims.filter(
+              (claim): claim is Claim & { conversationId: string } => typeof claim.conversationId === "string",
+            ),
+          statusLog: (currentState) => currentState.statusLog,
+          availableEngines: (currentState) => currentState.availableEngines,
+        },
+        actorField: {
+          id: (currentActor) => currentActor.id,
+          name: (currentActor) => currentActor.name,
+          engine: (currentActor) => currentActor.engine,
+          json: (currentActor) => currentActor,
+        },
       },
-      actorField: {
-        id: (currentActor) => currentActor.id,
-        name: (currentActor) => currentActor.name,
-        engine: (currentActor) => currentActor.engine,
-        json: (currentActor) => currentActor
-      }
-    });
+    );
     if (outcome.kind === "reject") return this.cliRejected(state, actor, argv, outcome.result);
     state.cliLog.push({ at: Date.now(), agentId: actor.id, argv, result: outcome.result });
     await this.put(state);
@@ -979,7 +1124,7 @@ export class GuiState implements DurableObject {
     state: State,
     taskRoutingBefore: Map<string, { assignee?: string; status: string }>,
     messageIdsBefore: Set<string>,
-    actorId: string
+    actorId: string,
   ): Promise<void> {
     const seen = new Set<string>();
     const wakes: Array<Record<string, unknown>> = [];
@@ -993,7 +1138,7 @@ export class GuiState implements DurableObject {
         taskId: task.id,
         agentId: assignee,
         ...(task.conversationId ? { conversationId: task.conversationId } : {}),
-        at: Date.now()
+        at: Date.now(),
       };
       if (task.status === "done") {
         // Reviewer approval returns the task to the coordinator; wake loop-closing even though
@@ -1034,7 +1179,7 @@ export class GuiState implements DurableObject {
       pathConflict,
       parseAllowedPaths,
       stripOptions,
-      readOption
+      readOption,
     });
   }
 
@@ -1042,21 +1187,21 @@ export class GuiState implements DurableObject {
     return await runStateCommand(state, args, {
       snapshot: (currentState) => this.snapshot(currentState),
       importSnapshot: (payload) => this.importSnapshot(payload),
-      resetState: () => this.resetState()
+      resetState: () => this.resetState(),
     });
   }
 
   private agentsCommand(state: State, args: string[]): string {
     return runAgentsCommand(state, args, {
       agentStateSummary,
-      formatAgentMatrixLine: (agent) => formatAgentMatrixLine(agent as AgentStateSummary)
+      formatAgentMatrixLine: (agent) => formatAgentMatrixLine(agent as AgentStateSummary),
     });
   }
 
   private observeCommand(state: State, args: string[]): string {
     return runObserveCommand(state, args, {
       buildLoopSnapshot,
-      readOption
+      readOption,
     });
   }
 
@@ -1068,9 +1213,14 @@ export class GuiState implements DurableObject {
       parseEventPayload,
       normalizePositiveInt,
       isLoopEventType,
-      pushLoopEvent: (currentState, event) => pushLoopEvent(currentState, event as Omit<LoopEvent, "runId" | "loop" | "timestamp"> & Partial<Pick<LoopEvent, "runId" | "loop" | "timestamp">>),
+      pushLoopEvent: (currentState, event) =>
+        pushLoopEvent(
+          currentState,
+          event as Omit<LoopEvent, "runId" | "loop" | "timestamp"> &
+            Partial<Pick<LoopEvent, "runId" | "loop" | "timestamp">>,
+        ),
       buildEventLoopSnapshot,
-      formatLoopEventLine: (event) => formatLoopEventLine(event as LoopEvent)
+      formatLoopEventLine: (event) => formatLoopEventLine(event as LoopEvent),
     });
   }
 
@@ -1086,13 +1236,19 @@ export class GuiState implements DurableObject {
       normalizePriority,
       isTaskStatus,
       applyTaskReviewPayload,
-      pushLoopEvent: (currentState, event) => pushLoopEvent(currentState, event as Omit<LoopEvent, "runId" | "loop" | "timestamp"> & Partial<Pick<LoopEvent, "runId" | "loop" | "timestamp">>),
+      pushLoopEvent: (currentState, event) =>
+        pushLoopEvent(
+          currentState,
+          event as Omit<LoopEvent, "runId" | "loop" | "timestamp"> &
+            Partial<Pick<LoopEvent, "runId" | "loop" | "timestamp">>,
+        ),
       ensureConversation,
-      workerAgentForConversation: (currentState, conversation) => workerAgentForConversation(currentState, ensureConversation(currentState, conversation.id)),
+      workerAgentForConversation: (currentState, conversation) =>
+        workerAgentForConversation(currentState, ensureConversation(currentState, conversation.id)),
       defaultWorkerAgentFor,
       pushTaskTransition,
       queueTaskChangesRequestedMessage,
-      advanceTaskDone
+      advanceTaskDone,
     });
   }
 
@@ -1109,18 +1265,23 @@ export class GuiState implements DurableObject {
       normalizePriority,
       isInitiativeStatus,
       parseExecutionPlan,
-      applyExecutionPlan: (currentState, plan, options) => runPlanCommand(currentState, [
-        "apply",
-        JSON.stringify(plan),
-        ...(options.assign ? ["--assign", options.assign] : []),
-        "--initiative",
-        options.initiativeId
-      ], {
-        defaultAgentId: DEFAULT_AGENT.id,
-        parseExecutionPlan,
-        readOption,
-        createTask: (input) => workflowCreateGuiTaskDraft(input) as Task
-      })
+      applyExecutionPlan: (currentState, plan, options) =>
+        runPlanCommand(
+          currentState,
+          [
+            "apply",
+            JSON.stringify(plan),
+            ...(options.assign ? ["--assign", options.assign] : []),
+            "--initiative",
+            options.initiativeId,
+          ],
+          {
+            defaultAgentId: DEFAULT_AGENT.id,
+            parseExecutionPlan,
+            readOption,
+            createTask: (input) => workflowCreateGuiTaskDraft(input) as Task,
+          },
+        ),
     });
   }
 
@@ -1135,7 +1296,7 @@ export class GuiState implements DurableObject {
       stripOptions,
       parseCsvOption,
       isCapsuleStatus,
-      isCapsuleScopeType
+      isCapsuleScopeType,
     });
   }
 
@@ -1148,7 +1309,7 @@ export class GuiState implements DurableObject {
       formatMergeRequestLine,
       readOption,
       isSafeBranchName,
-      isMergeStatus
+      isMergeStatus,
     });
   }
 
@@ -1159,7 +1320,7 @@ export class GuiState implements DurableObject {
       formatEvaluationSummary,
       firstJsonArg,
       parseEvaluationRecord,
-      readOption
+      readOption,
     });
   }
 
@@ -1171,7 +1332,7 @@ export class GuiState implements DurableObject {
       summarizeRunFeedback,
       parseRunFeedback,
       readOption,
-      readBooleanOption
+      readBooleanOption,
     });
   }
 
@@ -1182,7 +1343,7 @@ export class GuiState implements DurableObject {
       findMergeRequest,
       parseReviewRecord: (commandArgs, capsule) => parseReviewRecord(commandArgs, capsule as ChangeCapsule),
       formatReviewLine,
-      readOption
+      readOption,
     });
   }
 
@@ -1199,8 +1360,14 @@ export class GuiState implements DurableObject {
       readOption,
       parseExternalEventArgs,
       routeExternalEvent: (currentState, event) => routeExternalEvent(currentState, event as ExternalEvent),
-      pushLoopEvent: (currentState, event) => { pushLoopEvent(currentState, event as Omit<LoopEvent, "runId" | "loop" | "timestamp"> & Partial<Pick<LoopEvent, "runId" | "loop" | "timestamp">>); },
-      countPendingMessages
+      pushLoopEvent: (currentState, event) => {
+        pushLoopEvent(
+          currentState,
+          event as Omit<LoopEvent, "runId" | "loop" | "timestamp"> &
+            Partial<Pick<LoopEvent, "runId" | "loop" | "timestamp">>,
+        );
+      },
+      countPendingMessages,
     });
   }
 
@@ -1208,7 +1375,7 @@ export class GuiState implements DurableObject {
     return runCalendarCommand(state, args, {
       defaultAgentId: DEFAULT_AGENT.id,
       readOption,
-      parseCron
+      parseCron,
     });
   }
 
@@ -1216,7 +1383,7 @@ export class GuiState implements DurableObject {
     return runClaimCommand(state, args, actor, {
       parseAllowedPaths,
       readOption,
-      pathConflict
+      pathConflict,
     });
   }
 
@@ -1227,68 +1394,80 @@ export class GuiState implements DurableObject {
   private dmCommand(state: State, args: string[], actor = defaultAgentFor(state)): string {
     return runDmCommand(state, args, actor, {
       defaultAgentId: DEFAULT_AGENT.id,
-      newAgentMessage: (input) => this.newAgentMessage({
-        ...input,
-        fromKind: input.fromKind as Message["author_kind"],
-        fromEngine: input.fromEngine as Agent["engine"]
-      }) as Message,
-      resolveEscalationTarget: (currentState) => currentState.agents.find((agent) => agent.id === "ceo" || agent.name.toLowerCase().includes("ceo"))?.id ?? DEFAULT_AGENT.id,
+      newAgentMessage: (input) =>
+        this.newAgentMessage({
+          ...input,
+          fromKind: input.fromKind as Message["author_kind"],
+          fromEngine: input.fromEngine as Agent["engine"],
+        }) as Message,
+      resolveEscalationTarget: (currentState) =>
+        currentState.agents.find((agent) => agent.id === "ceo" || agent.name.toLowerCase().includes("ceo"))?.id ??
+        DEFAULT_AGENT.id,
       readOption,
       stripOptions,
       isRuntimeVisibleMessage: (message) => isRuntimeVisibleMessage(message as Message),
       sortRuntimeMessages: (messages, agentId) => sortRuntimeMessages(messages as Message[], agentId),
-      messageRouteTag: (routed) => messageRouteTag(routed as unknown as Parameters<typeof messageRouteTag>[0])
+      messageRouteTag: (routed) => messageRouteTag(routed as unknown as Parameters<typeof messageRouteTag>[0]),
     });
   }
 
   private sendCommand(state: State, args: string[], actor = defaultAgentFor(state)): string {
     return runSendCommand(state, args, actor, {
       defaultAgentId: DEFAULT_AGENT.id,
-      newAgentMessage: (input) => this.newAgentMessage({
-        ...input,
-        fromKind: input.fromKind as Message["author_kind"],
-        fromEngine: input.fromEngine as Agent["engine"]
-      }) as Message,
-      resolveEscalationTarget: (currentState) => currentState.agents.find((agent) => agent.id === "ceo" || agent.name.toLowerCase().includes("ceo"))?.id ?? DEFAULT_AGENT.id,
+      newAgentMessage: (input) =>
+        this.newAgentMessage({
+          ...input,
+          fromKind: input.fromKind as Message["author_kind"],
+          fromEngine: input.fromEngine as Agent["engine"],
+        }) as Message,
+      resolveEscalationTarget: (currentState) =>
+        currentState.agents.find((agent) => agent.id === "ceo" || agent.name.toLowerCase().includes("ceo"))?.id ??
+        DEFAULT_AGENT.id,
       readOption,
       stripOptions,
       isRuntimeVisibleMessage: (message) => isRuntimeVisibleMessage(message as Message),
       sortRuntimeMessages: (messages, agentId) => sortRuntimeMessages(messages as Message[], agentId),
-      messageRouteTag: (routed) => messageRouteTag(routed as unknown as Parameters<typeof messageRouteTag>[0])
+      messageRouteTag: (routed) => messageRouteTag(routed as unknown as Parameters<typeof messageRouteTag>[0]),
     });
   }
 
   private recvCommand(state: State, args: string[]): string {
     return runRecvCommand(state, args, {
       defaultAgentId: DEFAULT_AGENT.id,
-      newAgentMessage: (input) => this.newAgentMessage({
-        ...input,
-        fromKind: input.fromKind as Message["author_kind"],
-        fromEngine: input.fromEngine as Agent["engine"]
-      }) as Message,
-      resolveEscalationTarget: (currentState) => currentState.agents.find((agent) => agent.id === "ceo" || agent.name.toLowerCase().includes("ceo"))?.id ?? DEFAULT_AGENT.id,
+      newAgentMessage: (input) =>
+        this.newAgentMessage({
+          ...input,
+          fromKind: input.fromKind as Message["author_kind"],
+          fromEngine: input.fromEngine as Agent["engine"],
+        }) as Message,
+      resolveEscalationTarget: (currentState) =>
+        currentState.agents.find((agent) => agent.id === "ceo" || agent.name.toLowerCase().includes("ceo"))?.id ??
+        DEFAULT_AGENT.id,
       readOption,
       stripOptions,
       isRuntimeVisibleMessage: (message) => isRuntimeVisibleMessage(message as Message),
       sortRuntimeMessages: (messages, agentId) => sortRuntimeMessages(messages as Message[], agentId),
-      messageRouteTag: (routed) => messageRouteTag(routed as unknown as Parameters<typeof messageRouteTag>[0])
+      messageRouteTag: (routed) => messageRouteTag(routed as unknown as Parameters<typeof messageRouteTag>[0]),
     });
   }
 
   private escalateCommand(state: State, args: string[], actor = defaultAgentFor(state)): string {
     return runEscalateCommand(state, args, actor, {
       defaultAgentId: DEFAULT_AGENT.id,
-      newAgentMessage: (input) => this.newAgentMessage({
-        ...input,
-        fromKind: input.fromKind as Message["author_kind"],
-        fromEngine: input.fromEngine as Agent["engine"]
-      }) as Message,
-      resolveEscalationTarget: (currentState) => currentState.agents.find((agent) => agent.id === "ceo" || agent.name.toLowerCase().includes("ceo"))?.id ?? DEFAULT_AGENT.id,
+      newAgentMessage: (input) =>
+        this.newAgentMessage({
+          ...input,
+          fromKind: input.fromKind as Message["author_kind"],
+          fromEngine: input.fromEngine as Agent["engine"],
+        }) as Message,
+      resolveEscalationTarget: (currentState) =>
+        currentState.agents.find((agent) => agent.id === "ceo" || agent.name.toLowerCase().includes("ceo"))?.id ??
+        DEFAULT_AGENT.id,
       readOption,
       stripOptions,
       isRuntimeVisibleMessage: (message) => isRuntimeVisibleMessage(message as Message),
       sortRuntimeMessages: (messages, agentId) => sortRuntimeMessages(messages as Message[], agentId),
-      messageRouteTag: (routed) => messageRouteTag(routed as unknown as Parameters<typeof messageRouteTag>[0])
+      messageRouteTag: (routed) => messageRouteTag(routed as unknown as Parameters<typeof messageRouteTag>[0]),
     });
   }
 
@@ -1310,14 +1489,19 @@ export class GuiState implements DurableObject {
       formatArtifactQualityCheck: formatArtifactQualityCheckHelper,
       parseMetadataJson: parseMetadataJsonHelper,
       formatArtifactLine: formatArtifactLineHelper,
-      pushLoopEvent: (currentState, event) => pushLoopEvent(currentState, event as Omit<LoopEvent, "runId" | "loop" | "timestamp"> & Partial<Pick<LoopEvent, "runId" | "loop" | "timestamp">>)
+      pushLoopEvent: (currentState, event) =>
+        pushLoopEvent(
+          currentState,
+          event as Omit<LoopEvent, "runId" | "loop" | "timestamp"> &
+            Partial<Pick<LoopEvent, "runId" | "loop" | "timestamp">>,
+        ),
     });
   }
 
   private contextCommand(state: State, args: string[], actor = defaultAgentFor(state)): string {
     return runContextCommand(state, args, actor, {
       readOption,
-      stripOptions
+      stripOptions,
     });
   }
 
@@ -1328,7 +1512,7 @@ export class GuiState implements DurableObject {
       parseCsvOption,
       isHypothesisStatus,
       findHypothesis,
-      formatHypothesisLine
+      formatHypothesisLine,
     });
   }
 
@@ -1337,7 +1521,7 @@ export class GuiState implements DurableObject {
       defaultAgentId: DEFAULT_AGENT.id,
       parseExecutionPlan,
       readOption,
-      createTask: (input) => workflowCreateGuiTaskDraft(input) as Task
+      createTask: (input) => workflowCreateGuiTaskDraft(input) as Task,
     });
   }
 
@@ -1351,20 +1535,25 @@ export class GuiState implements DurableObject {
       findApproval,
       formatApprovalLine,
       readOption,
-      stripOptions
+      stripOptions,
     });
   }
 
-  private async resolveApproval(approvalId: string, payload: { decision?: string; reason?: string }): Promise<Response> {
+  private async resolveApproval(
+    approvalId: string,
+    payload: { decision?: string; reason?: string },
+  ): Promise<Response> {
     const state = await this.get();
     const request = findApproval(state, approvalId);
     if (!request) return json({ error: `approval not found: ${approvalId || ""}` }, { status: 404 });
-    if (request.status !== "pending") return json({ error: `cannot resolve ${request.id}: status=${request.status}` }, { status: 409 });
-    const decision = payload.decision === "approve" || payload.decision === "approved"
-      ? "approved"
-      : payload.decision === "deny" || payload.decision === "denied"
-        ? "denied"
-        : undefined;
+    if (request.status !== "pending")
+      return json({ error: `cannot resolve ${request.id}: status=${request.status}` }, { status: 409 });
+    const decision =
+      payload.decision === "approve" || payload.decision === "approved"
+        ? "approved"
+        : payload.decision === "deny" || payload.decision === "denied"
+          ? "denied"
+          : undefined;
     if (!decision) return json({ error: "decision must be approve or deny" }, { status: 400 });
     request.status = decision;
     request.resolvedAt = Date.now();
@@ -1376,43 +1565,58 @@ export class GuiState implements DurableObject {
     return json({ ok: true, approval: request });
   }
 
-  private async status(payload: { status?: string; remediation?: unknown }, agentId = DEFAULT_AGENT.id): Promise<Response> {
+  private async status(
+    payload: { status?: string; remediation?: unknown },
+    agentId = DEFAULT_AGENT.id,
+  ): Promise<Response> {
     const state = await this.get();
     const remediation = normalizeRuntimeRemediation(payload.remediation);
     state.statusLog.push({
       at: Date.now(),
       status: payload.status || "unknown",
       agentId,
-      ...(remediation !== undefined ? { remediation } : {})
+      ...(remediation !== undefined ? { remediation } : {}),
     });
     await this.put(state);
     return json({ ok: true });
   }
 
-  private async typing(payload: { conversationId?: string; done?: boolean }, agentId = DEFAULT_AGENT.id): Promise<Response> {
+  private async typing(
+    payload: { conversationId?: string; done?: boolean },
+    agentId = DEFAULT_AGENT.id,
+  ): Promise<Response> {
     const state = await this.get();
     state.typingLog.push({ at: Date.now(), conversationId: payload.conversationId, done: payload.done });
-    if (!payload.done) state.composing.push({
-      conversationId: payload.conversationId || DEFAULT_CONVERSATION.id,
-      agentId,
-      agentName: findAgent(state, agentId)?.name ?? agentId,
-      claimed_at: Date.now(),
-      expires_at: Date.now() + 60_000
-    });
+    if (!payload.done)
+      state.composing.push({
+        conversationId: payload.conversationId || DEFAULT_CONVERSATION.id,
+        agentId,
+        agentName: findAgent(state, agentId)?.name ?? agentId,
+        claimed_at: Date.now(),
+        expires_at: Date.now() + 60_000,
+      });
     await this.put(state);
     return json({ ok: true });
   }
 
-  private async thinking(action: "mark" | "unmark", payload: { conversationIds?: string[] }, agentId = DEFAULT_AGENT.id): Promise<Response> {
+  private async thinking(
+    action: "mark" | "unmark",
+    payload: { conversationIds?: string[] },
+    agentId = DEFAULT_AGENT.id,
+  ): Promise<Response> {
     const state = await this.get();
     const now = Date.now();
-    const ids = Array.isArray(payload.conversationIds) ? payload.conversationIds.filter((id): id is string => typeof id === "string") : [];
+    const ids = Array.isArray(payload.conversationIds)
+      ? payload.conversationIds.filter((id): id is string => typeof id === "string")
+      : [];
     state.thinkingLog.push({
       at: now,
       action,
-      conversationIds: ids
+      conversationIds: ids,
     });
-    state.composing = state.composing.filter((claim) => claim.expires_at > now && !(ids.includes(claim.conversationId) && claim.agentId === agentId));
+    state.composing = state.composing.filter(
+      (claim) => claim.expires_at > now && !(ids.includes(claim.conversationId) && claim.agentId === agentId),
+    );
     if (action === "mark") {
       const agent = findAgent(state, agentId) ?? defaultAgentFor(state);
       for (const conversationId of ids) {
@@ -1421,7 +1625,7 @@ export class GuiState implements DurableObject {
           agentId,
           agentName: agent.name,
           claimed_at: now,
-          expires_at: now + 60_000
+          expires_at: now + 60_000,
         });
       }
     }
@@ -1439,7 +1643,7 @@ export class GuiState implements DurableObject {
         type: "queue.backlog",
         agent: agentId,
         pendingMessages: countPendingMessages(state, agentId),
-        payload: event
+        payload: event,
       });
     }
     await this.put(state);
@@ -1456,30 +1660,54 @@ export class GuiState implements DurableObject {
   private async startRun(body: unknown): Promise<Response> {
     const state = await this.get();
     const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const contract = normalizeRunContract(body && typeof body === "object" ? (body as { contract?: unknown }).contract : undefined);
+    const contract = normalizeRunContract(
+      body && typeof body === "object" ? (body as { contract?: unknown }).contract : undefined,
+    );
     state.loopRunId = runId;
     state.runStreams = pruneRunStreams({ ...(state.runStreams ?? {}), [runId]: initialRunStreamState() });
-    if (contract) state.activeRunContracts = pruneActiveRunContracts({ ...(state.activeRunContracts ?? {}), [runId]: contract });
+    if (contract)
+      state.activeRunContracts = pruneActiveRunContracts({ ...(state.activeRunContracts ?? {}), [runId]: contract });
     state.runLog.push({ at: Date.now(), runId, action: "start", body });
     await this.put(state);
     return json({ runId, contract });
   }
 
-  private async runAction(runId: string, action: "heartbeat" | "finish", body?: unknown, agentId?: string): Promise<Response> {
+  private async runAction(
+    runId: string,
+    action: "heartbeat" | "finish",
+    body?: unknown,
+    agentId?: string,
+  ): Promise<Response> {
     const state = await this.get();
     const now = Date.now();
     if (agentId) state.agentBeats = { ...(state.agentBeats ?? {}), [agentId]: now };
     const streamEvent = normalizeRunStreamEvent(body);
     if (streamEvent) {
       const current = state.runStreams?.[runId] ?? initialRunStreamState();
-      state.runStreams = pruneRunStreams({ ...(state.runStreams ?? {}), [runId]: reduceRunStream(current, streamEvent) });
-      state.runLog.push({ at: now, runId, action: "stream", body: streamEvent, card: renderRunStreamCard(state.runStreams[runId]) });
+      state.runStreams = pruneRunStreams({
+        ...(state.runStreams ?? {}),
+        [runId]: reduceRunStream(current, streamEvent),
+      });
+      state.runLog.push({
+        at: now,
+        runId,
+        action: "stream",
+        body: streamEvent,
+        card: renderRunStreamCard(state.runStreams[runId]),
+      });
     }
     if (action === "finish") {
       const current = state.runStreams?.[runId] ?? initialRunStreamState();
-      const terminal = body && typeof body === "object" && (body as { status?: unknown }).status === "failed"
-        ? reduceRunStream(current, { type: "error", message: typeof (body as { error?: unknown }).error === "string" ? (body as { error: string }).error : "run failed" })
-        : reduceRunStream(current, { type: "done" });
+      const terminal =
+        body && typeof body === "object" && (body as { status?: unknown }).status === "failed"
+          ? reduceRunStream(current, {
+              type: "error",
+              message:
+                typeof (body as { error?: unknown }).error === "string"
+                  ? (body as { error: string }).error
+                  : "run failed",
+            })
+          : reduceRunStream(current, { type: "done" });
       state.runStreams = pruneRunStreams({ ...(state.runStreams ?? {}), [runId]: terminal });
       if (state.activeRunContracts?.[runId]) {
         state.activeRunContracts = { ...state.activeRunContracts };
@@ -1487,7 +1715,13 @@ export class GuiState implements DurableObject {
       }
       state.runLog.push({ at: now, runId, action, body, card: renderRunStreamCard(terminal) });
     } else if (streamEvent || hasRunHeartbeatBody(body)) {
-      state.runLog.push({ at: now, runId, action, body, card: state.runStreams?.[runId] ? renderRunStreamCard(state.runStreams[runId]) : undefined });
+      state.runLog.push({
+        at: now,
+        runId,
+        action,
+        body,
+        card: state.runStreams?.[runId] ? renderRunStreamCard(state.runStreams[runId]) : undefined,
+      });
     }
     await this.put(state);
     return json({ ok: true, runId });
@@ -1505,21 +1739,22 @@ export class GuiState implements DurableObject {
     if (!attempt) return json({ error: "invalid run attempt" }, { status: 400 });
     state.runAttempts = pruneRunAttempts({
       ...(state.runAttempts ?? {}),
-      [runId]: [...(state.runAttempts?.[runId] ?? []), attempt]
+      [runId]: [...(state.runAttempts?.[runId] ?? []), attempt],
     });
     await this.put(state);
     return json({ ok: true, runId, attempt });
   }
 
-  private async markRead(payload: { conversationId?: string; upToMessageId?: string }, agentId = DEFAULT_AGENT.id): Promise<Response> {
+  private async markRead(
+    payload: { conversationId?: string; upToMessageId?: string },
+    agentId = DEFAULT_AGENT.id,
+  ): Promise<Response> {
     const state = await this.get();
     const conversationMessages = state.messages.filter((m) => m.conversation_id === payload.conversationId);
     const cutoffIndex = conversationMessages.findIndex((m) => m.id === payload.upToMessageId);
     const readable = cutoffIndex >= 0 ? conversationMessages.slice(0, cutoffIndex + 1) : conversationMessages;
     for (const message of readable) {
-      if (
-        !message.readBy.includes(agentId)
-      ) {
+      if (!message.readBy.includes(agentId)) {
         message.readBy.push(agentId);
       }
     }
@@ -1530,10 +1765,16 @@ export class GuiState implements DurableObject {
   private async guiConversation(payload: GuiConversationPayload): Promise<Response> {
     const state = await this.get();
     const now = Date.now();
-    const title = typeof payload.title === "string" && payload.title.trim() ? payload.title.trim() : `事务 ${state.conversations.length + 1}`;
+    const title =
+      typeof payload.title === "string" && payload.title.trim()
+        ? payload.title.trim()
+        : `事务 ${state.conversations.length + 1}`;
     const maxOrder = Math.max(0, ...state.conversations.map((conversation) => conversation.order ?? 0));
     const order = Math.max(maxOrder + 1, now * 1000);
-    const team = normalizeConversationTeam(state, { ...payload, workflowId: payload.workflowId ?? DEFAULT_NEW_CONVERSATION_WORKFLOW_ID });
+    const team = normalizeConversationTeam(state, {
+      ...payload,
+      workflowId: payload.workflowId ?? DEFAULT_NEW_CONVERSATION_WORKFLOW_ID,
+    });
     const roleOverrides = normalizeAgentRolePayload(payload.agentRoles);
     const teamSnapshot = buildConversationTeamSnapshot(state, team, roleOverrides, now);
     const conversation: Conversation = {
@@ -1547,21 +1788,27 @@ export class GuiState implements DurableObject {
       teamMode: team.teamMode,
       coordinatorAgentId: team.coordinatorAgentId,
       teamAgentIds: team.teamAgentIds,
-      teamSnapshot
+      teamSnapshot,
     };
     state.conversations.push(conversation);
     await this.put(state);
     return json({ ok: true, conversation });
   }
 
-  private async guiUpdateConversationTeam(conversationId: string | undefined, payload: GuiConversationPayload): Promise<Response> {
+  private async guiUpdateConversationTeam(
+    conversationId: string | undefined,
+    payload: GuiConversationPayload,
+  ): Promise<Response> {
     const state = await this.get();
     const conversation = state.conversations.find((row) => row.id === conversationId);
     if (!conversation) return json({ error: `conversation not found: ${conversationId || ""}` }, { status: 404 });
     return json({ error: "conversation team is immutable after creation" }, { status: 409 });
   }
 
-  private async guiUpdateWorkflowAgents(workflowIdValue: string | undefined, payload: GuiWorkflowAgentsPayload): Promise<Response> {
+  private async guiUpdateWorkflowAgents(
+    workflowIdValue: string | undefined,
+    payload: GuiWorkflowAgentsPayload,
+  ): Promise<Response> {
     const state = await this.get();
     const workflow = workflowTemplateByIdOrUndefined(workflowIdValue);
     if (!workflow) return json({ error: `workflow not found: ${workflowIdValue || ""}` }, { status: 404 });
@@ -1569,10 +1816,15 @@ export class GuiState implements DurableObject {
     const incomingAgents = normalizeWorkflowAgentDefinitions(payload.agents).filter((agent) => systemIds.has(agent.id));
     if (incomingAgents.length) state.agents = upsertAgents(state.agents, incomingAgents);
     state.workflowAgentIds = normalizeWorkflowAgentIds(state.workflowAgentIds, state.agents);
-    const requestedIds = normalizeStringList(payload.agentIds).map(normalizeAgentId).filter((id): id is string => Boolean(id));
-    const candidateIds = requestedIds.length ? requestedIds : state.workflowAgentIds[workflow.id] ?? workflow.agentIds;
+    const requestedIds = normalizeStringList(payload.agentIds)
+      .map(normalizeAgentId)
+      .filter((id): id is string => Boolean(id));
+    const candidateIds = requestedIds.length
+      ? requestedIds
+      : (state.workflowAgentIds[workflow.id] ?? workflow.agentIds);
     const validIds = [...new Set(candidateIds)].filter((id) => Boolean(findAgent(state, id)));
-    if (!validIds.includes(workflow.defaultCoordinatorAgentId) && findAgent(state, workflow.defaultCoordinatorAgentId)) validIds.unshift(workflow.defaultCoordinatorAgentId);
+    if (!validIds.includes(workflow.defaultCoordinatorAgentId) && findAgent(state, workflow.defaultCoordinatorAgentId))
+      validIds.unshift(workflow.defaultCoordinatorAgentId);
     state.workflowAgentIds[workflow.id] = validIds.length ? validIds : workflow.agentIds;
     state.agentConfigUpdatedAt = Date.now();
     await this.put(state);
@@ -1580,7 +1832,8 @@ export class GuiState implements DurableObject {
   }
 
   private async guiDeleteConversation(conversationId?: string): Promise<Response> {
-    if (!conversationId || conversationId === DEFAULT_CONVERSATION.id) return json({ error: "default conversation cannot be deleted" }, { status: 400 });
+    if (!conversationId || conversationId === DEFAULT_CONVERSATION.id)
+      return json({ error: "default conversation cannot be deleted" }, { status: 400 });
     const state = await this.get();
     const before = state.conversations.length;
     state.conversations = state.conversations.filter((conversation) => conversation.id !== conversationId);
@@ -1589,33 +1842,39 @@ export class GuiState implements DurableObject {
     return json({ ok: true, deleted: before !== state.conversations.length });
   }
 
-  private async guiMessage(request: Request, payload: { body?: string; conversationId?: string; attachments?: unknown }): Promise<Response> {
+  private async guiMessage(
+    request: Request,
+    payload: { body?: string; conversationId?: string; attachments?: unknown },
+  ): Promise<Response> {
     const state = await this.get();
     const conversation = ensureConversation(state, payload.conversationId || DEFAULT_CONVERSATION.id);
-	    const now = Date.now();
-	    const targetAgent = coordinatorAgentFor(state, conversation);
-	    const humanName = displayNameForAuthUser(authUserFromRequest(request));
-	    const attachments = normalizeRuntimeAttachments(payload.attachments).map((attachment) => {
-	      if (attachment.url || !attachment.id) return attachment;
-	      const upload = state.uploads?.[attachment.id];
-	      if (!upload) return attachment;
-	      const base = request.headers.get("X-King-AI-Public-Base") || new URL(request.url).origin;
-	      const tenantId = tenantHeader(request);
-	      return { ...attachment, url: `${base}/gui/attachments/${encodeURIComponent(upload.id)}?token=${encodeURIComponent(upload.token)}&tenant=${encodeURIComponent(tenantId)}` };
-	    });
-	    const message: Message = {
+    const now = Date.now();
+    const targetAgent = coordinatorAgentFor(state, conversation);
+    const humanName = displayNameForAuthUser(authUserFromRequest(request));
+    const attachments = normalizeRuntimeAttachments(payload.attachments).map((attachment) => {
+      if (attachment.url || !attachment.id) return attachment;
+      const upload = state.uploads?.[attachment.id];
+      if (!upload) return attachment;
+      const base = request.headers.get("X-King-AI-Public-Base") || new URL(request.url).origin;
+      const tenantId = tenantHeader(request);
+      return {
+        ...attachment,
+        url: `${base}/gui/attachments/${encodeURIComponent(upload.id)}?token=${encodeURIComponent(upload.token)}&tenant=${encodeURIComponent(tenantId)}`,
+      };
+    });
+    const message: Message = {
       id: `msg-${now}`,
       conversation_id: conversation.id,
       conversation_title: conversation.title,
       conversation_kind: conversation.kind,
       author_name: humanName,
-	      author_kind: "human",
-	      kind: "message",
-	      body: payload.body || "Hello from the local gui runtime.",
-	      attachments: normalizeRuntimeAttachments(attachments),
-	      to_agent_id: targetAgent.id,
+      author_kind: "human",
+      kind: "message",
+      body: payload.body || "Hello from the local gui runtime.",
+      attachments: normalizeRuntimeAttachments(attachments),
+      to_agent_id: targetAgent.id,
       created_at: now,
-      readBy: []
+      readBy: [],
     };
     const pendingReply: Message = {
       id: `msg-${now}-pending`,
@@ -1631,13 +1890,16 @@ export class GuiState implements DurableObject {
       body: "AI 正在处理...",
       to_agent_id: targetAgent.id,
       created_at: now + 1,
-      readBy: [targetAgent.id]
+      readBy: [targetAgent.id],
     };
-    state.messages = state.messages.filter((row) => !(
-      row.conversation_id === conversation.id &&
-      row.status === "pending" &&
-      pendingBelongsToAgent(row, targetAgent)
-    ));
+    state.messages = state.messages.filter(
+      (row) =>
+        !(
+          row.conversation_id === conversation.id &&
+          row.status === "pending" &&
+          pendingBelongsToAgent(row, targetAgent)
+        ),
+    );
     conversation.updated_at = now;
     state.messages.push(message);
     state.messages.push(pendingReply);
@@ -1645,118 +1907,162 @@ export class GuiState implements DurableObject {
       autoDelegateMessage(state, conversation, message, targetAgent);
     }
     const delegated = state.tasks.find((task) => task.requestMessageId === message.id);
-    if (delegated?.assignee && delegated.assignee !== targetAgent.id) updatePendingForTask(state, delegated, `已委派给 ${delegated.assignee} 处理...`);
+    if (delegated?.assignee && delegated.assignee !== targetAgent.id)
+      updatePendingForTask(state, delegated, `已委派给 ${delegated.assignee} 处理...`);
     await this.put(state);
-    const targetWake = delegated?.assignee === targetAgent.id
-      ? { conversationId: message.conversation_id, requestId: message.id, messageId: message.id, taskId: delegated.id, agentId: targetAgent.id, at: now }
-      : { conversationId: message.conversation_id, requestId: message.id, messageId: message.id, agentId: targetAgent.id, at: now };
+    const targetWake =
+      delegated?.assignee === targetAgent.id
+        ? {
+            conversationId: message.conversation_id,
+            requestId: message.id,
+            messageId: message.id,
+            taskId: delegated.id,
+            agentId: targetAgent.id,
+            at: now,
+          }
+        : {
+            conversationId: message.conversation_id,
+            requestId: message.id,
+            messageId: message.id,
+            agentId: targetAgent.id,
+            at: now,
+          };
     await this.broadcast({ event: "wake", data: targetWake });
     if (delegated?.assignee) {
-      await this.broadcast({ event: "wake", data: { agenda: true, conversationId: conversation.id, requestId: message.id, messageId: message.id, taskId: delegated.id, agentId: delegated.assignee, at: Date.now() } });
-	    }
-	    return json({ ok: true, message });
-	  }
+      await this.broadcast({
+        event: "wake",
+        data: {
+          agenda: true,
+          conversationId: conversation.id,
+          requestId: message.id,
+          messageId: message.id,
+          taskId: delegated.id,
+          agentId: delegated.assignee,
+          at: Date.now(),
+        },
+      });
+    }
+    return json({ ok: true, message });
+  }
 
-	  private async guiAttachment(request: Request, payload: unknown): Promise<Response> {
-	    const row = payload && typeof payload === "object" ? payload as { name?: unknown; mime?: unknown; size?: unknown; bytesBase64?: unknown } : {};
-	    const name = typeof row.name === "string" && row.name.trim() ? row.name.trim().slice(0, 240) : "attachment";
-	    const mime = typeof row.mime === "string" && row.mime.trim() ? row.mime.trim().toLowerCase().slice(0, 120) : "application/octet-stream";
-	    const bytesBase64 = typeof row.bytesBase64 === "string" ? row.bytesBase64 : "";
-	    const actualSize = approximateBase64Bytes(bytesBase64);
-	    const size = Number.isFinite(row.size) && Number(row.size) >= 0 ? Math.floor(Number(row.size)) : actualSize;
-	    if (!bytesBase64) return json({ error: "missing attachment bytes" }, { status: 400 });
-	    if (size > GUI_ATTACHMENT_MAX_BYTES || actualSize > GUI_ATTACHMENT_MAX_BYTES) return json({ error: "attachment too large" }, { status: 413 });
-	    const id = `att-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-	    const token = crypto.randomUUID();
-	    const chunkCount = await this.writeUploadBytes(id, bytesBase64);
-	    const upload: UploadedAttachment = { id, token, name, mime, size, chunkCount, createdAt: Date.now() };
-	    let prunedUploads: UploadedAttachment[] = [];
-	    try {
-	      const state = await this.get();
-	      const unprunedUploads = { ...(state.uploads ?? {}), [id]: upload };
-	      state.uploads = pruneUploads(unprunedUploads);
-	      prunedUploads = Object.entries(unprunedUploads)
-	        .filter(([uploadId]) => !state.uploads?.[uploadId])
-	        .map(([, value]) => value);
-	      await this.put(state);
-	    } catch (error) {
-	      await this.deleteUploadBytes(upload);
-	      throw error;
-	    }
-	    await this.deleteUploads(prunedUploads);
-	    const base = request.headers.get("X-King-AI-Public-Base") || new URL(request.url).origin;
-	    const tenantId = tenantHeader(request);
-	    return json({
-	      attachment: {
-	        id,
-	        name,
-	        mime,
-	        size,
-	        url: `${base}/gui/attachments/${encodeURIComponent(id)}?token=${encodeURIComponent(token)}&tenant=${encodeURIComponent(tenantId)}`,
-	        source: "gui-upload"
-	      }
-	    });
-	  }
+  private async guiAttachment(request: Request, payload: unknown): Promise<Response> {
+    const row =
+      payload && typeof payload === "object"
+        ? (payload as { name?: unknown; mime?: unknown; size?: unknown; bytesBase64?: unknown })
+        : {};
+    const name = typeof row.name === "string" && row.name.trim() ? row.name.trim().slice(0, 240) : "attachment";
+    const mime =
+      typeof row.mime === "string" && row.mime.trim()
+        ? row.mime.trim().toLowerCase().slice(0, 120)
+        : "application/octet-stream";
+    const bytesBase64 = typeof row.bytesBase64 === "string" ? row.bytesBase64 : "";
+    const actualSize = approximateBase64Bytes(bytesBase64);
+    const size = Number.isFinite(row.size) && Number(row.size) >= 0 ? Math.floor(Number(row.size)) : actualSize;
+    if (!bytesBase64) return json({ error: "missing attachment bytes" }, { status: 400 });
+    if (size > GUI_ATTACHMENT_MAX_BYTES || actualSize > GUI_ATTACHMENT_MAX_BYTES)
+      return json({ error: "attachment too large" }, { status: 413 });
+    const id = `att-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const token = crypto.randomUUID();
+    const chunkCount = await this.writeUploadBytes(id, bytesBase64);
+    const upload: UploadedAttachment = { id, token, name, mime, size, chunkCount, createdAt: Date.now() };
+    let prunedUploads: UploadedAttachment[] = [];
+    try {
+      const state = await this.get();
+      const unprunedUploads = { ...(state.uploads ?? {}), [id]: upload };
+      state.uploads = pruneUploads(unprunedUploads);
+      prunedUploads = Object.entries(unprunedUploads)
+        .filter(([uploadId]) => !state.uploads?.[uploadId])
+        .map(([, value]) => value);
+      await this.put(state);
+    } catch (error) {
+      await this.deleteUploadBytes(upload);
+      throw error;
+    }
+    await this.deleteUploads(prunedUploads);
+    const base = request.headers.get("X-King-AI-Public-Base") || new URL(request.url).origin;
+    const tenantId = tenantHeader(request);
+    return json({
+      attachment: {
+        id,
+        name,
+        mime,
+        size,
+        url: `${base}/gui/attachments/${encodeURIComponent(id)}?token=${encodeURIComponent(token)}&tenant=${encodeURIComponent(tenantId)}`,
+        source: "gui-upload",
+      },
+    });
+  }
 
-	  private async guiAttachmentFile(url: URL, attachmentId: string): Promise<Response> {
-	    const state = await this.get();
-	    const upload = state.uploads?.[attachmentId];
-	    if (!upload || url.searchParams.get("token") !== upload.token) return json({ error: "attachment not found" }, { status: 404 });
-	    const bytesBase64 = await this.readUploadBytes(upload);
-	    if (!bytesBase64) return json({ error: "attachment not found" }, { status: 404 });
-	    const bytes = base64ToBytes(bytesBase64);
-	    const safeName = upload.name.replace(/["\r\n]/g, "_");
-	    const disposition = upload.mime.toLowerCase().startsWith("image/")
-	      ? `inline; filename="${safeName}"`
-	      : `attachment; filename="${safeName}"`;
-	    return new Response(bytes, {
-	      headers: {
-	        "Content-Type": upload.mime,
-	        "Content-Length": String(bytes.byteLength),
-	        "Content-Disposition": disposition
-	      }
-	    });
-	  }
+  private async guiAttachmentFile(url: URL, attachmentId: string): Promise<Response> {
+    const state = await this.get();
+    const upload = state.uploads?.[attachmentId];
+    if (!upload || url.searchParams.get("token") !== upload.token)
+      return json({ error: "attachment not found" }, { status: 404 });
+    const bytesBase64 = await this.readUploadBytes(upload);
+    if (!bytesBase64) return json({ error: "attachment not found" }, { status: 404 });
+    const bytes = base64ToBytes(bytesBase64);
+    const safeName = upload.name.replace(/["\r\n]/g, "_");
+    const disposition = upload.mime.toLowerCase().startsWith("image/")
+      ? `inline; filename="${safeName}"`
+      : `attachment; filename="${safeName}"`;
+    return new Response(bytes, {
+      headers: {
+        "Content-Type": upload.mime,
+        "Content-Length": String(bytes.byteLength),
+        "Content-Disposition": disposition,
+      },
+    });
+  }
 
-	  private async writeUploadBytes(id: string, bytesBase64: string): Promise<number> {
-	    const chunkCount = Math.max(1, Math.ceil(bytesBase64.length / GUI_ATTACHMENT_CHUNK_CHARS));
-	    const writtenKeys: string[] = [];
-	    try {
-	      for (let index = 0; index < chunkCount; index += 1) {
-	        const key = uploadChunkKey(id, index);
-	        await this.state.storage.put(key, bytesBase64.slice(index * GUI_ATTACHMENT_CHUNK_CHARS, (index + 1) * GUI_ATTACHMENT_CHUNK_CHARS));
-	        writtenKeys.push(key);
-	      }
-	      return chunkCount;
-	    } catch (error) {
-	      await Promise.all(writtenKeys.map((key) => this.state.storage.delete(key)));
-	      throw error;
-	    }
-	  }
+  private async writeUploadBytes(id: string, bytesBase64: string): Promise<number> {
+    const chunkCount = Math.max(1, Math.ceil(bytesBase64.length / GUI_ATTACHMENT_CHUNK_CHARS));
+    const writtenKeys: string[] = [];
+    try {
+      for (let index = 0; index < chunkCount; index += 1) {
+        const key = uploadChunkKey(id, index);
+        await this.state.storage.put(
+          key,
+          bytesBase64.slice(index * GUI_ATTACHMENT_CHUNK_CHARS, (index + 1) * GUI_ATTACHMENT_CHUNK_CHARS),
+        );
+        writtenKeys.push(key);
+      }
+      return chunkCount;
+    } catch (error) {
+      await Promise.all(writtenKeys.map((key) => this.state.storage.delete(key)));
+      throw error;
+    }
+  }
 
-	  private async readUploadBytes(upload: UploadedAttachment): Promise<string | null> {
-	    if (upload.bytesBase64) return upload.bytesBase64;
-	    if (!upload.chunkCount || upload.chunkCount < 1) return null;
-	    const chunks = await Promise.all(
-	      Array.from({ length: upload.chunkCount }, (_, index) => this.state.storage.get<string>(uploadChunkKey(upload.id, index)))
-	    );
-	    if (chunks.some((chunk) => typeof chunk !== "string")) return null;
-	    return chunks.join("");
-	  }
+  private async readUploadBytes(upload: UploadedAttachment): Promise<string | null> {
+    if (upload.bytesBase64) return upload.bytesBase64;
+    if (!upload.chunkCount || upload.chunkCount < 1) return null;
+    const chunks = await Promise.all(
+      Array.from({ length: upload.chunkCount }, (_, index) =>
+        this.state.storage.get<string>(uploadChunkKey(upload.id, index)),
+      ),
+    );
+    if (chunks.some((chunk) => typeof chunk !== "string")) return null;
+    return chunks.join("");
+  }
 
-	  private async deleteUploadBytes(upload: UploadedAttachment): Promise<void> {
-	    if (!upload.chunkCount || upload.chunkCount < 1) return;
-	    await Promise.all(
-	      Array.from({ length: upload.chunkCount }, (_, index) => this.state.storage.delete(uploadChunkKey(upload.id, index)))
-	    );
-	  }
+  private async deleteUploadBytes(upload: UploadedAttachment): Promise<void> {
+    if (!upload.chunkCount || upload.chunkCount < 1) return;
+    await Promise.all(
+      Array.from({ length: upload.chunkCount }, (_, index) =>
+        this.state.storage.delete(uploadChunkKey(upload.id, index)),
+      ),
+    );
+  }
 
-	  private async deleteUploads(uploads: UploadedAttachment[]): Promise<void> {
-	    await Promise.all(uploads.map((upload) => this.deleteUploadBytes(upload)));
-	  }
+  private async deleteUploads(uploads: UploadedAttachment[]): Promise<void> {
+    await Promise.all(uploads.map((upload) => this.deleteUploadBytes(upload)));
+  }
 
-	  private async guiWake(payload: unknown): Promise<Response> {
-    await this.broadcast({ event: "wake", data: { ...(payload && typeof payload === "object" ? payload as Record<string, unknown> : {}), at: Date.now() } });
+  private async guiWake(payload: unknown): Promise<Response> {
+    await this.broadcast({
+      event: "wake",
+      data: { ...(payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {}), at: Date.now() },
+    });
     return json({ ok: true });
   }
 
@@ -1771,7 +2077,7 @@ export class GuiState implements DurableObject {
       tokenPreview: `${tokenValue.slice(0, 8)}...${tokenValue.slice(-4)}`,
       createdAt: now,
       createdBy: displayNameForAuthUser(authUserFromRequest(request)),
-      uses: 0
+      uses: 0,
     };
     await this.put(state);
     const publicBase = request.headers.get("X-King-AI-Public-Base") || new URL(request.url).origin;
@@ -1785,14 +2091,17 @@ export class GuiState implements DurableObject {
     const state = await this.get();
     if (state.remoteAssist) state.remoteAssist.revokedAt = Date.now();
     await this.put(state);
-    return json({ ok: true, remoteAssist: state.remoteAssist ? remoteAssistSummary(state.remoteAssist) : { active: false } });
+    return json({
+      ok: true,
+      remoteAssist: state.remoteAssist ? remoteAssistSummary(state.remoteAssist) : { active: false },
+    });
   }
 
   private async remoteAssistAuth(payload: { token?: unknown }): Promise<Response> {
     const state = await this.get();
     const tokenValue = typeof payload.token === "string" ? payload.token.trim() : "";
     const grant = activeRemoteAssistGrant(state);
-    if (!grant || !tokenValue || await sha256Hex(tokenValue) !== grant.tokenHash) {
+    if (!grant || !tokenValue || (await sha256Hex(tokenValue)) !== grant.tokenHash) {
       return json({ error: "invalid remote assist token" }, { status: 401 });
     }
     grant.lastUsedAt = Date.now();
@@ -1804,7 +2113,7 @@ export class GuiState implements DurableObject {
   private async guiMarkRead(payload: { conversationId?: string; upToMessageId?: string }): Promise<Response> {
     return this.markRead({
       conversationId: payload.conversationId || "king-ai-convo",
-      upToMessageId: payload.upToMessageId
+      upToMessageId: payload.upToMessageId,
     });
   }
 
@@ -1815,7 +2124,7 @@ export class GuiState implements DurableObject {
       column: "todo",
       assignee,
       allowedPaths,
-      created_at: Date.now()
+      created_at: Date.now(),
     };
     state.cards.push(card);
     return card;
@@ -1823,7 +2132,9 @@ export class GuiState implements DurableObject {
 
   private async createCard(payload: { title?: string; assignee?: string; allowedPaths?: string[] }): Promise<Response> {
     const state = await this.get();
-    const allowedPaths = Array.isArray(payload.allowedPaths) ? payload.allowedPaths.filter((path): path is string => typeof path === "string") : [];
+    const allowedPaths = Array.isArray(payload.allowedPaths)
+      ? payload.allowedPaths.filter((path): path is string => typeof path === "string")
+      : [];
     const card = this.newCard(state, payload.title || "Gui card", payload.assignee, allowedPaths);
     await this.put(state);
     await this.broadcast({ event: "wake", data: { agenda: true, cardId: card.id, at: Date.now() } });
@@ -1836,7 +2147,8 @@ export class GuiState implements DurableObject {
     const card = state.cards.find((row) => row.id === cardId || row.id.startsWith(cardId));
     if (!card) return json({ error: `card not found: ${cardId || ""}` }, { status: 404 });
     const column = payload.column;
-    if (column !== "todo" && column !== "doing" && column !== "done") return json({ error: "column must be todo, doing, or done" }, { status: 400 });
+    if (column !== "todo" && column !== "doing" && column !== "done")
+      return json({ error: "column must be todo, doing, or done" }, { status: 400 });
     card.column = column;
     if (typeof payload.owner === "string" && payload.owner.trim()) {
       card.assignee = payload.owner.trim();
@@ -1851,13 +2163,21 @@ export class GuiState implements DurableObject {
   private async createTask(payload: GuiTaskPayload): Promise<Response> {
     const state = await this.get();
     const title = typeof payload.title === "string" && payload.title.trim() ? payload.title.trim() : "Gui task";
-    const description = typeof payload.description === "string" && payload.description.trim() ? payload.description.trim() : undefined;
-    const assignee = typeof payload.assignee === "string" && payload.assignee.trim() ? payload.assignee.trim() : defaultWorkerAgentFor(state).id;
-    const ownerRole = typeof payload.ownerRole === "string" && payload.ownerRole.trim() ? payload.ownerRole.trim() : "builder";
-    const reviewerRole = typeof payload.reviewerRole === "string" && payload.reviewerRole.trim() ? payload.reviewerRole.trim() : (findAgent(state, "reviewer") ? "reviewer" : undefined);
-    const priority = typeof payload.priority === "number"
-      ? Math.min(10, Math.max(1, Math.round(payload.priority)))
-      : 5;
+    const description =
+      typeof payload.description === "string" && payload.description.trim() ? payload.description.trim() : undefined;
+    const assignee =
+      typeof payload.assignee === "string" && payload.assignee.trim()
+        ? payload.assignee.trim()
+        : defaultWorkerAgentFor(state).id;
+    const ownerRole =
+      typeof payload.ownerRole === "string" && payload.ownerRole.trim() ? payload.ownerRole.trim() : "builder";
+    const reviewerRole =
+      typeof payload.reviewerRole === "string" && payload.reviewerRole.trim()
+        ? payload.reviewerRole.trim()
+        : findAgent(state, "reviewer")
+          ? "reviewer"
+          : undefined;
+    const priority = typeof payload.priority === "number" ? Math.min(10, Math.max(1, Math.round(payload.priority))) : 5;
     const paths = normalizeStringList(payload.paths);
     const dependsOn = normalizeStringList(payload.dependsOn);
     const blockedBy = normalizeStringList(payload.blockedBy);
@@ -1873,7 +2193,7 @@ export class GuiState implements DurableObject {
       dependsOn: dependsOn.length ? dependsOn : undefined,
       blockedBy: blockedBy.length ? blockedBy : undefined,
       acceptance: acceptance.length ? acceptance : ["Assigned work has concrete output and verification evidence."],
-      scope: paths.length ? { paths } : undefined
+      scope: paths.length ? { paths } : undefined,
     }) as Task;
     queueTaskAssignmentMessage(state, task, "King AI");
     pushLoopEvent(state, {
@@ -1881,10 +2201,14 @@ export class GuiState implements DurableObject {
       agent: assignee,
       taskId: task.id,
       pendingMessages: unreadMessagesFor(state, assignee).length,
-      payload: { taskId: task.id, source: "gui-ui" }
+      payload: { taskId: task.id, source: "gui-ui" },
     });
     await this.put(state);
-    if (payload.wake !== false) await this.broadcast({ event: "wake", data: { agenda: true, taskId: task.id, agentId: assignee, at: Date.now() } });
+    if (payload.wake !== false)
+      await this.broadcast({
+        event: "wake",
+        data: { agenda: true, taskId: task.id, agentId: assignee, at: Date.now() },
+      });
     return json({ ok: true, task });
   }
 
@@ -1894,11 +2218,15 @@ export class GuiState implements DurableObject {
     if (!lookup.task) return json({ error: lookup.error }, { status: lookup.ambiguous ? 409 : 404 });
     const task = lookup.task;
     const previousStatus = task.status;
-    const reviewResult = payload.reviewResult === "approved" || payload.reviewResult === "changes_requested" ? payload.reviewResult : undefined;
+    const reviewResult =
+      payload.reviewResult === "approved" || payload.reviewResult === "changes_requested"
+        ? payload.reviewResult
+        : undefined;
     const blockedBy = normalizeStringList(payload.blockedBy);
     const acceptance = normalizeStringList(payload.acceptance);
     if (typeof payload.status === "string") {
-      if (!isTaskStatus(payload.status)) return json({ error: `invalid task status: ${payload.status}` }, { status: 400 });
+      if (!isTaskStatus(payload.status))
+        return json({ error: `invalid task status: ${payload.status}` }, { status: 400 });
     }
     workflowUpdateGuiTaskFromPatch(task, {
       status: typeof payload.status === "string" && isTaskStatus(payload.status) ? payload.status : undefined,
@@ -1912,12 +2240,13 @@ export class GuiState implements DurableObject {
       revisionReason: typeof payload.revisionReason === "string" ? payload.revisionReason : undefined,
       artifactIds: payload.artifactIds !== undefined ? normalizeStringList(payload.artifactIds) : undefined,
       reviewedByAgentId: reviewResult ? findAgent(state, task.assignee)?.id : undefined,
-      reviewedAt: reviewResult ? Date.now() : undefined
+      reviewedAt: reviewResult ? Date.now() : undefined,
     });
     if (task.reviewResult === "changes_requested" && task.revisionReason) {
-      const worker = task.requestMessageId && task.conversationId
-        ? workerAgentForConversation(state, ensureConversation(state, task.conversationId))
-        : defaultWorkerAgentFor(state);
+      const worker =
+        task.requestMessageId && task.conversationId
+          ? workerAgentForConversation(state, ensureConversation(state, task.conversationId))
+          : defaultWorkerAgentFor(state);
       const targetWorker = worker ?? defaultWorkerAgentFor(state);
       task.status = "assigned";
       task.assignee = targetWorker.id;
@@ -1925,7 +2254,10 @@ export class GuiState implements DurableObject {
       if (previousStatus !== task.status) pushTaskTransition(state, task, previousStatus);
       queueTaskChangesRequestedMessage(state, task, targetWorker.id);
       await this.put(state);
-      await this.broadcast({ event: "wake", data: { agenda: true, taskId: task.id, agentId: task.assignee, at: Date.now() } });
+      await this.broadcast({
+        event: "wake",
+        data: { agenda: true, taskId: task.id, agentId: task.assignee, at: Date.now() },
+      });
       return json({ ok: true, task });
     }
     if (previousStatus !== task.status) {
@@ -1942,17 +2274,26 @@ export class GuiState implements DurableObject {
           task.assignee = task.coordinatorAgentId ?? defaultAgentFor(state).id;
           task.updated_at = Date.now();
           pushTaskTransition(state, task, reviewStatus);
-          queueTaskCompletionMessage(state, task, { fromName: defaultAgentFor(state).id, actorAgentId: defaultAgentFor(state).id });
+          queueTaskCompletionMessage(state, task, {
+            fromName: defaultAgentFor(state).id,
+            actorAgentId: defaultAgentFor(state).id,
+          });
         }
       } else if (task.status === "done") {
         task.assignee = task.coordinatorAgentId ?? defaultAgentFor(state).id;
-        queueTaskCompletionMessage(state, task, { fromName: defaultAgentFor(state).id, actorAgentId: defaultAgentFor(state).id });
+        queueTaskCompletionMessage(state, task, {
+          fromName: defaultAgentFor(state).id,
+          actorAgentId: defaultAgentFor(state).id,
+        });
       } else if (task.assignee) {
         queueTaskAssignmentMessage(state, task, "King AI");
       }
     }
     await this.put(state);
-    await this.broadcast({ event: "wake", data: { agenda: true, taskId: task.id, agentId: task.assignee, at: Date.now() } });
+    await this.broadcast({
+      event: "wake",
+      data: { agenda: true, taskId: task.id, agentId: task.assignee, at: Date.now() },
+    });
     return json({ ok: true, task });
   }
 
@@ -1982,7 +2323,7 @@ export class GuiState implements DurableObject {
       to_agent_id: args.target,
       payload: args.payload,
       created_at: Date.now(),
-      readBy: []
+      readBy: [],
     };
   }
 
@@ -2043,14 +2384,17 @@ export class GuiState implements DurableObject {
   private async agentConfig(payload: AgentConfigPayload): Promise<Response> {
     const state = await this.get();
     const previous = defaultAgentFor(state);
-    const engine = typeof payload.engine === "string" && state.availableEngines.includes(payload.engine) ? payload.engine : previous.engine;
+    const engine =
+      typeof payload.engine === "string" && state.availableEngines.includes(payload.engine)
+        ? payload.engine
+        : previous.engine;
     const name = typeof payload.name === "string" ? payload.name.trim() : "";
     const role = typeof payload.role === "string" ? payload.role.trim() : "";
     const model = typeof payload.model === "string" ? payload.model.trim() : "";
     const fastModel = typeof payload.fastModel === "string" ? payload.fastModel.trim() : "";
     const lifecycle = isAgentLifecycle(payload.lifecycle)
       ? payload.lifecycle
-      : previous.lifecycle ?? DEFAULT_AGENT.lifecycle;
+      : (previous.lifecycle ?? DEFAULT_AGENT.lifecycle);
     // Engine / model / fastModel / lifecycle are runtime (local CLI) settings that should apply to
     // the whole team hosted on this computer, so propagate them to every agent. Name / role are
     // coordinator-specific and only update the default operator agent.
@@ -2068,19 +2412,21 @@ export class GuiState implements DurableObject {
         engine: nextEngine,
         lifecycle,
         model: nextModel,
-        fastModel: nextFastModel
+        fastModel: nextFastModel,
       };
     });
     const nextAgent = state.agents.find((agent) => agent.id === previous.id) ?? defaultAgentFor(state);
     const changed = previousAgents.some((before) => {
       const after = state.agents.find((agent) => agent.id === before.id);
-      return !after
-        || before.name !== after.name
-        || before.role !== after.role
-        || before.engine !== after.engine
-        || before.lifecycle !== after.lifecycle
-        || before.model !== after.model
-        || before.fastModel !== after.fastModel;
+      return (
+        !after ||
+        before.name !== after.name ||
+        before.role !== after.role ||
+        before.engine !== after.engine ||
+        before.lifecycle !== after.lifecycle ||
+        before.model !== after.model ||
+        before.fastModel !== after.fastModel
+      );
     });
     state.agentConfigUpdatedAt = Date.now();
     if (changed) {
@@ -2121,19 +2467,19 @@ export class GuiState implements DurableObject {
           tasks: state.tasks,
           conversations: state.conversations,
           defaultConversationId: DEFAULT_CONVERSATION.id,
-          defaultCoordinatorAgentId: DEFAULT_AGENT.id
+          defaultCoordinatorAgentId: DEFAULT_AGENT.id,
         });
         event = resolveWakeEvent(wakeCtx, evt);
         const dedup = shouldSuppressAgentWake(
           { messages: state.messages, tasks: state.tasks, conversations: state.conversations },
-          event.data as Record<string, unknown>
+          event.data as Record<string, unknown>,
         );
         if (dedup.suppress) {
           suppressed = true;
           if (dedup.autoRead?.conversationId) {
             applyAgentReadUpTo(
               { messages: state.messages, tasks: state.tasks, conversations: state.conversations },
-              dedup.autoRead
+              dedup.autoRead,
             );
           }
           state.wakeLog ??= [];
@@ -2143,8 +2489,8 @@ export class GuiState implements DurableObject {
             data: {
               ...(event.data as Record<string, unknown>),
               suppressed: true,
-              suppressReason: dedup.reason
-            }
+              suppressReason: dedup.reason,
+            },
           });
           state.wakeLog = state.wakeLog.slice(-WAKE_LOG_CAPACITY);
           await this.put(state);
@@ -2161,27 +2507,31 @@ export class GuiState implements DurableObject {
     }
     const frame = encode(`event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`);
     // GUI clients only need a "something changed" nudge, so collapse every event into one frame.
-    const guiFrame = encode(`event: change\ndata: ${JSON.stringify({ event: event.event, at: Date.now(), suppressed })}\n\n`);
-    await Promise.all([...this.waiters].map(async (waiter) => {
-      if (suppressed) {
-        if (!waiter.gui) return;
-      } else if (!waiter.gui && !wakeEventVisibleToAgent(event, waiter.agentId)) {
-        return;
-      }
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      try {
-        await Promise.race([
-          waiter.writer.write(waiter.gui ? guiFrame : frame),
-          new Promise((_, reject) => {
-            timer = setTimeout(() => reject(new Error("sse write timeout")), 1000);
-          })
-        ]);
-      } catch {
-        this.waiters.delete(waiter);
-      } finally {
-        if (timer) clearTimeout(timer);
-      }
-    }));
+    const guiFrame = encode(
+      `event: change\ndata: ${JSON.stringify({ event: event.event, at: Date.now(), suppressed })}\n\n`,
+    );
+    await Promise.all(
+      [...this.waiters].map(async (waiter) => {
+        if (suppressed) {
+          if (!waiter.gui) return;
+        } else if (!waiter.gui && !wakeEventVisibleToAgent(event, waiter.agentId)) {
+          return;
+        }
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            waiter.writer.write(waiter.gui ? guiFrame : frame),
+            new Promise((_, reject) => {
+              timer = setTimeout(() => reject(new Error("sse write timeout")), 1000);
+            }),
+          ]);
+        } catch {
+          this.waiters.delete(waiter);
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
+      }),
+    );
   }
 }
 import {
@@ -2343,7 +2693,7 @@ import {
   stripOptions,
   parseAllowedPaths,
   pathConflict,
-  taskScopeConflicts
+  taskScopeConflicts,
 } from "./gui-runtime.js";
 
 export {
@@ -2361,7 +2711,7 @@ export {
   isMessageInboxSettled,
   agentReplyForMessage,
   applyAgentReadUpTo,
-  settleTaskInboxForAgents
+  settleTaskInboxForAgents,
 };
 
 export default app;

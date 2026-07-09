@@ -24,7 +24,7 @@ export async function probeWorkerHealth(serverUrl: string, timeoutMs = 10_000): 
     if (!res.ok) {
       return { ok: false, serverUrl: base, error: `HTTP ${res.status}` };
     }
-    const body = await res.json() as WorkerHealthPayload;
+    const body = (await res.json()) as WorkerHealthPayload;
     if (body.ok !== true) {
       return { ok: false, serverUrl: base, error: "worker reported unhealthy" };
     }
@@ -34,7 +34,7 @@ export async function probeWorkerHealth(serverUrl: string, timeoutMs = 10_000): 
       version: typeof body.version === "string" ? body.version : undefined,
       runtimeFeatures: Array.isArray(body.runtimeFeatures)
         ? body.runtimeFeatures.filter((item): item is string => typeof item === "string")
-        : undefined
+        : undefined,
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

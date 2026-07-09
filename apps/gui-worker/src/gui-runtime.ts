@@ -7,14 +7,18 @@ import { selectOwnerRole } from "@suwujs/king-ai/team-routing";
 import { defaultTeamSpec, requiredCapabilitiesForText, roleTemplateForAgent } from "@suwujs/king-ai/team-workflow";
 import { taskDoneTransition, workflowCardFromTask, workflowReadiness } from "@suwujs/king-ai/workflow-core";
 import { sanitizeTenantId, displayNameForAuthUser } from "./gui-auth.js";
-import { isLightweightCoordinationMessage, isMessageInboxSettled, settleTaskInboxForAgents } from "./runtime-helpers.js";
+import {
+  isLightweightCoordinationMessage,
+  isMessageInboxSettled,
+  settleTaskInboxForAgents,
+} from "./runtime-helpers.js";
 import {
   artifactCandidateFromArgs as artifactCandidateFromArgsHelper,
   checkArtifactQuality,
   findArtifactInState,
   formatArtifactLine,
   formatArtifactQualityCheck,
-  parseMetadataJson
+  parseMetadataJson,
 } from "./artifact-helpers.js";
 import {
   normalizeNonnegativeInt,
@@ -25,7 +29,7 @@ import {
   readNumberOption,
   readOption,
   stripOptions,
-  taskScopeConflicts
+  taskScopeConflicts,
 } from "./gui-cli-options.js";
 import {
   CLI_LOG_CAPACITY,
@@ -53,7 +57,7 @@ import {
   TRIAGE_LOG_CAPACITY,
   TYPING_LOG_CAPACITY,
   WAKE_LOG_CAPACITY,
-  WORKFLOW_TEMPLATES
+  WORKFLOW_TEMPLATES,
 } from "./gui-types.js";
 import type {
   Agent,
@@ -113,7 +117,7 @@ import type {
   TaskReviewResult,
   TaskStatus,
   UploadedAttachment,
-  WorkflowTemplate
+  WorkflowTemplate,
 } from "./gui-types.js";
 
 function isAgentLifecycle(value: unknown): value is AgentLifecycle {
@@ -145,14 +149,18 @@ function normalizeRuntimeTokens(value: Record<string, string> | undefined): Reco
   return next;
 }
 
-function normalizeRuntimeTokenMeta(value: Record<string, RuntimeTokenMeta> | undefined, runtimeTokens: Record<string, string>): Record<string, RuntimeTokenMeta> {
+function normalizeRuntimeTokenMeta(
+  value: Record<string, RuntimeTokenMeta> | undefined,
+  runtimeTokens: Record<string, string>,
+): Record<string, RuntimeTokenMeta> {
   const next: Record<string, RuntimeTokenMeta> = {};
   const now = Date.now();
   for (const [agentId, tokenValue] of Object.entries(runtimeTokens)) {
     const id = normalizeAgentId(agentId);
     if (!id || !tokenValue) continue;
     const row = value?.[agentId] ?? value?.[id];
-    const expiresAt = row && row.token === tokenValue && Number.isFinite(row.expiresAt) ? row.expiresAt : now + RUNTIME_TOKEN_TTL_MS;
+    const expiresAt =
+      row && row.token === tokenValue && Number.isFinite(row.expiresAt) ? row.expiresAt : now + RUNTIME_TOKEN_TTL_MS;
     next[id] = { token: tokenValue, expiresAt };
   }
   return next;
@@ -194,7 +202,7 @@ function normalizeRemoteAssistGrant(value: unknown): RemoteAssistGrant | undefin
     createdBy: typeof row.createdBy === "string" ? row.createdBy : undefined,
     revokedAt: typeof row.revokedAt === "number" ? row.revokedAt : undefined,
     lastUsedAt: typeof row.lastUsedAt === "number" ? row.lastUsedAt : undefined,
-    uses: typeof row.uses === "number" ? row.uses : 0
+    uses: typeof row.uses === "number" ? row.uses : 0,
   };
 }
 
@@ -204,27 +212,35 @@ function activeRemoteAssistGrant(state: State): RemoteAssistGrant | undefined {
   return state.remoteAssist;
 }
 
-function remoteAssistSummary(grant: RemoteAssistGrant): { active: boolean; tokenPreview: string; createdAt: number; revokedAt?: number; uses: number; lastUsedAt?: number } {
+function remoteAssistSummary(grant: RemoteAssistGrant): {
+  active: boolean;
+  tokenPreview: string;
+  createdAt: number;
+  revokedAt?: number;
+  uses: number;
+  lastUsedAt?: number;
+} {
   return {
     active: !grant.revokedAt,
     tokenPreview: grant.tokenPreview,
     createdAt: grant.createdAt,
     revokedAt: grant.revokedAt,
     uses: grant.uses ?? 0,
-    lastUsedAt: grant.lastUsedAt
+    lastUsedAt: grant.lastUsedAt,
   };
 }
 
 function normalizeMessages(messages: Message[]): Message[] {
   return messages.map((message) => {
-    const keepRendered = message.body_html && message.body_render_key === message.body
-      ? { body_html: message.body_html, body_render_key: message.body_render_key }
-      : {};
+    const keepRendered =
+      message.body_html && message.body_render_key === message.body
+        ? { body_html: message.body_html, body_render_key: message.body_render_key }
+        : {};
     return {
       ...message,
       ...keepRendered,
       to_agent_id: normalizeAgentId(message.to_agent_id),
-      readBy: [...new Set((message.readBy ?? []).map(normalizeAgentId).filter((id): id is string => Boolean(id)))]
+      readBy: [...new Set((message.readBy ?? []).map(normalizeAgentId).filter((id): id is string => Boolean(id)))],
     };
   });
 }
@@ -255,7 +271,7 @@ const SAFE_MARKDOWN_TAGS = new Set([
   "th",
   "thead",
   "tr",
-  "ul"
+  "ul",
 ]);
 
 const SAFE_MARK_CLASS_PATTERN = /^(ielts-core|ielts-phrase|ielts-word)$/;
@@ -269,7 +285,8 @@ function sanitizeMarkdownHtml(html: string): string {
       const name = rawName.toLowerCase();
       if (!SAFE_MARKDOWN_TAGS.has(name)) return "";
       if (tag.startsWith("</")) return `</${name}>`;
-      const attrs = name === "a" ? sanitizeLinkAttributes(rawAttrs) : name === "span" ? sanitizeSpanAttributes(rawAttrs) : "";
+      const attrs =
+        name === "a" ? sanitizeLinkAttributes(rawAttrs) : name === "span" ? sanitizeSpanAttributes(rawAttrs) : "";
       const selfClosing = tag.endsWith("/>") || name === "br" || name === "hr";
       return `<${name}${attrs}${selfClosing ? " />" : ">"}`;
     });
@@ -301,22 +318,31 @@ function decodeHtmlAttribute(value: string): string {
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, "\"")
+    .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'");
 }
 
 function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[ch] ?? ch);
+  return value.replace(
+    /[&<>"']/g,
+    (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch] ?? ch,
+  );
 }
 
 function escapeHtmlAttribute(value: string): string {
-  return value.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[ch] ?? ch);
+  return value.replace(
+    /[&<>"']/g,
+    (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch] ?? ch,
+  );
 }
 
 // Built-in fallback cards cover common grammar words plus high-frequency IELTS/job-writing
 // vocabulary. WordCards JSON remains the source for context-specific meanings, but this table
 // keeps imperfect replies usable when the model omitted a word.
-const COMMON_WORD_CARDS: Record<string, { meaning: string; phonetic: string; syllables: string; pos?: string; roots?: string }> = {
+const COMMON_WORD_CARDS: Record<
+  string,
+  { meaning: string; phonetic: string; syllables: string; pos?: string; roots?: string }
+> = {
   // articles
   a: { meaning: "一个（不定冠词）", phonetic: "/ə/", syllables: "" },
   an: { meaning: "一个（不定冠词）", phonetic: "/ən/", syllables: "" },
@@ -542,7 +568,7 @@ const COMMON_WORD_CARDS: Record<string, { meaning: string; phonetic: string; syl
   "can't": { meaning: "不能（cannot）", phonetic: "/kænt/", syllables: "" },
   "that's": { meaning: "那是（that is）", phonetic: "/ðæts/", syllables: "" },
   "you're": { meaning: "你是（you are）", phonetic: "/jʊr/", syllables: "" },
-  "i've": { meaning: "我已（I have）", phonetic: "/aɪv/", syllables: "" }
+  "i've": { meaning: "我已（I have）", phonetic: "/aɪv/", syllables: "" },
 };
 
 function withPos(words: readonly string[], pos: string): Record<string, string> {
@@ -559,40 +585,166 @@ const COMMON_WORD_POS: Record<string, string> = {
   ...withPos(["who", "whom", "whose", "which", "what"], "代词"),
   ...withPos(["when"], "副词/连词"),
   ...withPos(["where", "why", "how"], "副词"),
-  ...withPos([
-    "to", "of", "in", "on", "at", "by", "for", "with", "from", "about", "as", "into", "through", "over",
-    "under", "between", "during", "before", "after", "since", "until", "without", "within", "around",
-    "toward", "off", "out", "up", "down", "near"
-  ], "介词"),
+  ...withPos(
+    [
+      "to",
+      "of",
+      "in",
+      "on",
+      "at",
+      "by",
+      "for",
+      "with",
+      "from",
+      "about",
+      "as",
+      "into",
+      "through",
+      "over",
+      "under",
+      "between",
+      "during",
+      "before",
+      "after",
+      "since",
+      "until",
+      "without",
+      "within",
+      "around",
+      "toward",
+      "off",
+      "out",
+      "up",
+      "down",
+      "near",
+    ],
+    "介词",
+  ),
   ...withPos(["like"], "介词/动词"),
-  ...withPos([
-    "and", "or", "but", "so", "if", "because", "while", "than", "though", "although", "unless", "whether",
-    "nor", "yet", "once"
-  ], "连词"),
-  ...withPos([
-    "am", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does", "did",
-    "write", "writing", "written", "apply", "developed", "solve", "enjoy", "improving", "believe", "make",
-    "discuss", "hope"
-  ], "动词"),
+  ...withPos(
+    [
+      "and",
+      "or",
+      "but",
+      "so",
+      "if",
+      "because",
+      "while",
+      "than",
+      "though",
+      "although",
+      "unless",
+      "whether",
+      "nor",
+      "yet",
+      "once",
+    ],
+    "连词",
+  ),
+  ...withPos(
+    [
+      "am",
+      "is",
+      "are",
+      "was",
+      "were",
+      "be",
+      "been",
+      "being",
+      "have",
+      "has",
+      "had",
+      "do",
+      "does",
+      "did",
+      "write",
+      "writing",
+      "written",
+      "apply",
+      "developed",
+      "solve",
+      "enjoy",
+      "improving",
+      "believe",
+      "make",
+      "discuss",
+      "hope",
+    ],
+    "动词",
+  ),
   ...withPos(["will", "would", "can", "could", "shall", "should", "may", "might", "must"], "情态动词"),
-  ...withPos([
-    "not", "never", "very", "too", "also", "just", "only", "even", "still", "again", "then", "there", "here",
-    "now", "however", "always", "often", "really", "well", "yes", "carefully", "faithfully"
-  ], "副词"),
+  ...withPos(
+    [
+      "not",
+      "never",
+      "very",
+      "too",
+      "also",
+      "just",
+      "only",
+      "even",
+      "still",
+      "again",
+      "then",
+      "there",
+      "here",
+      "now",
+      "however",
+      "always",
+      "often",
+      "really",
+      "well",
+      "yes",
+      "carefully",
+      "faithfully",
+    ],
+    "副词",
+  ),
   ...withPos(["no"], "限定词/副词"),
   ...withPos(["more", "most", "much", "many", "some", "any", "all", "both", "each", "every", "few"], "限定词/代词"),
   ...withPos(["little", "own", "same", "other", "another"], "形容词/代词"),
-  ...withPos([
-    "dear", "practical", "personal", "technical", "new", "basic", "useful", "natural", "hiring"
-  ], "形容词"),
-  ...withPos([
-    "manager", "programmer", "position", "company", "skill", "skills", "java", "python", "web", "development",
-    "university", "project", "projects", "problem", "problems", "team", "member", "members", "tool", "tools",
-    "code", "quality", "pressure", "enthusiasm", "experience", "opportunity", "application", "interview",
-    "word", "job", "letter", "phrase", "phrases", "tip"
-  ], "名词"),
+  ...withPos(["dear", "practical", "personal", "technical", "new", "basic", "useful", "natural", "hiring"], "形容词"),
+  ...withPos(
+    [
+      "manager",
+      "programmer",
+      "position",
+      "company",
+      "skill",
+      "skills",
+      "java",
+      "python",
+      "web",
+      "development",
+      "university",
+      "project",
+      "projects",
+      "problem",
+      "problems",
+      "team",
+      "member",
+      "members",
+      "tool",
+      "tools",
+      "code",
+      "quality",
+      "pressure",
+      "enthusiasm",
+      "experience",
+      "opportunity",
+      "application",
+      "interview",
+      "word",
+      "job",
+      "letter",
+      "phrase",
+      "phrases",
+      "tip",
+    ],
+    "名词",
+  ),
   ...withPos(["work", "practice", "learning", "english", "chinese", "request"], "名词/动词"),
-  ...withPos(["i'm", "it's", "don't", "can't", "that's", "you're", "i've"], "缩写")
+  ...withPos(["i'm", "it's", "don't", "can't", "that's", "you're", "i've"], "缩写"),
 };
 
 function fallbackWordPos(key: string, dict?: { pos?: string }): string {
@@ -621,16 +773,17 @@ function lookupWordCard(key: string, glossary?: IeltsCardIndex, displayWord = ke
       phonetic: glossCard.phonetic || dict?.phonetic || "",
       syllables: glossCard.syllables || dict?.syllables || syllabifyEnglishWord(displayWord),
       partOfSpeech: glossCard.partOfSpeech || fallbackWordPos(key, dict),
-      roots: glossCard.roots || dict?.roots || ""
+      roots: glossCard.roots || dict?.roots || "",
     };
   }
-  if (dict) return {
-    meaning: dict.meaning,
-    phonetic: dict.phonetic,
-    syllables: dict.syllables || syllabifyEnglishWord(displayWord),
-    partOfSpeech: fallbackWordPos(key, dict),
-    roots: dict.roots || ""
-  };
+  if (dict)
+    return {
+      meaning: dict.meaning,
+      phonetic: dict.phonetic,
+      syllables: dict.syllables || syllabifyEnglishWord(displayWord),
+      partOfSpeech: fallbackWordPos(key, dict),
+      roots: dict.roots || "",
+    };
   return null;
 }
 
@@ -655,7 +808,8 @@ function clickableWordSpan(word: string, glossary?: IeltsCardIndex): string {
   // the card still shows a meaning. Contractions like don't keep their own dictionary entry,
   // which the direct lookup above resolves before any stripping.
   const baseKey = key.replace(/['’]s?$/i, "");
-  const card = lookupWordCard(key, glossary, word) ?? (baseKey !== key ? lookupWordCard(baseKey, glossary, word) : null);
+  const card =
+    lookupWordCard(key, glossary, word) ?? (baseKey !== key ? lookupWordCard(baseKey, glossary, word) : null);
   if (!card) {
     return `<span class="ielts-word" data-word="${escapedWord}">${display}</span>`;
   }
@@ -676,19 +830,27 @@ function setIeltsCard(glossary: IeltsCardIndex, term: string, card: IeltsCardDet
 }
 
 function normalizeIeltsCardSyllables(value: unknown): string {
-  if (Array.isArray(value)) return value.map((part) => typeof part === "string" ? part.trim() : "").filter(Boolean).join("-");
+  if (Array.isArray(value))
+    return value
+      .map((part) => (typeof part === "string" ? part.trim() : ""))
+      .filter(Boolean)
+      .join("-");
   return typeof value === "string" ? value.trim() : "";
 }
 
 // Roots and affixes may arrive as a ready string ("morn 词根 + -ing 后缀") or as an array of
 // morpheme parts; join arrays with " + " so the card shows a single readable breakdown.
 function normalizeIeltsCardRoots(value: unknown): string {
-  if (Array.isArray(value)) return value.map((part) => typeof part === "string" ? part.trim() : "").filter(Boolean).join(" + ");
+  if (Array.isArray(value))
+    return value
+      .map((part) => (typeof part === "string" ? part.trim() : ""))
+      .filter(Boolean)
+      .join(" + ");
   return typeof value === "string" ? value.trim() : "";
 }
 
 function firstJsonValueText(input: string): string | undefined {
-  const start = input.search(/[\[{]/);
+  const start = input.search(/[[{]/);
   if (start < 0) return undefined;
   const stack: string[] = [];
   let inString = false;
@@ -700,12 +862,12 @@ function firstJsonValueText(input: string): string | undefined {
         escaped = false;
       } else if (ch === "\\") {
         escaped = true;
-      } else if (ch === "\"") {
+      } else if (ch === '"') {
         inString = false;
       }
       continue;
     }
-    if (ch === "\"") {
+    if (ch === '"') {
       inString = true;
       continue;
     }
@@ -732,7 +894,8 @@ function parseIeltsWordCardsJson(raw: string): unknown {
 }
 
 function addIeltsWordCardsFromJson(glossary: IeltsCardIndex, parsed: unknown): void {
-  const container = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  const container =
+    parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
   const cards = Array.isArray(parsed)
     ? parsed
     : Array.isArray(container.cards)
@@ -745,41 +908,59 @@ function addIeltsWordCardsFromJson(glossary: IeltsCardIndex, parsed: unknown): v
   for (const item of cards) {
     if (!item || typeof item !== "object" || Array.isArray(item)) continue;
     const row = item as Record<string, unknown>;
-    const token = typeof row.token === "string" ? row.token : typeof row.word === "string" ? row.word : typeof row.lemma === "string" ? row.lemma : "";
-    const meaning = typeof row.meaningZh === "string"
-      ? row.meaningZh.trim()
-      : typeof row.meaning === "string"
-        ? row.meaning.trim()
-        : typeof row.zh === "string"
-          ? row.zh.trim()
-          : "";
-    const phonetic = typeof row.phonetic === "string"
-      ? row.phonetic.trim()
-      : typeof row.ipa === "string"
-        ? row.ipa.trim()
-        : typeof row.pronunciation === "string"
-          ? row.pronunciation.trim()
-          : "";
-    const partOfSpeech = typeof row.partOfSpeech === "string"
-      ? row.partOfSpeech.trim()
-      : typeof row.pos === "string"
-        ? row.pos.trim()
-        : typeof row.posZh === "string"
-          ? row.posZh.trim()
-          : "";
+    const token =
+      typeof row.token === "string"
+        ? row.token
+        : typeof row.word === "string"
+          ? row.word
+          : typeof row.lemma === "string"
+            ? row.lemma
+            : "";
+    const meaning =
+      typeof row.meaningZh === "string"
+        ? row.meaningZh.trim()
+        : typeof row.meaning === "string"
+          ? row.meaning.trim()
+          : typeof row.zh === "string"
+            ? row.zh.trim()
+            : "";
+    const phonetic =
+      typeof row.phonetic === "string"
+        ? row.phonetic.trim()
+        : typeof row.ipa === "string"
+          ? row.ipa.trim()
+          : typeof row.pronunciation === "string"
+            ? row.pronunciation.trim()
+            : "";
+    const partOfSpeech =
+      typeof row.partOfSpeech === "string"
+        ? row.partOfSpeech.trim()
+        : typeof row.pos === "string"
+          ? row.pos.trim()
+          : typeof row.posZh === "string"
+            ? row.posZh.trim()
+            : "";
     const roots = normalizeIeltsCardRoots(row.roots ?? row.affixes ?? row.morphology ?? row.rootsZh);
-    setIeltsCard(glossary, token, { meaning, phonetic, syllables: normalizeIeltsCardSyllables(row.syllables), partOfSpeech, roots });
+    setIeltsCard(glossary, token, {
+      meaning,
+      phonetic,
+      syllables: normalizeIeltsCardSyllables(row.syllables),
+      partOfSpeech,
+      roots,
+    });
   }
 }
 
 function ieltsAnnotationSentences(parsed: unknown): IeltsSentenceAnnotation[] {
-  const container = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  const container =
+    parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
   if (!Array.isArray(container.sentences)) return [];
   const sentences: IeltsSentenceAnnotation[] = [];
   for (const item of container.sentences) {
     if (!item || typeof item !== "object" || Array.isArray(item)) continue;
     const row = item as Record<string, unknown>;
-    const text = typeof row.text === "string" ? row.text.trim() : typeof row.sentence === "string" ? row.sentence.trim() : "";
+    const text =
+      typeof row.text === "string" ? row.text.trim() : typeof row.sentence === "string" ? row.sentence.trim() : "";
     if (!text) continue;
     const clauses: IeltsClauseAnnotation[] = [];
     const rawClauses = Array.isArray(row.clauses) ? row.clauses : [];
@@ -792,7 +973,7 @@ function ieltsAnnotationSentences(parsed: unknown): IeltsSentenceAnnotation[] {
       clauses.push({
         text: clauseText || text,
         core,
-        phrases: rawPhrases.map((part) => typeof part === "string" ? part.trim() : "").filter(Boolean)
+        phrases: rawPhrases.map((part) => (typeof part === "string" ? part.trim() : "")).filter(Boolean),
       });
     }
     sentences.push({ text, clauses });
@@ -843,44 +1024,55 @@ function extractIeltsCardData(body: string): { text: string; glossary: IeltsCard
 }
 
 function renderIeltsAnnotations(markdown: string): string {
-  return markdown
-    .replace(/\[word\s+([^\]\n|]+)\|([^\]\n|]+)\|([^\]\n|]+)\|([^\]\n|]+)(?:\|([^\]\n|]+))?(?:\|([^\]\n|]+))?\]/g, (_match, word: string, meaning: string, phonetic: string, syllables: string, pos?: string, roots?: string) =>
+  return markdown.replace(
+    /\[word\s+([^\]\n|]+)\|([^\]\n|]+)\|([^\]\n|]+)\|([^\]\n|]+)(?:\|([^\]\n|]+))?(?:\|([^\]\n|]+))?\]/g,
+    (_match, word: string, meaning: string, phonetic: string, syllables: string, pos?: string, roots?: string) =>
       `<span class="ielts-word" data-word="${escapeHtmlAttribute(word.trim())}" data-meaning="${escapeHtmlAttribute(meaning.trim())}" data-phonetic="${escapeHtmlAttribute(phonetic.trim())}" data-syllables="${escapeHtmlAttribute(syllables.trim())}"` +
       (pos && pos.trim() ? ` data-pos="${escapeHtmlAttribute(pos.trim())}"` : "") +
       (roots && roots.trim() ? ` data-roots="${escapeHtmlAttribute(roots.trim())}"` : "") +
-      `>${escapeHtml(word.trim())}</span>`
-    );
+      `>${escapeHtml(word.trim())}</span>`,
+  );
 }
 
 // Walk rendered HTML and transform only the visible text nodes, skipping links/code and any
 // element whose class equals skipClassName (used to avoid descending into already-wrapped words).
-function transformIeltsTextNodes(html: string, skipClassName: string | null, transform: (text: string) => string): string {
+function transformIeltsTextNodes(
+  html: string,
+  skipClassName: string | null,
+  transform: (text: string) => string,
+): string {
   const skipTags = new Set(["a", "code", "pre", "script", "style"]);
   const stack: Array<{ name: string; className: string }> = [];
-  return html.split(/(<[^>]+>)/g).map((part) => {
-    if (!part) return part;
-    if (part.startsWith("<")) {
-      const close = part.match(/^<\/\s*([a-zA-Z][\w:-]*)/);
-      if (close) {
-        const name = close[1].toLowerCase();
-        for (let idx = stack.length - 1; idx >= 0; idx -= 1) {
-          const current = stack.pop();
-          if (current?.name === name) break;
+  return html
+    .split(/(<[^>]+>)/g)
+    .map((part) => {
+      if (!part) return part;
+      if (part.startsWith("<")) {
+        const close = part.match(/^<\/\s*([a-zA-Z][\w:-]*)/);
+        if (close) {
+          const name = close[1].toLowerCase();
+          for (let idx = stack.length - 1; idx >= 0; idx -= 1) {
+            const current = stack.pop();
+            if (current?.name === name) break;
+          }
+          return part;
+        }
+        const open = part.match(/^<\s*([a-zA-Z][\w:-]*)([^>]*)>/);
+        if (open && !part.endsWith("/>")) {
+          const name = open[1].toLowerCase();
+          const classMatch = open[2].match(/\sclass\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+          const className = decodeHtmlAttribute(classMatch?.[1] ?? classMatch?.[2] ?? classMatch?.[3] ?? "").trim();
+          stack.push({ name, className });
         }
         return part;
       }
-      const open = part.match(/^<\s*([a-zA-Z][\w:-]*)([^>]*)>/);
-      if (open && !part.endsWith("/>")) {
-        const name = open[1].toLowerCase();
-        const classMatch = open[2].match(/\sclass\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
-        const className = decodeHtmlAttribute(classMatch?.[1] ?? classMatch?.[2] ?? classMatch?.[3] ?? "").trim();
-        stack.push({ name, className });
-      }
-      return part;
-    }
-    if (stack.some((entry) => skipTags.has(entry.name) || (skipClassName !== null && entry.className === skipClassName))) return part;
-    return transform(part);
-  }).join("");
+      if (
+        stack.some((entry) => skipTags.has(entry.name) || (skipClassName !== null && entry.className === skipClassName))
+      )
+        return part;
+      return transform(part);
+    })
+    .join("");
 }
 
 // Wrap the coach's declared cores/phrases on rendered HTML text nodes. Matching plain substrings
@@ -889,7 +1081,7 @@ function transformIeltsTextNodes(html: string, skipClassName: string | null, tra
 function highlightIeltsSpansInHtml(html: string, spans: IeltsHighlightSpans): string {
   const needles: Array<{ value: string; kind: "core" | "phrase" }> = [
     ...spans.cores.map((value) => ({ value, kind: "core" as const })),
-    ...spans.phrases.map((value) => ({ value, kind: "phrase" as const }))
+    ...spans.phrases.map((value) => ({ value, kind: "phrase" as const })),
   ]
     .filter((needle) => needle.value)
     .sort((a, b) => (a.kind === b.kind ? b.value.length - a.value.length : a.kind === "core" ? -1 : 1));
@@ -898,7 +1090,11 @@ function highlightIeltsSpansInHtml(html: string, spans: IeltsHighlightSpans): st
   return transformIeltsTextNodes(html, null, (text) => wrapIeltsSpansInText(text, needles, consumed));
 }
 
-function wrapIeltsSpansInText(text: string, needles: Array<{ value: string; kind: "core" | "phrase" }>, consumed: Set<string>): string {
+function wrapIeltsSpansInText(
+  text: string,
+  needles: Array<{ value: string; kind: "core" | "phrase" }>,
+  consumed: Set<string>,
+): string {
   const spans: Array<{ start: number; end: number; kind: "core" | "phrase" }> = [];
   for (const needle of needles) {
     const key = `${needle.kind}\u0000${needle.value}`;
@@ -922,7 +1118,7 @@ function wrapIeltsSpansInText(text: string, needles: Array<{ value: string; kind
 
 function renderFallbackClickableWords(html: string, glossary?: IeltsCardIndex): string {
   return transformIeltsTextNodes(html, "ielts-word", (text) =>
-    text.replace(/\b[A-Za-z]+(?:'[A-Za-z]+)?\b/g, (word) => clickableWordSpan(word, glossary))
+    text.replace(/\b[A-Za-z]+(?:'[A-Za-z]+)?\b/g, (word) => clickableWordSpan(word, glossary)),
   );
 }
 
@@ -931,8 +1127,10 @@ function renderFallbackClickableWords(html: string, glossary?: IeltsCardIndex): 
 const IELTS_COACH_AGENT = IELTS_WORKFLOW_AGENTS[0];
 
 function shouldRenderIeltsClickableWords(message: Message): boolean {
-  return message.author_kind === "agent" &&
-    (message.author_name === IELTS_COACH_AGENT.name || message.author_name === IELTS_COACH_AGENT.id);
+  return (
+    message.author_kind === "agent" &&
+    (message.author_name === IELTS_COACH_AGENT.name || message.author_name === IELTS_COACH_AGENT.id)
+  );
 }
 
 async function renderMessageMarkdown(message: Message): Promise<Message> {
@@ -942,7 +1140,11 @@ async function renderMessageMarkdown(message: Message): Promise<Message> {
     const isIelts = shouldRenderIeltsClickableWords(message);
     const { text, glossary, spans } = isIelts
       ? extractIeltsCardData(message.body || "")
-      : { text: message.body || "", glossary: emptyIeltsCardIndex(), spans: { cores: [], phrases: [] } as IeltsHighlightSpans };
+      : {
+          text: message.body || "",
+          glossary: emptyIeltsCardIndex(),
+          spans: { cores: [], phrases: [] } as IeltsHighlightSpans,
+        };
     const rendered = await renderMarkdownHtml(renderIeltsAnnotations(text));
     const sanitized = sanitizeMarkdownHtml(rendered);
     const body_html = isIelts
@@ -963,16 +1165,20 @@ function sortMessagesChronologically(messages: Message[]): Message[] {
 }
 
 async function messagesForGuiConversation(state: State, conversationId: string): Promise<Message[]> {
-  const rows = sortMessagesChronologically(state.messages.filter((message) => message.conversation_id === conversationId));
+  const rows = sortMessagesChronologically(
+    state.messages.filter((message) => message.conversation_id === conversationId),
+  );
   return Promise.all(rows.map((message) => renderMessageMarkdown(message)));
 }
 
-type GuiStateResponse = State | Omit<State, "deviceToken" | "runtimeToken" | "runtimeTokens" | "runtimeTokenMeta" | "pairingCode" | "remoteAssist">;
+type GuiStateResponse =
+  | State
+  | Omit<State, "deviceToken" | "runtimeToken" | "runtimeTokens" | "runtimeTokenMeta" | "pairingCode" | "remoteAssist">;
 
 async function stateForGui(state: State, redactSecrets = false): Promise<GuiStateResponse> {
   const visible = {
     ...state,
-    messages: await Promise.all(state.messages.map(renderMessageMarkdown))
+    messages: await Promise.all(state.messages.map(renderMessageMarkdown)),
   };
   if (!redactSecrets) return visible;
   const {
@@ -993,7 +1199,7 @@ function normalizeTasks(tasks: Task[]): Task[] {
     assignee: normalizeAgentId(task.assignee),
     coordinatorAgentId: normalizeAgentId(task.coordinatorAgentId),
     reviewerAgentId: normalizeAgentId(task.reviewerAgentId),
-    reviewedByAgentId: normalizeAgentId(task.reviewedByAgentId)
+    reviewedByAgentId: normalizeAgentId(task.reviewedByAgentId),
   }));
 }
 
@@ -1001,7 +1207,7 @@ function normalizeTaskEvents(events: TaskEvent[]): TaskEvent[] {
   return events.map((event) => ({
     ...event,
     actorAgentId: normalizeAgentId(event.actorAgentId),
-    targetAgentId: normalizeAgentId(event.targetAgentId)
+    targetAgentId: normalizeAgentId(event.targetAgentId),
   }));
 }
 
@@ -1009,7 +1215,7 @@ function normalizeCards(cards: Card[]): Card[] {
   return cards.map((card) => ({
     ...card,
     assignee: normalizeAgentId(card.assignee),
-    claimedBy: normalizeAgentId(card.claimedBy)
+    claimedBy: normalizeAgentId(card.claimedBy),
   }));
 }
 
@@ -1022,7 +1228,10 @@ function normalizeClaims(claims: Claim[]): Claim[] {
 }
 
 function normalizeCapsules(capsules: ChangeCapsule[]): ChangeCapsule[] {
-  return capsules.map((capsule) => ({ ...capsule, ownerAgent: normalizeAgentId(capsule.ownerAgent) ?? capsule.ownerAgent }));
+  return capsules.map((capsule) => ({
+    ...capsule,
+    ownerAgent: normalizeAgentId(capsule.ownerAgent) ?? capsule.ownerAgent,
+  }));
 }
 
 function normalizeMergeQueue(queue: MergeRequest[]): MergeRequest[] {
@@ -1033,7 +1242,7 @@ function normalizeArtifacts(artifacts: Artifact[]): Artifact[] {
   return artifacts.map((artifact) => ({
     ...artifact,
     agentId: normalizeAgentId(artifact.agentId) ?? artifact.agentId,
-    source: artifact.source
+    source: artifact.source,
   }));
 }
 
@@ -1042,11 +1251,17 @@ function normalizeContext(entries: ContextEntry[]): ContextEntry[] {
 }
 
 function normalizeHypotheses(hypotheses: Hypothesis[]): Hypothesis[] {
-  return hypotheses.map((hypothesis) => ({ ...hypothesis, agentId: normalizeAgentId(hypothesis.agentId) ?? hypothesis.agentId }));
+  return hypotheses.map((hypothesis) => ({
+    ...hypothesis,
+    agentId: normalizeAgentId(hypothesis.agentId) ?? hypothesis.agentId,
+  }));
 }
 
 function normalizeReactions(reactions: Reaction[]): Reaction[] {
-  return reactions.map((reaction) => ({ ...reaction, authorId: normalizeAgentId(reaction.authorId) ?? reaction.authorId }));
+  return reactions.map((reaction) => ({
+    ...reaction,
+    authorId: normalizeAgentId(reaction.authorId) ?? reaction.authorId,
+  }));
 }
 
 function normalizeComposing(claims: ComposingClaim[]): ComposingClaim[] {
@@ -1072,7 +1287,7 @@ function normalizeConversations(input: unknown, messages: Message[]): Conversati
         teamMode: normalizeTeamMode(row.teamMode),
         coordinatorAgentId: normalizeAgentId(row.coordinatorAgentId) ?? DEFAULT_AGENT.id,
         teamAgentIds: normalizeTeamAgentIds(row.teamAgentIds),
-        teamSnapshot: normalizeConversationTeamSnapshot(row.teamSnapshot)
+        teamSnapshot: normalizeConversationTeamSnapshot(row.teamSnapshot),
       });
     }
   }
@@ -1086,7 +1301,7 @@ function normalizeConversations(input: unknown, messages: Message[]): Conversati
     workflowId: normalizeWorkflowId(byId.get(DEFAULT_CONVERSATION.id)?.workflowId),
     coordinatorAgentId: normalizeAgentId(byId.get(DEFAULT_CONVERSATION.id)?.coordinatorAgentId) ?? DEFAULT_AGENT.id,
     teamAgentIds: normalizeTeamAgentIds(byId.get(DEFAULT_CONVERSATION.id)?.teamAgentIds),
-    teamSnapshot: normalizeConversationTeamSnapshot(byId.get(DEFAULT_CONVERSATION.id)?.teamSnapshot)
+    teamSnapshot: normalizeConversationTeamSnapshot(byId.get(DEFAULT_CONVERSATION.id)?.teamSnapshot),
   });
   for (const message of messages) {
     const existing = byId.get(message.conversation_id);
@@ -1104,7 +1319,7 @@ function normalizeConversations(input: unknown, messages: Message[]): Conversati
       teamMode: "team",
       coordinatorAgentId: DEFAULT_AGENT.id,
       teamAgentIds: normalizeTeamAgentIds(undefined),
-      teamSnapshot: undefined
+      teamSnapshot: undefined,
     });
   }
   return [...byId.values()].sort(compareConversations);
@@ -1125,7 +1340,7 @@ function ensureConversation(state: State, id: string): Conversation {
     teamMode: "team",
     coordinatorAgentId: DEFAULT_AGENT.id,
     teamAgentIds: normalizeTeamAgentIds(undefined),
-    teamSnapshot: undefined
+    teamSnapshot: undefined,
   };
   state.conversations.push(conversation);
   return conversation;
@@ -1162,14 +1377,22 @@ function workflowAgentIdsFor(state: State, workflow: WorkflowTemplate): string[]
 
 function normalizeWorkflowAgentIds(value: unknown, agents: Agent[]): Record<string, string[]> {
   const availableIds = new Set(agents.map((agent) => agent.id));
-  const input = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  const input = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
   const normalized: Record<string, string[]> = {};
   for (const workflow of WORKFLOW_TEMPLATES) {
-    const incomingIds = normalizeStringList(input[workflow.id]).map(normalizeAgentId).filter((id): id is string => Boolean(id));
+    const incomingIds = normalizeStringList(input[workflow.id])
+      .map(normalizeAgentId)
+      .filter((id): id is string => Boolean(id));
     const workflowTemplateIds = new Set(workflow.agentIds);
-    const ids = [...new Set((incomingIds.length ? incomingIds : workflow.agentIds)
-      .filter((id) => workflowTemplateIds.has(id) && availableIds.has(id)))];
-    if (!ids.includes(workflow.defaultCoordinatorAgentId) && availableIds.has(workflow.defaultCoordinatorAgentId)) ids.unshift(workflow.defaultCoordinatorAgentId);
+    const ids = [
+      ...new Set(
+        (incomingIds.length ? incomingIds : workflow.agentIds).filter(
+          (id) => workflowTemplateIds.has(id) && availableIds.has(id),
+        ),
+      ),
+    ];
+    if (!ids.includes(workflow.defaultCoordinatorAgentId) && availableIds.has(workflow.defaultCoordinatorAgentId))
+      ids.unshift(workflow.defaultCoordinatorAgentId);
     normalized[workflow.id] = ids.length ? ids : workflow.agentIds;
   }
   return normalized;
@@ -1198,7 +1421,9 @@ function normalizeWorkflowAgentDefinition(value: unknown): Agent | undefined {
     lifecycle: isAgentLifecycle(row.lifecycle) ? row.lifecycle : "on-demand",
     model: typeof row.model === "string" && row.model.trim() ? row.model.trim() : undefined,
     fastModel: typeof row.fastModel === "string" && row.fastModel.trim() ? row.fastModel.trim() : undefined,
-    events: Array.isArray(row.events) ? row.events.filter((event): event is string => typeof event === "string" && Boolean(event.trim())) : undefined
+    events: Array.isArray(row.events)
+      ? row.events.filter((event): event is string => typeof event === "string" && Boolean(event.trim()))
+      : undefined,
   };
 }
 
@@ -1234,26 +1459,54 @@ function normalizeTeamAgentIds(value: unknown): string[] {
   return [...new Set(ids.length ? ids : defaultTeamAgentIds())];
 }
 
-function normalizeConversationTeam(state: State, payload: GuiConversationPayload, previous?: Conversation): Required<Pick<Conversation, "workflowId" | "teamMode" | "coordinatorAgentId" | "teamAgentIds">> {
+function normalizeConversationTeam(
+  state: State,
+  payload: GuiConversationPayload,
+  previous?: Conversation,
+): Required<Pick<Conversation, "workflowId" | "teamMode" | "coordinatorAgentId" | "teamAgentIds">> {
   const workflow = workflowTemplateById(payload.workflowId ?? previous?.workflowId);
   const mode = normalizeTeamMode(payload.teamMode ?? previous?.teamMode);
   const workflowAgentIds = workflowAgentIdsFor(state, workflow);
   const workflowIds = new Set(workflowAgentIds);
   const requestedCoordinatorId = normalizeAgentId(payload.coordinatorAgentId ?? previous?.coordinatorAgentId);
-  const coordinator = findAgent(state, requestedCoordinatorId && workflowIds.has(requestedCoordinatorId) ? requestedCoordinatorId : workflow.defaultCoordinatorAgentId)
-    ?? findAgent(state, workflowAgentIds[0])
-    ?? defaultAgentFor(state);
+  const coordinator =
+    findAgent(
+      state,
+      requestedCoordinatorId && workflowIds.has(requestedCoordinatorId)
+        ? requestedCoordinatorId
+        : workflow.defaultCoordinatorAgentId,
+    ) ??
+    findAgent(state, workflowAgentIds[0]) ??
+    defaultAgentFor(state);
   if (mode === "single") {
-    return { workflowId: workflow.id, teamMode: mode, coordinatorAgentId: coordinator.id, teamAgentIds: [coordinator.id] };
+    return {
+      workflowId: workflow.id,
+      teamMode: mode,
+      coordinatorAgentId: coordinator.id,
+      teamAgentIds: [coordinator.id],
+    };
   }
   if (mode === "custom") {
-    const requestedIds = normalizeStringList(payload.teamAgentIds ?? previous?.teamAgentIds).map(normalizeAgentId).filter((id): id is string => Boolean(id));
-    const ids = [...new Set([coordinator.id, ...requestedIds])]
-      .filter((id) => workflowIds.has(id) && Boolean(findAgent(state, id)));
-    return { workflowId: workflow.id, teamMode: mode, coordinatorAgentId: coordinator.id, teamAgentIds: ids.length ? ids : [coordinator.id] };
+    const requestedIds = normalizeStringList(payload.teamAgentIds ?? previous?.teamAgentIds)
+      .map(normalizeAgentId)
+      .filter((id): id is string => Boolean(id));
+    const ids = [...new Set([coordinator.id, ...requestedIds])].filter(
+      (id) => workflowIds.has(id) && Boolean(findAgent(state, id)),
+    );
+    return {
+      workflowId: workflow.id,
+      teamMode: mode,
+      coordinatorAgentId: coordinator.id,
+      teamAgentIds: ids.length ? ids : [coordinator.id],
+    };
   }
   const teamAgentIds = workflowAgentIds.filter((id) => Boolean(findAgent(state, id)));
-  return { workflowId: workflow.id, teamMode: "team", coordinatorAgentId: coordinator.id, teamAgentIds: teamAgentIds.length ? teamAgentIds : [coordinator.id] };
+  return {
+    workflowId: workflow.id,
+    teamMode: "team",
+    coordinatorAgentId: coordinator.id,
+    teamAgentIds: teamAgentIds.length ? teamAgentIds : [coordinator.id],
+  };
 }
 
 function normalizeAgentRolePayload(value: unknown): Record<string, string> {
@@ -1286,7 +1539,13 @@ function normalizeConversationTeamSnapshot(value: unknown): ConversationTeamSnap
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const row = value as Partial<ConversationTeamSnapshot>;
   const agents = Array.isArray(row.agents)
-    ? row.agents.filter((agent): agent is Agent => Boolean(agent) && typeof agent.id === "string" && typeof agent.name === "string" && typeof agent.role === "string")
+    ? row.agents.filter(
+        (agent): agent is Agent =>
+          Boolean(agent) &&
+          typeof agent.id === "string" &&
+          typeof agent.name === "string" &&
+          typeof agent.role === "string",
+      )
     : [];
   const teamAgentIds = normalizeTeamAgentIds(row.teamAgentIds);
   const coordinatorAgentId = normalizeAgentId(row.coordinatorAgentId) ?? DEFAULT_AGENT.id;
@@ -1297,7 +1556,7 @@ function normalizeConversationTeamSnapshot(value: unknown): ConversationTeamSnap
     coordinatorAgentId,
     teamAgentIds,
     agents: agents.map((agent) => ({ ...agent, id: normalizeAgentId(agent.id) ?? agent.id })),
-    createdAt: typeof row.createdAt === "number" ? row.createdAt : Date.now()
+    createdAt: typeof row.createdAt === "number" ? row.createdAt : Date.now(),
   };
 }
 
@@ -1305,13 +1564,13 @@ function buildConversationTeamSnapshot(
   state: State,
   team: Required<Pick<Conversation, "workflowId" | "teamMode" | "coordinatorAgentId" | "teamAgentIds">>,
   roleOverrides: Record<string, string> = {},
-  createdAt = Date.now()
+  createdAt = Date.now(),
 ): ConversationTeamSnapshot {
   const agents = team.teamAgentIds.map((id) => {
     const agent = findAgent(state, id) ?? DEFAULT_TEAM_AGENTS.find((row) => row.id === id) ?? defaultAgentFor(state);
     return {
       ...agent,
-      role: roleOverrides[id] || agent.role
+      role: roleOverrides[id] || agent.role,
     };
   });
   return {
@@ -1320,7 +1579,7 @@ function buildConversationTeamSnapshot(
     coordinatorAgentId: team.coordinatorAgentId,
     teamAgentIds: team.teamAgentIds,
     agents,
-    createdAt
+    createdAt,
   };
 }
 
@@ -1389,10 +1648,10 @@ function teamSpecForConversation(state: State, conversation: Conversation) {
         handoffPolicy: baseRole?.handoffPolicy ?? {
           mode: "one-of-us" as const,
           escalation: "coordinator" as const,
-          acceptanceRequired: false
-        }
+          acceptanceRequired: false,
+        },
       };
-    })
+    }),
   };
 }
 
@@ -1427,16 +1686,25 @@ function agentIdForRuntimeToken(state: State, runtimeToken: string): string | nu
   return null;
 }
 
-function autoDelegateMessage(state: State, conversation: Conversation, message: Message, coordinator: Agent): Task | undefined {
+function autoDelegateMessage(
+  state: State,
+  conversation: Conversation,
+  message: Message,
+  coordinator: Agent,
+): Task | undefined {
   const lightweight = isLightweightCoordinationMessage(conversation, message.body);
   const ownerRole = lightweight
     ? "builder"
-    : selectOwnerRole(teamSpecForConversation(state, conversation), requiredCapabilitiesForText(message.body)) ?? "builder";
+    : (selectOwnerRole(teamSpecForConversation(state, conversation), requiredCapabilitiesForText(message.body)) ??
+      "builder");
   const worker = lightweight
-    ? workerAgentForConversation(state, conversation) ?? agentForRoleInConversation(state, conversation, ownerRole)
-    : agentForRoleInConversation(state, conversation, ownerRole) ?? workerAgentForConversation(state, conversation);
+    ? (workerAgentForConversation(state, conversation) ?? agentForRoleInConversation(state, conversation, ownerRole))
+    : (agentForRoleInConversation(state, conversation, ownerRole) ?? workerAgentForConversation(state, conversation));
   if (!worker) return undefined;
-  const reviewer = lightweight ? undefined : agentForRoleInConversation(state, conversation, "reviewer") ?? reviewerAgentForConversation(state, conversation);
+  const reviewer = lightweight
+    ? undefined
+    : (agentForRoleInConversation(state, conversation, "reviewer") ??
+      reviewerAgentForConversation(state, conversation));
   const now = Date.now();
   const task: Task = {
     id: `task-${now}-${Math.random().toString(36).slice(2)}`,
@@ -1449,7 +1717,9 @@ function autoDelegateMessage(state: State, conversation: Conversation, message: 
     priority: message.priority === "steer" ? 8 : 5,
     acceptance: [
       "The assigned agent reports concrete output or files changed.",
-      reviewer ? "Reviewer approves or requests specific revisions before Planner summarizes." : "The task status and result are recorded without requiring a separate chat summary."
+      reviewer
+        ? "Reviewer approves or requests specific revisions before Planner summarizes."
+        : "The task status and result are recorded without requiring a separate chat summary.",
     ],
     conversationId: conversation.id,
     requestMessageId: message.id,
@@ -1457,7 +1727,7 @@ function autoDelegateMessage(state: State, conversation: Conversation, message: 
     reviewerAgentId: reviewer?.id,
     coordinationOnly: lightweight || undefined,
     created_at: now,
-    updated_at: now
+    updated_at: now,
   };
   state.tasks.push(task);
   queueTaskAssignmentMessage(state, task, coordinator.id);
@@ -1466,7 +1736,7 @@ function autoDelegateMessage(state: State, conversation: Conversation, message: 
     agent: worker.id,
     taskId: task.id,
     pendingMessages: unreadMessagesFor(state, worker.id).length,
-    payload: { taskId: task.id, source: "gui-message", conversationId: conversation.id, requestMessageId: message.id }
+    payload: { taskId: task.id, source: "gui-message", conversationId: conversation.id, requestMessageId: message.id },
   });
   return task;
 }
@@ -1475,15 +1745,18 @@ function settleTaskParticipantInboxes(state: State, task: Task): void {
   if (!task.conversationId) return;
   const coordinatorId = task.coordinatorAgentId ?? defaultAgentFor(state).id;
   const routedFromSteers = state.messages
-    .filter((row) =>
-      row.conversation_id === task.conversationId &&
-      row.priority === "steer" &&
-      row.body.includes(task.id) &&
-      row.body.startsWith("Task assigned")
+    .filter(
+      (row) =>
+        row.conversation_id === task.conversationId &&
+        row.priority === "steer" &&
+        row.body.includes(task.id) &&
+        row.body.startsWith("Task assigned"),
     )
     .map((row) => row.to_agent_id)
     .filter((id): id is string => Boolean(id));
-  const agentIds = [...new Set([...routedFromSteers, task.reviewerAgentId, coordinatorId].filter((id): id is string => Boolean(id)))];
+  const agentIds = [
+    ...new Set([...routedFromSteers, task.reviewerAgentId, coordinatorId].filter((id): id is string => Boolean(id))),
+  ];
   settleTaskInboxForAgents(state.messages, { conversationId: task.conversationId, agentIds });
 }
 
@@ -1499,11 +1772,13 @@ function advanceTaskDone(state: State, task: Task, actor: Agent, resultText?: st
     settleTaskParticipantInboxes(state, task);
     return `Task ${task.id} marked done.`;
   }
-  const reviewer = task.reviewerAgentId ? findAgent(state, task.reviewerAgentId) ?? reviewerAgentFor(state) : undefined;
+  const reviewer = task.reviewerAgentId
+    ? (findAgent(state, task.reviewerAgentId) ?? reviewerAgentFor(state))
+    : undefined;
   const transition = taskDoneTransition(workflowCardFromTask(task), actor.id, {
     coordinatorId: task.coordinatorAgentId ?? DEFAULT_AGENT.id,
     reviewerId: reviewer?.id,
-    hasConversation: Boolean(task.conversationId)
+    hasConversation: Boolean(task.conversationId),
   });
   task.status = transition.status === "review" ? "review" : "done";
   task.assignee = transition.assignee;
@@ -1533,7 +1808,7 @@ function pushTaskTransition(state: State, task: Task, previousStatus: TaskStatus
     agent: task.assignee,
     taskId: task.id,
     from: previousStatus,
-    to: task.status
+    to: task.status,
   });
 }
 
@@ -1551,14 +1826,14 @@ function applyTaskReviewPayload(task: Task, payload: GuiTaskUpdatePayload, revie
 function recordTaskEvent(
   state: State,
   task: Task,
-  args: Omit<TaskEvent, "id" | "taskId" | "conversationId" | "created_at">
+  args: Omit<TaskEvent, "id" | "taskId" | "conversationId" | "created_at">,
 ): TaskEvent {
   const event: TaskEvent = {
     id: `task-event-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     taskId: task.id,
     conversationId: task.conversationId,
     created_at: Date.now(),
-    ...args
+    ...args,
   };
   state.taskEvents.push(event);
   return event;
@@ -1574,7 +1849,7 @@ function taskEventPayload(event: TaskEvent, task: Task): Record<string, unknown>
     result: task.result,
     reviewResult: task.reviewResult,
     revisionReason: task.revisionReason,
-    artifactIds: task.artifactIds ?? []
+    artifactIds: task.artifactIds ?? [],
   };
 }
 
@@ -1588,7 +1863,7 @@ function queueTaskAssignmentMessage(state: State, task: Task, fromName: string):
     type: "assigned",
     actorAgentId: task.coordinatorAgentId,
     targetAgentId: target.id,
-    summary: `Assigned to ${target.name || target.id}`
+    summary: `Assigned to ${target.name || target.id}`,
   });
   state.messages.push({
     id: `msg-${now}-${Math.random().toString(36).slice(2)}`,
@@ -1604,7 +1879,7 @@ function queueTaskAssignmentMessage(state: State, task: Task, fromName: string):
     to_agent_id: target.id,
     payload: taskEventPayload(event, task),
     created_at: now,
-    readBy: []
+    readBy: [],
   });
   conversation.updated_at = now;
 }
@@ -1620,7 +1895,7 @@ function queueTaskReviewMessage(state: State, task: Task, fromAgentId: string): 
     actorAgentId: fromAgentId,
     targetAgentId: target.id,
     summary: `Submitted for review by ${fromAgentId}`,
-    result: task.result
+    result: task.result,
   });
   state.messages.push({
     id: `msg-${now}-${Math.random().toString(36).slice(2)}`,
@@ -1636,7 +1911,7 @@ function queueTaskReviewMessage(state: State, task: Task, fromAgentId: string): 
     to_agent_id: target.id,
     payload: taskEventPayload(event, task),
     created_at: now,
-    readBy: []
+    readBy: [],
   });
   updatePendingForTask(state, task, `等待 ${target.id} 评审...`);
   conversation.updated_at = now;
@@ -1654,7 +1929,7 @@ function queueTaskChangesRequestedMessage(state: State, task: Task, targetAgentI
     summary: task.revisionReason || "Reviewer requested revisions",
     reviewResult: "changes_requested",
     revisionReason: task.revisionReason,
-    artifactIds: task.artifactIds
+    artifactIds: task.artifactIds,
   });
   state.messages.push({
     id: `msg-${now}-${Math.random().toString(36).slice(2)}`,
@@ -1670,13 +1945,17 @@ function queueTaskChangesRequestedMessage(state: State, task: Task, targetAgentI
     to_agent_id: target.id,
     payload: taskEventPayload(event, task),
     created_at: now,
-    readBy: []
+    readBy: [],
   });
   updatePendingForTask(state, task, `${target.id} 正在根据评审意见修改...`);
   conversation.updated_at = now;
 }
 
-function queueTaskCompletionMessage(state: State, task: Task, options: { fromName?: string; actorAgentId?: string } = {}): void {
+function queueTaskCompletionMessage(
+  state: State,
+  task: Task,
+  options: { fromName?: string; actorAgentId?: string } = {},
+): void {
   const ceo = findAgent(state, task.coordinatorAgentId) ?? defaultAgentFor(state);
   const fromName = options.fromName ?? "Reviewer";
   const actorAgentId = options.actorAgentId ?? task.reviewedByAgentId ?? task.reviewerAgentId ?? task.assignee;
@@ -1689,7 +1968,7 @@ function queueTaskCompletionMessage(state: State, task: Task, options: { fromNam
     summary: task.result || `Completed by ${fromName}`,
     result: task.result,
     reviewResult: task.reviewResult,
-    artifactIds: task.artifactIds
+    artifactIds: task.artifactIds,
   });
   if (actorAgentId === ceo.id) {
     conversation.updated_at = now;
@@ -1710,7 +1989,7 @@ function queueTaskCompletionMessage(state: State, task: Task, options: { fromNam
     to_agent_id: ceo.id,
     payload: taskEventPayload(event, task),
     created_at: now,
-    readBy: []
+    readBy: [],
   });
   conversation.updated_at = now;
 }
@@ -1726,29 +2005,41 @@ function conversationResponderIds(state: State, conversation: Conversation): str
 }
 
 function conversationSummaries(state: State): Array<Conversation & { unread: number; messages: number }> {
-  return state.conversations.slice().sort(compareConversations).map((conversation) => {
-    const rows = state.messages.filter((message) => message.conversation_id === conversation.id && isRuntimeVisibleMessage(message));
-    const responderIds = conversationResponderIds(state, conversation);
-    return {
-      ...conversation,
-      unread: rows.filter((message) => message.author_kind === "human" && !responderIds.some((id) => message.readBy.includes(id))).length,
-      messages: rows.length
-    };
-  });
+  return state.conversations
+    .slice()
+    .sort(compareConversations)
+    .map((conversation) => {
+      const rows = state.messages.filter(
+        (message) => message.conversation_id === conversation.id && isRuntimeVisibleMessage(message),
+      );
+      const responderIds = conversationResponderIds(state, conversation);
+      return {
+        ...conversation,
+        unread: rows.filter(
+          (message) => message.author_kind === "human" && !responderIds.some((id) => message.readBy.includes(id)),
+        ).length,
+        messages: rows.length,
+      };
+    });
 }
 
-function workflowSummaries(state: State): Array<{ id: string; name: string; defaultCoordinatorAgentId: string; agentIds: string[]; agents: Agent[] }> {
+function workflowSummaries(
+  state: State,
+): Array<{ id: string; name: string; defaultCoordinatorAgentId: string; agentIds: string[]; agents: Agent[] }> {
   return WORKFLOW_TEMPLATES.map((workflow) => workflowSummary(state, workflow));
 }
 
-function workflowSummary(state: State, workflow: WorkflowTemplate): { id: string; name: string; defaultCoordinatorAgentId: string; agentIds: string[]; agents: Agent[] } {
+function workflowSummary(
+  state: State,
+  workflow: WorkflowTemplate,
+): { id: string; name: string; defaultCoordinatorAgentId: string; agentIds: string[]; agents: Agent[] } {
   const agentIds = workflowAgentIdsFor(state, workflow);
   return {
     id: workflow.id,
     name: workflow.name,
     defaultCoordinatorAgentId: workflow.defaultCoordinatorAgentId,
     agentIds,
-    agents: agentIds.map((id) => findAgent(state, id)).filter((agent): agent is Agent => Boolean(agent))
+    agents: agentIds.map((id) => findAgent(state, id)).filter((agent): agent is Agent => Boolean(agent)),
   };
 }
 
@@ -1760,19 +2051,20 @@ function wakeDedupContext(state: State) {
   return {
     messages: state.messages,
     tasks: state.tasks,
-    conversations: state.conversations
+    conversations: state.conversations,
   };
 }
 
 function unreadMessagesFor(state: State, agentId: string): Message[] {
   const dedup = wakeDedupContext(state);
-  return state.messages.filter((message) =>
-    isRuntimeVisibleMessage(message) &&
-    messageVisibleToAgentInConversation(state, message, agentId) &&
-    messageActionableForAgent(state, message, agentId) &&
-    (!message.to_agent_id || message.to_agent_id === agentId) &&
-    !message.readBy.includes(agentId) &&
-    !isMessageInboxSettled(dedup, message.id, agentId)
+  return state.messages.filter(
+    (message) =>
+      isRuntimeVisibleMessage(message) &&
+      messageVisibleToAgentInConversation(state, message, agentId) &&
+      messageActionableForAgent(state, message, agentId) &&
+      (!message.to_agent_id || message.to_agent_id === agentId) &&
+      !message.readBy.includes(agentId) &&
+      !isMessageInboxSettled(dedup, message.id, agentId),
   );
 }
 
@@ -1781,7 +2073,8 @@ function messageActionableForAgent(state: State, message: Message, agentId: stri
   if (message.to_agent_id) return message.to_agent_id === agentId;
   if (message.author_kind !== "agent") return true;
   if ((message.body ?? "").includes(`@${agentId}`)) return true;
-  if (message.priority === "steer" || message.message_type === "decision" || message.message_type === "blocker") return true;
+  if (message.priority === "steer" || message.message_type === "decision" || message.message_type === "blocker")
+    return true;
   const conversation = state.conversations.find((row) => row.id === message.conversation_id);
   if (conversation?.kind === "direct") return true;
   return false;
@@ -1797,31 +2090,32 @@ function messageVisibleToAgentInConversation(state: State, message: Message, age
 function compareConversations(a: Conversation, b: Conversation): number {
   if (a.id === DEFAULT_CONVERSATION.id) return -1;
   if (b.id === DEFAULT_CONVERSATION.id) return 1;
-  return (b.order ?? b.created_at) - (a.order ?? a.created_at)
-    || b.updated_at - a.updated_at
-    || b.created_at - a.created_at
-    || b.id.localeCompare(a.id);
+  return (
+    (b.order ?? b.created_at) - (a.order ?? a.created_at) ||
+    b.updated_at - a.updated_at ||
+    b.created_at - a.created_at ||
+    b.id.localeCompare(a.id)
+  );
 }
 
 function normalizeCapabilities(input: unknown): { workspaces: string[]; agentWorkspaceRoot?: string } {
   if (!input || typeof input !== "object") return { workspaces: [] };
   const raw = (input as { workspaces?: unknown }).workspaces;
   const workspaces = Array.isArray(raw)
-    ? raw.filter((path): path is string => typeof path === "string" && path.trim().length > 0).map((path) => path.trim())
+    ? raw
+        .filter((path): path is string => typeof path === "string" && path.trim().length > 0)
+        .map((path) => path.trim())
     : [];
   const agentWorkspaceRoot = (input as { agentWorkspaceRoot?: unknown }).agentWorkspaceRoot;
   return {
     workspaces,
-    agentWorkspaceRoot: typeof agentWorkspaceRoot === "string" && agentWorkspaceRoot.trim() ? agentWorkspaceRoot.trim() : undefined
+    agentWorkspaceRoot:
+      typeof agentWorkspaceRoot === "string" && agentWorkspaceRoot.trim() ? agentWorkspaceRoot.trim() : undefined,
   };
 }
 
 function normalizeStringList(input: unknown): string[] {
-  const raw = Array.isArray(input)
-    ? input
-    : typeof input === "string"
-      ? input.split(",")
-      : [];
+  const raw = Array.isArray(input) ? input : typeof input === "string" ? input.split(",") : [];
   return raw
     .filter((item): item is string => typeof item === "string")
     .map((item) => item.trim())
@@ -1834,10 +2128,11 @@ function normalizeRunContract(input: unknown): RunContract | undefined {
   const row = input as Record<string, unknown>;
   const contract: RunContract = {
     agentId: normalizeAgentId(row.agentId),
-    conversationId: typeof row.conversationId === "string" && row.conversationId.trim() ? row.conversationId.trim() : undefined,
+    conversationId:
+      typeof row.conversationId === "string" && row.conversationId.trim() ? row.conversationId.trim() : undefined,
     requestId: typeof row.requestId === "string" && row.requestId.trim() ? row.requestId.trim() : undefined,
     messageId: typeof row.messageId === "string" && row.messageId.trim() ? row.messageId.trim() : undefined,
-    taskId: typeof row.taskId === "string" && row.taskId.trim() ? row.taskId.trim() : undefined
+    taskId: typeof row.taskId === "string" && row.taskId.trim() ? row.taskId.trim() : undefined,
   };
   return Object.values(contract).some(Boolean) ? contract : undefined;
 }
@@ -1856,7 +2151,12 @@ function pruneRunStreams(streams: Record<string, RunStreamState>): Record<string
   return Object.fromEntries(Object.entries(streams).slice(-RUN_STREAM_CAPACITY));
 }
 
-function normalizeRunAttempt(runId: string, body: unknown, agentId: string, contract?: RunContract): RunAttemptRecord | null {
+function normalizeRunAttempt(
+  runId: string,
+  body: unknown,
+  agentId: string,
+  contract?: RunContract,
+): RunAttemptRecord | null {
   if (!body || typeof body !== "object") return null;
   const row = body as { attempt?: unknown; status?: unknown; message?: unknown; at?: unknown };
   if (typeof row.attempt !== "number" || !Number.isFinite(row.attempt)) return null;
@@ -1871,18 +2171,33 @@ function normalizeRunAttempt(runId: string, body: unknown, agentId: string, cont
     messageId: contract?.messageId,
     taskId: contract?.taskId,
     message: typeof row.message === "string" && row.message.trim() ? row.message : undefined,
-    at: typeof row.at === "number" && Number.isFinite(row.at) ? row.at : Date.now()
+    at: typeof row.at === "number" && Number.isFinite(row.at) ? row.at : Date.now(),
   };
 }
 
 function pruneRunAttempts(attempts: Record<string, RunAttemptRecord[]>): Record<string, RunAttemptRecord[]> {
-  return Object.fromEntries(Object.entries(attempts).slice(-RUN_ATTEMPT_CAPACITY).map(([runId, rows]) => [runId, rows.slice(-20)]));
+  return Object.fromEntries(
+    Object.entries(attempts)
+      .slice(-RUN_ATTEMPT_CAPACITY)
+      .map(([runId, rows]) => [runId, rows.slice(-20)]),
+  );
 }
 
-function validateRunContractAction(state: State, contract: RunContract | undefined, actor: Agent, action: { command: "reply" | "task"; conversationId?: string; taskId?: string }): string | null {
+function validateRunContractAction(
+  state: State,
+  contract: RunContract | undefined,
+  actor: Agent,
+  action: { command: "reply" | "task"; conversationId?: string; taskId?: string },
+): string | null {
   if (!contract) return null;
-  if (contract.agentId && contract.agentId !== actor.id) return `run contract mismatch: actor ${actor.id} cannot act for ${contract.agentId}`;
-  if (action.command === "reply" && contract.conversationId && action.conversationId && action.conversationId !== contract.conversationId) {
+  if (contract.agentId && contract.agentId !== actor.id)
+    return `run contract mismatch: actor ${actor.id} cannot act for ${contract.agentId}`;
+  if (
+    action.command === "reply" &&
+    contract.conversationId &&
+    action.conversationId &&
+    action.conversationId !== contract.conversationId
+  ) {
     return `run contract mismatch: reply conversation ${action.conversationId} does not match wake conversation ${contract.conversationId}`;
   }
   if (action.command === "task" && action.taskId) {
@@ -1898,7 +2213,14 @@ function validateRunContractAction(state: State, contract: RunContract | undefin
   return null;
 }
 
-function recordRunAction(state: State, runId: string | undefined, contract: RunContract | undefined, actor: Agent, kind: RunAction["kind"], detail: { conversationId?: string; taskId?: string; summary?: string } = {}): void {
+function recordRunAction(
+  state: State,
+  runId: string | undefined,
+  contract: RunContract | undefined,
+  actor: Agent,
+  kind: RunAction["kind"],
+  detail: { conversationId?: string; taskId?: string; summary?: string } = {},
+): void {
   if (!runId) return;
   const action: RunAction = {
     runId,
@@ -1909,13 +2231,20 @@ function recordRunAction(state: State, runId: string | undefined, contract: RunC
     messageId: contract?.messageId,
     taskId: detail.taskId ?? contract?.taskId,
     summary: detail.summary,
-    at: Date.now()
+    at: Date.now(),
   };
-  state.runActions = pruneRunActions({ ...(state.runActions ?? {}), [runId]: [...(state.runActions?.[runId] ?? []), action] });
+  state.runActions = pruneRunActions({
+    ...(state.runActions ?? {}),
+    [runId]: [...(state.runActions?.[runId] ?? []), action],
+  });
 }
 
 function pruneRunActions(actions: Record<string, RunAction[]>): Record<string, RunAction[]> {
-  return Object.fromEntries(Object.entries(actions).slice(-100).map(([runId, rows]) => [runId, rows.slice(-50)]));
+  return Object.fromEntries(
+    Object.entries(actions)
+      .slice(-100)
+      .map(([runId, rows]) => [runId, rows.slice(-50)]),
+  );
 }
 
 function clearRunStateForConversation(state: State, conversationId: string): void {
@@ -1930,9 +2259,13 @@ function clearRunStateForConversation(state: State, conversationId: string): voi
     if (attempts.some((attempt) => attempt.conversationId === conversationId)) runIds.add(runId);
   }
   if (!runIds.size) return;
-  state.activeRunContracts = Object.fromEntries(Object.entries(state.activeRunContracts ?? {}).filter(([runId]) => !runIds.has(runId)));
+  state.activeRunContracts = Object.fromEntries(
+    Object.entries(state.activeRunContracts ?? {}).filter(([runId]) => !runIds.has(runId)),
+  );
   state.runActions = Object.fromEntries(Object.entries(state.runActions ?? {}).filter(([runId]) => !runIds.has(runId)));
-  state.runAttempts = Object.fromEntries(Object.entries(state.runAttempts ?? {}).filter(([runId]) => !runIds.has(runId)));
+  state.runAttempts = Object.fromEntries(
+    Object.entries(state.runAttempts ?? {}).filter(([runId]) => !runIds.has(runId)),
+  );
   state.runStreams = Object.fromEntries(Object.entries(state.runStreams ?? {}).filter(([runId]) => !runIds.has(runId)));
 }
 
@@ -1960,27 +2293,43 @@ function runtimeBodyEngine(body: unknown): string | undefined {
 
 function normalizeRunStreamEvent(value: unknown): RunStreamEvent | null {
   if (!value || typeof value !== "object") return null;
-  const row = value as { stream?: unknown; event?: unknown; type?: unknown; text?: unknown; name?: unknown; id?: unknown; input?: unknown; output?: unknown; error?: unknown; message?: unknown; attempt?: unknown; status?: unknown };
-  const event = row.stream && typeof row.stream === "object"
-    ? row.stream as typeof row
-    : row.event && typeof row.event === "object"
-      ? row.event as typeof row
-      : row;
-  if (event.type === "reasoning_delta" && typeof event.text === "string") return { type: "reasoning_delta", text: event.text };
-  if (event.type === "message_delta" && typeof event.text === "string") return { type: "message_delta", text: event.text };
+  const row = value as {
+    stream?: unknown;
+    event?: unknown;
+    type?: unknown;
+    text?: unknown;
+    name?: unknown;
+    id?: unknown;
+    input?: unknown;
+    output?: unknown;
+    error?: unknown;
+    message?: unknown;
+    attempt?: unknown;
+    status?: unknown;
+  };
+  const event =
+    row.stream && typeof row.stream === "object"
+      ? (row.stream as typeof row)
+      : row.event && typeof row.event === "object"
+        ? (row.event as typeof row)
+        : row;
+  if (event.type === "reasoning_delta" && typeof event.text === "string")
+    return { type: "reasoning_delta", text: event.text };
+  if (event.type === "message_delta" && typeof event.text === "string")
+    return { type: "message_delta", text: event.text };
   if (event.type === "tool_started" && typeof event.name === "string") {
     return {
       type: "tool_started",
       id: typeof event.id === "string" ? event.id : undefined,
       name: event.name,
-      input: typeof event.input === "string" ? event.input : undefined
+      input: typeof event.input === "string" ? event.input : undefined,
     };
   }
   if (event.type === "tool_delta" && typeof event.text === "string") {
     return {
       type: "tool_delta",
       id: typeof event.id === "string" ? event.id : undefined,
-      text: event.text
+      text: event.text,
     };
   }
   if (event.type === "tool_done") {
@@ -1988,7 +2337,7 @@ function normalizeRunStreamEvent(value: unknown): RunStreamEvent | null {
       type: "tool_done",
       id: typeof event.id === "string" ? event.id : undefined,
       output: typeof event.output === "string" ? event.output : undefined,
-      error: typeof event.error === "string" ? event.error : undefined
+      error: typeof event.error === "string" ? event.error : undefined,
     };
   }
   if (
@@ -2001,12 +2350,13 @@ function normalizeRunStreamEvent(value: unknown): RunStreamEvent | null {
       type: "attempt",
       attempt: Math.max(1, Math.floor(event.attempt)),
       status: event.status,
-      message: typeof event.message === "string" ? event.message : undefined
+      message: typeof event.message === "string" ? event.message : undefined,
     };
   }
   if (event.type === "done") return { type: "done" };
   if (event.type === "interrupted") return { type: "interrupted" };
-  if (event.type === "error") return { type: "error", message: typeof event.message === "string" ? event.message : "run failed" };
+  if (event.type === "error")
+    return { type: "error", message: typeof event.message === "string" ? event.message : "run failed" };
   return null;
 }
 
@@ -2037,7 +2387,7 @@ function pruneUploads(uploads: Record<string, UploadedAttachment>): Record<strin
   return Object.fromEntries(
     Object.entries(uploads)
       .sort(([, a], [, b]) => b.createdAt - a.createdAt)
-      .slice(0, GUI_ATTACHMENT_STORE_CAPACITY)
+      .slice(0, GUI_ATTACHMENT_STORE_CAPACITY),
   );
 }
 
@@ -2046,8 +2396,14 @@ function normalizeEngineId(value: unknown): Agent["engine"] | undefined {
 }
 
 function activeRunEngine(state: State): Agent["engine"] | undefined {
-  const lastRunStart = state.runLog.slice().reverse().find((row) => row.action === "start");
-  const lastRunFinish = state.runLog.slice().reverse().find((row) => row.action === "finish");
+  const lastRunStart = state.runLog
+    .slice()
+    .reverse()
+    .find((row) => row.action === "start");
+  const lastRunFinish = state.runLog
+    .slice()
+    .reverse()
+    .find((row) => row.action === "finish");
   if (!lastRunStart || (lastRunFinish && lastRunFinish.at >= lastRunStart.at)) return undefined;
   return normalizeEngineId(runtimeBodyEngine(lastRunStart?.body));
 }
@@ -2070,8 +2426,11 @@ const STATUS_BUSY_TTL_MS = 15_000;
 
 function agentStateSummary(state: State, agent: Agent): AgentStateSummary {
   const lifecycle = agent.lifecycle ?? "on-demand";
-  const latestStatus = state.statusLog.slice().reverse().find((row) => !row.agentId || row.agentId === agent.id);
-  let status = lifecycle === "disabled" ? "disabled" : latestStatus?.status ?? "idle";
+  const latestStatus = state.statusLog
+    .slice()
+    .reverse()
+    .find((row) => !row.agentId || row.agentId === agent.id);
+  let status = lifecycle === "disabled" ? "disabled" : (latestStatus?.status ?? "idle");
   if (status === "thinking" || status === "running") {
     // The runner refreshes composing claims (~6s) while a turn is live but never re-posts the
     // status itself, so use the freshest of those claims plus the status post as the heartbeat.
@@ -2080,7 +2439,7 @@ function agentStateSummary(state: State, agent: Agent): AgentStateSummary {
     const now = Date.now();
     const lastBusyAt = state.composing.reduce(
       (latest, claim) => (claim.agentId === agent.id ? Math.max(latest, claim.claimed_at) : latest),
-      Math.max(latestStatus?.at ?? 0, state.agentBeats?.[agent.id] ?? 0)
+      Math.max(latestStatus?.at ?? 0, state.agentBeats?.[agent.id] ?? 0),
     );
     if (now - lastBusyAt > STATUS_BUSY_TTL_MS) status = "idle";
   }
@@ -2095,11 +2454,16 @@ function agentStateSummary(state: State, agent: Agent): AgentStateSummary {
     fastModel: agent.fastModel ?? "default",
     unreadMessages: unreadMessagesFor(state, agent.id).length,
     openClaims: state.claims.filter((claim) => claim.owner === agent.id).length,
-    activeCards: state.cards.filter((card) => card.column !== "done" && (card.assignee === agent.id || card.claimedBy === agent.id)).length,
-    openTasks: state.tasks.filter((task) => task.status !== "done" && (!task.assignee || task.assignee === agent.id)).length,
-    blockedTasks: state.tasks.filter((task) => taskVisibleStatus(state, task) === "blocked" && (!task.assignee || task.assignee === agent.id)).length,
+    activeCards: state.cards.filter(
+      (card) => card.column !== "done" && (card.assignee === agent.id || card.claimedBy === agent.id),
+    ).length,
+    openTasks: state.tasks.filter((task) => task.status !== "done" && (!task.assignee || task.assignee === agent.id))
+      .length,
+    blockedTasks: state.tasks.filter(
+      (task) => taskVisibleStatus(state, task) === "blocked" && (!task.assignee || task.assignee === agent.id),
+    ).length,
     lastStatusAt: latestStatus?.at,
-    remediation: latestStatus && "remediation" in latestStatus ? latestStatus.remediation ?? null : null
+    remediation: latestStatus && "remediation" in latestStatus ? (latestStatus.remediation ?? null) : null,
   };
 }
 
@@ -2117,7 +2481,7 @@ function formatRosterAgent(agent: AgentStateSummary): string {
     `claims=${agent.openClaims}`,
     `cards=${agent.activeCards}`,
     `tasks=${agent.openTasks}`,
-    `blocked=${agent.blockedTasks}`
+    `blocked=${agent.blockedTasks}`,
   ].join("\t");
 }
 
@@ -2143,13 +2507,13 @@ function buildConversationGlanceSection(state: State, conversationId: string, ag
     "### Conversation Glance (live snapshot — skip king-ai glance for this pinned conversation unless you need a fresher group-thread check)",
     ...messageLines,
     ...composing,
-    ...claims
+    ...claims,
   ].join("\n");
 }
 
 function buildRuntimePreamble(
   state: State,
-  options: { agentId: string; reason: string; runId?: string; steerReason?: string }
+  options: { agentId: string; reason: string; runId?: string; steerReason?: string },
 ): string {
   const agent = state.agents.find((row) => row.id === options.agentId) ?? state.agents[0] ?? DEFAULT_AGENT;
   const runContract = resolveRunContract(state, options.runId);
@@ -2158,7 +2522,7 @@ function buildRuntimePreamble(
     `Agent: ${agent.id} (${agent.name})`,
     `Role: ${agent.role}`,
     `Reason: ${options.reason}`,
-    `Run ID: ${options.runId || state.loopRunId || "run-gui"}`
+    `Run ID: ${options.runId || state.loopRunId || "run-gui"}`,
   ];
   if (options.steerReason) {
     lines.push("");
@@ -2183,27 +2547,22 @@ function buildRuntimePreamble(
     }
   }
   const tasks = state.tasks
-    .filter((task) =>
-      task.assignee === agent.id ||
-      task.status === "pending" ||
-      task.status === "assigned"
-    )
+    .filter((task) => task.assignee === agent.id || task.status === "pending" || task.status === "assigned")
     .slice(0, 10);
   if (tasks.length > 0) {
     lines.push("");
     lines.push("### Current Tasks");
     for (const task of tasks) {
-      lines.push(`- [${taskVisibleStatus(state, task)}] ${task.id} ${task.title}${task.assignee ? ` (${task.assignee})` : ""}`);
+      lines.push(
+        `- [${taskVisibleStatus(state, task)}] ${task.id} ${task.title}${task.assignee ? ` (${task.assignee})` : ""}`,
+      );
     }
-    const total = state.tasks.filter((task) =>
-      task.assignee === agent.id ||
-      task.status === "pending" ||
-      task.status === "assigned"
+    const total = state.tasks.filter(
+      (task) => task.assignee === agent.id || task.status === "pending" || task.status === "assigned",
     ).length;
     if (total > tasks.length) lines.push(`- ...and ${total - tasks.length} more task(s)`);
   }
-  const unread = unreadMessagesFor(state, agent.id)
-    .slice(-5);
+  const unread = unreadMessagesFor(state, agent.id).slice(-5);
   if (unread.length > 0) {
     lines.push("");
     lines.push("### Recent Unread Messages");
@@ -2243,7 +2602,7 @@ function parseExternalEventArgs(eventType: string, args: string[]): ExternalEven
     type: eventType,
     source: readOption(args, "--source") || "cli",
     payload: parseEventPayload(args),
-    timestamp: Date.now()
+    timestamp: Date.now(),
   };
 }
 
@@ -2265,7 +2624,7 @@ function normalizeExternalEvent(body: unknown): ExternalEvent | null {
     type: rec.type.trim(),
     source: typeof rec.source === "string" && rec.source.trim() ? rec.source.trim() : "runtime",
     payload: "payload" in rec ? rec.payload : {},
-    timestamp: typeof rec.timestamp === "number" ? rec.timestamp : Date.now()
+    timestamp: typeof rec.timestamp === "number" ? rec.timestamp : Date.now(),
   };
 }
 
@@ -2298,7 +2657,7 @@ function eventMessage(event: ExternalEvent, agentId: string): Message {
     to_agent_id: agentId,
     payload: event,
     created_at: event.timestamp,
-    readBy: []
+    readBy: [],
   };
 }
 
@@ -2312,19 +2671,19 @@ function formatAgentMatrixLine(agent: AgentStateSummary): string {
     agent.lifecycle.padEnd(10),
     model,
     `unread=${agent.unreadMessages}`,
-    `tasks=${agent.openTasks}`
+    `tasks=${agent.openTasks}`,
   ].join(" ");
 }
 
 function pushLoopEvent(
   state: State,
-  event: Omit<LoopEvent, "runId" | "loop" | "timestamp"> & Partial<Pick<LoopEvent, "runId" | "loop" | "timestamp">>
+  event: Omit<LoopEvent, "runId" | "loop" | "timestamp"> & Partial<Pick<LoopEvent, "runId" | "loop" | "timestamp">>,
 ): LoopEvent {
   const full: LoopEvent = {
     ...event,
     runId: event.runId || state.loopRunId || "run-gui",
     loop: event.loop ?? state.currentLoop,
-    timestamp: event.timestamp || new Date().toISOString()
+    timestamp: event.timestamp || new Date().toISOString(),
   };
   state.loopEvents.push(full);
   if (state.loopEvents.length > LOOP_EVENT_BUFFER_CAPACITY) {
@@ -2334,14 +2693,16 @@ function pushLoopEvent(
 }
 
 function isLoopEventType(value: string | undefined): value is LoopEventType {
-  return value === "loop.tick" ||
+  return (
+    value === "loop.tick" ||
     value === "loop.classified" ||
     value === "agent.spawned" ||
     value === "task.transition" ||
     value === "task.blocked" ||
     value === "queue.backlog" ||
     value === "artifact.created" ||
-    value === "agent.budget_exceeded";
+    value === "agent.budget_exceeded"
+  );
 }
 
 function buildEventLoopSnapshot(state: State): LoopSnapshot {
@@ -2351,8 +2712,12 @@ function buildEventLoopSnapshot(state: State): LoopSnapshot {
   const reasons: string[] = [];
   let classification: LoopClassification = "idle";
   const budgetExceeded = currentEvents.filter((event) => event.type === "agent.budget_exceeded").length;
-  const productive = currentEvents.filter((event) => event.type === "task.transition" || event.type === "artifact.created").length;
-  const backlog = currentEvents.filter((event) => event.type === "queue.backlog" && (event.pendingMessages ?? 1) > 0).length;
+  const productive = currentEvents.filter(
+    (event) => event.type === "task.transition" || event.type === "artifact.created",
+  ).length;
+  const backlog = currentEvents.filter(
+    (event) => event.type === "queue.backlog" && (event.pendingMessages ?? 1) > 0,
+  ).length;
   const blocked = currentEvents.filter((event) => event.type === "task.blocked").length;
   if (budgetExceeded > 0) {
     classification = "error";
@@ -2376,15 +2741,14 @@ function buildEventLoopSnapshot(state: State): LoopSnapshot {
     loop,
     classification,
     reasons,
-    recentEvents: currentEvents.slice(-20)
+    recentEvents: currentEvents.slice(-20),
   };
 }
 
 function countPendingMessages(state: State, agentId: string): number {
-  return state.messages.filter((message) =>
-    isRuntimeVisibleMessage(message) &&
-    message.to_agent_id === agentId &&
-    !message.readBy.includes(agentId)
+  return state.messages.filter(
+    (message) =>
+      isRuntimeVisibleMessage(message) && message.to_agent_id === agentId && !message.readBy.includes(agentId),
   ).length;
 }
 
@@ -2404,18 +2768,23 @@ function buildLoopSnapshot(state: State): LoopSnapshot {
   const activeTasks = state.tasks.filter((task) => taskVisibleStatus(state, task) !== "done").length;
   const openCapsules = state.capsules.filter((capsule) => capsule.status === "open").length;
   const inReviewCapsules = state.capsules.filter((capsule) => capsule.status === "in_review").length;
-  const failedRuns = state.runLog.filter((row) =>
-    row.action === "finish" &&
-    row.body &&
-    typeof row.body === "object" &&
-    (row.body as { status?: unknown }).status === "failed"
+  const failedRuns = state.runLog.filter(
+    (row) =>
+      row.action === "finish" &&
+      row.body &&
+      typeof row.body === "object" &&
+      (row.body as { status?: unknown }).status === "failed",
   ).length;
   const reasons: string[] = [];
   let classification: LoopClassification = "idle";
   if (failedRuns > 0) {
     classification = "error";
     reasons.push(`${failedRuns} failed run(s)`);
-  } else if (state.artifacts.length > 0 || inReviewCapsules > 0 || state.tasks.some((task) => task.status === "done" || task.status === "review")) {
+  } else if (
+    state.artifacts.length > 0 ||
+    inReviewCapsules > 0 ||
+    state.tasks.some((task) => task.status === "done" || task.status === "review")
+  ) {
     classification = "productive";
     if (state.artifacts.length > 0) reasons.push(`${state.artifacts.length} artifact(s) recorded`);
     if (inReviewCapsules > 0) reasons.push(`${inReviewCapsules} capsule(s) in review`);
@@ -2440,13 +2809,20 @@ function buildLoopSnapshot(state: State): LoopSnapshot {
       openCapsules,
       inReviewCapsules,
       artifacts: state.artifacts.length,
-      failedRuns
-    }
+      failedRuns,
+    },
   };
 }
 
 function isTaskStatus(value: string): value is TaskStatus {
-  return value === "pending" || value === "assigned" || value === "in_progress" || value === "review" || value === "done" || value === "failed";
+  return (
+    value === "pending" ||
+    value === "assigned" ||
+    value === "in_progress" ||
+    value === "review" ||
+    value === "done" ||
+    value === "failed"
+  );
 }
 
 function isInitiativeStatus(value: string): value is InitiativeStatus {
@@ -2470,7 +2846,10 @@ function normalizePriority(value: string | undefined): number {
 function parseCsvOption(args: string[], name: string): string[] | undefined {
   const raw = readOption(args, name);
   if (!raw) return undefined;
-  const values = raw.split(",").map((value) => value.trim()).filter(Boolean);
+  const values = raw
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
   return values.length ? values : undefined;
 }
 
@@ -2494,7 +2873,10 @@ function lookupTask(state: State, id: string | undefined): TaskLookupResult {
   const matches = state.tasks.filter((task) => task.id.startsWith(id));
   if (matches.length === 1) return { task: matches[0], error: "", ambiguous: false };
   if (matches.length > 1) {
-    const options = matches.slice(0, 8).map((task) => task.id).join(", ");
+    const options = matches
+      .slice(0, 8)
+      .map((task) => task.id)
+      .join(", ");
     const suffix = matches.length > 8 ? `, ... ${matches.length - 8} more` : "";
     return { error: `ambiguous task id: ${id}; matches: ${options}${suffix}`, ambiguous: true };
   }
@@ -2513,12 +2895,15 @@ function pendingBelongsToAgent(message: Message, agent: Agent): boolean {
 function updatePendingForTask(state: State, task: Task, body: string): void {
   const conversationId = task.conversationId || DEFAULT_CONVERSATION.id;
   const coordinator = findAgent(state, task.coordinatorAgentId) ?? defaultAgentFor(state);
-  const pending = [...state.messages].reverse().find((message) =>
-    message.conversation_id === conversationId &&
-    message.author_kind === "agent" &&
-    message.status === "pending" &&
-    pendingBelongsToAgent(message, coordinator)
-  );
+  const pending = [...state.messages]
+    .reverse()
+    .find(
+      (message) =>
+        message.conversation_id === conversationId &&
+        message.author_kind === "agent" &&
+        message.status === "pending" &&
+        pendingBelongsToAgent(message, coordinator),
+    );
   if (!pending) return;
   pending.body = body;
   pending.created_at = Date.now();
@@ -2539,8 +2924,10 @@ function formatTaskLine(state: State, task: Task): string {
   const refs = [
     task.initiativeId ? `I:${task.initiativeId.slice(0, 8)}` : "",
     task.capsuleId ? `C:${task.capsuleId.slice(0, 8)}` : "",
-    task.subsystem ? `subsystem=${task.subsystem}` : ""
-  ].filter(Boolean).join(" ");
+    task.subsystem ? `subsystem=${task.subsystem}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   return `[${taskVisibleStatus(state, task)}] ${task.id.slice(0, 12)} P${task.priority} "${task.title}"${assignee}${dependsOn}${scope}${refs ? ` [${refs}]` : ""}`;
 }
 
@@ -2566,8 +2953,10 @@ function formatCapsuleLine(capsule: ChangeCapsule): string {
     capsule.initiativeId ? `I:${capsule.initiativeId.slice(0, 8)}` : "",
     capsule.taskId ? `T:${capsule.taskId.slice(0, 8)}` : "",
     capsule.reviewer ? `reviewer=${capsule.reviewer}` : "",
-    capsule.subsystem ? `subsystem=${capsule.subsystem}` : ""
-  ].filter(Boolean).join(" ");
+    capsule.subsystem ? `subsystem=${capsule.subsystem}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   return `[${capsule.status}] ${capsule.id.slice(0, 14)} ${capsule.ownerAgent} ${capsule.branch} "${capsule.goal}"${refs ? ` [${refs}]` : ""}`;
 }
 
@@ -2588,8 +2977,10 @@ function formatMergeRequestLine(request: MergeRequest): string {
   const refs = [
     request.taskId ? `task=${request.taskId.slice(0, 12)}` : "",
     request.capsuleId ? `capsule=${request.capsuleId.slice(0, 14)}` : "",
-    request.error ? `error=${request.error}` : ""
-  ].filter(Boolean).join(" ");
+    request.error ? `error=${request.error}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   return `[${request.status}] ${request.id.slice(0, 14)} ${request.branch} -> ${request.targetBranch} by ${request.agentId}${refs ? ` [${refs}]` : ""}`;
 }
 
@@ -2602,17 +2993,22 @@ function formatEvaluationLine(evaluation: EvaluationRecord): string {
   const marker = evaluation.requiresHumanApproval ? "approval_required" : "auto_ok";
   const refs = [
     evaluation.artifactId ? `artifact=${evaluation.artifactId.slice(0, 14)}` : "",
-    evaluation.initiativeId ? `initiative=${evaluation.initiativeId.slice(0, 14)}` : ""
-  ].filter(Boolean).join(" ");
+    evaluation.initiativeId ? `initiative=${evaluation.initiativeId.slice(0, 14)}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   return `[${marker}] ${evaluation.id.slice(0, 14)} selected=${evaluation.selectedOptionId} confidence=${formatNumber(evaluation.confidence)} tokens=${evaluation.tokensUsed}${refs ? ` [${refs}]` : ""}`;
 }
 
 function formatEvaluationSummary(evaluation: EvaluationRecord): string {
   return [
     `evaluation selected=${evaluation.selectedOptionId} confidence=${formatNumber(evaluation.confidence)} requiresApproval=${evaluation.requiresHumanApproval} tokens=${evaluation.tokensUsed}`,
-    ...evaluation.scores.map((score) =>
-      `- ${score.optionId} total=${score.totalScore.toFixed(2)} ${Object.entries(score.scores).map(([name, value]) => `${name}=${formatNumber(value)}`).join(" ")}${score.reasoning ? ` :: ${score.reasoning}` : ""}`
-    )
+    ...evaluation.scores.map(
+      (score) =>
+        `- ${score.optionId} total=${score.totalScore.toFixed(2)} ${Object.entries(score.scores)
+          .map(([name, value]) => `${name}=${formatNumber(value)}`)
+          .join(" ")}${score.reasoning ? ` :: ${score.reasoning}` : ""}`,
+    ),
   ].join("\n");
 }
 
@@ -2637,7 +3033,9 @@ function parseRunFeedback(args: string[]): RunFeedback {
   const durationMs = normalizeNonnegativeInt(readOption(args, "--duration-ms") || readOption(args, "--duration"));
   const tokenCount = normalizeNonnegativeInt(readOption(args, "--tokens") || readOption(args, "--token-count"));
   const steerCount = normalizeNonnegativeInt(readOption(args, "--steer-count"));
-  const revisionCount = normalizeNonnegativeInt(readOption(args, "--revision-count") || readOption(args, "--revisions"));
+  const revisionCount = normalizeNonnegativeInt(
+    readOption(args, "--revision-count") || readOption(args, "--revisions"),
+  );
   const outputQualityScore = readNumberOption(args, "--quality");
   if (outputQualityScore !== undefined && (outputQualityScore < 0 || outputQualityScore > 1)) {
     throw new Error("feedback quality must be between 0 and 1");
@@ -2661,7 +3059,7 @@ function parseRunFeedback(args: string[]): RunFeedback {
     outputQualityScore,
     artifactReused: readBooleanOption(args, "--artifact-reused"),
     artifactLookupSuccess: readBooleanOption(args, "--artifact-lookup-success"),
-    createdAt: Date.now()
+    createdAt: Date.now(),
   };
 }
 
@@ -2671,27 +3069,33 @@ function formatRunFeedbackLine(feedback: RunFeedback): string {
     feedback.runId ? `run=${feedback.runId}` : "",
     feedback.taskId ? `task=${feedback.taskId.slice(0, 12)}` : "",
     feedback.executionProfile ? `profile=${feedback.executionProfile}` : "",
-    feedback.outputQualityScore !== undefined ? `quality=${formatNumber(feedback.outputQualityScore)}` : ""
-  ].filter(Boolean).join(" ");
+    feedback.outputQualityScore !== undefined ? `quality=${formatNumber(feedback.outputQualityScore)}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   return `[${status}] ${feedback.id.slice(0, 16)} agent=${feedback.agentId} tokens=${feedback.tokenCount} durationMs=${feedback.durationMs} steer=${feedback.steerCount} revisions=${feedback.revisionCount}${refs ? ` [${refs}]` : ""}`;
 }
 
 function summarizeRunFeedback(rows: RunFeedback[]): RunFeedbackSummary[] {
   const byAgent = new Map<string, RunFeedback[]>();
   for (const row of rows) byAgent.set(row.agentId, [...(byAgent.get(row.agentId) ?? []), row]);
-  return [...byAgent.entries()].map(([agentId, agentRows]) => {
-    const qualityRows = agentRows.filter((row) => row.outputQualityScore !== undefined);
-    return {
-      agentId,
-      runs: agentRows.length,
-      successRate: percent(agentRows.filter((row) => row.taskCompleted && !row.errored).length, agentRows.length),
-      avgDurationMs: average(agentRows.map((row) => row.durationMs)),
-      avgTokenCount: average(agentRows.map((row) => row.tokenCount)),
-      avgSteerCount: average(agentRows.map((row) => row.steerCount)),
-      interventionRate: percent(agentRows.filter((row) => row.humanIntervention).length, agentRows.length),
-      avgQualityScore: qualityRows.length ? average(qualityRows.map((row) => row.outputQualityScore ?? 0)) : undefined
-    };
-  }).sort((a, b) => a.successRate - b.successRate || b.runs - a.runs);
+  return [...byAgent.entries()]
+    .map(([agentId, agentRows]) => {
+      const qualityRows = agentRows.filter((row) => row.outputQualityScore !== undefined);
+      return {
+        agentId,
+        runs: agentRows.length,
+        successRate: percent(agentRows.filter((row) => row.taskCompleted && !row.errored).length, agentRows.length),
+        avgDurationMs: average(agentRows.map((row) => row.durationMs)),
+        avgTokenCount: average(agentRows.map((row) => row.tokenCount)),
+        avgSteerCount: average(agentRows.map((row) => row.steerCount)),
+        interventionRate: percent(agentRows.filter((row) => row.humanIntervention).length, agentRows.length),
+        avgQualityScore: qualityRows.length
+          ? average(qualityRows.map((row) => row.outputQualityScore ?? 0))
+          : undefined,
+      };
+    })
+    .sort((a, b) => a.successRate - b.successRate || b.runs - a.runs);
 }
 
 function formatRunFeedbackSummaryLine(summary: RunFeedbackSummary): string {
@@ -2703,8 +3107,10 @@ function formatRunFeedbackSummaryLine(summary: RunFeedbackSummary): string {
     `avgTokens=${Math.round(summary.avgTokenCount)}`,
     `avgSteer=${formatNumber(summary.avgSteerCount)}`,
     `interventionRate=${formatNumber(summary.interventionRate)}%`,
-    summary.avgQualityScore !== undefined ? `avgQuality=${formatNumber(summary.avgQualityScore)}` : ""
-  ].filter(Boolean).join("\t");
+    summary.avgQualityScore !== undefined ? `avgQuality=${formatNumber(summary.avgQualityScore)}` : "",
+  ]
+    .filter(Boolean)
+    .join("\t");
 }
 
 function findReview(state: State, id: string | undefined): ReviewRecord | undefined {
@@ -2725,7 +3131,7 @@ function parseReviewRecord(args: string[], capsule: ChangeCapsule): ReviewRecord
     acceptanceMet,
     scopeMatched,
     testsMeaningful,
-    noRegressions
+    noRegressions,
   });
   return {
     id: `review-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -2741,26 +3147,33 @@ function parseReviewRecord(args: string[], capsule: ChangeCapsule): ReviewRecord
     decision: reasons.length === 0 ? "approved" : "changes_requested",
     reasons,
     comment: readOption(args, "--comment"),
-    createdAt: Date.now()
+    createdAt: Date.now(),
   };
 }
 
-function reviewFailureReasons(review: Pick<ReviewRecord, "coveragePct" | "checksPassed" | "acceptanceMet" | "scopeMatched" | "testsMeaningful" | "noRegressions">): string[] {
+function reviewFailureReasons(
+  review: Pick<
+    ReviewRecord,
+    "coveragePct" | "checksPassed" | "acceptanceMet" | "scopeMatched" | "testsMeaningful" | "noRegressions"
+  >,
+): string[] {
   return [
     review.coveragePct < REVIEW_COVERAGE_GATE ? `coverage below ${REVIEW_COVERAGE_GATE}%` : "",
     !review.checksPassed ? "checks failed" : "",
     !review.acceptanceMet ? "acceptance not met" : "",
     !review.scopeMatched ? "scope mismatch" : "",
     !review.testsMeaningful ? "tests not meaningful" : "",
-    !review.noRegressions ? "regression risk" : ""
+    !review.noRegressions ? "regression risk" : "",
   ].filter(Boolean);
 }
 
 function formatReviewLine(review: ReviewRecord): string {
   const refs = [
     review.mergeId ? `merge=${review.mergeId.slice(0, 14)}` : "",
-    review.reasons.length ? `reasons=${review.reasons.join("; ")}` : ""
-  ].filter(Boolean).join(" ");
+    review.reasons.length ? `reasons=${review.reasons.join("; ")}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   return `[${review.decision}] ${review.id.slice(0, 14)} capsule=${review.capsuleId.slice(0, 14)} reviewer=${review.reviewer} coverage=${formatNumber(review.coveragePct)}%${refs ? ` [${refs}]` : ""}`;
 }
 
@@ -2781,7 +3194,10 @@ function normalizeDir(pathValue: string): string {
   return parts.slice(0, -1).join("/");
 }
 
-function capsuleConflictLevel(left: ChangeCapsule, right: ChangeCapsule): "parallel_ok" | "weak_conflict" | "high_conflict" {
+function capsuleConflictLevel(
+  left: ChangeCapsule,
+  right: ChangeCapsule,
+): "parallel_ok" | "weak_conflict" | "high_conflict" {
   const leftPaths = new Set(left.allowedPaths);
   const rightPaths = new Set(right.allowedPaths);
   for (const pathValue of leftPaths) {
@@ -2789,11 +3205,17 @@ function capsuleConflictLevel(left: ChangeCapsule, right: ChangeCapsule): "paral
   }
   if (left.subsystem && right.subsystem && left.subsystem === right.subsystem) return "weak_conflict";
   const rightDirs = new Set([...rightPaths].map(normalizeDir).filter(Boolean));
-  const sharedDir = [...leftPaths].map(normalizeDir).filter(Boolean).some((dir) => rightDirs.has(dir));
+  const sharedDir = [...leftPaths]
+    .map(normalizeDir)
+    .filter(Boolean)
+    .some((dir) => rightDirs.has(dir));
   return sharedDir ? "weak_conflict" : "parallel_ok";
 }
 
-function capsuleConflicts(state: State, capsule: ChangeCapsule): { id: string; level: "weak_conflict" | "high_conflict" }[] {
+function capsuleConflicts(
+  state: State,
+  capsule: ChangeCapsule,
+): { id: string; level: "weak_conflict" | "high_conflict" }[] {
   return state.capsules
     .filter((row) => row.id !== capsule.id && (row.status === "open" || row.status === "in_review"))
     .map((row) => ({ id: row.id, level: capsuleConflictLevel(capsule, row) }))
@@ -2809,7 +3231,9 @@ function artifactCandidateFromArgs(args: string[]): ReturnType<typeof artifactCa
 }
 
 function isHypothesisStatus(value: string): value is HypothesisStatus {
-  return value === "proposed" || value === "active" || value === "validated" || value === "rejected" || value === "abandoned";
+  return (
+    value === "proposed" || value === "active" || value === "validated" || value === "rejected" || value === "abandoned"
+  );
 }
 
 function findHypothesis(state: State, id: string | undefined): Hypothesis | undefined {
@@ -2819,7 +3243,9 @@ function findHypothesis(state: State, id: string | undefined): Hypothesis | unde
 
 function formatHypothesisLine(hypothesis: Hypothesis): string {
   const parent = hypothesis.parentId ? ` parent=${hypothesis.parentId}` : "";
-  const evidence = hypothesis.evidenceArtifactIds?.length ? ` evidence=${hypothesis.evidenceArtifactIds.join(",")}` : "";
+  const evidence = hypothesis.evidenceArtifactIds?.length
+    ? ` evidence=${hypothesis.evidenceArtifactIds.join(",")}`
+    : "";
   const outcome = hypothesis.outcome ? ` outcome=${hypothesis.outcome.slice(0, 80)}` : "";
   return `[${hypothesis.status}] ${hypothesis.id.slice(0, 14)} ${hypothesis.title}${parent}${evidence}${outcome}`;
 }
@@ -2851,20 +3277,22 @@ function parseExecutionPlan(raw: string): ExecutionPlan {
   const rec = parsed as { optionId?: unknown; tasks: unknown[]; totalEstimatedTokens?: unknown };
   if (rec.tasks.length === 0) throw new Error("Invalid execution plan: tasks array is empty");
   const tasks = rec.tasks.map((item, index) => parsePlannedTask(item, index));
-  const totalEstimatedTokens = typeof rec.totalEstimatedTokens === "number"
-    ? Math.max(0, rec.totalEstimatedTokens)
-    : tasks.reduce((sum, task) => sum + task.estimatedTokens, 0);
+  const totalEstimatedTokens =
+    typeof rec.totalEstimatedTokens === "number"
+      ? Math.max(0, rec.totalEstimatedTokens)
+      : tasks.reduce((sum, task) => sum + task.estimatedTokens, 0);
   return {
     optionId: typeof rec.optionId === "string" && rec.optionId.trim() ? rec.optionId : `plan-${Date.now()}`,
     tasks,
-    totalEstimatedTokens
+    totalEstimatedTokens,
   };
 }
 
 function parsePlannedTask(item: unknown, index: number): PlannedTask {
   if (!item || typeof item !== "object") throw new Error(`Invalid execution plan: task ${index} is not an object`);
   const rec = item as Record<string, unknown>;
-  if (typeof rec.title !== "string" || !rec.title.trim()) throw new Error(`Invalid execution plan: task ${index} missing title`);
+  if (typeof rec.title !== "string" || !rec.title.trim())
+    throw new Error(`Invalid execution plan: task ${index} missing title`);
   if (typeof rec.description !== "string") throw new Error(`Invalid execution plan: task ${index} missing description`);
   const scope = rec.scope;
   if (!scope || typeof scope !== "object" || !Array.isArray((scope as { paths?: unknown }).paths)) {
@@ -2886,11 +3314,14 @@ function parsePlannedTask(item: unknown, index: number): PlannedTask {
     scope: patterns?.length ? { paths, patterns } : { paths },
     dependencies,
     estimatedTokens,
-    priority
+    priority,
   };
 }
 
-function parseEvaluationRecord(raw: string, refs: { artifactId?: string; initiativeId?: string } = {}): EvaluationRecord {
+function parseEvaluationRecord(
+  raw: string,
+  refs: { artifactId?: string; initiativeId?: string } = {},
+): EvaluationRecord {
   if (!raw.trim()) throw new Error("usage: king-ai eval parse|record '<json evaluation>'");
   let parsed: unknown;
   try {
@@ -2906,16 +3337,19 @@ function parseEvaluationRecord(raw: string, refs: { artifactId?: string; initiat
   if (rawScores.length === 0) throw new Error("Invalid evaluation: scores array is empty");
   const criteria = parseEvaluationCriteria(rec.criteria);
   const scores = rawScores.map((item, index) => parseEvaluationScore(item, index, criteria));
-  const selectedOptionId = typeof rec.selectedOptionId === "string" && rec.selectedOptionId.trim()
-    ? rec.selectedOptionId
-    : scores.slice().sort((a, b) => b.totalScore - a.totalScore)[0]?.optionId ?? "";
-  if (!scores.some((score) => score.optionId === selectedOptionId)) throw new Error(`Invalid evaluation: selected option not found: ${selectedOptionId}`);
+  const selectedOptionId =
+    typeof rec.selectedOptionId === "string" && rec.selectedOptionId.trim()
+      ? rec.selectedOptionId
+      : (scores.slice().sort((a, b) => b.totalScore - a.totalScore)[0]?.optionId ?? "");
+  if (!scores.some((score) => score.optionId === selectedOptionId))
+    throw new Error(`Invalid evaluation: selected option not found: ${selectedOptionId}`);
   const confidence = normalizeBoundedNumber(typeof rec.confidence === "number" ? rec.confidence : 0, 0, 1);
-  const tokensUsed = typeof rec.tokensUsed === "number"
-    ? Math.max(0, Math.round(rec.tokensUsed))
-    : typeof rec.tokens_used === "number"
-      ? Math.max(0, Math.round(rec.tokens_used))
-      : 0;
+  const tokensUsed =
+    typeof rec.tokensUsed === "number"
+      ? Math.max(0, Math.round(rec.tokensUsed))
+      : typeof rec.tokens_used === "number"
+        ? Math.max(0, Math.round(rec.tokens_used))
+        : 0;
   return {
     id: `eval-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     scores,
@@ -2926,7 +3360,7 @@ function parseEvaluationRecord(raw: string, refs: { artifactId?: string; initiat
     criteria,
     artifactId: refs.artifactId,
     initiativeId: refs.initiativeId,
-    createdAt: Date.now()
+    createdAt: Date.now(),
   };
 }
 
@@ -2940,7 +3374,7 @@ function parseEvaluationCriteria(raw: unknown): EvaluationCriteria[] {
     criteria.push({
       name: rec.name.trim(),
       weight: Math.max(0, rec.weight),
-      description: typeof rec.description === "string" ? rec.description : undefined
+      description: typeof rec.description === "string" ? rec.description : undefined,
     });
   }
   return criteria.length ? criteria : DEFAULT_EVALUATION_CRITERIA;
@@ -2949,18 +3383,26 @@ function parseEvaluationCriteria(raw: unknown): EvaluationCriteria[] {
 function parseEvaluationScore(item: unknown, index: number, criteria: EvaluationCriteria[]): EvaluationScore {
   if (!item || typeof item !== "object") throw new Error(`Invalid evaluation: score ${index} is not an object`);
   const rec = item as Record<string, unknown>;
-  if (typeof rec.optionId !== "string" || !rec.optionId.trim()) throw new Error(`Invalid evaluation: score ${index} missing optionId`);
-  if (!rec.scores || typeof rec.scores !== "object" || Array.isArray(rec.scores)) throw new Error(`Invalid evaluation: score ${index} missing scores object`);
+  if (typeof rec.optionId !== "string" || !rec.optionId.trim())
+    throw new Error(`Invalid evaluation: score ${index} missing optionId`);
+  if (!rec.scores || typeof rec.scores !== "object" || Array.isArray(rec.scores))
+    throw new Error(`Invalid evaluation: score ${index} missing scores object`);
   const rawScores = rec.scores as Record<string, unknown>;
   const scores: Record<string, number> = {};
   for (const criterion of criteria) {
-    scores[criterion.name] = normalizeBoundedNumber(typeof rawScores[criterion.name] === "number" ? rawScores[criterion.name] as number : 0, 0, 10);
+    scores[criterion.name] = normalizeBoundedNumber(
+      typeof rawScores[criterion.name] === "number" ? (rawScores[criterion.name] as number) : 0,
+      0,
+      10,
+    );
   }
   return {
     optionId: rec.optionId.trim(),
     scores,
-    totalScore: roundScore(criteria.reduce((sum, criterion) => sum + (scores[criterion.name] ?? 0) * criterion.weight, 0)),
-    reasoning: typeof rec.reasoning === "string" ? rec.reasoning : ""
+    totalScore: roundScore(
+      criteria.reduce((sum, criterion) => sum + (scores[criterion.name] ?? 0) * criterion.weight, 0),
+    ),
+    reasoning: typeof rec.reasoning === "string" ? rec.reasoning : "",
   };
 }
 
@@ -3011,7 +3453,11 @@ function findApproval(state: State, id: string | undefined): ApprovalRequest | u
 }
 
 function formatApprovalLine(approval: ApprovalRequest): string {
-  const reason = approval.reason ? ` reason=${approval.reason}` : typeof approval.context.reason === "string" ? ` reason=${approval.context.reason}` : "";
+  const reason = approval.reason
+    ? ` reason=${approval.reason}`
+    : typeof approval.context.reason === "string"
+      ? ` reason=${approval.context.reason}`
+      : "";
   return `[${approval.status}] ${approval.id.slice(0, 18)} action=${approval.action}${reason}`;
 }
 
@@ -3175,5 +3621,5 @@ export {
   stripOptions,
   parseAllowedPaths,
   pathConflict,
-  taskScopeConflicts
+  taskScopeConflicts,
 };

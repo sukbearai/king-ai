@@ -62,7 +62,7 @@ const HOST_RESOURCE_ENDPOINTS = [
   "PATCH /remote/devices/:id",
   "DELETE /remote/devices/:id",
   "POST /remote/devices/:id/probe",
-  "POST /remote/devices/:id/profile"
+  "POST /remote/devices/:id/profile",
 ];
 
 const HOST_STREAM_ENDPOINTS = [
@@ -70,7 +70,7 @@ const HOST_STREAM_ENDPOINTS = [
   "GET /status/stream",
   "GET /timeline/stream",
   "GET /runs/stream",
-  "GET /runs/:id/stream"
+  "GET /runs/:id/stream",
 ];
 
 export type HostStatusServerOptions = {
@@ -109,7 +109,13 @@ function localhostCorsOrigin(req: IncomingMessage): string | undefined {
   try {
     const url = new URL(origin);
     if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
-    if (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1" || url.hostname === "[::1]") return origin;
+    if (
+      url.hostname === "localhost" ||
+      url.hostname === "127.0.0.1" ||
+      url.hostname === "::1" ||
+      url.hostname === "[::1]"
+    )
+      return origin;
     if (url.protocol === "https:" && url.hostname === "king-ai.congrongtech.cn") return origin;
   } catch {
     return undefined;
@@ -117,16 +123,21 @@ function localhostCorsOrigin(req: IncomingMessage): string | undefined {
   return undefined;
 }
 
-function hostResponseHeaders(req?: IncomingMessage, headers: Record<string, string | number> = {}): Record<string, string | number> {
+function hostResponseHeaders(
+  req?: IncomingMessage,
+  headers: Record<string, string | number> = {},
+): Record<string, string | number> {
   const origin = req ? localhostCorsOrigin(req) : undefined;
   return {
     ...headers,
-    ...(origin ? {
-      "Access-Control-Allow-Origin": origin,
-      "Access-Control-Allow-Methods": "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type,Accept",
-      "Access-Control-Max-Age": "600"
-    } : {})
+    ...(origin
+      ? {
+          "Access-Control-Allow-Origin": origin,
+          "Access-Control-Allow-Methods": "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type,Accept",
+          "Access-Control-Max-Age": "600",
+        }
+      : {}),
   };
 }
 
@@ -153,7 +164,7 @@ function sendJson(res: ServerResponse, status: number, value: unknown, headOnly 
   const body = JSON.stringify(value, null, 2);
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
-    "Content-Length": Buffer.byteLength(body)
+    "Content-Length": Buffer.byteLength(body),
   });
   if (!headOnly) res.end(body);
   else res.end();
@@ -162,7 +173,7 @@ function sendJson(res: ServerResponse, status: number, value: unknown, headOnly 
 function sendText(res: ServerResponse, status: number, value: string, headOnly = false): void {
   res.writeHead(status, {
     "Content-Type": "text/plain; charset=utf-8",
-    "Content-Length": Buffer.byteLength(value)
+    "Content-Length": Buffer.byteLength(value),
   });
   if (!headOnly) res.end(value);
   else res.end();
@@ -200,7 +211,7 @@ async function runHostCommandRoute(
   res: ServerResponse,
   runCommand: (request: HostCommandRequest) => Promise<HostCommandResult>,
   request: HostCommandRequest,
-  headOnly = false
+  headOnly = false,
 ): Promise<void> {
   try {
     const result = await runCommand(request);
@@ -239,7 +250,14 @@ function buildHostCapabilities() {
     remoteApi: false,
     cors: {
       enabled: true,
-      allowedOrigins: ["http://localhost:*", "http://127.0.0.1:*", "http://[::1]:*", "https://localhost:*", "https://127.0.0.1:*", "https://[::1]:*"]
+      allowedOrigins: [
+        "http://localhost:*",
+        "http://127.0.0.1:*",
+        "http://[::1]:*",
+        "https://localhost:*",
+        "https://127.0.0.1:*",
+        "https://[::1]:*",
+      ],
     },
     resources: [...HOST_RESOURCE_ENDPOINTS],
     streams: [...HOST_STREAM_ENDPOINTS],
@@ -248,8 +266,8 @@ function buildHostCapabilities() {
     destructiveCommands: commands.filter((entry) => entry.destructive).map((entry) => entry.name),
     commandEnvelope: {
       path: "/commands/run",
-      method: "POST"
-    }
+      method: "POST",
+    },
   };
 }
 
@@ -259,7 +277,10 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
   const usagePricing = options.usagePricing ?? usagePricingFromEnv;
   const readTimeline = options.readTimeline ?? ((limit?: number) => readHostTimeline({ limit }));
   const readRuns = options.readRuns ?? ((input?: HostRunListInput) => listHostRunRequests(input));
-  const runCommand = options.runCommand ?? ((request: HostCommandRequest) => runHostCommand(request, { readState, tokenBudget, usagePricing, recordTimeline: true }));
+  const runCommand =
+    options.runCommand ??
+    ((request: HostCommandRequest) =>
+      runHostCommand(request, { readState, tokenBudget, usagePricing, recordTimeline: true }));
   return createServer(async (req: IncomingMessage, res: ServerResponse) => {
     try {
       const method = req.method ?? "GET";
@@ -286,21 +307,26 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
 
       if (url.pathname === "/runs") {
         if (method === "GET" || method === "HEAD") {
-          await runHostCommandRoute(res, runCommand, {
-            command: "run-requests",
-            format: "json",
-            input: {
-              limit: url.searchParams.get("limit") ?? undefined,
-              status: url.searchParams.get("status") ?? undefined
-            }
-          }, headOnly);
+          await runHostCommandRoute(
+            res,
+            runCommand,
+            {
+              command: "run-requests",
+              format: "json",
+              input: {
+                limit: url.searchParams.get("limit") ?? undefined,
+                status: url.searchParams.get("status") ?? undefined,
+              },
+            },
+            headOnly,
+          );
           return;
         }
         if (method === "POST") {
           await runHostCommandRoute(res, runCommand, {
             command: "submit-run",
             format: "json",
-            input: await readJsonBody(req)
+            input: await readJsonBody(req),
           });
           return;
         }
@@ -317,7 +343,7 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
         await runHostCommandRoute(res, runCommand, {
           command: "execute-run",
           format: "json",
-          input: body && typeof body === "object" ? body : {}
+          input: body && typeof body === "object" ? body : {},
         });
         return;
       }
@@ -331,7 +357,7 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
           res.writeHead(200, {
             "Content-Type": "text/event-stream; charset=utf-8",
             "Cache-Control": "no-store",
-            "Connection": "keep-alive"
+            Connection: "keep-alive",
           });
           res.end();
           return;
@@ -339,7 +365,7 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
         res.writeHead(200, {
           "Content-Type": "text/event-stream; charset=utf-8",
           "Cache-Control": "no-store",
-          "Connection": "keep-alive"
+          Connection: "keep-alive",
         });
         const interval = normalizeStatusStreamInterval(url.searchParams.get("interval"));
         const limit = normalizeTimelineLimit(url.searchParams.get("limit"));
@@ -350,7 +376,9 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
           if (closed || busy) return;
           busy = true;
           try {
-            sendSseEvent(res, "runs", { requests: await readRuns({ limit, status: status as HostRunListInput["status"] }) });
+            sendSseEvent(res, "runs", {
+              requests: await readRuns({ limit, status: status as HostRunListInput["status"] }),
+            });
           } catch (err) {
             sendSseEvent(res, "error", { error: err instanceof Error ? err.message : String(err) });
           } finally {
@@ -367,19 +395,24 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
         return;
       }
 
-      if (url.pathname === "/runs/plan" || url.pathname === "/runs/preflight" || url.pathname === "/runs/prepare-layout") {
+      if (
+        url.pathname === "/runs/plan" ||
+        url.pathname === "/runs/preflight" ||
+        url.pathname === "/runs/prepare-layout"
+      ) {
         if (method !== "POST") {
           sendJson(res, 405, { ok: false, error: "method not allowed" }, headOnly);
           return;
         }
         await runHostCommandRoute(res, runCommand, {
-          command: url.pathname === "/runs/plan"
-            ? "plan-run"
-            : url.pathname === "/runs/preflight"
-              ? "preflight"
-              : "prepare-run-layout",
+          command:
+            url.pathname === "/runs/plan"
+              ? "plan-run"
+              : url.pathname === "/runs/preflight"
+                ? "preflight"
+                : "prepare-run-layout",
           format: "json",
-          input: await readJsonBody(req)
+          input: await readJsonBody(req),
         });
         return;
       }
@@ -401,7 +434,7 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
             res.writeHead(200, {
               "Content-Type": "text/event-stream; charset=utf-8",
               "Cache-Control": "no-store",
-              "Connection": "keep-alive"
+              Connection: "keep-alive",
             });
             res.end();
             return;
@@ -409,7 +442,7 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
           res.writeHead(200, {
             "Content-Type": "text/event-stream; charset=utf-8",
             "Cache-Control": "no-store",
-            "Connection": "keep-alive"
+            Connection: "keep-alive",
           });
           const interval = normalizeStatusStreamInterval(url.searchParams.get("interval"));
           let closed = false;
@@ -421,15 +454,12 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
               const request = (await readRuns({ limit: 100 })).find((entry) => entry.id === id) ?? null;
               const outputDir = request?.spec.options?.outputDir;
               const [heartbeat, meta] = outputDir
-                ? await Promise.all([
-                    readHostRunHeartbeat({ outputDir }),
-                    readHostRunMeta({ outputDir })
-                  ])
+                ? await Promise.all([readHostRunHeartbeat({ outputDir }), readHostRunMeta({ outputDir })])
                 : [null, null];
               sendSseEvent(res, "run", {
                 request,
                 heartbeat: heartbeat?.heartbeat ?? null,
-                meta: meta?.meta ?? null
+                meta: meta?.meta ?? null,
               });
             } catch (err) {
               sendSseEvent(res, "error", { error: err instanceof Error ? err.message : String(err) });
@@ -447,18 +477,23 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
           return;
         }
         if (!action && (method === "GET" || method === "HEAD")) {
-          await runHostCommandRoute(res, runCommand, {
-            command: "run-request",
-            format: "json",
-            input: { id }
-          }, headOnly);
+          await runHostCommandRoute(
+            res,
+            runCommand,
+            {
+              command: "run-request",
+              format: "json",
+              input: { id },
+            },
+            headOnly,
+          );
           return;
         }
         if (!action && method === "PATCH") {
           await runHostCommandRoute(res, runCommand, {
             command: "update-run",
             format: "json",
-            input: { ...(await readJsonBody(req) as object), id }
+            input: { ...((await readJsonBody(req)) as object), id },
           });
           return;
         }
@@ -467,7 +502,7 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
           await runHostCommandRoute(res, runCommand, {
             command: "cancel-run",
             format: "json",
-            input: { ...(body && typeof body === "object" ? body as object : {}), id }
+            input: { ...(body && typeof body === "object" ? (body as object) : {}), id },
           });
           return;
         }
@@ -476,7 +511,7 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
           await runHostCommandRoute(res, runCommand, {
             command: "execute-run",
             format: "json",
-            input: { ...(body && typeof body === "object" ? body as object : {}), id }
+            input: { ...(body && typeof body === "object" ? (body as object) : {}), id },
           });
           return;
         }
@@ -485,62 +520,82 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
           await runHostCommandRoute(res, runCommand, {
             command: "emit-run-event",
             format: "json",
-            input: { ...(body && typeof body === "object" ? body as object : {}), id }
+            input: { ...(body && typeof body === "object" ? (body as object) : {}), id },
           });
           return;
         }
         if (action === "events" && (method === "GET" || method === "HEAD")) {
-          await runHostCommandRoute(res, runCommand, {
-            command: "watch-run",
-            format: "json",
-            input: {
-              id,
-              tail: url.searchParams.get("tail") ?? undefined,
-              type: url.searchParams.get("type") ?? undefined,
-              agent: url.searchParams.get("agent") ?? undefined,
-              classification: url.searchParams.get("classification") ?? undefined,
-              file: url.searchParams.get("file") ?? undefined,
-              outputDir: url.searchParams.get("outputDir") ?? undefined,
-              writeResults: parseOptionalBoolean(url.searchParams.get("writeResults"))
-            }
-          }, headOnly);
+          await runHostCommandRoute(
+            res,
+            runCommand,
+            {
+              command: "watch-run",
+              format: "json",
+              input: {
+                id,
+                tail: url.searchParams.get("tail") ?? undefined,
+                type: url.searchParams.get("type") ?? undefined,
+                agent: url.searchParams.get("agent") ?? undefined,
+                classification: url.searchParams.get("classification") ?? undefined,
+                file: url.searchParams.get("file") ?? undefined,
+                outputDir: url.searchParams.get("outputDir") ?? undefined,
+                writeResults: parseOptionalBoolean(url.searchParams.get("writeResults")),
+              },
+            },
+            headOnly,
+          );
           return;
         }
         if (action === "results" && (method === "GET" || method === "HEAD")) {
-          await runHostCommandRoute(res, runCommand, {
-            command: "run-results",
-            format: "json",
-            input: {
-              id,
-              file: url.searchParams.get("file") ?? undefined,
-              outputDir: url.searchParams.get("outputDir") ?? undefined,
-              resultsFile: url.searchParams.get("resultsFile") ?? undefined
-            }
-          }, headOnly);
+          await runHostCommandRoute(
+            res,
+            runCommand,
+            {
+              command: "run-results",
+              format: "json",
+              input: {
+                id,
+                file: url.searchParams.get("file") ?? undefined,
+                outputDir: url.searchParams.get("outputDir") ?? undefined,
+                resultsFile: url.searchParams.get("resultsFile") ?? undefined,
+              },
+            },
+            headOnly,
+          );
           return;
         }
         if (action === "heartbeat" && (method === "GET" || method === "HEAD")) {
-          await runHostCommandRoute(res, runCommand, {
-            command: "run-heartbeat",
-            format: "json",
-            input: {
-              id,
-              file: url.searchParams.get("file") ?? undefined,
-              outputDir: url.searchParams.get("outputDir") ?? undefined
-            }
-          }, headOnly);
+          await runHostCommandRoute(
+            res,
+            runCommand,
+            {
+              command: "run-heartbeat",
+              format: "json",
+              input: {
+                id,
+                file: url.searchParams.get("file") ?? undefined,
+                outputDir: url.searchParams.get("outputDir") ?? undefined,
+              },
+            },
+            headOnly,
+          );
           return;
         }
         if (action === "meta" && (method === "GET" || method === "HEAD")) {
-          await runHostCommandRoute(res, runCommand, {
-            command: "run-meta",
-            format: "json",
-            input: {
-              id,
-              file: url.searchParams.get("file") ?? undefined,
-              outputDir: url.searchParams.get("outputDir") ?? undefined
-            }
-          }, headOnly);
+          await runHostCommandRoute(
+            res,
+            runCommand,
+            {
+              command: "run-meta",
+              format: "json",
+              input: {
+                id,
+                file: url.searchParams.get("file") ?? undefined,
+                outputDir: url.searchParams.get("outputDir") ?? undefined,
+              },
+            },
+            headOnly,
+          );
           return;
         }
         sendJson(res, 405, { ok: false, error: "method not allowed" }, headOnly);
@@ -555,7 +610,7 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
         await runHostCommandRoute(res, runCommand, {
           command: url.pathname === "/exports/plan" ? "plan-export" : "export",
           format: "json",
-          input: await readJsonBody(req)
+          input: await readJsonBody(req),
         });
         return;
       }
@@ -572,28 +627,38 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
           return;
         }
         const input = method === "POST" ? await readJsonBody(req) : {};
-        await runHostCommandRoute(res, runCommand, {
-          command: "policy",
-          format: "json",
-          input: { ...(input && typeof input === "object" ? input as object : {}), command }
-        }, headOnly);
+        await runHostCommandRoute(
+          res,
+          runCommand,
+          {
+            command: "policy",
+            format: "json",
+            input: { ...(input && typeof input === "object" ? (input as object) : {}), command },
+          },
+          headOnly,
+        );
         return;
       }
 
       if (url.pathname === "/remote/config") {
         if (method === "GET" || method === "HEAD") {
-          await runHostCommandRoute(res, runCommand, {
-            command: "remote-config-get",
-            format: "json",
-            input: { revealSecrets: true }
-          }, headOnly);
+          await runHostCommandRoute(
+            res,
+            runCommand,
+            {
+              command: "remote-config-get",
+              format: "json",
+              input: { revealSecrets: true },
+            },
+            headOnly,
+          );
           return;
         }
         if (method === "PUT" || method === "POST") {
           await runHostCommandRoute(res, runCommand, {
             command: "remote-config-save",
             format: "json",
-            input: await readJsonBody(req)
+            input: await readJsonBody(req),
           });
           return;
         }
@@ -603,17 +668,22 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
 
       if (url.pathname === "/remote/devices") {
         if (method === "GET" || method === "HEAD") {
-          await runHostCommandRoute(res, runCommand, {
-            command: "remote-list",
-            format: "json"
-          }, headOnly);
+          await runHostCommandRoute(
+            res,
+            runCommand,
+            {
+              command: "remote-list",
+              format: "json",
+            },
+            headOnly,
+          );
           return;
         }
         if (method === "POST") {
           await runHostCommandRoute(res, runCommand, {
             command: "remote-save-device",
             format: "json",
-            input: await readJsonBody(req)
+            input: await readJsonBody(req),
           });
           return;
         }
@@ -634,7 +704,7 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
           await runHostCommandRoute(res, runCommand, {
             command: "remote-save-device",
             format: "json",
-            input: { ...(body && typeof body === "object" ? body as object : {}), id }
+            input: { ...(body && typeof body === "object" ? (body as object) : {}), id },
           });
           return;
         }
@@ -642,7 +712,7 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
           await runHostCommandRoute(res, runCommand, {
             command: "remote-delete-device",
             format: "json",
-            input: { id }
+            input: { id },
           });
           return;
         }
@@ -650,7 +720,7 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
           await runHostCommandRoute(res, runCommand, {
             command: "remote-default-device",
             format: "json",
-            input: { id }
+            input: { id },
           });
           return;
         }
@@ -659,7 +729,7 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
           await runHostCommandRoute(res, runCommand, {
             command: action === "probe" ? "remote-probe" : "remote-profile",
             format: "json",
-            input: { ...(body && typeof body === "object" ? body as object : {}), device: id }
+            input: { ...(body && typeof body === "object" ? (body as object) : {}), device: id },
           });
           return;
         }
@@ -673,12 +743,17 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
       }
 
       if (url.pathname === "/" || url.pathname === "/health") {
-        sendJson(res, 200, {
-          ok: true,
-          service: "king-ai host",
-          readOnly: true,
-          commands: listHostCommands().map((entry) => entry.name)
-        }, headOnly);
+        sendJson(
+          res,
+          200,
+          {
+            ok: true,
+            service: "king-ai host",
+            readOnly: true,
+            commands: listHostCommands().map((entry) => entry.name),
+          },
+          headOnly,
+        );
         return;
       }
       if (url.pathname === "/capabilities") {
@@ -687,16 +762,23 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
       }
       if (url.pathname === "/host/snapshot") {
         const limit = normalizeTimelineLimit(url.searchParams.get("limit"));
-        const timelineLimit = normalizeTimelineLimit(url.searchParams.get("timelineLimit") ?? url.searchParams.get("limit"));
+        const timelineLimit = normalizeTimelineLimit(
+          url.searchParams.get("timelineLimit") ?? url.searchParams.get("limit"),
+        );
         const runLimit = normalizeTimelineLimit(url.searchParams.get("runLimit") ?? url.searchParams.get("limit"));
         const runStatus = url.searchParams.get("status") ?? undefined;
-        sendJson(res, 200, {
-          ok: true,
-          status: buildHostStatusSnapshot(await readState(), tokenBudget(), usagePricing()),
-          capabilities: buildHostCapabilities(),
-          timeline: await readTimeline(timelineLimit ?? limit),
-          runs: await readRuns({ limit: runLimit ?? limit, status: runStatus as HostRunListInput["status"] })
-        }, headOnly);
+        sendJson(
+          res,
+          200,
+          {
+            ok: true,
+            status: buildHostStatusSnapshot(await readState(), tokenBudget(), usagePricing()),
+            capabilities: buildHostCapabilities(),
+            timeline: await readTimeline(timelineLimit ?? limit),
+            runs: await readRuns({ limit: runLimit ?? limit, status: runStatus as HostRunListInput["status"] }),
+          },
+          headOnly,
+        );
         return;
       }
       if (url.pathname === "/host/stream") {
@@ -704,7 +786,7 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
           res.writeHead(200, {
             "Content-Type": "text/event-stream; charset=utf-8",
             "Cache-Control": "no-store",
-            "Connection": "keep-alive"
+            Connection: "keep-alive",
           });
           res.end();
           return;
@@ -712,10 +794,14 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
         res.writeHead(200, {
           "Content-Type": "text/event-stream; charset=utf-8",
           "Cache-Control": "no-store",
-          "Connection": "keep-alive"
+          Connection: "keep-alive",
         });
-        const interval = normalizeStatusStreamInterval(url.searchParams.get("interval") ?? options.statusStreamIntervalMs);
-        const timelineLimit = normalizeTimelineLimit(url.searchParams.get("timelineLimit") ?? url.searchParams.get("limit"));
+        const interval = normalizeStatusStreamInterval(
+          url.searchParams.get("interval") ?? options.statusStreamIntervalMs,
+        );
+        const timelineLimit = normalizeTimelineLimit(
+          url.searchParams.get("timelineLimit") ?? url.searchParams.get("limit"),
+        );
         const runLimit = normalizeTimelineLimit(url.searchParams.get("runLimit") ?? url.searchParams.get("limit"));
         const runStatus = url.searchParams.get("status") ?? undefined;
         let closed = false;
@@ -726,7 +812,9 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
           try {
             sendSseEvent(res, "status", buildHostStatusSnapshot(await readState(), tokenBudget(), usagePricing()));
             sendSseEvent(res, "timeline", await readTimeline(timelineLimit));
-            sendSseEvent(res, "runs", { requests: await readRuns({ limit: runLimit, status: runStatus as HostRunListInput["status"] }) });
+            sendSseEvent(res, "runs", {
+              requests: await readRuns({ limit: runLimit, status: runStatus as HostRunListInput["status"] }),
+            });
           } catch (err) {
             sendSseEvent(res, "error", { error: err instanceof Error ? err.message : String(err) });
           } finally {
@@ -743,20 +831,30 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
         return;
       }
       if (url.pathname === "/commands") {
-        sendJson(res, 200, {
-          ok: true,
-          commands: listHostCommands()
-        }, headOnly);
+        sendJson(
+          res,
+          200,
+          {
+            ok: true,
+            commands: listHostCommands(),
+          },
+          headOnly,
+        );
         return;
       }
       if (url.pathname === "/timeline") {
-        await runHostCommandRoute(res, runCommand, {
-          command: "timeline",
-          format: "json",
-          input: {
-            limit: url.searchParams.get("limit") ?? undefined
-          }
-        }, headOnly);
+        await runHostCommandRoute(
+          res,
+          runCommand,
+          {
+            command: "timeline",
+            format: "json",
+            input: {
+              limit: url.searchParams.get("limit") ?? undefined,
+            },
+          },
+          headOnly,
+        );
         return;
       }
       if (url.pathname === "/timeline/stream") {
@@ -764,7 +862,7 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
           res.writeHead(200, {
             "Content-Type": "text/event-stream; charset=utf-8",
             "Cache-Control": "no-store",
-            "Connection": "keep-alive"
+            Connection: "keep-alive",
           });
           res.end();
           return;
@@ -772,7 +870,7 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
         res.writeHead(200, {
           "Content-Type": "text/event-stream; charset=utf-8",
           "Cache-Control": "no-store",
-          "Connection": "keep-alive"
+          Connection: "keep-alive",
         });
         const interval = normalizeStatusStreamInterval(url.searchParams.get("interval"));
         const limit = normalizeTimelineLimit(url.searchParams.get("limit"));
@@ -799,10 +897,15 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
         return;
       }
       if (url.pathname === "/usage" || url.pathname === "/expenses" || url.pathname === "/doctor") {
-        await runHostCommandRoute(res, runCommand, {
-          command: url.pathname === "/usage" ? "usage" : url.pathname === "/expenses" ? "expenses" : "doctor",
-          format: "json"
-        }, headOnly);
+        await runHostCommandRoute(
+          res,
+          runCommand,
+          {
+            command: url.pathname === "/usage" ? "usage" : url.pathname === "/expenses" ? "expenses" : "doctor",
+            format: "json",
+          },
+          headOnly,
+        );
         return;
       }
       if (url.pathname === "/status/stream") {
@@ -810,7 +913,7 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
           res.writeHead(200, {
             "Content-Type": "text/event-stream; charset=utf-8",
             "Cache-Control": "no-store",
-            "Connection": "keep-alive"
+            Connection: "keep-alive",
           });
           res.end();
           return;
@@ -818,9 +921,11 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
         res.writeHead(200, {
           "Content-Type": "text/event-stream; charset=utf-8",
           "Cache-Control": "no-store",
-          "Connection": "keep-alive"
+          Connection: "keep-alive",
         });
-        const interval = normalizeStatusStreamInterval(url.searchParams.get("interval") ?? options.statusStreamIntervalMs);
+        const interval = normalizeStatusStreamInterval(
+          url.searchParams.get("interval") ?? options.statusStreamIntervalMs,
+        );
         let closed = false;
         let busy = false;
         const sendSnapshot = async () => {
@@ -854,10 +959,15 @@ export function createHostStatusServer(options: HostStatusServerOptions = {}): S
         return;
       }
       if (url.pathname === "/events") {
-        sendJson(res, 200, {
-          ok: snapshot.ok,
-          events: snapshot.events
-        }, headOnly);
+        sendJson(
+          res,
+          200,
+          {
+            ok: snapshot.ok,
+            events: snapshot.events,
+          },
+          headOnly,
+        );
         return;
       }
 
@@ -893,14 +1003,21 @@ export async function serveHostStatus(options: HostStatusServerOptions = {}): Pr
   const server = await startHostStatusServer(options);
   const address = server.address();
   const host = normalizeHostServerHost(options.host);
-  const port = typeof address === "object" && address ? address.port : options.port ?? hostServerPortFromEnv();
+  const port = typeof address === "object" && address ? address.port : (options.port ?? hostServerPortFromEnv());
   console.log(`host status server listening on http://${host}:${port}`);
-  console.log("read-only endpoints: /health, /capabilities, /status, /host/snapshot, /host/stream, /status/stream, /status.txt, /events, /timeline, /timeline/stream, /usage, /expenses, /doctor, /commands");
+  console.log(
+    "read-only endpoints: /health, /capabilities, /status, /host/snapshot, /host/stream, /status/stream, /status.txt, /events, /timeline, /timeline/stream, /usage, /expenses, /doctor, /commands",
+  );
   console.log("controlled command endpoint: POST /commands/run");
-  console.log("host run endpoints: POST /runs/plan, POST /runs/preflight, POST /runs/prepare-layout, GET/POST /runs, GET /runs/stream, GET/PATCH /runs/:id, GET /runs/:id/stream, GET /runs/:id/events, GET /runs/:id/results, GET /runs/:id/heartbeat, GET /runs/:id/meta, POST /runs/:id/execute");
+  console.log(
+    "host run endpoints: POST /runs/plan, POST /runs/preflight, POST /runs/prepare-layout, GET/POST /runs, GET /runs/stream, GET/PATCH /runs/:id, GET /runs/:id/stream, GET /runs/:id/events, GET /runs/:id/results, GET /runs/:id/heartbeat, GET /runs/:id/meta, POST /runs/:id/execute",
+  );
   console.log("host export endpoints: POST /exports/plan, POST /exports");
   console.log("host policy endpoints: GET/POST /policy/:command");
-  if (options.executeRuns) console.log(`host run auto-executor enabled every ${normalizeExecuteRunsInterval(options.executeRunsIntervalMs)}ms`);
+  if (options.executeRuns)
+    console.log(
+      `host run auto-executor enabled every ${normalizeExecuteRunsInterval(options.executeRunsIntervalMs)}ms`,
+    );
   await new Promise<void>((resolve) => {
     const stop = () => {
       server.close(() => resolve());
@@ -912,21 +1029,26 @@ export async function serveHostStatus(options: HostStatusServerOptions = {}): Pr
 
 function attachHostRunAutoExecutor(server: Server, options: HostStatusServerOptions): void {
   if (!options.executeRuns) return;
-  const runCommand = options.runCommand ?? ((request: HostCommandRequest) => runHostCommand(request, {
-    readState: options.readState ?? readRunningState,
-    tokenBudget: options.tokenBudget ?? tokenBudgetFromEnv,
-    usagePricing: options.usagePricing ?? usagePricingFromEnv,
-    recordTimeline: true
-  }));
+  const runCommand =
+    options.runCommand ??
+    ((request: HostCommandRequest) =>
+      runHostCommand(request, {
+        readState: options.readState ?? readRunningState,
+        tokenBudget: options.tokenBudget ?? tokenBudgetFromEnv,
+        usagePricing: options.usagePricing ?? usagePricingFromEnv,
+        recordTimeline: true,
+      }));
   let busy = false;
   const tick = () => {
     if (busy) return;
     busy = true;
-    void runCommand({ command: "execute-run", format: "json" }).catch((err: unknown) => {
-      console.warn(`host run auto-executor failed: ${err instanceof Error ? err.message : String(err)}`);
-    }).finally(() => {
-      busy = false;
-    });
+    void runCommand({ command: "execute-run", format: "json" })
+      .catch((err: unknown) => {
+        console.warn(`host run auto-executor failed: ${err instanceof Error ? err.message : String(err)}`);
+      })
+      .finally(() => {
+        busy = false;
+      });
   };
   const timer = setInterval(tick, normalizeExecuteRunsInterval(options.executeRunsIntervalMs));
   timer.unref?.();

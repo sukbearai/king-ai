@@ -15,33 +15,39 @@ import {
   recordAgentRunStats,
   summarizeAgentUsage,
   tokenBudgetFromEnv,
-  usagePricingFromEnv
+  usagePricingFromEnv,
 } from "../src/usage.js";
 import { buildUsageRuntimeData, formatRuntimeResultsTable, sanitizeRuntimeData } from "../src/runtime-data.js";
 
 test("normalizeEngineUsage accepts snake_case and camelCase token fields", () => {
-  assert.deepEqual(normalizeEngineUsage({
-    input_tokens: 10,
-    cache_read_input_tokens: 3,
-    output_tokens: 7
-  }), {
-    inputTokens: 10,
-    cacheReadInputTokens: 3,
-    outputTokens: 7,
-    totalTokens: 20
-  });
+  assert.deepEqual(
+    normalizeEngineUsage({
+      input_tokens: 10,
+      cache_read_input_tokens: 3,
+      output_tokens: 7,
+    }),
+    {
+      inputTokens: 10,
+      cacheReadInputTokens: 3,
+      outputTokens: 7,
+      totalTokens: 20,
+    },
+  );
 
-  assert.deepEqual(normalizeEngineUsage({
-    inputTokens: 4,
-    cachedInputTokens: 2,
-    outputTokens: 6,
-    totalTokens: 99
-  }), {
-    inputTokens: 4,
-    cacheReadInputTokens: 2,
-    outputTokens: 6,
-    totalTokens: 99
-  });
+  assert.deepEqual(
+    normalizeEngineUsage({
+      inputTokens: 4,
+      cachedInputTokens: 2,
+      outputTokens: 6,
+      totalTokens: 99,
+    }),
+    {
+      inputTokens: 4,
+      cacheReadInputTokens: 2,
+      outputTokens: 6,
+      totalTokens: 99,
+    },
+  );
 });
 
 test("recordAgentRunStats aggregates turn counts and usage totals", () => {
@@ -51,14 +57,14 @@ test("recordAgentRunStats aggregates turn counts and usage totals", () => {
     usage: { input_tokens: 10, cache_read_input_tokens: 2, output_tokens: 8 },
     durationMs: 1234,
     model: "gpt-test",
-    at: "2026-06-02T00:00:00.000Z"
+    at: "2026-06-02T00:00:00.000Z",
   });
   stats = recordAgentRunStats(stats, {
     status: "failed",
     usage: { inputTokens: 5, outputTokens: 1 },
     durationMs: 250,
     model: null,
-    at: "2026-06-02T00:01:00.000Z"
+    at: "2026-06-02T00:01:00.000Z",
   });
 
   assert.equal(stats.turns, 2);
@@ -84,7 +90,7 @@ test("checkTokenBudget reports ok, warning, and exceeded states", () => {
     status: "completed",
     usage: { totalTokens: 70 },
     durationMs: 1,
-    at: "2026-06-02T00:00:00.000Z"
+    at: "2026-06-02T00:00:00.000Z",
   });
   assert.deepEqual(checkTokenBudget(stats, 100), {
     budget: 100,
@@ -92,20 +98,20 @@ test("checkTokenBudget reports ok, warning, and exceeded states", () => {
     remaining: 30,
     warning: false,
     exceeded: false,
-    state: "ok"
+    state: "ok",
   });
   stats = recordAgentRunStats(stats, {
     status: "completed",
     usage: { totalTokens: 15 },
     durationMs: 1,
-    at: "2026-06-02T00:00:01.000Z"
+    at: "2026-06-02T00:00:01.000Z",
   });
   assert.equal(checkTokenBudget(stats, 100)?.state, "warning");
   stats = recordAgentRunStats(stats, {
     status: "completed",
     usage: { totalTokens: 20 },
     durationMs: 1,
-    at: "2026-06-02T00:00:02.000Z"
+    at: "2026-06-02T00:00:02.000Z",
   });
   const exceeded = checkTokenBudget(stats, 100);
   assert.equal(exceeded?.state, "exceeded");
@@ -124,35 +130,40 @@ test("usagePricingFromEnv reads configurable cost rules", () => {
       "codex:gpt-test": {
         inputPerMillionTokens: 2,
         cacheReadInputPerMillionTokens: 0.5,
-        outputPerMillionTokens: 10
-      }
-    })
+        outputPerMillionTokens: 10,
+      },
+    }),
   } as NodeJS.ProcessEnv);
 
-  assert.deepEqual(pricing, [{
-    key: "codex:gpt-test",
-    currency: "USD",
-    inputPerMillionTokens: 2,
-    cacheReadInputPerMillionTokens: 0.5,
-    outputPerMillionTokens: 10,
-    source: undefined
-  }]);
+  assert.deepEqual(pricing, [
+    {
+      key: "codex:gpt-test",
+      currency: "USD",
+      inputPerMillionTokens: 2,
+      cacheReadInputPerMillionTokens: 0.5,
+      outputPerMillionTokens: 10,
+      source: undefined,
+    },
+  ]);
   assert.deepEqual(usagePricingFromEnv({ KING_AI_USAGE_PRICING: "not-json" } as NodeJS.ProcessEnv), []);
 });
 
 test("estimateUsageCost prices token categories per million tokens", () => {
-  const cost = estimateUsageCost({
-    inputTokens: 1_000_000,
-    cacheReadInputTokens: 500_000,
-    outputTokens: 250_000,
-    totalTokens: 1_750_000
-  }, {
-    key: "codex:gpt-test",
-    currency: "USD",
-    inputPerMillionTokens: 2,
-    cacheReadInputPerMillionTokens: 0.5,
-    outputPerMillionTokens: 10
-  });
+  const cost = estimateUsageCost(
+    {
+      inputTokens: 1_000_000,
+      cacheReadInputTokens: 500_000,
+      outputTokens: 250_000,
+      totalTokens: 1_750_000,
+    },
+    {
+      key: "codex:gpt-test",
+      currency: "USD",
+      inputPerMillionTokens: 2,
+      cacheReadInputPerMillionTokens: 0.5,
+      outputPerMillionTokens: 10,
+    },
+  );
 
   assert.deepEqual(cost, {
     amount: 4.75,
@@ -162,7 +173,7 @@ test("estimateUsageCost prices token categories per million tokens", () => {
     outputCost: 2.5,
     pricedTokens: 1_750_000,
     unpricedTokens: 0,
-    pricingKeys: ["codex:gpt-test"]
+    pricingKeys: ["codex:gpt-test"],
   });
 });
 
@@ -172,29 +183,47 @@ test("summarizeAgentUsage groups usage by engine, model, and agent", () => {
     usage: { inputTokens: 10, cacheReadInputTokens: 5, outputTokens: 15 },
     durationMs: 1000,
     model: "gpt-test",
-    at: "2026-06-02T00:00:00.000Z"
+    at: "2026-06-02T00:00:00.000Z",
   });
   const claudeStats = recordAgentRunStats(emptyAgentRunStats(), {
     status: "failed",
     usage: { input_tokens: 7, output_tokens: 3 },
     durationMs: 2000,
     model: "opus-test",
-    at: "2026-06-02T00:01:00.000Z"
+    at: "2026-06-02T00:01:00.000Z",
   });
 
-  const summary = summarizeAgentUsage([
-    { id: "dev", name: "Dev", engine: "codex", model: "gpt-test", runStats: codexStats },
-    { id: "reviewer", name: "Reviewer", engine: "claude", model: "opus-test", runStats: claudeStats }
-  ], 60);
+  const summary = summarizeAgentUsage(
+    [
+      { id: "dev", name: "Dev", engine: "codex", model: "gpt-test", runStats: codexStats },
+      { id: "reviewer", name: "Reviewer", engine: "claude", model: "opus-test", runStats: claudeStats },
+    ],
+    60,
+  );
 
   assert.equal(summary.turns, 2);
   assert.equal(summary.completed, 1);
   assert.equal(summary.failed, 1);
   assert.equal(summary.totalTokens, 40);
   assert.equal(summary.budget?.state, "ok");
-  assert.deepEqual(summary.byEngine.map((group) => [group.key, group.totalTokens]), [["codex", 30], ["claude", 10]]);
-  assert.deepEqual(summary.byModel.map((group) => [group.key, group.totalTokens]), [["gpt-test", 30], ["opus-test", 10]]);
-  assert.deepEqual(summary.agents.map((agent) => agent.id), ["dev", "reviewer"]);
+  assert.deepEqual(
+    summary.byEngine.map((group) => [group.key, group.totalTokens]),
+    [
+      ["codex", 30],
+      ["claude", 10],
+    ],
+  );
+  assert.deepEqual(
+    summary.byModel.map((group) => [group.key, group.totalTokens]),
+    [
+      ["gpt-test", 30],
+      ["opus-test", 10],
+    ],
+  );
+  assert.deepEqual(
+    summary.agents.map((agent) => agent.id),
+    ["dev", "reviewer"],
+  );
 
   const rendered = formatUsageSummary(summary);
   assert.match(rendered, /usage summary/);
@@ -213,30 +242,34 @@ test("summarizeAgentUsage includes optional King AI cost estimates", () => {
     usage: { inputTokens: 1_000_000, cacheReadInputTokens: 500_000, outputTokens: 250_000 },
     durationMs: 1000,
     model: "gpt-test",
-    at: "2026-06-02T00:00:00.000Z"
+    at: "2026-06-02T00:00:00.000Z",
   });
   const claudeStats = recordAgentRunStats(emptyAgentRunStats(), {
     status: "completed",
     usage: { inputTokens: 1000, outputTokens: 2000 },
     durationMs: 1000,
     model: "opus-test",
-    at: "2026-06-02T00:01:00.000Z"
+    at: "2026-06-02T00:01:00.000Z",
   });
 
-  const summary = summarizeAgentUsage([
-    { id: "dev", engine: "codex", model: "gpt-test", runStats: codexStats },
-    { id: "reviewer", engine: "claude", model: "opus-test", runStats: claudeStats }
-  ], null, normalizeUsagePricing({
-    "codex:gpt-test": {
-      inputPerMillionTokens: 2,
-      cacheReadInputPerMillionTokens: 0.5,
-      outputPerMillionTokens: 10
-    },
-    "claude:*": {
-      inputPerMillionTokens: 3,
-      outputPerMillionTokens: 15
-    }
-  }));
+  const summary = summarizeAgentUsage(
+    [
+      { id: "dev", engine: "codex", model: "gpt-test", runStats: codexStats },
+      { id: "reviewer", engine: "claude", model: "opus-test", runStats: claudeStats },
+    ],
+    null,
+    normalizeUsagePricing({
+      "codex:gpt-test": {
+        inputPerMillionTokens: 2,
+        cacheReadInputPerMillionTokens: 0.5,
+        outputPerMillionTokens: 10,
+      },
+      "claude:*": {
+        inputPerMillionTokens: 3,
+        outputPerMillionTokens: 15,
+      },
+    }),
+  );
 
   assert.equal(summary.cost?.amount, 4.783);
   assert.equal(summary.cost?.currency, "USD");
@@ -252,28 +285,35 @@ test("listUsageExpenses returns sorted per-agent expense rows", () => {
     usage: { inputTokens: 1_000_000, cacheReadInputTokens: 500_000, outputTokens: 250_000 },
     durationMs: 1000,
     model: "gpt-test",
-    at: "2026-06-02T00:00:00.000Z"
+    at: "2026-06-02T00:00:00.000Z",
   });
   const unpricedStats = recordAgentRunStats(emptyAgentRunStats(), {
     status: "failed",
     usage: { inputTokens: 10, outputTokens: 5 },
     durationMs: 100,
     model: "unknown-model",
-    at: "2026-06-02T00:01:00.000Z"
+    at: "2026-06-02T00:01:00.000Z",
   });
-  const summary = summarizeAgentUsage([
-    { id: "unpriced", name: "Unpriced", engine: "codex", model: "unknown-model", runStats: unpricedStats },
-    { id: "dev", name: "Dev", engine: "codex", model: "gpt-test", runStats: codexStats }
-  ], null, normalizeUsagePricing({
-    "codex:gpt-test": {
-      inputPerMillionTokens: 2,
-      cacheReadInputPerMillionTokens: 0.5,
-      outputPerMillionTokens: 10
-    }
-  }));
+  const summary = summarizeAgentUsage(
+    [
+      { id: "unpriced", name: "Unpriced", engine: "codex", model: "unknown-model", runStats: unpricedStats },
+      { id: "dev", name: "Dev", engine: "codex", model: "gpt-test", runStats: codexStats },
+    ],
+    null,
+    normalizeUsagePricing({
+      "codex:gpt-test": {
+        inputPerMillionTokens: 2,
+        cacheReadInputPerMillionTokens: 0.5,
+        outputPerMillionTokens: 10,
+      },
+    }),
+  );
 
   const rows = listUsageExpenses(summary);
-  assert.deepEqual(rows.map((row) => row.agentId), ["dev", "unpriced"]);
+  assert.deepEqual(
+    rows.map((row) => row.agentId),
+    ["dev", "unpriced"],
+  );
   assert.equal(rows[0]?.amount, 4.75);
   assert.equal(rows[0]?.pricingKeys[0], "codex:gpt-test");
   assert.equal(rows[1]?.amount, 0);
@@ -298,42 +338,56 @@ test("buildUsageRuntimeData exports sanitized provider and runtime rows", () => 
     status: "completed",
     usage: { inputTokens: 10, outputTokens: 5 },
     durationMs: 1200,
-    at: "2026-06-02T00:00:00.000Z"
+    at: "2026-06-02T00:00:00.000Z",
   });
-  const data = buildUsageRuntimeData({
-    version: "0.1.0",
-    pid: 123,
-    startedAt: "2026-06-02T00:00:00.000Z",
-    capabilities: { workspaces: [workspace] },
-    agents: [{
-      id: "dev",
-      name: "Dev",
-      engine: "codex",
-      workspaceRoot: workspace,
-      runStats: stats,
-      updatedAt: "2026-06-02T00:00:01.000Z"
-    }],
-    events: [{ at: "2026-06-02T00:00:02.000Z", kind: "turn.completed", detail: `dev completed ${workspace}` }]
-  }, { generatedAt: "2026-06-02T00:00:03.000Z" });
+  const data = buildUsageRuntimeData(
+    {
+      version: "0.1.0",
+      pid: 123,
+      startedAt: "2026-06-02T00:00:00.000Z",
+      capabilities: { workspaces: [workspace] },
+      agents: [
+        {
+          id: "dev",
+          name: "Dev",
+          engine: "codex",
+          workspaceRoot: workspace,
+          runStats: stats,
+          updatedAt: "2026-06-02T00:00:01.000Z",
+        },
+      ],
+      events: [{ at: "2026-06-02T00:00:02.000Z", kind: "turn.completed", detail: `dev completed ${workspace}` }],
+    },
+    { generatedAt: "2026-06-02T00:00:03.000Z" },
+  );
 
   assert.equal(data.schemaVersion, 1);
   assert.equal(data.dataSource.secretValuesIncluded, false);
   assert.equal(data.usage.totalTokens, 15);
   assert.equal(data.runtimeResults[0]?.classification, "productive");
-  assert.match(formatRuntimeResultsTable(data.runtimeResults), /dev\tcodex\t2026-06-02T00:00:00\.000Z\tdaemon-state\tcompleted\t1200\t15\tproductive/);
+  assert.match(
+    formatRuntimeResultsTable(data.runtimeResults),
+    /dev\tcodex\t2026-06-02T00:00:00\.000Z\tdaemon-state\tcompleted\t1200\t15\tproductive/,
+  );
   assert.equal(data.state.workspaces[0], "<home>/workspace/github/pnpm/king-ai");
   assert.match(data.state.events[0]?.detail ?? "", /<home>\/workspace\/github\/pnpm\/king-ai/);
-  assert.equal(data.providerCapabilities.some((capability) => capability.provider === "OpenAI"), true);
+  assert.equal(
+    data.providerCapabilities.some((capability) => capability.provider === "OpenAI"),
+    true,
+  );
 });
 
 test("sanitizeRuntimeData redacts user paths without touching ordinary strings", () => {
-  const sanitized = sanitizeRuntimeData({
-    homePath: "/Users/fayon/.king-ai/agents/dev",
-    message: "use /Users/other/secret/token but keep relative/path"
-  }, "/Users/fayon");
+  const sanitized = sanitizeRuntimeData(
+    {
+      homePath: "/Users/fayon/.king-ai/agents/dev",
+      message: "use /Users/other/secret/token but keep relative/path",
+    },
+    "/Users/fayon",
+  );
 
   assert.deepEqual(sanitized, {
     homePath: "<home>/.king-ai/agents/dev",
-    message: "use private://user/secret/token but keep relative/path"
+    message: "use private://user/secret/token but keep relative/path",
   });
 });

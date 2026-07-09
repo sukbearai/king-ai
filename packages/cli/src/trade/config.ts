@@ -56,6 +56,6 @@ export function telegramFromConfig(config: TradeConfig): { botToken: string; cha
   const tg = (dotGet(config, "telegram", {}) ?? {}) as Record<string, unknown>;
   return {
     botToken: String(tg.bot_token ?? process.env.TG_BOT_TOKEN ?? ""),
-    chatId: String(tg.push_chat_id ?? process.env.TG_PUSH_CHAT_ID ?? "")
+    chatId: String(tg.push_chat_id ?? process.env.TG_PUSH_CHAT_ID ?? ""),
   };
 }

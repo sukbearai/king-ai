@@ -4,7 +4,11 @@ import type { RunStreamState } from "@suwujs/king-ai/run-stream";
 export type Bindings = {
   GUI_STATE: DurableObjectNamespace;
   AI?: {
-    run(model: string, input: Record<string, unknown>, options?: Record<string, unknown>): Promise<Response | ArrayBuffer | Uint8Array | Blob | string | Record<string, unknown>>;
+    run(
+      model: string,
+      input: Record<string, unknown>,
+      options?: Record<string, unknown>,
+    ): Promise<Response | ArrayBuffer | Uint8Array | Blob | string | Record<string, unknown>>;
   };
   CLOUDFLARE_ACCOUNT_ID?: string;
   CLOUDFLARE_AI_API_TOKEN?: string;
@@ -567,7 +571,11 @@ export type State = {
   pairingCode: string;
   availableEngines: string[];
   capabilities: { workspaces: string[]; agentWorkspaceRoot?: string };
-  lastHeartbeat?: { at: number; version?: string; capabilities?: { workspaces: string[]; agentWorkspaceRoot?: string } };
+  lastHeartbeat?: {
+    at: number;
+    version?: string;
+    capabilities?: { workspaces: string[]; agentWorkspaceRoot?: string };
+  };
   agentConfigUpdatedAt?: number;
   agents: Agent[];
   workflowAgentIds?: Record<string, string[]>;
@@ -585,7 +593,13 @@ export type State = {
   loopEvents: LoopEvent[];
   noticeLog: { at: number; body: unknown }[];
   triageLog: { at: number; body: unknown }[];
-  runLog: { at: number; runId: string; action: "start" | "heartbeat" | "finish" | "stream"; body?: unknown; card?: unknown }[];
+  runLog: {
+    at: number;
+    runId: string;
+    action: "start" | "heartbeat" | "finish" | "stream";
+    body?: unknown;
+    card?: unknown;
+  }[];
   runStreams?: Record<string, RunStreamState>;
   activeRunContracts?: Record<string, RunContract>;
   runActions?: Record<string, RunAction[]>;
@@ -730,7 +744,7 @@ export const DEFAULT_AGENT: Agent = {
   name: "King AI CEO",
   role: "Coordinate the conversation: clarify ambiguous human requests, split work into concrete tasks for available teammates, track progress, and summarize verified results back to the human. For presence checks (你在？/在吗), roll calls, and sequential count games (轮流报数), either give one brief reply yourself or let one teammate answer via glance — never post a second coordinator wrap-up after Dev already answered. Role template: planner.",
   engine: "grok",
-  lifecycle: "on-demand"
+  lifecycle: "on-demand",
 };
 
 // Concrete software-dev roster. The default GUI team is intentionally compact:
@@ -743,15 +757,15 @@ export const DEFAULT_TEAM_AGENTS: Agent[] = [
     name: "Dev",
     role: "Implement only assigned tasks. Make concrete changes, run focused verification, report files changed and command results, then mark the task done so it can be reviewed or returned to King AI CEO. Role template: builder.",
     engine: "grok",
-    lifecycle: "on-demand"
+    lifecycle: "on-demand",
   },
   {
     id: "reviewer",
     name: "Reviewer",
     role: "Review completed Dev work before King AI CEO summarizes. Check correctness, regressions, and missing tests; pass verified work back to King AI CEO or request specific revisions. Never post review reports, audit ledgers, or round-robin digits in public group chat — use king-ai react, task done, or king-ai dm king-ai-ceo for conversational approvals. Role template: reviewer.",
     engine: "grok",
-    lifecycle: "on-demand"
-  }
+    lifecycle: "on-demand",
+  },
 ];
 
 export type WorkflowTemplate = {
@@ -777,12 +791,12 @@ export const IELTS_WORKFLOW_AGENTS: Agent[] = [
       "- A clause core must be the shortest useful continuous substring that actually appears word-for-word in that clause: usually the subject head plus verb, and only a directly adjacent required object or complement when it is already next to the verb. Never rewrite, compress, reorder, or skip across words to create a new core. Example: for 'I have kept these feelings in my heart, and I hope you understand me.', use cores 'I have kept' and 'I hope'. For 'Your smile gives my days light, even when life feels heavy.', use cores 'Your smile gives' and 'life feels'. In 'I want to eat', the core is 'I want' and 'to eat' is a phrase.",
       "- Each phrase is the shortest meaningful chunk of about two to four words, and it must be a natural collocation that reads well on its own (a noun phrase, verb phrase, prepositional phrase, or fixed expression). Never mark a single word as a phrase, especially a lone pronoun, article, conjunction, or adverb such as 'quietly', 'myself', 'willing', or 'Whatever'. Never glue grammatically unrelated pieces together, such as an object plus an adverb ('it clearly') or an indirect object plus a direct object ('me courage'); choose the natural chunk instead, like 'say it clearly' or 'give me courage'. Keep noun compounds whole: in 'a short love confession letter' the phrase is 'love confession letter', never 'a short love'. Never wrap a whole clause, the sentence core, or most of a sentence in one phrase, and do not overlap a phrase with the core.",
       "- Explain the highlighted phrases in the same visible Tip line in concise Chinese, after any natural-English expression for what the learner wrote. Example: Tip: 用英文可以说: 'I am off work and my eyes are sore.' Useful phrases: 'off work' = 下班; 'eyes are sore' = 眼睛酸. Do not rely on phrase click cards.",
-      "- End your reply with one hidden WordCards JSON block after the visible answer. Use exactly this shape: WordCards: {\"sentences\":[{\"text\":\"Your smile gives my days light, even when life feels heavy.\",\"clauses\":[{\"type\":\"main\",\"text\":\"Your smile gives my days light\",\"core\":\"Your smile gives\",\"phrases\":[\"my days light\"]},{\"type\":\"subordinate\",\"text\":\"even when life feels heavy\",\"core\":\"life feels\",\"phrases\":[\"even when\"]}]}],\"cards\":[{\"token\":\"Your\",\"lemma\":\"your\",\"meaningZh\":\"你的\",\"partOfSpeech\":\"代词(物主限定词)\",\"phonetic\":\"/jɔːr/\",\"syllables\":[\"your\"],\"roots\":\"\"},{\"token\":\"smile\",\"lemma\":\"smile\",\"meaningZh\":\"微笑\",\"partOfSpeech\":\"名词/动词\",\"phonetic\":\"/smaɪl/\",\"syllables\":[\"smile\"],\"roots\":\"\"}]}. Include every distinct English word token from the visible answer, including short function words such as I, am, to, the, for, and. Do not skip words because they are common. Use concise Chinese meanings, the Chinese part of speech in partOfSpeech (such as 名词, 动词, 形容词, 副词, 介词, 连词, 代词, or 限定词), IPA phonetics wrapped in slashes such as /driːmz/ (never respellings such as DREEMZ), syllable arrays, and a short Chinese root/affix breakdown in roots such as \"un- 否定前缀 + happy 快乐\" or \"morn 词根 + -ing 名词后缀\" (use an empty string for single-morpheme words like the or smile). The app reads this JSON to fill word cards and render core/phrase highlights, and does not show it to the learner. Do not put prose inside WordCards.",
-      "Keep replies compact: a short natural English reply or the requested passage, an optional one-line Tip, and the WordCards JSON block at the very end."
+      '- End your reply with one hidden WordCards JSON block after the visible answer. Use exactly this shape: WordCards: {"sentences":[{"text":"Your smile gives my days light, even when life feels heavy.","clauses":[{"type":"main","text":"Your smile gives my days light","core":"Your smile gives","phrases":["my days light"]},{"type":"subordinate","text":"even when life feels heavy","core":"life feels","phrases":["even when"]}]}],"cards":[{"token":"Your","lemma":"your","meaningZh":"你的","partOfSpeech":"代词(物主限定词)","phonetic":"/jɔːr/","syllables":["your"],"roots":""},{"token":"smile","lemma":"smile","meaningZh":"微笑","partOfSpeech":"名词/动词","phonetic":"/smaɪl/","syllables":["smile"],"roots":""}]}. Include every distinct English word token from the visible answer, including short function words such as I, am, to, the, for, and. Do not skip words because they are common. Use concise Chinese meanings, the Chinese part of speech in partOfSpeech (such as 名词, 动词, 形容词, 副词, 介词, 连词, 代词, or 限定词), IPA phonetics wrapped in slashes such as /driːmz/ (never respellings such as DREEMZ), syllable arrays, and a short Chinese root/affix breakdown in roots such as "un- 否定前缀 + happy 快乐" or "morn 词根 + -ing 名词后缀" (use an empty string for single-morpheme words like the or smile). The app reads this JSON to fill word cards and render core/phrase highlights, and does not show it to the learner. Do not put prose inside WordCards.',
+      "Keep replies compact: a short natural English reply or the requested passage, an optional one-line Tip, and the WordCards JSON block at the very end.",
     ].join(" "),
     engine: "grok",
-    lifecycle: "on-demand"
-  }
+    lifecycle: "on-demand",
+  },
 ];
 
 export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
@@ -791,15 +805,15 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
     name: "Software Development",
     defaultCoordinatorAgentId: DEFAULT_AGENT.id,
     agentIds: DEFAULT_TEAM_AGENTS.map((agent) => agent.id),
-    agents: DEFAULT_TEAM_AGENTS
+    agents: DEFAULT_TEAM_AGENTS,
   },
   {
     id: "ielts-study",
     name: "IELTS Study",
     defaultCoordinatorAgentId: "ielts-tutor",
     agentIds: IELTS_WORKFLOW_AGENTS.map((agent) => agent.id),
-    agents: IELTS_WORKFLOW_AGENTS
-  }
+    agents: IELTS_WORKFLOW_AGENTS,
+  },
 ];
 export const DEFAULT_NEW_CONVERSATION_WORKFLOW_ID = "ielts-study";
 
@@ -808,7 +822,7 @@ export const DEFAULT_CONVERSATION: Conversation = {
   title: "all",
   kind: "group",
   created_at: 0,
-  updated_at: 0
+  updated_at: 0,
 };
 
 export { STANDARD_ARTIFACT_KINDS } from "./artifact-helpers.js";
@@ -823,19 +837,16 @@ export const SAFETY_ACTIONS = new Set<SafetyAction>([
   "send_slack",
   "financial_transaction",
   "delete_data",
-  "modify_permissions"
+  "modify_permissions",
 ]);
 
-export const SAFETY_AUTO_ALLOW = new Set<SafetyAction>([
-  "git_commit",
-  "git_merge_staging"
-]);
+export const SAFETY_AUTO_ALLOW = new Set<SafetyAction>(["git_commit", "git_merge_staging"]);
 
 export const DEFAULT_EVALUATION_CRITERIA: EvaluationCriteria[] = [
   { name: "feasibility", weight: 0.3, description: "Can this option be executed with available context and tools?" },
   { name: "risk", weight: 0.25, description: "Higher means safer and less likely to cause regressions." },
   { name: "impact", weight: 0.25, description: "Expected value if this option succeeds." },
-  { name: "cost", weight: 0.2, description: "Higher means cheaper in time, tokens, and operational complexity." }
+  { name: "cost", weight: 0.2, description: "Higher means cheaper in time, tokens, and operational complexity." },
 ];
 
 export const REVIEW_COVERAGE_GATE = 95;
@@ -903,5 +914,5 @@ export const GUI_ENTITY_STATE_KEYS: EntityStateKey[] = [
   "reactions",
   "composing",
   "approvals",
-  "uploads"
+  "uploads",
 ];

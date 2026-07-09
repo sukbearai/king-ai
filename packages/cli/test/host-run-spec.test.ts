@@ -4,7 +4,14 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
-import { createDefaultHostRunOptions, createHostLaunchPlan, createHostRunPlan, formatHostRunPlanSummary, parseHostGitStatus, toJsonSafeHostLaunchPlan } from "../src/host-run-spec.js";
+import {
+  createDefaultHostRunOptions,
+  createHostLaunchPlan,
+  createHostRunPlan,
+  formatHostRunPlanSummary,
+  parseHostGitStatus,
+  toJsonSafeHostLaunchPlan,
+} from "../src/host-run-spec.js";
 
 test("createDefaultHostRunOptions normalizes bounded and infinite loops", () => {
   const defaults = createDefaultHostRunOptions();
@@ -21,10 +28,14 @@ test("createDefaultHostRunOptions normalizes bounded and infinite loops", () => 
 });
 
 test("toJsonSafeHostLaunchPlan keeps infinite loops JSON-safe", () => {
-  const plan = createHostLaunchPlan({
-    goal: "watch forever",
-    options: { loopMode: "infinite" }
-  }, {}, ["codex"]);
+  const plan = createHostLaunchPlan(
+    {
+      goal: "watch forever",
+      options: { loopMode: "infinite" },
+    },
+    {},
+    ["codex"],
+  );
   const json = toJsonSafeHostLaunchPlan(plan);
   assert.equal(json.options.loopMode, "infinite");
   assert.equal(json.options.loops, "infinite");
@@ -35,18 +46,21 @@ test("createHostRunPlan validates local project dirs and renders a summary", asy
   const dir = await mkdtemp(join(tmpdir(), "king-ai-host-run-"));
   await writeFile(join(dir, "package.json"), "{}", "utf8");
 
-  const plan = createHostRunPlan({
-    goal: "review this repo",
-    projectDir: dir,
-    options: {
-      engine: "codex",
-      model: "gpt-test",
-      loops: 2,
-      outputDir: "out"
-    }
-  }, {
-    KING_AI_AGENT_WORKSPACE_ROOT: join(dir, ".agents")
-  } as NodeJS.ProcessEnv);
+  const plan = createHostRunPlan(
+    {
+      goal: "review this repo",
+      projectDir: dir,
+      options: {
+        engine: "codex",
+        model: "gpt-test",
+        loops: 2,
+        outputDir: "out",
+      },
+    },
+    {
+      KING_AI_AGENT_WORKSPACE_ROOT: join(dir, ".agents"),
+    } as NodeJS.ProcessEnv,
+  );
 
   assert.match(plan.runId, /^host-run-/);
   assert.equal(plan.spec.goal, "review this repo");
@@ -71,11 +85,11 @@ test("createHostRunPlan accepts King AI project run metadata without leaking sec
     threadSync: {
       threadId: "thread-1",
       syncUrl: "https://sync.example/thread-1",
-      syncSecret: "sync-secret"
+      syncSecret: "sync-secret",
     },
     hooks: {
-      beforeRun: "prepare"
-    }
+      beforeRun: "prepare",
+    },
   });
 
   assert.equal(plan.spec.githubToken, "ghp_secret");
@@ -95,8 +109,8 @@ test("createHostRunPlan accepts King AI worker run options without leaking worke
       workerUrl: " http://127.0.0.1:1234 ",
       workerModel: " local-model ",
       workerKey: "worker-secret-key",
-      noBrain: true
-    }
+      noBrain: true,
+    },
   });
 
   assert.equal(plan.options.configPath, "config.json");
@@ -113,40 +127,43 @@ test("createHostRunPlan accepts King AI worker run options without leaking worke
 test("createHostRunPlan carries accepted attachments and blocks rejected required attachments", () => {
   const plan = createHostRunPlan({
     goal: "inspect attached screenshot",
-    attachments: [
-      { name: "screen.png", mime: "image/png", size: 12, filePath: "/tmp/screen.png", required: true }
-    ]
+    attachments: [{ name: "screen.png", mime: "image/png", size: 12, filePath: "/tmp/screen.png", required: true }],
   });
   assert.equal(plan.spec.attachments[0]?.decision, "accepted");
   assert.match(plan.summary, /Runtime attachments/);
   assert.match(plan.summary, /\[screen\.png\] image\/png 12B @\/tmp\/screen\.png/);
 
   assert.throws(
-    () => createHostRunPlan({
-      goal: "inspect attached binary",
-      attachments: [
-        { name: "tool.exe", mime: "application/x-msdownload", size: 12, filePath: "/tmp/tool.exe", required: true }
-      ]
-    }),
-    /required attachment rejected: tool\.exe/
+    () =>
+      createHostRunPlan({
+        goal: "inspect attached binary",
+        attachments: [
+          { name: "tool.exe", mime: "application/x-msdownload", size: 12, filePath: "/tmp/tool.exe", required: true },
+        ],
+      }),
+    /required attachment rejected: tool\.exe/,
   );
 });
 
 test("createHostRunPlan rejects run IDs that are not safe filename segments", () => {
   assert.throws(
     () => createHostRunPlan({ goal: "unsafe run", runId: "../../outside" }),
-    /runId must be a safe filename segment/
+    /runId must be a safe filename segment/,
   );
   assert.throws(
     () => createHostRunPlan({ goal: "unsafe run", runId: "nested/run" }),
-    /runId must be a safe filename segment/
+    /runId must be a safe filename segment/,
   );
 
-  const plan = createHostLaunchPlan({
-    goal: "safe run",
-    runId: "safe-run_1.2",
-    options: { outputDir: "out" }
-  }, {}, ["codex"]);
+  const plan = createHostLaunchPlan(
+    {
+      goal: "safe run",
+      runId: "safe-run_1.2",
+      options: { outputDir: "out" },
+    },
+    {},
+    ["codex"],
+  );
   assert.equal(plan.runId, "safe-run_1.2");
   assert.equal(plan.layout.baseDir, join(plan.options.outputDir, ".king-ai-local", "safe-run_1.2"));
 });
@@ -154,14 +171,18 @@ test("createHostRunPlan rejects run IDs that are not safe filename segments", ()
 test("createHostLaunchPlan reports launch readiness and preflight issues", async () => {
   const dir = await mkdtemp(join(tmpdir(), "king-ai-host-launch-"));
   await writeFile(join(dir, "package.json"), "{}", "utf8");
-  await writeFile(join(dir, "agents.json"), "{\"agents\":[]}", "utf8");
+  await writeFile(join(dir, "agents.json"), '{"agents":[]}', "utf8");
   await writeFile(join(dir, ".env"), "DB9_TOKEN=secret-token\n", "utf8");
 
-  const ready = createHostLaunchPlan({
-    goal: "ship feature",
-    projectDir: dir,
-    options: { engine: "codex" }
-  }, {}, ["codex"]);
+  const ready = createHostLaunchPlan(
+    {
+      goal: "ship feature",
+      projectDir: dir,
+      options: { engine: "codex" },
+    },
+    {},
+    ["codex"],
+  );
   assert.equal(ready.ready, true);
   assert.equal(ready.effectiveEngine, "codex");
   assert.equal(ready.session.runtimeLabel, "codex");
@@ -200,10 +221,14 @@ test("createHostLaunchPlan reports launch readiness and preflight issues", async
   assert.match(ready.launchSummary, /warning\/project-not-git/);
   assert.match(ready.suggestedCommands.join("\n"), /king-ai project-profile/);
 
-  const missingEngine = createHostLaunchPlan({
-    goal: "ship feature",
-    options: { engine: "claude" }
-  }, {}, []);
+  const missingEngine = createHostLaunchPlan(
+    {
+      goal: "ship feature",
+      options: { engine: "claude" },
+    },
+    {},
+    [],
+  );
   assert.equal(missingEngine.ready, false);
   assert.equal(missingEngine.issues[0]?.code, "no-engine");
   assert.equal(missingEngine.session.llmModeLabel, "claude-cli");
@@ -215,15 +240,17 @@ test("createHostLaunchPlan reports launch readiness and preflight issues", async
 });
 
 test("parseHostGitStatus reads branch, upstream, ahead/behind, and changed paths", () => {
-  const state = parseHostGitStatus([
-    "# branch.oid abc123",
-    "# branch.head feature/demo",
-    "# branch.upstream origin/feature/demo",
-    "# branch.ab +2 -1",
-    "1 .M N... 100644 100644 100644 abc abc src/app.ts",
-    "2 R. N... 100644 100644 100644 abc abc R100 src/new.ts\tsrc/old.ts",
-    "? notes/todo.md"
-  ].join("\n"));
+  const state = parseHostGitStatus(
+    [
+      "# branch.oid abc123",
+      "# branch.head feature/demo",
+      "# branch.upstream origin/feature/demo",
+      "# branch.ab +2 -1",
+      "1 .M N... 100644 100644 100644 abc abc src/app.ts",
+      "2 R. N... 100644 100644 100644 abc abc R100 src/new.ts\tsrc/old.ts",
+      "? notes/todo.md",
+    ].join("\n"),
+  );
 
   assert.equal(state.activeBranch, "feature/demo");
   assert.equal(state.hasUpstream, true);
@@ -237,11 +264,15 @@ test("createHostLaunchPlan exposes read-only local git observation", async () =>
   execFileSync("git", ["init"], { cwd: dir, stdio: "ignore" });
   await writeFile(join(dir, "package.json"), "{}", "utf8");
 
-  const plan = createHostLaunchPlan({
-    goal: "inspect git",
-    projectDir: dir,
-    options: { engine: "codex" }
-  }, {}, ["codex"]);
+  const plan = createHostLaunchPlan(
+    {
+      goal: "inspect git",
+      projectDir: dir,
+      options: { engine: "codex" },
+    },
+    {},
+    ["codex"],
+  );
 
   assert.equal(plan.git.isGitRepo, true);
   assert.equal(plan.git.gitRoot, dir);
@@ -254,14 +285,18 @@ test("createHostLaunchPlan exposes read-only local git observation", async () =>
 test("createHostLaunchPlan exposes explicit configPath metadata without reading config content", async () => {
   const dir = await mkdtemp(join(tmpdir(), "king-ai-host-config-"));
   const configPath = join(dir, "custom-agents.json");
-  await writeFile(configPath, "{\"agents\":[{\"systemPrompt\":\"secret prompt\"}]}", "utf8");
+  await writeFile(configPath, '{"agents":[{"systemPrompt":"secret prompt"}]}', "utf8");
 
-  const plan = createHostLaunchPlan({
-    goal: "run with config",
-    options: {
-      configPath
-    }
-  }, {}, ["claude"]);
+  const plan = createHostLaunchPlan(
+    {
+      goal: "run with config",
+      options: {
+        configPath,
+      },
+    },
+    {},
+    ["claude"],
+  );
 
   assert.equal(plan.config.label, "custom-agents.json");
   assert.equal(plan.config.source, "explicit");
@@ -276,14 +311,18 @@ test("createHostLaunchPlan reports local layout while honoring explicit workspac
   const workspaceRoot = join(dir, "custom-agents");
   const outputDir = join(dir, "out");
 
-  const plan = createHostLaunchPlan({
-    goal: "preview layout",
-    projectDir: dir,
-    workspaceRoot,
-    options: {
-      outputDir
-    }
-  }, {}, ["claude"]);
+  const plan = createHostLaunchPlan(
+    {
+      goal: "preview layout",
+      projectDir: dir,
+      workspaceRoot,
+      options: {
+        outputDir,
+      },
+    },
+    {},
+    ["claude"],
+  );
 
   assert.equal(plan.layout.outputDir, outputDir);
   assert.equal(plan.layout.baseDir, join(outputDir, ".king-ai-local", plan.runId));
@@ -302,25 +341,33 @@ test("createHostLaunchPlan reports local layout while honoring explicit workspac
 });
 
 test("createHostLaunchPlan accepts local role profiles", () => {
-  const plan = createHostLaunchPlan({
-    goal: "small team",
-    roleProfile: "small"
-  }, {}, ["codex"]);
+  const plan = createHostLaunchPlan(
+    {
+      goal: "small team",
+      roleProfile: "small",
+    },
+    {},
+    ["codex"],
+  );
 
   assert.equal(plan.spec.roleProfile, "small");
   assert.match(plan.summary, /role profile: small/);
 });
 
 test("createHostLaunchPlan exposes King AI hybrid worker session metadata", () => {
-  const plan = createHostLaunchPlan({
-    goal: "run hybrid",
-    options: {
-      engine: "codex",
-      model: "gpt-test",
-      codexReasoningEffort: "high",
-      workerUrl: "http://127.0.0.1:1234"
-    }
-  }, {}, ["codex", "claude"]);
+  const plan = createHostLaunchPlan(
+    {
+      goal: "run hybrid",
+      options: {
+        engine: "codex",
+        model: "gpt-test",
+        codexReasoningEffort: "high",
+        workerUrl: "http://127.0.0.1:1234",
+      },
+    },
+    {},
+    ["codex", "claude"],
+  );
 
   assert.equal(plan.session.useHybrid, true);
   assert.equal(plan.session.runtimeOverride, "codex");
@@ -335,10 +382,16 @@ test("createHostLaunchPlan exposes King AI hybrid worker session metadata", () =
 test("createHostLaunchPlan requires a source for takeover mode", () => {
   const plan = createHostLaunchPlan({ goal: "take over", mode: "takeover" }, {}, ["claude"]);
   assert.equal(plan.ready, false);
-  assert.equal(plan.issues.some((issue) => issue.code === "takeover-source-required"), true);
+  assert.equal(
+    plan.issues.some((issue) => issue.code === "takeover-source-required"),
+    true,
+  );
 });
 
 test("createHostRunPlan rejects missing goals and invalid project dirs", () => {
   assert.throws(() => createHostRunPlan({ goal: "" }), /goal is required/);
-  assert.throws(() => createHostRunPlan({ goal: "x", projectDir: "/path/that/does/not/exist" }), /projectDir does not exist/);
+  assert.throws(
+    () => createHostRunPlan({ goal: "x", projectDir: "/path/that/does/not/exist" }),
+    /projectDir does not exist/,
+  );
 });

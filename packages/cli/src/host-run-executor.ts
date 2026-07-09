@@ -26,7 +26,7 @@ const EXECUTOR_SAFE_COMMANDS = new Set([
   "doctor",
   "plan-run",
   "preflight",
-  "plan-export"
+  "plan-export",
 ]);
 
 export function listSafeHostExecutorCommands(): string[] {
@@ -35,7 +35,7 @@ export function listSafeHostExecutorCommands(): string[] {
 
 export async function executeNextHostRunRequest(
   input: HostRunExecuteInput = {},
-  deps: HostCommandRunnerDeps = {}
+  deps: HostCommandRunnerDeps = {},
 ): Promise<HostRunExecuteResult> {
   const request = await selectExecutableRequest(input, deps);
   if (!request) {
@@ -46,124 +46,136 @@ export async function executeNextHostRunRequest(
   }
   const command = request.executor.command.trim().toLowerCase();
   if (!EXECUTOR_SAFE_COMMANDS.has(command)) {
-    const failed = await updateHostRunRequest({
-      id: request.id,
-      status: "failed",
-      detail: `executor command is not allowed: ${request.executor.command}`,
-      result: {
-        command: request.executor.command,
-        ok: false,
-        exitCode: 64,
-        error: "executor command is not allowed"
-      }
-    }, {
-      path: deps.runsPath,
-      now: deps.now
-    });
+    const failed = await updateHostRunRequest(
+      {
+        id: request.id,
+        status: "failed",
+        detail: `executor command is not allowed: ${request.executor.command}`,
+        result: {
+          command: request.executor.command,
+          ok: false,
+          exitCode: 64,
+          error: "executor command is not allowed",
+        },
+      },
+      {
+        path: deps.runsPath,
+        now: deps.now,
+      },
+    );
     await writeRequestHeartbeat(failed.request, "failed", {
       detail: failed.request.detail,
       command: request.executor.command,
       exitCode: 64,
       loopCount: 0,
-      now: deps.now
+      now: deps.now,
     });
     await writeRequestMeta(failed.request, "failed", {
       detail: failed.request.detail,
       command: request.executor.command,
       exitCode: 64,
       actualLoops: 0,
-      now: deps.now
+      now: deps.now,
     });
     await writeRequestLoopEvent(failed.request, "failed", {
       detail: failed.request.detail,
       command: request.executor.command,
       exitCode: 64,
       loop: 0,
-      now: deps.now
+      now: deps.now,
     });
     return {
       request: failed.request,
-      summary: failed.summary
+      summary: failed.summary,
     };
   }
 
-  await updateHostRunRequest({
-    id: request.id,
-    status: "running",
-    detail: `executing ${command}`
-  }, {
-    path: deps.runsPath,
-    now: deps.now
-  });
+  await updateHostRunRequest(
+    {
+      id: request.id,
+      status: "running",
+      detail: `executing ${command}`,
+    },
+    {
+      path: deps.runsPath,
+      now: deps.now,
+    },
+  );
   await writeRequestHeartbeat(request, "running", {
     detail: `executing ${command}`,
     command,
     loopCount: 0,
-    now: deps.now
+    now: deps.now,
   });
   await writeRequestMeta(request, "running", {
     detail: `executing ${command}`,
     command,
     actualLoops: 0,
-    now: deps.now
+    now: deps.now,
   });
   await writeRequestLoopEvent(request, "running", {
     detail: `executing ${command}`,
     command,
     loop: 0,
-    now: deps.now
+    now: deps.now,
   });
 
-  const commandResult = await runHostCommand({
-    command,
-    format: request.executor.format,
-    input: request.executor.input,
-    actorRole: request.executor.actorRole
-  }, {
-    ...deps,
-    recordTimeline: deps.recordTimeline ?? true,
-    enforcePermission: request.executor.trusted === true ? false : deps.enforcePermission
-  });
-  const completed = await updateHostRunRequest({
-    id: request.id,
-    status: commandResult.ok ? "completed" : "failed",
-    detail: commandResult.ok ? `completed ${command}` : `failed ${command}`,
-    result: {
+  const commandResult = await runHostCommand(
+    {
       command,
-      ok: commandResult.ok,
-      exitCode: commandResult.exitCode,
-      textPreview: compact(commandResult.text),
-      error: commandResult.error
-    }
-  }, {
-    path: deps.runsPath,
-    now: deps.now
-  });
+      format: request.executor.format,
+      input: request.executor.input,
+      actorRole: request.executor.actorRole,
+    },
+    {
+      ...deps,
+      recordTimeline: deps.recordTimeline ?? true,
+      enforcePermission: request.executor.trusted === true ? false : deps.enforcePermission,
+    },
+  );
+  const completed = await updateHostRunRequest(
+    {
+      id: request.id,
+      status: commandResult.ok ? "completed" : "failed",
+      detail: commandResult.ok ? `completed ${command}` : `failed ${command}`,
+      result: {
+        command,
+        ok: commandResult.ok,
+        exitCode: commandResult.exitCode,
+        textPreview: compact(commandResult.text),
+        error: commandResult.error,
+      },
+    },
+    {
+      path: deps.runsPath,
+      now: deps.now,
+    },
+  );
   await writeRequestHeartbeat(completed.request, commandResult.ok ? "completed" : "failed", {
     detail: completed.request.detail,
     command,
     exitCode: commandResult.exitCode,
     loopCount: 1,
-    now: deps.now
+    now: deps.now,
   });
   await writeRequestMeta(completed.request, commandResult.ok ? "completed" : "failed", {
     detail: completed.request.detail,
     command,
     exitCode: commandResult.exitCode,
     actualLoops: 1,
-    now: deps.now
+    now: deps.now,
   });
   await writeRequestLoopEvent(completed.request, commandResult.ok ? "completed" : "failed", {
     detail: completed.request.detail,
     command,
     exitCode: commandResult.exitCode,
     loop: 1,
-    now: deps.now
+    now: deps.now,
   });
   return {
     request: completed.request,
     commandResult,
-    summary: completed.summary
+    summary: completed.summary,
   };
 }
 
@@ -176,7 +188,7 @@ async function writeRequestMeta(
     exitCode?: number;
     actualLoops?: number;
     now?: () => Date;
-  }
+  },
 ): Promise<void> {
   const outputDir = request.spec.options?.outputDir;
   if (!outputDir) return;
@@ -188,7 +200,7 @@ async function writeRequestMeta(
     detail: input.detail,
     command: input.command,
     exitCode: input.exitCode,
-    now: input.now
+    now: input.now,
   });
 }
 
@@ -201,7 +213,7 @@ async function writeRequestLoopEvent(
     exitCode?: number;
     loop?: number;
     now?: () => Date;
-  }
+  },
 ): Promise<void> {
   const outputDir = request.spec.options?.outputDir;
   if (!outputDir) return;
@@ -216,8 +228,8 @@ async function writeRequestLoopEvent(
       command: input.command,
       exitCode: input.exitCode,
       loop: input.loop,
-      source: "execute-run"
-    }
+      source: "execute-run",
+    },
   });
 }
 
@@ -226,11 +238,16 @@ export function formatHostRunExecuteResult(result: HostRunExecuteResult): string
   return [
     result.summary,
     result.commandResult ? `command: ${result.commandResult.command} exit=${result.commandResult.exitCode}` : "",
-    formatHostRunRequestSummary(result.request)
-  ].filter(Boolean).join("\n");
+    formatHostRunRequestSummary(result.request),
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
-async function selectExecutableRequest(input: HostRunExecuteInput, deps: HostCommandRunnerDeps): Promise<HostRunRequest | undefined> {
+async function selectExecutableRequest(
+  input: HostRunExecuteInput,
+  deps: HostCommandRunnerDeps,
+): Promise<HostRunRequest | undefined> {
   const requests = await listHostRunRequests({ limit: 100, status: "pending" }, deps.runsPath);
   const oldestFirst = [...requests].reverse();
   if (input.id) return oldestFirst.find((request) => request.id === input.id);
@@ -252,7 +269,7 @@ async function writeRequestHeartbeat(
     exitCode?: number;
     loopCount?: number;
     now?: () => Date;
-  }
+  },
 ): Promise<void> {
   const outputDir = request.spec.options?.outputDir;
   if (!outputDir) return;
@@ -266,6 +283,6 @@ async function writeRequestHeartbeat(
     command: input.command,
     exitCode: input.exitCode,
     loopCount: input.loopCount,
-    now: input.now
+    now: input.now,
   });
 }

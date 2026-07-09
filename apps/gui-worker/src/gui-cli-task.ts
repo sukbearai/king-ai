@@ -1,4 +1,9 @@
-import { applyGuiTaskChangesRequested, addGuiTaskToState, createGuiTaskDraft, updateGuiTaskFromPatch } from "./workflow-state.js";
+import {
+  applyGuiTaskChangesRequested,
+  addGuiTaskToState,
+  createGuiTaskDraft,
+  updateGuiTaskFromPatch,
+} from "./workflow-state.js";
 
 export type GuiCliTaskStatus = "pending" | "assigned" | "in_progress" | "review" | "done" | "failed" | "blocked";
 
@@ -50,11 +55,15 @@ export type RunTaskCommandDeps<S extends { tasks: GuiCliTask[] }, T extends GuiC
   stripOptions: (args: string[], flags: string[]) => string[];
   normalizePriority: (value: string | undefined) => number;
   isTaskStatus: (value: string) => value is GuiCliTaskStatus;
-  applyTaskReviewPayload: (task: T, payload: {
-    reviewResult?: string;
-    revisionReason?: string;
-    artifactIds?: string[];
-  }, reviewer: A) => void;
+  applyTaskReviewPayload: (
+    task: T,
+    payload: {
+      reviewResult?: string;
+      revisionReason?: string;
+      artifactIds?: string[];
+    },
+    reviewer: A,
+  ) => void;
   pushLoopEvent: (state: S, event: Record<string, unknown>) => void;
   ensureConversation: (state: S, id: string) => { id: string };
   workerAgentForConversation: (state: S, conversation: { id: string }) => { id: string } | undefined;
@@ -68,7 +77,7 @@ export function runTaskCommand<S extends { tasks: GuiCliTask[] }, T extends GuiC
   state: S,
   args: string[],
   actor: A,
-  deps: RunTaskCommandDeps<S, T, A>
+  deps: RunTaskCommandDeps<S, T, A>,
 ): string {
   const cmd = args[0] || "list";
   if (cmd === "list") {
@@ -76,11 +85,12 @@ export function runTaskCommand<S extends { tasks: GuiCliTask[] }, T extends GuiC
     const assignee = deps.readOption(args, "--assignee") || deps.readOption(args, "--assign");
     const initiative = deps.readOption(args, "--initiative");
     const capsule = deps.readOption(args, "--capsule");
-    const tasks = state.tasks.filter((task) =>
-      (!status || task.status === status) &&
-      (!assignee || task.assignee === assignee) &&
-      (!initiative || task.initiativeId === initiative) &&
-      (!capsule || task.capsuleId === capsule)
+    const tasks = state.tasks.filter(
+      (task) =>
+        (!status || task.status === status) &&
+        (!assignee || task.assignee === assignee) &&
+        (!initiative || task.initiativeId === initiative) &&
+        (!capsule || task.capsuleId === capsule),
     ) as T[];
     if (tasks.length === 0) return "No tasks found.";
     return tasks.map((task) => deps.formatTaskLine(state, task)).join("\n") + `\n\n${tasks.length} task(s)`;
@@ -91,11 +101,27 @@ export function runTaskCommand<S extends { tasks: GuiCliTask[] }, T extends GuiC
     return JSON.stringify(lookup.task, null, 2);
   }
   if (cmd === "create") {
-    const title = deps.stripOptions(args.slice(1), [
-      "--assign", "--assignee", "--priority", "--parent", "--after", "--path", "--pattern", "--desc",
-      "--initiative", "--capsule", "--subsystem", "--profile", "--owner-role", "--reviewer-role",
-      "--acceptance", "--blocked-by"
-    ]).join(" ").trim();
+    const title = deps
+      .stripOptions(args.slice(1), [
+        "--assign",
+        "--assignee",
+        "--priority",
+        "--parent",
+        "--after",
+        "--path",
+        "--pattern",
+        "--desc",
+        "--initiative",
+        "--capsule",
+        "--subsystem",
+        "--profile",
+        "--owner-role",
+        "--reviewer-role",
+        "--acceptance",
+        "--blocked-by",
+      ])
+      .join(" ")
+      .trim();
     if (!title) {
       return "usage: king-ai task create <title> [--assign agent-id] [--priority 1-10] [--after id1,id2] [--path a,b] [--pattern a,b] [--desc text]";
     }
@@ -115,11 +141,13 @@ export function runTaskCommand<S extends { tasks: GuiCliTask[] }, T extends GuiC
       capsuleId: deps.readOption(args, "--capsule"),
       subsystem: deps.readOption(args, "--subsystem"),
       scope: deps.taskScopeFromArgs(args),
-      executionProfile: deps.readOption(args, "--profile")
+      executionProfile: deps.readOption(args, "--profile"),
     }) as T;
     const conflicts = deps.taskScopeConflicts(state, task, task.assignee);
-    return `Task ${task.id} created: "${task.title}" [${task.status}]` +
-      (conflicts.length ? `\nWarnings: ${conflicts.join("; ")}` : "");
+    return (
+      `Task ${task.id} created: "${task.title}" [${task.status}]` +
+      (conflicts.length ? `\nWarnings: ${conflicts.join("; ")}` : "")
+    );
   }
   if (cmd === "update") {
     const lookup = deps.lookupTask(state, args[1]);
@@ -146,7 +174,7 @@ export function runTaskCommand<S extends { tasks: GuiCliTask[] }, T extends GuiC
       executionProfile: deps.readOption(args, "--profile"),
       scope: scope ? { ...(task.scope ?? {}), ...scope } : undefined,
       reviewedByAgentId: reviewResult === "approved" || reviewResult === "changes_requested" ? actor.id : undefined,
-      reviewedAt: reviewResult === "approved" || reviewResult === "changes_requested" ? Date.now() : undefined
+      reviewedAt: reviewResult === "approved" || reviewResult === "changes_requested" ? Date.now() : undefined,
     });
     if (writeResult.statusChanged) {
       deps.pushLoopEvent(state, {
@@ -154,7 +182,7 @@ export function runTaskCommand<S extends { tasks: GuiCliTask[] }, T extends GuiC
         agent: task.assignee,
         taskId: task.id,
         from: writeResult.previousStatus,
-        to: task.status
+        to: task.status,
       });
     }
     return `Task ${task.id} updated [${task.status}]`;
@@ -166,19 +194,24 @@ export function runTaskCommand<S extends { tasks: GuiCliTask[] }, T extends GuiC
     const review = deps.readOption(args, "--review");
     const reason = deps.readOption(args, "--reason");
     const artifactIds = deps.parseCsvOption(args, "--artifact") ?? deps.parseCsvOption(args, "--artifacts");
-    const resultText = deps.stripOptions(args.slice(2), ["--review", "--reason", "--artifact", "--artifacts"]).join(" ").trim();
+    const resultText = deps
+      .stripOptions(args.slice(2), ["--review", "--reason", "--artifact", "--artifacts"])
+      .join(" ")
+      .trim();
     if (review && review !== "approved" && review !== "changes_requested") {
       return "invalid review result: use approved or changes_requested";
     }
     if (review === "changes_requested") {
       const conversation = task.conversationId ? deps.ensureConversation(state, task.conversationId) : undefined;
-      const worker = conversation ? deps.workerAgentForConversation(state, conversation) : deps.defaultWorkerAgentFor(state);
+      const worker = conversation
+        ? deps.workerAgentForConversation(state, conversation)
+        : deps.defaultWorkerAgentFor(state);
       const workerId = worker?.id ?? deps.defaultWorkerAgentFor(state).id;
       const previousStatus = applyGuiTaskChangesRequested(task, {
         actorId: actor.id,
         workerId,
         reason: reason || resultText || "Reviewer requested revisions.",
-        artifactIds
+        artifactIds,
       });
       if (previousStatus !== task.status) deps.pushTaskTransition(state, task, previousStatus);
       deps.queueTaskChangesRequestedMessage(state, task, task.assignee ?? workerId);

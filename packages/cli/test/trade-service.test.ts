@@ -4,7 +4,7 @@ import {
   resolveTradeDaemonProgramArgs,
   shouldKillTradeDaemonCommand,
   tradeDaemonLogPath,
-  tradeServiceNames
+  tradeServiceNames,
 } from "../src/trade/service.js";
 import { TRADE_SERVICE_LABEL } from "../src/paths.js";
 

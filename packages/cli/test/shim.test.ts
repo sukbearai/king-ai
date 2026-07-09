@@ -21,7 +21,7 @@ async function setupShim(): Promise<{ shim: string; learnedDir: string; draft: s
 function runShim(shim: string, args: string[], env: Record<string, string | undefined>) {
   return spawnSync("node", [shim, ...args], {
     encoding: "utf8",
-    env: { ...process.env, KING_AI_AGENT_RUNTIME_URL: undefined, KING_AI_AGENT_RUNTIME_TOKEN: undefined, ...env }
+    env: { ...process.env, KING_AI_AGENT_RUNTIME_URL: undefined, KING_AI_AGENT_RUNTIME_TOKEN: undefined, ...env },
   });
 }
 
@@ -72,14 +72,18 @@ test("shim skill save validates name, content, and configuration", async () => {
 async function captureCliPost(
   shim: string,
   argv: string[],
-  env: Record<string, string | undefined>
+  env: Record<string, string | undefined>,
 ): Promise<{ runId?: string; contract?: { taskId?: string } }> {
   let captured: { runId?: string; contract?: { taskId?: string } } = {};
   const server = createServer((req, res) => {
     let raw = "";
-    req.on("data", (chunk) => { raw += chunk; });
+    req.on("data", (chunk) => {
+      raw += chunk;
+    });
     req.on("end", () => {
-      try { captured = JSON.parse(raw); } catch {}
+      try {
+        captured = JSON.parse(raw);
+      } catch {}
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ text: "", exitCode: 0 }));
     });
@@ -90,10 +94,17 @@ async function captureCliPost(
     // Must spawn asynchronously: spawnSync would block this process's event loop, so the in-process
     // HTTP server could never handle the shim's request.
     const child = spawn("node", [shim, ...argv], {
-      env: { ...process.env, KING_AI_AGENT_RUNTIME_URL: `http://127.0.0.1:${port}`, KING_AI_AGENT_RUNTIME_TOKEN: "t", ...env }
+      env: {
+        ...process.env,
+        KING_AI_AGENT_RUNTIME_URL: `http://127.0.0.1:${port}`,
+        KING_AI_AGENT_RUNTIME_TOKEN: "t",
+        ...env,
+      },
     });
     let stderr = "";
-    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
     const status = await new Promise<number | null>((resolve) => child.on("close", resolve));
     assert.equal(status, 0, stderr);
   } finally {
@@ -112,7 +123,7 @@ test("shim forwards the run file's runId/contract over the frozen spawn-time env
   const fresh = await captureCliPost(shim, ["task", "done", "task-fresh"], {
     KING_AI_AGENT_RUNTIME_RUN_ID: "run-stale",
     KING_AI_AGENT_RUNTIME_CONTRACT: JSON.stringify({ taskId: "task-stale" }),
-    KING_AI_AGENT_RUNTIME_RUN_FILE: runFile
+    KING_AI_AGENT_RUNTIME_RUN_FILE: runFile,
   });
   assert.equal(fresh.runId, "run-fresh");
   assert.equal(fresh.contract?.taskId, "task-fresh");
@@ -120,7 +131,7 @@ test("shim forwards the run file's runId/contract over the frozen spawn-time env
   // With no run file, the shim falls back to the env values (backward compatible).
   const fallback = await captureCliPost(shim, ["task", "done", "task-stale"], {
     KING_AI_AGENT_RUNTIME_RUN_ID: "run-stale",
-    KING_AI_AGENT_RUNTIME_CONTRACT: JSON.stringify({ taskId: "task-stale" })
+    KING_AI_AGENT_RUNTIME_CONTRACT: JSON.stringify({ taskId: "task-stale" }),
   });
   assert.equal(fallback.runId, "run-stale");
   assert.equal(fallback.contract?.taskId, "task-stale");

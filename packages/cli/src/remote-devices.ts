@@ -52,7 +52,10 @@ export async function loadRemoteDevicesConfig(path = DEVICES_PATH): Promise<Remo
   }
 }
 
-export async function saveRemoteDevicesConfig(config: RemoteDevicesConfig, path = DEVICES_PATH): Promise<RemoteDevicesConfig> {
+export async function saveRemoteDevicesConfig(
+  config: RemoteDevicesConfig,
+  path = DEVICES_PATH,
+): Promise<RemoteDevicesConfig> {
   const normalized = normalizeRemoteDevicesConfig(config);
   await mkdir(CONFIG_DIR, { recursive: true });
   await writeFile(path, JSON.stringify(normalized, null, 2) + "\n", "utf8");
@@ -61,12 +64,18 @@ export async function saveRemoteDevicesConfig(config: RemoteDevicesConfig, path 
 }
 
 export function summarizeRemoteDevice(device: RemoteDevice): RemoteDeviceSummary {
-  const auth = device.password ? "password" : device.passwordEnv ? "passwordEnv" : device.identityFile ? "identityFile" : "ssh-agent";
+  const auth = device.password
+    ? "password"
+    : device.passwordEnv
+      ? "passwordEnv"
+      : device.identityFile
+        ? "identityFile"
+        : "ssh-agent";
   const { password: _password, ...rest } = device;
   return {
     ...rest,
     auth,
-    hasPassword: Boolean(device.password)
+    hasPassword: Boolean(device.password),
   };
 }
 
@@ -88,7 +97,7 @@ export function upsertRemoteDevice(config: RemoteDevicesConfig, raw: unknown): R
   devices.push(device);
   return normalizeRemoteDevicesConfig({
     defaultDevice: config.defaultDevice || device.id,
-    devices
+    devices,
   });
 }
 
@@ -98,7 +107,7 @@ export function deleteRemoteDevice(config: RemoteDevicesConfig, id: string): Rem
   const devices = config.devices.filter((entry) => entry.id !== key);
   return normalizeRemoteDevicesConfig({
     defaultDevice: config.defaultDevice === key ? devices[0]?.id : config.defaultDevice,
-    devices
+    devices,
   });
 }
 
@@ -117,7 +126,8 @@ export function normalizeRemoteDevicesConfig(raw: unknown): RemoteDevicesConfig 
     if (ids.has(device.id)) throw new Error(`duplicate remote device id: ${device.id}`);
     ids.add(device.id);
   }
-  const defaultDevice = typeof input.defaultDevice === "string" && input.defaultDevice.trim() ? input.defaultDevice.trim() : undefined;
+  const defaultDevice =
+    typeof input.defaultDevice === "string" && input.defaultDevice.trim() ? input.defaultDevice.trim() : undefined;
   if (defaultDevice && !ids.has(defaultDevice)) throw new Error(`default remote device not found: ${defaultDevice}`);
   return { ...(defaultDevice ? { defaultDevice } : {}), devices };
 }
@@ -139,9 +149,15 @@ function normalizeRemoteDevice(raw: unknown, label: string): RemoteDevice {
     ...(optionalString(input.passwordEnv) ? { passwordEnv: optionalString(input.passwordEnv) } : {}),
     ...(optionalString(input.identityFile) ? { identityFile: optionalString(input.identityFile) } : {}),
     ...(optionalString(input.defaultApp) ? { defaultApp: optionalString(input.defaultApp) } : {}),
-    ...(input.apps && typeof input.apps === "object" ? { apps: normalizeApps(input.apps as Record<string, unknown>, `${label}.apps`) } : {}),
-    ...(input.databases && typeof input.databases === "object" ? { databases: normalizeServiceCommands(input.databases as Record<string, unknown>, `${label}.databases`) } : {}),
-    ...(input.redis && typeof input.redis === "object" ? { redis: normalizeServiceCommands(input.redis as Record<string, unknown>, `${label}.redis`) } : {})
+    ...(input.apps && typeof input.apps === "object"
+      ? { apps: normalizeApps(input.apps as Record<string, unknown>, `${label}.apps`) }
+      : {}),
+    ...(input.databases && typeof input.databases === "object"
+      ? { databases: normalizeServiceCommands(input.databases as Record<string, unknown>, `${label}.databases`) }
+      : {}),
+    ...(input.redis && typeof input.redis === "object"
+      ? { redis: normalizeServiceCommands(input.redis as Record<string, unknown>, `${label}.redis`) }
+      : {}),
   };
 }
 
@@ -151,9 +167,15 @@ function normalizeApps(raw: Record<string, unknown>, label: string): Record<stri
     if (!value || typeof value !== "object") throw new Error(`${label}.${name} must be an object`);
     const app = value as Record<string, unknown>;
     result[name] = {
-      ...(app.installMarkers !== undefined ? { installMarkers: normalizeStringArray(app.installMarkers, `${label}.${name}.installMarkers`) } : {}),
-      ...(app.logRoots !== undefined ? { logRoots: normalizeStringArray(app.logRoots, `${label}.${name}.logRoots`) } : {}),
-      ...(app.errorPatterns !== undefined ? { errorPatterns: normalizeStringArray(app.errorPatterns, `${label}.${name}.errorPatterns`) } : {})
+      ...(app.installMarkers !== undefined
+        ? { installMarkers: normalizeStringArray(app.installMarkers, `${label}.${name}.installMarkers`) }
+        : {}),
+      ...(app.logRoots !== undefined
+        ? { logRoots: normalizeStringArray(app.logRoots, `${label}.${name}.logRoots`) }
+        : {}),
+      ...(app.errorPatterns !== undefined
+        ? { errorPatterns: normalizeStringArray(app.errorPatterns, `${label}.${name}.errorPatterns`) }
+        : {}),
     };
   }
   return result;
@@ -166,7 +188,7 @@ function normalizeServiceCommands(raw: Record<string, unknown>, label: string): 
     const service = value as Record<string, unknown>;
     result[name] = {
       ...(optionalString(service.type) ? { type: optionalString(service.type) } : {}),
-      command: requiredString(service.command, `${label}.${name}.command`)
+      command: requiredString(service.command, `${label}.${name}.command`),
     };
   }
   return result;

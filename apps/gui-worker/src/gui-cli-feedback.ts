@@ -18,20 +18,23 @@ export type RunFeedbackCommandDeps<S extends { runFeedback: GuiCliRunFeedback[] 
 export function runFeedbackCommand<S extends { runFeedback: GuiCliRunFeedback[] }, F extends GuiCliRunFeedback>(
   state: S,
   args: string[],
-  deps: RunFeedbackCommandDeps<S, F>
+  deps: RunFeedbackCommandDeps<S, F>,
 ): string {
   const cmd = args[0] || "list";
   if (cmd === "list") {
     const agent = deps.readOption(args, "--agent");
     const errored = deps.readBooleanOption(args, "--errored");
     const completed = deps.readBooleanOption(args, "--completed");
-    const rows = state.runFeedback.filter((feedback) =>
-      (!agent || feedback.agentId === agent) &&
-      (errored === undefined || feedback.errored === errored) &&
-      (completed === undefined || feedback.taskCompleted === completed)
+    const rows = state.runFeedback.filter(
+      (feedback) =>
+        (!agent || feedback.agentId === agent) &&
+        (errored === undefined || feedback.errored === errored) &&
+        (completed === undefined || feedback.taskCompleted === completed),
     ) as F[];
     if (rows.length === 0) return "No run feedback found.";
-    return rows.map((feedback) => deps.formatRunFeedbackLine(feedback)).join("\n") + `\n\n${rows.length} feedback record(s)`;
+    return (
+      rows.map((feedback) => deps.formatRunFeedbackLine(feedback)).join("\n") + `\n\n${rows.length} feedback record(s)`
+    );
   }
   if (cmd === "get") {
     const feedback = deps.findRunFeedback(state, args[1]);
@@ -41,7 +44,10 @@ export function runFeedbackCommand<S extends { runFeedback: GuiCliRunFeedback[] 
     const agent = deps.readOption(args, "--agent");
     const rows = state.runFeedback.filter((feedback) => !agent || feedback.agentId === agent) as F[];
     if (rows.length === 0) return "No run feedback found.";
-    return deps.summarizeRunFeedback(rows).map((summary) => deps.formatRunFeedbackSummaryLine(summary)).join("\n");
+    return deps
+      .summarizeRunFeedback(rows)
+      .map((summary) => deps.formatRunFeedbackSummaryLine(summary))
+      .join("\n");
   }
   if (cmd === "record") {
     let feedback: F;

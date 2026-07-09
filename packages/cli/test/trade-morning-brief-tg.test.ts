@@ -6,7 +6,7 @@ import {
   parseTgRecentMessages,
   preprocessTelegramBody,
   isTradeRelevantTweet,
-  resolveBriefingPushTg
+  resolveBriefingPushTg,
 } from "../src/trade/morning-brief.js";
 import { chunkTelegramMessage } from "../src/trade/telegram.js";
 import { countRecentCacheRecords } from "../src/trade/twitter-cache.js";
@@ -14,9 +14,9 @@ import { countRecentCacheRecords } from "../src/trade/twitter-cache.js";
 describe("parseTelegramChannels", () => {
   it("maps label to tg chat name", () => {
     const rows = parseTelegramChannels({
-      "方程式快讯": "方程式新闻 BWEnews",
+      方程式快讯: "方程式新闻 BWEnews",
       "传统金融/宏观": "@BWETradFi |方程式财经（传统金融新闻）",
-      "meme 链上监控": "meme链上监控"
+      "meme 链上监控": "meme链上监控",
     });
     assert.equal(rows.length, 3);
     assert.deepEqual(rows[0], { label: "方程式快讯", chat: "方程式新闻 BWEnews" });
@@ -28,7 +28,7 @@ describe("parseTgRecentMessages", () => {
   it("extracts content from tg recent --json output", () => {
     const raw = JSON.stringify({
       ok: true,
-      data: [{ content: "hello" }, { content: "world" }, { content: "" }]
+      data: [{ content: "hello" }, { content: "world" }, { content: "" }],
     });
     assert.deepEqual(parseTgRecentMessages(raw), ["hello", "world"]);
   });
@@ -51,7 +51,7 @@ describe("preprocessTelegramBody", () => {
       "⬇️ [CZ](https://chain.fm/account) received 200k Fomo3D from 0xce...25c6",
       "⬇️ [CZ](https://chain.fm/account) received 200k Fomo3D from 0xce...25c6",
       "⚙️",
-      "⬇️ [CZ](https://chain.fm/account) received 100k Fomo3D from 0xb0...ea61"
+      "⬇️ [CZ](https://chain.fm/account) received 100k Fomo3D from 0xb0...ea61",
     ].join("\n");
     const out = preprocessTelegramBody(raw);
     assert.equal(out.split("\n").length, 2);
@@ -99,7 +99,7 @@ describe("compactSummaryFallback", () => {
       "BTC breaks 60000",
       "",
       "[ETH bid](https://example.com)",
-      ...Array.from({ length: 30 }, (_, i) => `line ${i}`)
+      ...Array.from({ length: 30 }, (_, i) => `line ${i}`),
     ].join("\n");
     const out = compactSummaryFallback(repeated);
     assert.match(out, /BTC breaks 60000/);

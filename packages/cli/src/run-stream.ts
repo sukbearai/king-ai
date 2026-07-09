@@ -41,7 +41,7 @@ export function initialRunStreamState(): RunStreamState {
     message: "",
     tools: [],
     terminal: "running",
-    footer: "thinking"
+    footer: "thinking",
   };
 }
 
@@ -57,28 +57,31 @@ export function reduceRunStream(state: RunStreamState, event: RunStreamEvent): R
     return {
       ...state,
       footer: "tool_running",
-      tools: [...state.tools, { id: event.id ?? `tool-${state.tools.length + 1}`, name: event.name, input: event.input, status: "running" }]
+      tools: [
+        ...state.tools,
+        { id: event.id ?? `tool-${state.tools.length + 1}`, name: event.name, input: event.input, status: "running" },
+      ],
     };
   }
   if (event.type === "tool_delta") {
     return updateTool(state, event.id, (tool) => ({
       ...tool,
       output: `${tool.output ?? ""}${event.text}`,
-      status: "running"
+      status: "running",
     }));
   }
   if (event.type === "tool_done") {
     return updateTool(state, event.id, (tool) => ({
       ...tool,
       output: event.output ?? tool.output,
-      status: event.error ? "error" : "done"
+      status: event.error ? "error" : "done",
     }));
   }
   if (event.type === "attempt") {
     return {
       ...state,
       attempts: [...(state.attempts ?? []), { attempt: event.attempt, status: event.status, message: event.message }],
-      footer: event.status === "failed_retrying" ? "thinking" : state.footer
+      footer: event.status === "failed_retrying" ? "thinking" : state.footer,
     };
   }
   if (event.type === "done") return { ...state, terminal: "done", footer: null };
@@ -106,11 +109,26 @@ export function renderRunStreamText(state: RunStreamState): string {
 
 export function renderRunStreamCard(state: RunStreamState): {
   summary: string;
-  sections: Array<{ kind: "reasoning" | "tool" | "message" | "status"; title: string; body: string; collapsed: boolean }>;
+  sections: Array<{
+    kind: "reasoning" | "tool" | "message" | "status";
+    title: string;
+    body: string;
+    collapsed: boolean;
+  }>;
 } {
-  const sections: Array<{ kind: "reasoning" | "tool" | "message" | "status"; title: string; body: string; collapsed: boolean }> = [];
+  const sections: Array<{
+    kind: "reasoning" | "tool" | "message" | "status";
+    title: string;
+    body: string;
+    collapsed: boolean;
+  }> = [];
   if (state.reasoning) {
-    sections.push({ kind: "reasoning", title: state.footer === "thinking" ? "Thinking" : "Reasoning", body: compact(state.reasoning, 1500), collapsed: state.footer !== "thinking" });
+    sections.push({
+      kind: "reasoning",
+      title: state.footer === "thinking" ? "Thinking" : "Reasoning",
+      body: compact(state.reasoning, 1500),
+      collapsed: state.footer !== "thinking",
+    });
   }
   const priorTools = state.tools.length > 2 && state.terminal === "running" ? state.tools.slice(0, -1) : [];
   if (priorTools.length) {
@@ -118,7 +136,7 @@ export function renderRunStreamCard(state: RunStreamState): {
       kind: "tool",
       title: `${priorTools.length} tool calls`,
       body: priorTools.map((tool) => `${tool.status}: ${tool.name}`).join("\n"),
-      collapsed: true
+      collapsed: true,
     });
   }
   const visibleTools = priorTools.length ? state.tools.slice(-1) : state.tools;
@@ -127,7 +145,7 @@ export function renderRunStreamCard(state: RunStreamState): {
       kind: "tool",
       title: `${tool.status}: ${tool.name}`,
       body: compact([tool.input, tool.output].filter(Boolean).join("\n"), 1500) || "(no output)",
-      collapsed: tool.status !== "running"
+      collapsed: tool.status !== "running",
     });
   }
   const attempts = state.attempts ?? [];
@@ -135,11 +153,13 @@ export function renderRunStreamCard(state: RunStreamState): {
     sections.push({
       kind: "status",
       title: "Attempts",
-      body: attempts.map((attempt) => {
-        const label = attempt.status === "failed_retrying" ? "failed, retrying" : "failed";
-        return `#${attempt.attempt} ${label}${attempt.message ? `: ${compact(attempt.message, 500)}` : ""}`;
-      }).join("\n"),
-      collapsed: state.terminal === "running"
+      body: attempts
+        .map((attempt) => {
+          const label = attempt.status === "failed_retrying" ? "failed, retrying" : "failed";
+          return `#${attempt.attempt} ${label}${attempt.message ? `: ${compact(attempt.message, 500)}` : ""}`;
+        })
+        .join("\n"),
+      collapsed: state.terminal === "running",
     });
   }
   if (state.message) sections.push({ kind: "message", title: "Reply", body: state.message, collapsed: false });
@@ -149,13 +169,17 @@ export function renderRunStreamCard(state: RunStreamState): {
   return { summary: summaryText(state), sections };
 }
 
-function updateTool(state: RunStreamState, id: string | undefined, update: (tool: RunStreamTool) => RunStreamTool): RunStreamState {
+function updateTool(
+  state: RunStreamState,
+  id: string | undefined,
+  update: (tool: RunStreamTool) => RunStreamTool,
+): RunStreamState {
   const target = id ?? state.tools.at(-1)?.id;
   if (!target) return state;
   return {
     ...state,
     footer: "tool_running",
-    tools: state.tools.map((tool) => tool.id === target ? update(tool) : tool)
+    tools: state.tools.map((tool) => (tool.id === target ? update(tool) : tool)),
   };
 }
 

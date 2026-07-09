@@ -35,11 +35,13 @@ export interface WorktreeCleanupResult {
 export type WorktreeExecutor = (file: string, args: string[]) => Promise<unknown>;
 
 export function safeBranchSegment(value: string): string {
-  return value
-    .trim()
-    .replace(/[^A-Za-z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80) || "agent";
+  return (
+    value
+      .trim()
+      .replace(/[^A-Za-z0-9._-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 80) || "agent"
+  );
 }
 
 export function isGitRepo(path: string): boolean {
@@ -112,7 +114,7 @@ export function planAgentWorktrees(args: { agentId: string; workspaces: string[]
         repoUrl: githubRepoUrl(repoRoot),
         branch,
         worktreePath,
-        command: ["git", "-C", repoRoot, "worktree", "add", "-B", branch, worktreePath]
+        command: ["git", "-C", repoRoot, "worktree", "add", "-B", branch, worktreePath],
       };
     });
 }
@@ -121,7 +123,10 @@ export function formatWorktreePlanForPrompt(plans: WorktreePlan[]): string {
   if (plans.length === 0) return "";
   return [
     "Planned git worktree isolation (not auto-created by the daemon):",
-    ...plans.map((plan) => `- ${plan.repoName}: ${plan.worktreePath} on ${plan.branch}${plan.repoUrl ? ` from ${plan.repoUrl}` : ""}`)
+    ...plans.map(
+      (plan) =>
+        `- ${plan.repoName}: ${plan.worktreePath} on ${plan.branch}${plan.repoUrl ? ` from ${plan.repoUrl}` : ""}`,
+    ),
   ].join("\n");
 }
 
@@ -135,7 +140,7 @@ export function commandText(command: string[]): string {
 
 export async function prepareWorktreePlans(
   plans: WorktreePlan[],
-  options: { execute?: boolean; executor?: WorktreeExecutor } = {}
+  options: { execute?: boolean; executor?: WorktreeExecutor } = {},
 ): Promise<WorktreePreparationResult[]> {
   const executor = options.executor ?? ((file, args) => execFileP(file, args));
   const results: WorktreePreparationResult[] = [];
@@ -156,7 +161,12 @@ export async function prepareWorktreePlans(
       await executor(file, args);
       results.push({ plan, status: "created", commandText: command });
     } catch (err) {
-      results.push({ plan, status: "failed", commandText: command, detail: err instanceof Error ? err.message : String(err) });
+      results.push({
+        plan,
+        status: "failed",
+        commandText: command,
+        detail: err instanceof Error ? err.message : String(err),
+      });
     }
   }
   return results;
@@ -184,7 +194,7 @@ export function cleanupCommand(plan: WorktreePlan): string[] {
 
 export async function cleanupWorktreePlans(
   plans: WorktreePlan[],
-  options: { execute?: boolean; executor?: WorktreeExecutor } = {}
+  options: { execute?: boolean; executor?: WorktreeExecutor } = {},
 ): Promise<WorktreeCleanupResult[]> {
   const executor = options.executor ?? ((file, args) => execFileP(file, args));
   const results: WorktreeCleanupResult[] = [];
@@ -205,7 +215,12 @@ export async function cleanupWorktreePlans(
       await executor(file, args);
       results.push({ plan, status: "removed", commandText: command });
     } catch (err) {
-      results.push({ plan, status: "failed", commandText: command, detail: err instanceof Error ? err.message : String(err) });
+      results.push({
+        plan,
+        status: "failed",
+        commandText: command,
+        detail: err instanceof Error ? err.message : String(err),
+      });
     }
   }
   return results;

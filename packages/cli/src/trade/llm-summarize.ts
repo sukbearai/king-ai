@@ -49,7 +49,7 @@ export async function llmSummarize(text: string, label: string): Promise<string>
     "输出要求：纯文本，不要使用任何 Markdown 格式（禁止 # 标题、**加粗**、- 列表、代码块、反引号等）。",
     "可用换行分段，条目用「1.」「2.」编号或「·」开头。",
     "",
-    text.slice(0, 12000)
+    text.slice(0, 12000),
   ].join("\n");
   try {
     const summary = await runAgent(prompt, { timeoutMs: 60_000, task: "summarize" });
@@ -66,6 +66,6 @@ export async function batchSummarize(blocks: Array<{ label: string; text: string
     blocks.map(async (block) => {
       if (!block.text.trim()) return "";
       return llmSummarize(block.text, block.label);
-    })
+    }),
   );
 }

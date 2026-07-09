@@ -133,13 +133,13 @@ export function emptyAgentRunStats(): AgentRunStats {
     inputTokens: 0,
     cacheReadInputTokens: 0,
     outputTokens: 0,
-    totalTokens: 0
+    totalTokens: 0,
   };
 }
 
 export function recordAgentRunStats(
   current: AgentRunStats,
-  args: { status: "completed" | "failed"; usage?: unknown; durationMs: number; model?: string | null; at?: string }
+  args: { status: "completed" | "failed"; usage?: unknown; durationMs: number; model?: string | null; at?: string },
 ): AgentRunStats {
   const usage = normalizeEngineUsage(args.usage);
   return {
@@ -153,7 +153,7 @@ export function recordAgentRunStats(
     lastRunAt: args.at ?? new Date().toISOString(),
     lastDurationMs: Math.max(0, Math.floor(args.durationMs)),
     lastStatus: args.status,
-    lastModel: args.model ?? null
+    lastModel: args.model ?? null,
   };
 }
 
@@ -186,13 +186,18 @@ export function usagePricingFromEnv(env: NodeJS.ProcessEnv = process.env): Usage
 export function normalizeUsagePricing(value: unknown): UsagePricingRule[] {
   if (Array.isArray(value)) return value.flatMap((entry) => normalizeUsagePricingRule(entry));
   if (!value || typeof value !== "object") return [];
-  return Object.entries(value as Record<string, unknown>).flatMap(([key, entry]) => normalizeUsagePricingRule({
-    ...(entry && typeof entry === "object" ? entry as Record<string, unknown> : {}),
-    key
-  }));
+  return Object.entries(value as Record<string, unknown>).flatMap(([key, entry]) =>
+    normalizeUsagePricingRule({
+      ...(entry && typeof entry === "object" ? (entry as Record<string, unknown>) : {}),
+      key,
+    }),
+  );
 }
 
-export function estimateUsageCost(totals: UsageTotals, pricing?: UsagePricingRule | null): UsageCostSummary | undefined {
+export function estimateUsageCost(
+  totals: UsageTotals,
+  pricing?: UsagePricingRule | null,
+): UsageCostSummary | undefined {
   if (!pricing) return undefined;
   const inputRate = pricing.inputPerMillionTokens ?? 0;
   const cacheRate = pricing.cacheReadInputPerMillionTokens ?? inputRate;
@@ -212,11 +217,14 @@ export function estimateUsageCost(totals: UsageTotals, pricing?: UsagePricingRul
     outputCost,
     pricedTokens,
     unpricedTokens: Math.max(0, totals.totalTokens - pricedTokens),
-    pricingKeys: [pricing.key]
+    pricingKeys: [pricing.key],
   };
 }
 
-export function checkTokenBudget(stats: AgentRunStats | undefined, budget: number | null | undefined): TokenBudgetCheck | undefined {
+export function checkTokenBudget(
+  stats: AgentRunStats | undefined,
+  budget: number | null | undefined,
+): TokenBudgetCheck | undefined {
   if (!stats || !budget) return undefined;
   const used = stats.totalTokens;
   const remaining = budget - used;
@@ -228,7 +236,7 @@ export function checkTokenBudget(stats: AgentRunStats | undefined, budget: numbe
     remaining,
     warning,
     exceeded,
-    state: exceeded ? "exceeded" : warning ? "warning" : "ok"
+    state: exceeded ? "exceeded" : warning ? "warning" : "ok",
   };
 }
 
@@ -240,7 +248,7 @@ export function formatTokenBudgetCheck(check?: TokenBudgetCheck): string {
 export function summarizeAgentUsage(
   agents: UsageAgentInput[] = [],
   budget: number | null | undefined = null,
-  pricingRules: UsagePricingRule[] = []
+  pricingRules: UsagePricingRule[] = [],
 ): UsageSummary {
   const summary: UsageSummary = {
     agents: [],
@@ -252,7 +260,7 @@ export function summarizeAgentUsage(
     inputTokens: 0,
     cacheReadInputTokens: 0,
     outputTokens: 0,
-    totalTokens: 0
+    totalTokens: 0,
   };
   const byEngine = new Map<string, UsageGroupSummary>();
   const byModel = new Map<string, UsageGroupSummary>();
@@ -279,7 +287,7 @@ export function summarizeAgentUsage(
       lastRunAt: stats.lastRunAt,
       lastStatus: stats.lastStatus,
       tokenBudget: agent.tokenBudget,
-      cost
+      cost,
     };
     summary.agents.push(agentSummary);
     addUsageTotals(summary, stats);
@@ -292,8 +300,12 @@ export function summarizeAgentUsage(
   }
 
   summary.agents.sort((left, right) => right.totalTokens - left.totalTokens || left.id.localeCompare(right.id));
-  summary.byEngine = [...byEngine.values()].sort((left, right) => right.totalTokens - left.totalTokens || left.key.localeCompare(right.key));
-  summary.byModel = [...byModel.values()].sort((left, right) => right.totalTokens - left.totalTokens || left.key.localeCompare(right.key));
+  summary.byEngine = [...byEngine.values()].sort(
+    (left, right) => right.totalTokens - left.totalTokens || left.key.localeCompare(right.key),
+  );
+  summary.byModel = [...byModel.values()].sort(
+    (left, right) => right.totalTokens - left.totalTokens || left.key.localeCompare(right.key),
+  );
   summary.budget = checkTokenBudget(summary, budget);
   return summary;
 }
@@ -302,7 +314,7 @@ export function formatUsageSummary(summary: UsageSummary): string {
   const lines = [
     "usage summary:",
     `  runs=${summary.turns} completed=${summary.completed} failed=${summary.failed}`,
-    `  tokens=${summary.totalTokens} input=${summary.inputTokens} cache=${summary.cacheReadInputTokens} output=${summary.outputTokens}`
+    `  tokens=${summary.totalTokens} input=${summary.inputTokens} cache=${summary.cacheReadInputTokens} output=${summary.outputTokens}`,
   ];
   const budget = formatTokenBudgetCheck(summary.budget);
   if (budget) lines.push(`  token budget: ${budget}`);
@@ -322,7 +334,9 @@ export function formatUsageSummary(summary: UsageSummary): string {
       const label = agent.name ? `${agent.id} (${agent.name})` : agent.id;
       const budgetText = formatTokenBudgetCheck(agent.tokenBudget);
       const costText = agent.cost ? ` cost=${formatUsageCost(agent.cost)}` : "";
-      lines.push(`  - ${label}: engine=${agent.engine} model=${agent.model || "default"} ${formatUsageGroup(agent)}${agent.lastRunAt ? ` last=${agent.lastStatus ?? "unknown"}@${agent.lastRunAt}` : ""}${budgetText ? ` ${budgetText}` : ""}${costText}`);
+      lines.push(
+        `  - ${label}: engine=${agent.engine} model=${agent.model || "default"} ${formatUsageGroup(agent)}${agent.lastRunAt ? ` last=${agent.lastStatus ?? "unknown"}@${agent.lastRunAt}` : ""}${budgetText ? ` ${budgetText}` : ""}${costText}`,
+      );
     }
   } else {
     lines.push("by agent: none");
@@ -356,10 +370,13 @@ export function listUsageExpenses(summary: UsageSummary): UsageExpenseRow[] {
         unpricedTokens: cost?.unpricedTokens ?? agent.totalTokens,
         pricingKeys: cost?.pricingKeys ?? [],
         lastRunAt: agent.lastRunAt,
-        lastStatus: agent.lastStatus
+        lastStatus: agent.lastStatus,
       };
     })
-    .sort((left, right) => right.amount - left.amount || right.totalTokens - left.totalTokens || left.agentId.localeCompare(right.agentId));
+    .sort(
+      (left, right) =>
+        right.amount - left.amount || right.totalTokens - left.totalTokens || left.agentId.localeCompare(right.agentId),
+    );
 }
 
 export function formatUsageExpenses(rows: UsageExpenseRow[]): string {
@@ -372,13 +389,18 @@ export function formatUsageExpenses(rows: UsageExpenseRow[]): string {
     const keys = row.pricingKeys.length ? ` pricing=${row.pricingKeys.join(",")}` : "";
     const last = row.lastRunAt ? ` last=${row.lastStatus ?? "unknown"}@${row.lastRunAt}` : "";
     lines.push(
-      `  - ${label}: ${cost} engine=${row.engine} model=${row.model} runs=${row.turns} completed=${row.completed} failed=${row.failed} tokens=${row.totalTokens} input=${row.inputTokens} cache=${row.cacheReadInputTokens} output=${row.outputTokens} inputCost=${row.inputCost.toFixed(6)} cacheCost=${row.cacheReadInputCost.toFixed(6)} outputCost=${row.outputCost.toFixed(6)}${unpriced}${keys}${last}`
+      `  - ${label}: ${cost} engine=${row.engine} model=${row.model} runs=${row.turns} completed=${row.completed} failed=${row.failed} tokens=${row.totalTokens} input=${row.inputTokens} cache=${row.cacheReadInputTokens} output=${row.outputTokens} inputCost=${row.inputCost.toFixed(6)} cacheCost=${row.cacheReadInputCost.toFixed(6)} outputCost=${row.outputCost.toFixed(6)}${unpriced}${keys}${last}`,
     );
   }
   return lines.join("\n");
 }
 
-function addGroup(groups: Map<string, UsageGroupSummary>, key: string, stats: AgentRunStats, cost?: UsageCostSummary): void {
+function addGroup(
+  groups: Map<string, UsageGroupSummary>,
+  key: string,
+  stats: AgentRunStats,
+  cost?: UsageCostSummary,
+): void {
   const group = groups.get(key) ?? {
     key,
     agents: 0,
@@ -388,7 +410,7 @@ function addGroup(groups: Map<string, UsageGroupSummary>, key: string, stats: Ag
     inputTokens: 0,
     cacheReadInputTokens: 0,
     outputTokens: 0,
-    totalTokens: 0
+    totalTokens: 0,
   };
   group.agents += 1;
   group.turns += stats.turns;
@@ -433,15 +455,28 @@ function normalizeUsagePricingRule(value: unknown): UsagePricingRule[] {
   const rule: UsagePricingRule = {
     key,
     currency: typeof entry.currency === "string" && entry.currency.trim() ? entry.currency.trim().toUpperCase() : "USD",
-    inputPerMillionTokens: optionalRate(entry.inputPerMillionTokens ?? entry.inputPerMillion ?? entry.input_tokens_per_million),
-    cacheReadInputPerMillionTokens: optionalRate(entry.cacheReadInputPerMillionTokens ?? entry.cacheReadInputPerMillion ?? entry.cachedInputPerMillion ?? entry.cache_read_input_tokens_per_million),
-    outputPerMillionTokens: optionalRate(entry.outputPerMillionTokens ?? entry.outputPerMillion ?? entry.output_tokens_per_million),
-    source: typeof entry.source === "string" ? entry.source : undefined
+    inputPerMillionTokens: optionalRate(
+      entry.inputPerMillionTokens ?? entry.inputPerMillion ?? entry.input_tokens_per_million,
+    ),
+    cacheReadInputPerMillionTokens: optionalRate(
+      entry.cacheReadInputPerMillionTokens ??
+        entry.cacheReadInputPerMillion ??
+        entry.cachedInputPerMillion ??
+        entry.cache_read_input_tokens_per_million,
+    ),
+    outputPerMillionTokens: optionalRate(
+      entry.outputPerMillionTokens ?? entry.outputPerMillion ?? entry.output_tokens_per_million,
+    ),
+    source: typeof entry.source === "string" ? entry.source : undefined,
   };
   return rule.inputPerMillionTokens || rule.cacheReadInputPerMillionTokens || rule.outputPerMillionTokens ? [rule] : [];
 }
 
-function selectUsagePricingRule(pricing: UsagePricingRule[], engine: string, model?: string | null): UsagePricingRule | undefined {
+function selectUsagePricingRule(
+  pricing: UsagePricingRule[],
+  engine: string,
+  model?: string | null,
+): UsagePricingRule | undefined {
   const engineKey = engine.trim().toLowerCase();
   const modelKey = model?.trim().toLowerCase();
   const candidates = [
@@ -449,9 +484,11 @@ function selectUsagePricingRule(pricing: UsagePricingRule[], engine: string, mod
     modelKey ?? "",
     `${engineKey}:*`,
     engineKey,
-    "*"
+    "*",
   ].filter(Boolean);
-  return candidates.map((key) => pricing.find((rule) => rule.key === key)).find((rule): rule is UsagePricingRule => Boolean(rule));
+  return candidates
+    .map((key) => pricing.find((rule) => rule.key === key))
+    .find((rule): rule is UsagePricingRule => Boolean(rule));
 }
 
 function optionalRate(value: unknown): number | undefined {
@@ -460,7 +497,7 @@ function optionalRate(value: unknown): number | undefined {
 }
 
 function costForTokens(tokens: number, perMillionTokens: number): number {
-  return roundCost(tokens / 1_000_000 * perMillionTokens);
+  return roundCost((tokens / 1_000_000) * perMillionTokens);
 }
 
 function roundCost(value: number): number {

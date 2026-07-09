@@ -17,7 +17,7 @@ export type RunCalendarCommandDeps = {
 export function runCalendarCommand<S extends { calendar: GuiCliCalendarItem[] }>(
   state: S,
   args: string[],
-  deps: RunCalendarCommandDeps
+  deps: RunCalendarCommandDeps,
 ): string {
   const cmd = args[0] || "list";
   if (cmd === "list") return JSON.stringify(state.calendar, null, 2);
@@ -46,7 +46,7 @@ export function runCalendarCommand<S extends { calendar: GuiCliCalendarItem[] }>
       cron,
       assignee: assigneeIdx >= 0 && args[assigneeIdx + 1] ? args[assigneeIdx + 1] : deps.defaultAgentId,
       prompt: promptIdx >= 0 && args[promptIdx + 1] ? args[promptIdx + 1] : undefined,
-      created_at: Date.now()
+      created_at: Date.now(),
     };
     state.calendar.push(item);
     return `calendar created ${item.id}${cron ? ` cron=${cron}` : ""}`;

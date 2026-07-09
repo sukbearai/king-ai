@@ -54,20 +54,21 @@ export function resolveHostRunMetaPath(input: HostRunMetaReadInput = {}): string
 export async function readHostRunMeta(input: HostRunMetaReadInput = {}): Promise<HostRunMetaReadResult> {
   const file = resolveHostRunMetaPath(input);
   const text = await readFile(file, "utf8").catch((err: unknown) => {
-    if (err && typeof err === "object" && "code" in err && (err as { code?: string }).code === "ENOENT") return undefined;
+    if (err && typeof err === "object" && "code" in err && (err as { code?: string }).code === "ENOENT")
+      return undefined;
     throw err;
   });
   if (text === undefined) {
     return {
       file,
       meta: null,
-      exists: false
+      exists: false,
     };
   }
   return {
     file,
     meta: parseHostRunMeta(text),
-    exists: true
+    exists: true,
   };
 }
 
@@ -79,8 +80,10 @@ export function formatHostRunMeta(result: HostRunMetaReadResult): string {
     `status: ${result.meta.status}`,
     result.meta.goal ? `goal: ${result.meta.goal}` : "",
     result.meta.preparedAt ? `prepared: ${result.meta.preparedAt}` : "",
-    result.meta.maxLoops !== undefined ? `loops: ${result.meta.actualLoops ?? 0}/${result.meta.maxLoops}` : ""
-  ].filter(Boolean).join("\n");
+    result.meta.maxLoops !== undefined ? `loops: ${result.meta.actualLoops ?? 0}/${result.meta.maxLoops}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export async function updateHostRunMeta(input: HostRunMetaUpdateInput): Promise<HostRunMetaReadResult> {
@@ -90,7 +93,7 @@ export async function updateHostRunMeta(input: HostRunMetaUpdateInput): Promise<
   const base: HostRunMetaData = existing.meta ?? {
     schema: "king-ai.host-run-meta.v1",
     status: input.status,
-    runId: input.runId
+    runId: input.runId,
   };
   const next: HostRunMetaData = {
     ...base,
@@ -102,14 +105,14 @@ export async function updateHostRunMeta(input: HostRunMetaUpdateInput): Promise<
     detail: cleanString(input.detail) ?? base.detail,
     command: cleanString(input.command) ?? base.command,
     exitCode: normalizeExitCode(input.exitCode) ?? base.exitCode,
-    completedAt: isTerminalStatus(input.status) ? now : base.completedAt
+    completedAt: isTerminalStatus(input.status) ? now : base.completedAt,
   };
   await mkdir(dirname(file), { recursive: true });
   await writeFile(file, `${JSON.stringify(dropUndefined({ ...next }), null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   return {
     file,
     meta: next,
-    exists: true
+    exists: true,
   };
 }
 
@@ -131,9 +134,11 @@ function parseHostRunMeta(text: string): HostRunMetaData | null {
       detail: typeof parsed.detail === "string" ? parsed.detail : undefined,
       command: typeof parsed.command === "string" ? parsed.command : undefined,
       exitCode: typeof parsed.exitCode === "number" ? parsed.exitCode : undefined,
-      session: parsed.session && typeof parsed.session === "object" ? parsed.session as Record<string, unknown> : undefined,
-      paths: parsed.paths && typeof parsed.paths === "object" ? parsed.paths as Record<string, unknown> : undefined,
-      config: parsed.config && typeof parsed.config === "object" ? parsed.config as Record<string, unknown> : undefined
+      session:
+        parsed.session && typeof parsed.session === "object" ? (parsed.session as Record<string, unknown>) : undefined,
+      paths: parsed.paths && typeof parsed.paths === "object" ? (parsed.paths as Record<string, unknown>) : undefined,
+      config:
+        parsed.config && typeof parsed.config === "object" ? (parsed.config as Record<string, unknown>) : undefined,
     };
   } catch {
     return null;

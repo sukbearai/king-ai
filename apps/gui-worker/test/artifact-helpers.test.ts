@@ -8,7 +8,7 @@ test("checkArtifactQuality flags non-standard kinds and missing metadata dates",
     path: "domain/category/item",
     source: "estimate",
     confidence: 0.9,
-    metadata: {}
+    metadata: {},
   });
   assert.equal(check.valid, false);
   assert.match(formatArtifactQualityCheck(check), /non-standard kind/);
@@ -21,7 +21,7 @@ test("checkArtifactQuality accepts well-formed standard artifacts", () => {
     path: "platform/runtime/item",
     source: "cross_validated",
     confidence: 0.9,
-    metadata: { verified_at: "2026-06-08" }
+    metadata: { verified_at: "2026-06-08" },
   });
   assert.equal(check.valid, true);
   assert.equal(check.warnings.length, 0);

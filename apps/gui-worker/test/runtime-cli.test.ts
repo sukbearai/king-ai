@@ -67,20 +67,24 @@ function makeDeps(overrides: Partial<Deps> = {}): Deps {
     agendaJson: async () => ({}),
     getStateField: {
       messages: (s) => s.messages,
-      pushMessage: (s, message) => { s.messages.push(message); },
+      pushMessage: (s, message) => {
+        s.messages.push(message);
+      },
       agents: (s) => s.agents,
       composing: (s) => s.composing,
-      setComposing: (s, composing) => { s.composing = composing; },
+      setComposing: (s, composing) => {
+        s.composing = composing;
+      },
       claims: (s) => s.claims,
       statusLog: (s) => s.statusLog,
-      availableEngines: (s) => s.availableEngines
+      availableEngines: (s) => s.availableEngines,
     },
     actorField: {
       id: (a) => a.id,
       name: (a) => a.name,
       engine: (a) => a.engine,
-      json: (a) => a
-    }
+      json: (a) => a,
+    },
   };
   return { ...base, ...overrides };
 }
@@ -95,14 +99,17 @@ test("runtimeCliHelp lists core collaboration commands", () => {
 test("dispatchRuntimeCli routes help without mutating state", async () => {
   const state = freshState();
   const actor = { id: "dev", name: "Dev", engine: "codex" };
-  const outcome = await dispatchRuntimeCli({
-    argv: ["help"],
-    state,
-    actor,
-    authorEngine: "codex",
-    runContract: undefined,
-    payload: {}
-  }, makeDeps());
+  const outcome = await dispatchRuntimeCli(
+    {
+      argv: ["help"],
+      state,
+      actor,
+      authorEngine: "codex",
+      runContract: undefined,
+      payload: {},
+    },
+    makeDeps(),
+  );
   assert.equal(outcome.kind, "success");
   if (outcome.kind === "success") assert.match(outcome.result, /king-ai inbox/);
 });
@@ -113,25 +120,28 @@ test("dispatchRuntimeCli only contract-checks id-targeted task mutations, not fl
   const isTaskMutationCommand = (args: string[]) => args[0] === "done" || args[0] === "update" || args[0] === "create";
   const seenTaskIds: Array<string | undefined> = [];
   const run = (argv: string[]) =>
-    dispatchRuntimeCli({
-      argv,
-      state: freshState(),
-      actor,
-      authorEngine: "codex",
-      // A live wake contract pinned to one task; the bug let any argv[2] (incl. flags) trip it.
-      runContract: { agentId: "dev", taskId: "task-pinned" },
-      payload: { runId: "run-1" }
-    }, makeDeps({
-      isTaskMutationCommand,
-      taskCommand: () => "ok",
-      validateRunContractAction: (_state, _contract, _actor, action) => {
-        seenTaskIds.push(action.taskId);
-        return undefined;
-      }
-    }));
+    dispatchRuntimeCli(
+      {
+        argv,
+        state: freshState(),
+        actor,
+        authorEngine: "codex",
+        // A live wake contract pinned to one task; the bug let any argv[2] (incl. flags) trip it.
+        runContract: { agentId: "dev", taskId: "task-pinned" },
+        payload: { runId: "run-1" },
+      },
+      makeDeps({
+        isTaskMutationCommand,
+        taskCommand: () => "ok",
+        validateRunContractAction: (_state, _contract, _actor, action) => {
+          seenTaskIds.push(action.taskId);
+          return undefined;
+        },
+      }),
+    );
 
   await run(["task", "list", "--json"]); // read subcommand: no taskId
-  await run(["task", "done", "--help"]);  // usage flag must not be read as a taskId
+  await run(["task", "done", "--help"]); // usage flag must not be read as a taskId
   await run(["task", "get", "task-123"]); // read subcommand: not contract-gated
   await run(["task", "done", "task-123"]); // real id-targeted mutation: validated
   await run(["task", "create", "Write the spec"]); // create makes a new id, not validated

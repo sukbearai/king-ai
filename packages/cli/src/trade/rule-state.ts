@@ -23,7 +23,7 @@ const DEFAULT_STATE: RuleStateFile = {
   dailyPushCounts: {},
   dailyPushDate: todayDisplayDate(),
   recentSignals: [],
-  heartbeats: {}
+  heartbeats: {},
 };
 
 const writeChains = new Map<string, Promise<unknown>>();
@@ -31,7 +31,13 @@ const writeChains = new Map<string, Promise<unknown>>();
 function withLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
   const prev = writeChains.get(path) ?? Promise.resolve();
   const run = prev.then(fn, fn);
-  writeChains.set(path, run.then(() => undefined, () => undefined));
+  writeChains.set(
+    path,
+    run.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
   return run;
 }
 
@@ -84,7 +90,7 @@ export class RuleStateStore {
     symbol: string,
     direction: string,
     severity: string,
-    volState = "normal"
+    volState = "normal",
   ): Promise<void> {
     const now = Date.now() / 1000;
     await this.update((state) => {
@@ -104,7 +110,10 @@ export class RuleStateStore {
     });
   }
 
-  async checkConfluence(symbol: string, windowSeconds = 900): Promise<Array<{ ruleKey: string; direction: string; severity: string; volState: string }>> {
+  async checkConfluence(
+    symbol: string,
+    windowSeconds = 900,
+  ): Promise<Array<{ ruleKey: string; direction: string; severity: string; volState: string }>> {
     const state = await this.readState();
     const cutoff = Date.now() / 1000 - windowSeconds;
     const rows = state.recentSignals.filter((s) => s.symbol === symbol && s.ts > cutoff);

@@ -39,11 +39,12 @@ test("runCardCommand creates and claims kanban cards through workflow helpers", 
       const idx = args.indexOf("--paths");
       return idx >= 0 ? [args[idx + 1]].filter(Boolean) : [];
     },
-    stripOptions: (args, flags) => args.filter((arg, index) => !flags.includes(arg) && !flags.includes(args[index - 1])),
+    stripOptions: (args, flags) =>
+      args.filter((arg, index) => !flags.includes(arg) && !flags.includes(args[index - 1])),
     readOption: (args, flag) => {
       const idx = args.indexOf(flag);
       return idx >= 0 ? args[idx + 1] : undefined;
-    }
+    },
   });
   assert.match(created, /^card created card-/);
   const cardId = state.cards[0]?.id;
@@ -56,7 +57,7 @@ test("runCardCommand creates and claims kanban cards through workflow helpers", 
     readOption: (args, flag) => {
       const idx = args.indexOf(flag);
       return idx >= 0 ? args[idx + 1] : undefined;
-    }
+    },
   });
   assert.match(claimed, /^card claimed/);
   assert.equal(state.cards[0]?.column, "doing");
@@ -65,28 +66,34 @@ test("runCardCommand creates and claims kanban cards through workflow helpers", 
 
 test("runTaskCommand creates tasks via createGuiTaskDraft", () => {
   const state = { tasks: [] as GuiCliTask[] };
-  const result = runTaskCommand(state, ["create", "Plan", "--assign", "dev"], { id: "dev" }, {
-    lookupTask: () => ({ error: "missing" }),
-    formatTaskLine: (_state, task) => task.id,
-    taskScopeConflicts: () => [],
-    taskScopeFromArgs: () => undefined,
-    parseCsvOption: () => undefined,
-    readOption: (args, flag) => {
-      const idx = args.indexOf(flag);
-      return idx >= 0 ? args[idx + 1] : undefined;
+  const result = runTaskCommand(
+    state,
+    ["create", "Plan", "--assign", "dev"],
+    { id: "dev" },
+    {
+      lookupTask: () => ({ error: "missing" }),
+      formatTaskLine: (_state, task) => task.id,
+      taskScopeConflicts: () => [],
+      taskScopeFromArgs: () => undefined,
+      parseCsvOption: () => undefined,
+      readOption: (args, flag) => {
+        const idx = args.indexOf(flag);
+        return idx >= 0 ? args[idx + 1] : undefined;
+      },
+      stripOptions: (args, flags) =>
+        args.filter((arg, index) => !flags.includes(arg) && !flags.includes(args[index - 1])),
+      normalizePriority: () => 5,
+      isTaskStatus: (value): value is "pending" => value === "pending",
+      applyTaskReviewPayload: () => {},
+      pushLoopEvent: () => {},
+      ensureConversation: () => ({ id: "king-ai-convo" }),
+      workerAgentForConversation: () => ({ id: "dev" }),
+      defaultWorkerAgentFor: () => ({ id: "dev" }),
+      pushTaskTransition: () => {},
+      queueTaskChangesRequestedMessage: () => {},
+      advanceTaskDone: () => "done",
     },
-    stripOptions: (args, flags) => args.filter((arg, index) => !flags.includes(arg) && !flags.includes(args[index - 1])),
-    normalizePriority: () => 5,
-    isTaskStatus: (value): value is "pending" => value === "pending",
-    applyTaskReviewPayload: () => {},
-    pushLoopEvent: () => {},
-    ensureConversation: () => ({ id: "king-ai-convo" }),
-    workerAgentForConversation: () => ({ id: "dev" }),
-    defaultWorkerAgentFor: () => ({ id: "dev" }),
-    pushTaskTransition: () => {},
-    queueTaskChangesRequestedMessage: () => {},
-    advanceTaskDone: () => "done"
-  });
+  );
   assert.match(result, /^Task task-/);
   assert.equal(state.tasks.length, 1);
   assert.equal(state.tasks[0]?.status, "assigned");
@@ -94,7 +101,11 @@ test("runTaskCommand creates tasks via createGuiTaskDraft", () => {
 });
 
 test("runLoopCommand records tick events", () => {
-  const state = { loopRunId: undefined as string | undefined, currentLoop: 0, loopEvents: [] as Array<{ type: string; loop: number; runId?: string }> };
+  const state = {
+    loopRunId: undefined as string | undefined,
+    currentLoop: 0,
+    loopEvents: [] as Array<{ type: string; loop: number; runId?: string }>,
+  };
   const result = runLoopCommand(state, ["tick", "--run", "run-test"], {
     readOption: (args, flag) => {
       const idx = args.indexOf(flag);
@@ -110,8 +121,14 @@ test("runLoopCommand records tick events", () => {
       nextState.loopEvents.push(row);
       return row;
     },
-    buildEventLoopSnapshot: () => ({ runId: "run-test", loop: 1, classification: "productive", reasons: [], recentEvents: [] }),
-    formatLoopEventLine: (event) => event.type
+    buildEventLoopSnapshot: () => ({
+      runId: "run-test",
+      loop: 1,
+      classification: "productive",
+      reasons: [],
+      recentEvents: [],
+    }),
+    formatLoopEventLine: (event) => event.type,
   });
   assert.match(result, /^loop tick 1 run=run-test/);
   assert.equal(state.loopEvents.length, 1);
@@ -127,7 +144,7 @@ type InitiativeTestState = {
 
 function initiativeDeps(
   state: InitiativeTestState,
-  overrides: Partial<RunInitiativeCommandDeps<InitiativeTestState, GuiCliInitiative>> = {}
+  overrides: Partial<RunInitiativeCommandDeps<InitiativeTestState, GuiCliInitiative>> = {},
 ): RunInitiativeCommandDeps<InitiativeTestState, GuiCliInitiative> {
   return {
     defaultAgentId: "king-ai-ceo",
@@ -153,7 +170,7 @@ function initiativeDeps(
     parseExecutionPlan: (raw: string) => JSON.parse(raw),
     applyExecutionPlan: (_state, plan, options) =>
       `applied ${plan.optionId} initiative=${options.initiativeId} tasks=${plan.tasks.length}`,
-    ...overrides
+    ...overrides,
   };
 }
 
@@ -163,7 +180,7 @@ test("runInitiativeCommand and runCapsuleCommand create records", () => {
     tasks: [],
     capsules: [],
     docs: [],
-    context: []
+    context: [],
   };
   const initiativeResult = runInitiativeCommand(state, ["create", "Q2", "--goal", "Ship"], initiativeDeps(state));
   assert.match(initiativeResult, /^Initiative initiative-/);
@@ -183,7 +200,7 @@ test("runInitiativeCommand and runCapsuleCommand create records", () => {
     stripOptions: (args) => args,
     parseCsvOption: () => undefined,
     isCapsuleStatus: (value): value is "open" => value === "open",
-    isCapsuleScopeType: (value): value is "code" => value === "code"
+    isCapsuleScopeType: (value): value is "code" => value === "code",
   });
   assert.match(capsuleResult, /^Capsule capsule-/);
   assert.equal(state.initiatives.length, 1);
@@ -192,19 +209,21 @@ test("runInitiativeCommand and runCapsuleCommand create records", () => {
 
 test("runInitiativeCommand advance reports gaps and auto-applies plans", () => {
   const state: InitiativeTestState = {
-    initiatives: [{
-      id: "initiative-1",
-      title: "Vision",
-      goal: "Ship advance CLI",
-      status: "active",
-      priority: 7,
-      created_at: 1,
-      updated_at: 1
-    }],
+    initiatives: [
+      {
+        id: "initiative-1",
+        title: "Vision",
+        goal: "Ship advance CLI",
+        status: "active",
+        priority: 7,
+        created_at: 1,
+        updated_at: 1,
+      },
+    ],
     tasks: [],
     capsules: [],
     docs: [],
-    context: []
+    context: [],
   };
   const gap = runInitiativeCommand(state, ["advance", "initiative-1"], initiativeDeps(state));
   assert.match(gap, /no tasks linked/);
@@ -215,7 +234,7 @@ test("runInitiativeCommand advance reports gaps and auto-applies plans", () => {
     title: "In flight",
     status: "assigned",
     priority: 5,
-    initiativeId: "initiative-1"
+    initiativeId: "initiative-1",
   });
   const blocked = runInitiativeCommand(state, ["advance", "initiative-1", "--auto"], initiativeDeps(state));
   assert.match(blocked, /auto: skipped/);
@@ -227,7 +246,7 @@ test("runInitiativeCommand persist writes vision doc and context", () => {
     tasks: [],
     capsules: [],
     docs: [],
-    context: []
+    context: [],
   };
   const result = runInitiativeCommand(state, ["persist"], initiativeDeps(state));
   assert.match(result, /^vision plan persisted doc=/);
@@ -239,9 +258,17 @@ test("runInitiativeCommand persist writes vision doc and context", () => {
 
 test("runMergeCommand enqueues merge requests", () => {
   const state = {
-    mergeQueue: [] as Array<{ id: string; branch: string; targetBranch: string; status: string; createdAt: number; updatedAt: number; agentId: string }>,
+    mergeQueue: [] as Array<{
+      id: string;
+      branch: string;
+      targetBranch: string;
+      status: string;
+      createdAt: number;
+      updatedAt: number;
+      agentId: string;
+    }>,
     capsules: [{ id: "capsule-1", status: "open", updated_at: 0, branch: "feat/x", ownerAgent: "dev" }],
-    tasks: [] as Array<{ status: string; updated_at: number }>
+    tasks: [] as Array<{ status: string; updated_at: number }>,
   };
   const result = runMergeCommand(state, ["enqueue", "--capsule", "capsule-1"], {
     defaultAgentId: "king-ai-ceo",
@@ -254,7 +281,7 @@ test("runMergeCommand enqueues merge requests", () => {
       return idx >= 0 ? args[idx + 1] : undefined;
     },
     isSafeBranchName: () => true,
-    isMergeStatus: (value): value is "queued" => value === "queued"
+    isMergeStatus: (value): value is "queued" => value === "queued",
   });
   assert.match(result, /^merge queued merge-/);
   assert.equal(state.capsules[0]?.status, "in_review");
@@ -271,7 +298,7 @@ test("runSafetyCommand requests approval for gated actions", () => {
     findApproval: () => undefined,
     formatApprovalLine: (approval) => approval.id,
     readOption: () => undefined,
-    stripOptions: (args) => args
+    stripOptions: (args) => args,
   });
   assert.match(result, /^approval requested approval-/);
   assert.equal(state.approvals.length, 1);
@@ -280,7 +307,7 @@ test("runSafetyCommand requests approval for gated actions", () => {
 test("runRouteCommand sets event routes for agents", () => {
   const state = {
     eventRoutes: [] as Array<{ eventType: string; agentId: string; createdAt: number }>,
-    agents: [{ id: "dev", name: "Dev", events: [] as string[] }]
+    agents: [{ id: "dev", name: "Dev", events: [] as string[] }],
   };
   const result = runRouteCommand(state, ["set", "task.created", "--agent", "dev"], {
     defaultAgentId: "king-ai-ceo",
@@ -293,7 +320,7 @@ test("runRouteCommand sets event routes for agents", () => {
     parseExternalEventArgs: (eventType) => ({ type: eventType }),
     routeExternalEvent: () => [],
     pushLoopEvent: () => {},
-    countPendingMessages: () => 0
+    countPendingMessages: () => 0,
   });
   assert.equal(result, "route set task.created -> dev");
   assert.equal(state.eventRoutes.length, 1);
@@ -301,38 +328,57 @@ test("runRouteCommand sets event routes for agents", () => {
 
 test("runClaimCommand and runSendCommand create workspace records", () => {
   const claimState = { claims: [] as Array<{ id: string; name: string; owner: string; created_at: number }> };
-  const claimResult = runClaimCommand(claimState, ["docs"], { id: "dev" }, {
-    parseAllowedPaths: () => [],
-    readOption: () => undefined,
-    pathConflict: () => undefined
-  });
+  const claimResult = runClaimCommand(
+    claimState,
+    ["docs"],
+    { id: "dev" },
+    {
+      parseAllowedPaths: () => [],
+      readOption: () => undefined,
+      pathConflict: () => undefined,
+    },
+  );
   assert.match(claimResult, /^claim created claim-/);
 
   const messageState = {
-    messages: [] as Array<{ id: string; conversation_id: string; author_name: string; body: string; priority?: string; readBy: string[]; created_at: number; author_kind: string }>,
-    agents: [{ id: "reviewer", name: "Reviewer" }]
+    messages: [] as Array<{
+      id: string;
+      conversation_id: string;
+      author_name: string;
+      body: string;
+      priority?: string;
+      readBy: string[];
+      created_at: number;
+      author_kind: string;
+    }>,
+    agents: [{ id: "reviewer", name: "Reviewer" }],
   };
-  const sendResult = runSendCommand(messageState, ["reviewer", "please review"], { id: "dev", name: "Dev" }, {
-    defaultAgentId: "king-ai-ceo",
-    newAgentMessage: ({ target, fromName, body, priority, messageType }) => ({
-      id: "msg-1",
-      conversation_id: `dm-${target}`,
-      author_name: fromName,
-      author_kind: "agent",
-      body,
-      priority,
-      message_type: messageType,
-      to_agent_id: target,
-      created_at: 1,
-      readBy: []
-    }),
-    resolveEscalationTarget: () => "king-ai-ceo",
-    readOption: () => undefined,
-    stripOptions: (args) => args,
-    isRuntimeVisibleMessage: () => true,
-    sortRuntimeMessages: (messages) => messages.map((row) => ({ row })),
-    messageRouteTag: () => "route"
-  });
+  const sendResult = runSendCommand(
+    messageState,
+    ["reviewer", "please review"],
+    { id: "dev", name: "Dev" },
+    {
+      defaultAgentId: "king-ai-ceo",
+      newAgentMessage: ({ target, fromName, body, priority, messageType }) => ({
+        id: "msg-1",
+        conversation_id: `dm-${target}`,
+        author_name: fromName,
+        author_kind: "agent",
+        body,
+        priority,
+        message_type: messageType,
+        to_agent_id: target,
+        created_at: 1,
+        readBy: [],
+      }),
+      resolveEscalationTarget: () => "king-ai-ceo",
+      readOption: () => undefined,
+      stripOptions: (args) => args,
+      isRuntimeVisibleMessage: () => true,
+      sortRuntimeMessages: (messages) => messages.map((row) => ({ row })),
+      messageRouteTag: () => "route",
+    },
+  );
   assert.match(sendResult, /^Message msg-1 queued -> reviewer/);
   assert.equal(messageState.messages.length, 1);
 });
@@ -343,7 +389,7 @@ test("runPlanCommand parses execution plans", () => {
     defaultAgentId: "dev",
     parseExecutionPlan: () => ({ optionId: "A", totalEstimatedTokens: 10, tasks: [] }),
     readOption: () => undefined,
-    createTask: (input) => ({ id: "task-1", title: input.title, dependsOn: input.dependsOn })
+    createTask: (input) => ({ id: "task-1", title: input.title, dependsOn: input.dependsOn }),
   });
   assert.match(result, /^plan A: 0 task\(s\)/);
 });
@@ -359,15 +405,25 @@ test("runDocCommand creates and shows docs", () => {
 
 test("runContextCommand sets and gets context keys", () => {
   const state = { context: [] as Array<{ key: string; value: string; updatedBy: string; updatedAt: number }> };
-  const setResult = runContextCommand(state, ["set", "theme", "dark"], { id: "dev" }, {
-    readOption: () => undefined,
-    stripOptions: (args) => args
-  });
+  const setResult = runContextCommand(
+    state,
+    ["set", "theme", "dark"],
+    { id: "dev" },
+    {
+      readOption: () => undefined,
+      stripOptions: (args) => args,
+    },
+  );
   assert.equal(setResult, 'Set "theme" = "dark"');
-  const getResult = runContextCommand(state, ["get", "theme"], { id: "dev" }, {
-    readOption: () => undefined,
-    stripOptions: (args) => args
-  });
+  const getResult = runContextCommand(
+    state,
+    ["get", "theme"],
+    { id: "dev" },
+    {
+      readOption: () => undefined,
+      stripOptions: (args) => args,
+    },
+  );
   assert.equal(getResult, "dark");
 });
 
@@ -380,14 +436,19 @@ test("runReactCommand posts reactions", () => {
 
 test("runHypothesisCommand creates hypotheses", () => {
   const state = { hypotheses: [] as GuiCliHypothesis[] };
-  const result = runHypothesisCommand(state, ["create", "Ship faster"], { id: "dev" }, {
-    readOption: () => undefined,
-    stripOptions: (args) => args,
-    parseCsvOption: () => undefined,
-    isHypothesisStatus: (value) => value === "proposed",
-    findHypothesis: () => undefined,
-    formatHypothesisLine: (hypothesis) => hypothesis.title
-  });
+  const result = runHypothesisCommand(
+    state,
+    ["create", "Ship faster"],
+    { id: "dev" },
+    {
+      readOption: () => undefined,
+      stripOptions: (args) => args,
+      parseCsvOption: () => undefined,
+      isHypothesisStatus: (value) => value === "proposed",
+      findHypothesis: () => undefined,
+      formatHypothesisLine: (hypothesis) => hypothesis.title,
+    },
+  );
   assert.match(result, /^Hypothesis hyp-/);
   assert.equal(state.hypotheses[0].title, "Ship faster");
 });
@@ -398,9 +459,17 @@ test("runObserveCommand renders loop snapshot summary", () => {
     buildLoopSnapshot: () => ({
       classification: "idle",
       reasons: ["no state changes detected"],
-      counts: { unreadMessages: 0, blockedTasks: 0, activeTasks: 0, openCapsules: 0, inReviewCapsules: 0, artifacts: 0, failedRuns: 0 }
+      counts: {
+        unreadMessages: 0,
+        blockedTasks: 0,
+        activeTasks: 0,
+        openCapsules: 0,
+        inReviewCapsules: 0,
+        artifacts: 0,
+        failedRuns: 0,
+      },
     }),
-    readOption: () => undefined
+    readOption: () => undefined,
   });
   assert.match(result, /^classification=idle/);
   assert.match(result, /activeTasks=0/);
@@ -420,9 +489,9 @@ test("runAgentsCommand renders agent matrix", () => {
       openClaims: 0,
       activeCards: 0,
       openTasks: 0,
-      blockedTasks: 0
+      blockedTasks: 0,
     }),
-    formatAgentMatrixLine: (agent) => `${agent.id} ${agent.status}`
+    formatAgentMatrixLine: (agent) => `${agent.id} ${agent.status}`,
   });
   assert.match(result, /^Agent Matrix:/);
   assert.match(result, /dev idle/);

@@ -4,7 +4,11 @@ import { json } from "./gui-http.js";
 import type { AuthUser, Bindings, RequestContext } from "./gui-types.js";
 
 export function sanitizeTenantId(value: string): string {
-  const normalized = value.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
   return normalized.slice(0, 96) || "global";
 }
 
@@ -28,15 +32,15 @@ export function authForRequest(request: Request, env: Bindings) {
     database: {
       dialect: new D1Dialect({ database: env.AUTH_DB }),
       type: "sqlite",
-      transaction: false
+      transaction: false,
     },
     socialProviders: {
       github: {
         clientId: env.GITHUB_CLIENT_ID || "",
-        clientSecret: env.GITHUB_CLIENT_SECRET || ""
-      }
+        clientSecret: env.GITHUB_CLIENT_SECRET || "",
+      },
     },
-    trustedOrigins: [publicBaseUrl(request, env)]
+    trustedOrigins: [publicBaseUrl(request, env)],
   });
 }
 
@@ -91,7 +95,7 @@ export async function remoteAssistTenantFromRequest(c: RequestContext): Promise<
   const stub = c.env.GUI_STATE.get(c.env.GUI_STATE.idFromName(tenantId));
   const response = await stub.fetch("https://state/remote-assist/auth", {
     method: "POST",
-    body: JSON.stringify({ token: tokenValue })
+    body: JSON.stringify({ token: tokenValue }),
   });
   return response.ok ? tenantId : undefined;
 }
@@ -110,7 +114,7 @@ export async function tenantFromRequest(c: RequestContext): Promise<string> {
 }
 
 export async function tenantForGuiRequest(c: RequestContext): Promise<string> {
-  return await remoteAssistTenantFromRequest(c) ?? await tenantFromRequest(c);
+  return (await remoteAssistTenantFromRequest(c)) ?? (await tenantFromRequest(c));
 }
 
 export async function stateForTenant(c: RequestContext, tenantId: string): Promise<DurableObjectStub> {
@@ -296,7 +300,7 @@ export async function requireGuiAuth(c: RequestContext): Promise<Response | null
   }
   return new Response(loginPage(), {
     headers: { "Content-Type": "text/html; charset=utf-8" },
-    status: 401
+    status: 401,
   });
 }
 

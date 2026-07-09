@@ -12,15 +12,19 @@ test("every built-in software-dev agent declares an explicit role template", () 
   const expected: Record<string, string> = {
     "king-ai-ceo": "planner",
     dev: "builder",
-    reviewer: "reviewer"
+    reviewer: "reviewer",
   };
   assert.deepEqual(
     DEFAULT_TEAM_AGENTS.map((agent) => agent.id),
-    Object.keys(expected)
+    Object.keys(expected),
   );
   for (const agent of DEFAULT_TEAM_AGENTS) {
     assert.match(agent.role, TEMPLATE_MARKER, `agent ${agent.id} should carry a Role template marker`);
-    assert.equal(roleTemplateForAgent(agent), expected[agent.id], `agent ${agent.id} should resolve to ${expected[agent.id]}`);
+    assert.equal(
+      roleTemplateForAgent(agent),
+      expected[agent.id],
+      `agent ${agent.id} should resolve to ${expected[agent.id]}`,
+    );
   }
 });
 
@@ -39,7 +43,10 @@ test("the IELTS coach is a conversation partner, not a translator that echoes th
   assert.match(tutor.role, /chat partner, not a translator/);
   assert.match(tutor.role, /never translate or echo their own sentence back/);
   // It still produces translations/deliverables, but only on explicit request.
-  assert.match(tutor.role, /Only write a direct translation or a standalone piece of text when the learner explicitly asks/);
+  assert.match(
+    tutor.role,
+    /Only write a direct translation or a standalone piece of text when the learner explicitly asks/,
+  );
 });
 
 test("normalizeAgents keeps only the four built-in system agents", () => {
@@ -47,11 +54,30 @@ test("normalizeAgents keeps only the four built-in system agents", () => {
   assert.ok(tutorTemplate, "ielts-tutor template should exist");
   const normalized = normalizeAgents([
     // A stale coach role persisted from an older build, plus a user-set model override.
-    { id: "ielts-tutor", name: "IELTS Reading & Writing Coach", role: "STALE coach role", engine: "codex", lifecycle: "on-demand", model: "custom-model" },
+    {
+      id: "ielts-tutor",
+      name: "IELTS Reading & Writing Coach",
+      role: "STALE coach role",
+      engine: "codex",
+      lifecycle: "on-demand",
+      model: "custom-model",
+    },
     // The default operator agent with a role the user customized via agent-config.
-    { id: "king-ai-ceo", name: "King AI Helper", role: "Answer in a concise operator voice.", engine: "claude", lifecycle: "disabled" },
+    {
+      id: "king-ai-ceo",
+      name: "King AI Helper",
+      role: "Answer in a concise operator voice.",
+      engine: "claude",
+      lifecycle: "disabled",
+    },
     { id: "tester", name: "Tester", role: "Legacy tester.", engine: "codex", lifecycle: "on-demand" },
-    { id: "ielts-vocab-coach", name: "IELTS Vocabulary Coach", role: "Custom coach.", engine: "codex", lifecycle: "on-demand" }
+    {
+      id: "ielts-vocab-coach",
+      name: "IELTS Vocabulary Coach",
+      role: "Custom coach.",
+      engine: "codex",
+      lifecycle: "on-demand",
+    },
   ]);
   const tutor = normalized.find((agent) => agent.id === "ielts-tutor");
   const ceo = normalized.find((agent) => agent.id === "king-ai-ceo");

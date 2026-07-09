@@ -22,7 +22,7 @@ const PUMPFUN_CLI_FLAG_MAP: Array<{ key: string; flag: string }> = [
   { key: "has_at_least_one_social_link", flag: "--has-at-least-one-social-link" },
   { key: "has_x", flag: "--has-x" },
   { key: "has_telegram", flag: "--has-telegram" },
-  { key: "has_website", flag: "--has-website" }
+  { key: "has_website", flag: "--has-website" },
 ];
 
 const LEADERBOARD_CLI_FLAG_MAP: Array<{ key: string; flag: string }> = [
@@ -34,7 +34,7 @@ const LEADERBOARD_CLI_FLAG_MAP: Array<{ key: string; flag: string }> = [
   { key: "max_txs", flag: "--max-txs" },
   { key: "min_tx_volume", flag: "--min-tx-volume" },
   { key: "max_tx_volume", flag: "--max-tx-volume" },
-  { key: "wallet_type", flag: "--wallet-type" }
+  { key: "wallet_type", flag: "--wallet-type" },
 ];
 
 export function extractOnchainosRows(data: unknown): unknown[] {
@@ -48,7 +48,7 @@ export function extractOnchainosRows(data: unknown): unknown[] {
 
 export function buildOnchainosFilterArgs(
   ds: Record<string, unknown>,
-  mappings: Array<{ key: string; flag: string }>
+  mappings: Array<{ key: string; flag: string }>,
 ): string[] {
   const args: string[] = [];
   for (const { key, flag } of mappings) {
@@ -63,10 +63,13 @@ export function buildPumpfunCliArgs(ds: Record<string, unknown>): string[] {
   const chain = String(ds.chain ?? "solana");
   const stage = String(ds.stage ?? "MIGRATED");
   return [
-    "memepump", "tokens",
-    "--chain", chain,
-    "--stage", stage,
-    ...buildOnchainosFilterArgs(ds, PUMPFUN_CLI_FLAG_MAP)
+    "memepump",
+    "tokens",
+    "--chain",
+    chain,
+    "--stage",
+    stage,
+    ...buildOnchainosFilterArgs(ds, PUMPFUN_CLI_FLAG_MAP),
   ];
 }
 
@@ -74,11 +77,15 @@ export function buildLeaderboardCliArgs(chain: string, ds: Record<string, unknow
   const timeFrame = String(ds.time_frame ?? "1");
   const sortBy = String(ds.sort_by ?? "1");
   return [
-    "leaderboard", "list",
-    "--chain", chain,
-    "--time-frame", timeFrame,
-    "--sort-by", sortBy,
-    ...buildOnchainosFilterArgs(ds, LEADERBOARD_CLI_FLAG_MAP)
+    "leaderboard",
+    "list",
+    "--chain",
+    chain,
+    "--time-frame",
+    timeFrame,
+    "--sort-by",
+    sortBy,
+    ...buildOnchainosFilterArgs(ds, LEADERBOARD_CLI_FLAG_MAP),
   ];
 }
 
@@ -87,14 +94,11 @@ export function parsePumpfunFilters(ds: Record<string, unknown>): PumpfunFilterC
     minMarketCapUsd: numberOrUndefined(ds.min_market_cap_usd) ?? 10_000,
     minHolders: numberOrUndefined(ds.min_holders) ?? 50,
     minVolumeUsd1h: numberOrUndefined(ds.min_volume_usd_1h) ?? 50,
-    maxTop10HoldingsPercent: numberOrUndefined(ds.max_top10_holdings_percent) ?? 90
+    maxTop10HoldingsPercent: numberOrUndefined(ds.max_top10_holdings_percent) ?? 90,
   };
 }
 
-export function passesPumpfunFilters(
-  token: Record<string, unknown>,
-  filters: PumpfunFilterConfig
-): boolean {
+export function passesPumpfunFilters(token: Record<string, unknown>, filters: PumpfunFilterConfig): boolean {
   const market = (token.market ?? {}) as Record<string, string>;
   const tags = (token.tags ?? {}) as Record<string, string>;
 
@@ -153,9 +157,7 @@ export function formatPumpfunToken(token: Record<string, unknown>, index: number
   const top10 = Number.isFinite(top10Raw) ? `${top10Raw.toFixed(1)}%` : "?";
 
   const bondingRaw = Number.parseFloat(String(token.bondingPercent ?? ""));
-  const bonding = Number.isFinite(bondingRaw) && bondingRaw > 0
-    ? ` · 曲线 ${bondingRaw.toFixed(1)}%`
-    : "";
+  const bonding = Number.isFinite(bondingRaw) && bondingRaw > 0 ? ` · 曲线 ${bondingRaw.toFixed(1)}%` : "";
 
   const socialBits: string[] = [];
   if (social.x) socialBits.push("X");
@@ -200,10 +202,7 @@ export function formatLeaderboardEntry(entry: Record<string, unknown>, index: nu
   return line;
 }
 
-export function formatPumpfunSection(
-  data: unknown,
-  ds: Record<string, unknown>
-): { stage: string; lines: string[] } {
+export function formatPumpfunSection(data: unknown, ds: Record<string, unknown>): { stage: string; lines: string[] } {
   const stage = String(ds.stage ?? "MIGRATED");
   const limit = Number(ds.limit) || 5;
   const filters = parsePumpfunFilters(ds);
@@ -213,14 +212,11 @@ export function formatPumpfunSection(
 
   return {
     stage,
-    lines: rows.slice(0, limit).map((row, i) => formatPumpfunToken(row, i + 1))
+    lines: rows.slice(0, limit).map((row, i) => formatPumpfunToken(row, i + 1)),
   };
 }
 
-export function formatLeaderboardSection(
-  data: unknown,
-  limit: number
-): string[] {
+export function formatLeaderboardSection(data: unknown, limit: number): string[] {
   return extractOnchainosRows(data)
     .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row))
     .slice(0, limit)

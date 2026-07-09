@@ -16,7 +16,7 @@ export function runContextCommand<S extends { context: GuiCliContextEntry[] }, A
   state: S,
   args: string[],
   actor: A,
-  deps: RunContextCommandDeps<A>
+  deps: RunContextCommandDeps<A>,
 ): string {
   const cmd = args[0] || "list";
   if (cmd === "list") {

@@ -13,7 +13,13 @@ function withPathLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
   // Run after the previous mutation settles, whether it resolved or rejected, so one failed
   // write never deadlocks the queue.
   const run = prev.then(fn, fn);
-  writeChains.set(path, run.then(() => undefined, () => undefined));
+  writeChains.set(
+    path,
+    run.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
   return run;
 }
 
@@ -29,7 +35,11 @@ export async function readJsonl(path: string): Promise<unknown[]> {
     if (err && typeof err === "object" && "code" in err && (err as { code?: string }).code === "ENOENT") return "";
     throw err;
   });
-  return text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => JSON.parse(line) as unknown);
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as unknown);
 }
 
 export interface CompactJsonlResult {
@@ -43,7 +53,10 @@ export interface CompactJsonlResult {
  * merged latest state). The rewrite is atomic (temp file + rename) and holds the same write lock
  * as appendJsonl, so a compaction never races a concurrent append.
  */
-export async function compactJsonl(path: string, reduce: (records: unknown[]) => unknown[]): Promise<CompactJsonlResult> {
+export async function compactJsonl(
+  path: string,
+  reduce: (records: unknown[]) => unknown[],
+): Promise<CompactJsonlResult> {
   return withPathLock(path, async () => {
     const records = await readJsonl(path);
     const compacted = reduce(records);

@@ -20,15 +20,16 @@ export type GuiCliArtifactQualityCheck = {
 
 export type GuiCliArtifactActor = { id: string };
 
-export type RunArtifactCommandDeps<
-  S extends { artifacts: GuiCliArtifact[] },
-  A extends GuiCliArtifact
-> = {
+export type RunArtifactCommandDeps<S extends { artifacts: GuiCliArtifact[] }, A extends GuiCliArtifact> = {
   readOption: (args: string[], flag: string) => string | undefined;
   standardArtifactKinds: ReadonlySet<string>;
   findArtifact: (state: S, id: string | undefined) => A | undefined;
-  artifactCandidateFromArgs: (args: string[]) => Pick<A, "kind" | "path" | "source" | "confidence" | "metadata" | "content"> | null;
-  checkArtifactQuality: (artifact: Pick<A, "kind" | "path" | "source" | "confidence" | "metadata" | "content">) => GuiCliArtifactQualityCheck;
+  artifactCandidateFromArgs: (
+    args: string[],
+  ) => Pick<A, "kind" | "path" | "source" | "confidence" | "metadata" | "content"> | null;
+  checkArtifactQuality: (
+    artifact: Pick<A, "kind" | "path" | "source" | "confidence" | "metadata" | "content">,
+  ) => GuiCliArtifactQualityCheck;
   formatArtifactQualityCheck: (check: GuiCliArtifactQualityCheck) => string;
   parseMetadataJson: (args: string[]) => Record<string, unknown> | null;
   formatArtifactLine: (artifact: A) => string;
@@ -38,17 +39,18 @@ export type RunArtifactCommandDeps<
 export function runArtifactCommand<
   S extends { artifacts: GuiCliArtifact[] },
   A extends GuiCliArtifact,
-  Actor extends GuiCliArtifactActor
+  Actor extends GuiCliArtifactActor,
 >(state: S, args: string[], actor: Actor, deps: RunArtifactCommandDeps<S, A>): string {
   const cmd = args[0] || "list";
   if (cmd === "list") {
     const agent = deps.readOption(args, "--agent");
     const kind = deps.readOption(args, "--kind");
     const unverified = args.includes("--unverified");
-    const rows = state.artifacts.filter((artifact) =>
-      (!agent || artifact.agentId === agent) &&
-      (!kind || artifact.kind === kind) &&
-      (!unverified || !artifact.verified)
+    const rows = state.artifacts.filter(
+      (artifact) =>
+        (!agent || artifact.agentId === agent) &&
+        (!kind || artifact.kind === kind) &&
+        (!unverified || !artifact.verified),
     ) as A[];
     if (rows.length === 0) return "No artifacts found.";
     return rows.map((artifact) => deps.formatArtifactLine(artifact)).join("\n") + `\n\n${rows.length} artifact(s)`;
@@ -81,7 +83,14 @@ export function runArtifactCommand<
     }
     const metadata = deps.parseMetadataJson(args) ?? {};
     if (!deps.standardArtifactKinds.has(kind)) metadata.non_standard_kind = true;
-    const quality = deps.checkArtifactQuality({ kind, path, source, confidence, metadata, content: deps.readOption(args, "--content") });
+    const quality = deps.checkArtifactQuality({
+      kind,
+      path,
+      source,
+      confidence,
+      metadata,
+      content: deps.readOption(args, "--content"),
+    });
     if (quality.warnings.length) metadata.quality_warnings = quality.warnings;
     metadata.quality_score = quality.score;
     const artifact = {
@@ -95,7 +104,7 @@ export function runArtifactCommand<
       content: deps.readOption(args, "--content"),
       metadata,
       verified: confidence >= 0.8,
-      created_at: Date.now()
+      created_at: Date.now(),
     } as A;
     state.artifacts.push(artifact);
     deps.pushLoopEvent(state, {
@@ -104,7 +113,7 @@ export function runArtifactCommand<
       taskId: artifact.taskId,
       kind: artifact.kind,
       path: artifact.path,
-      payload: { artifactId: artifact.id, confidence: artifact.confidence, verified: artifact.verified }
+      payload: { artifactId: artifact.id, confidence: artifact.confidence, verified: artifact.verified },
     });
     return `artifact stored ${artifact.id} kind=${artifact.kind} source=${artifact.source} confidence=${artifact.confidence}${quality.warnings.length ? ` warnings=${quality.warnings.length}` : ""}`;
   }

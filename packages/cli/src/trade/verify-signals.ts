@@ -17,7 +17,7 @@ const RULE_LABELS: Record<string, string> = {
   t: "名人推文 (OpenCLI+agent)",
   tm: "Ticker 提及加速",
   discord_wba: "Discord WBA (OpenCLI)",
-  q: "PANews (agent)"
+  q: "PANews (agent)",
 };
 
 export interface VerifySignalsOptions {
@@ -50,7 +50,7 @@ export async function withVerifyTimeout<T>(label: string, timeoutMs: number, tas
       task(),
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
-      })
+      }),
     ]);
   } finally {
     if (timer) clearTimeout(timer);
@@ -111,9 +111,9 @@ export async function runVerifySignalsPush(options: VerifySignalsOptions = {}): 
     const header = `🧪 晨报验证 [${section}] — ${stamp}`;
     let body: string;
     try {
-      const content = await withVerifyTimeout(`brief:${section}`, timeoutMs, () => (
-        runMorningBrief({ sections: [section], hours, dryRun: true })
-      ));
+      const content = await withVerifyTimeout(`brief:${section}`, timeoutMs, () =>
+        runMorningBrief({ sections: [section], hours, dryRun: true }),
+      );
       body = `${header}\n\n${content.trim()}`;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -128,5 +128,7 @@ export async function runVerifySignalsPush(options: VerifySignalsOptions = {}): 
   }
 
   const totalMessages = verifyRules.length + verifyBriefSections.length;
-  process.stderr.write(`[verify-tg] done — ${totalMessages} messages (${verifyRules.length} rules + ${verifyBriefSections.length} brief sections)\n`);
+  process.stderr.write(
+    `[verify-tg] done — ${totalMessages} messages (${verifyRules.length} rules + ${verifyBriefSections.length} brief sections)\n`,
+  );
 }

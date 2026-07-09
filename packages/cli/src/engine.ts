@@ -11,7 +11,7 @@ import type {
   EngineRunArgs,
   EngineSession,
   EngineTurnOptions,
-  EngineUsage
+  EngineUsage,
 } from "./types.js";
 import { cleanLine, stripLoneSurrogates } from "./text.js";
 
@@ -196,7 +196,11 @@ export function formatEngineLogLine(engine: EngineId, line: string): string | nu
       }
       if (obj.type === "end") return "[grok] turn completed";
       if (obj.type === "error") return `[grok] failed: ${String(obj.message ?? "error").slice(0, 500)}`;
-      const update = (obj.params as { update?: { sessionUpdate?: unknown; rawInput?: { command?: unknown }; title?: unknown } } | undefined)?.update;
+      const update = (
+        obj.params as
+          | { update?: { sessionUpdate?: unknown; rawInput?: { command?: unknown }; title?: unknown } }
+          | undefined
+      )?.update;
       if (update?.sessionUpdate === "tool_call" && update.rawInput && typeof update.rawInput.command === "string") {
         return `[grok] $ ${update.rawInput.command.replace(/\s+/g, " ").slice(0, 500)}`;
       }
@@ -252,7 +256,7 @@ async function ensureCommonHome(home: string): Promise<void> {
     await writeFile(
       index,
       "# Memory index\n\nOne line per durable fact, pointing at the file that holds it:\n`- [Title](file.md) - one-line hook`\n\nWrite the fact itself in its own `memory/<topic>.md` file; keep this index short.\n",
-      "utf8"
+      "utf8",
     );
   }
 }
@@ -291,14 +295,24 @@ async function seedPersonaFile(path: string, persona: { id: string; name: string
   await writeFile(path, next, "utf8");
 }
 
-function failurePreview(exitCode: number, signalName: NodeJS.Signals | null, stderr: string[], stdout: string[]): string {
+function failurePreview(
+  exitCode: number,
+  signalName: NodeJS.Signals | null,
+  stderr: string[],
+  stdout: string[],
+): string {
   const detail = [...stderr, ...stdout].join("\n").trim();
   const prefix = signalName ? `process terminated by ${signalName}` : `process exited with code ${exitCode}`;
   return detail ? `${prefix}\n${detail}`.slice(0, MAX_FAILURE_CHARS) : prefix;
 }
 
 export function claudeStreamUserMessage(text: string): string {
-  return JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "text", text: stripLoneSurrogates(text) }] } }) + "\n";
+  return (
+    JSON.stringify({
+      type: "user",
+      message: { role: "user", content: [{ type: "text", text: stripLoneSurrogates(text) }] },
+    }) + "\n"
+  );
 }
 
 export interface CodexAppEventState {
@@ -315,14 +329,12 @@ export interface CodexAppEventResult {
   threadId?: string;
 }
 
-type CodexUserInput =
-  | { type: "text"; text: string; text_elements: [] }
-  | { type: "localImage"; path: string };
+type CodexUserInput = { type: "text"; text: string; text_elements: [] } | { type: "localImage"; path: string };
 
 function codexUserInput(text: string, imagePaths: readonly string[] = []): CodexUserInput[] {
   return [
     { type: "text", text: stripLoneSurrogates(text), text_elements: [] },
-    ...imagePaths.filter((path) => path.trim()).map((path) => ({ type: "localImage" as const, path }))
+    ...imagePaths.filter((path) => path.trim()).map((path) => ({ type: "localImage" as const, path })),
   ];
 }
 
@@ -352,8 +364,13 @@ export function reduceCodexAppEvent(state: CodexAppEventState, msg: Record<strin
   const method = typeof msg.method === "string" ? msg.method : "";
   const result = unknownRecord(msg.result);
   const params = unknownRecord(msg.params);
-  const threadId = nestedRecord(result, "thread")?.id ?? (method === "thread/started" ? nestedRecord(params, "thread")?.id : undefined);
-  const turnId = nestedRecord(result, "turn")?.id ?? result?.turnId ?? (method === "turn/started" ? nestedRecord(params, "turn")?.id : undefined);
+  const threadId =
+    nestedRecord(result, "thread")?.id ??
+    (method === "thread/started" ? nestedRecord(params, "thread")?.id : undefined);
+  const turnId =
+    nestedRecord(result, "turn")?.id ??
+    result?.turnId ??
+    (method === "turn/started" ? nestedRecord(params, "turn")?.id : undefined);
 
   if (typeof turnId === "string") {
     activeTurnId = turnId;
@@ -366,7 +383,8 @@ export function reduceCodexAppEvent(state: CodexAppEventState, msg: Record<strin
 
   if (method === "account/rateLimits/updated") {
     const pct = unknownRecord(nestedRecord(params, "rateLimits")?.primary)?.usedPercent;
-    if (typeof pct === "number" && pct >= 90) logs.push(`[codex] account rate limit at ${Math.round(pct)}% - turns will start failing when it reaches 100%`);
+    if (typeof pct === "number" && pct >= 90)
+      logs.push(`[codex] account rate limit at ${Math.round(pct)}% - turns will start failing when it reaches 100%`);
     return { logs, activeTurnId, steerGate };
   }
 
@@ -377,20 +395,31 @@ export function reduceCodexAppEvent(state: CodexAppEventState, msg: Record<strin
       logs.push(`[codex] native context compaction ${method === "item/started" ? "started" : "finished"}`);
     } else if (item && type === "commandExecution" && method === "item/started" && typeof item.command === "string") {
       logs.push(`[codex] $ ${item.command.replace(/\s+/g, " ").slice(0, 200)}`);
-    } else if (item && type === "agentMessage" && method === "item/completed" && typeof item.text === "string" && item.text.trim()) {
+    } else if (
+      item &&
+      type === "agentMessage" &&
+      method === "item/completed" &&
+      typeof item.text === "string" &&
+      item.text.trim()
+    ) {
       logs.push(`[codex] ${item.text.replace(/\s+/g, " ").slice(0, 200)}`);
     }
     if (method === "item/completed") steerGate = true;
     return { logs, activeTurnId, steerGate };
   }
 
-  if (method === "item/agentMessage/delta" || method === "item/reasoning/textDelta" || method === "item/reasoning/summaryTextDelta") {
+  if (
+    method === "item/agentMessage/delta" ||
+    method === "item/reasoning/textDelta" ||
+    method === "item/reasoning/summaryTextDelta"
+  ) {
     return { logs, activeTurnId, steerGate: false };
   }
 
   if (method === "turn/completed") {
     const turn = nestedRecord(params, "turn") ?? nestedRecord(result, "turn");
-    const failed = turn?.status === "failed" ? String(nestedRecord(turn, "error")?.message ?? "codex turn failed") : undefined;
+    const failed =
+      turn?.status === "failed" ? String(nestedRecord(turn, "error")?.message ?? "codex turn failed") : undefined;
     return { logs, activeTurnId: null, steerGate: false, turnCompletedError: failed };
   }
 
@@ -400,14 +429,21 @@ export function reduceCodexAppEvent(state: CodexAppEventState, msg: Record<strin
 function spawnCapture(
   bin: string,
   args: string[],
-  opts: { cwd: string; env: NodeJS.ProcessEnv; signal: AbortSignal; shell?: boolean; stdinText?: string; onLog?: (line: string) => void }
+  opts: {
+    cwd: string;
+    env: NodeJS.ProcessEnv;
+    signal: AbortSignal;
+    shell?: boolean;
+    stdinText?: string;
+    onLog?: (line: string) => void;
+  },
 ): Promise<{ text: string; error?: string; usage?: EngineUsage }> {
   return new Promise((resolve) => {
     const child = spawn(bin, args, {
       cwd: opts.cwd,
       env: opts.env,
       stdio: [opts.stdinText == null ? "ignore" : "pipe", "pipe", "pipe"],
-      shell: opts.shell ?? false
+      shell: opts.shell ?? false,
     });
     if (opts.stdinText != null) {
       child.stdin?.write(opts.stdinText);
@@ -438,7 +474,7 @@ function spawnCapture(
       const exitCode = code ?? (signalName ? 128 : 1);
       resolve({
         text: stdout.trim(),
-        error: exitCode === 0 ? undefined : failurePreview(exitCode, signalName, stderr, [])
+        error: exitCode === 0 ? undefined : failurePreview(exitCode, signalName, stderr, []),
       });
     });
   });
@@ -447,14 +483,14 @@ function spawnCapture(
 function spawnEngine(
   bin: string,
   args: string[],
-  opts: EngineRunArgs & { shell?: boolean; stdinText?: string }
+  opts: EngineRunArgs & { shell?: boolean; stdinText?: string },
 ): Promise<EngineResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, {
       cwd: opts.home,
       env: opts.env,
       stdio: [opts.stdinText == null ? "ignore" : "pipe", "pipe", "pipe"],
-      shell: opts.shell ?? false
+      shell: opts.shell ?? false,
     });
     if (opts.stdinText != null) {
       child.stdin?.write(opts.stdinText);
@@ -509,7 +545,7 @@ function spawnEngine(
         error: exitCode === 0 ? undefined : failurePreview(exitCode, signalName, stderr, stdout),
         sessionId,
         usage,
-        model
+        model,
       });
     });
   });
@@ -537,18 +573,23 @@ class ClaudeSession implements EngineSession {
     bin: string,
     args: string[],
     opts: Omit<EngineRunArgs, "prompt" | "signal"> & { shell?: boolean; stdinText?: string },
-    readonly carriesStandingPrompt: boolean
+    readonly carriesStandingPrompt: boolean,
   ) {
     this.child = spawn(bin, args, {
       cwd: opts.home,
       env: opts.env,
       stdio: ["pipe", "pipe", "pipe"],
-      shell: opts.shell ?? false
+      shell: opts.shell ?? false,
     });
     this.child.stdout?.on("data", (buf) => this.onStdout(buf, opts.onLog));
     this.child.stderr?.on("data", (buf) => this.onStderr(buf, opts.onLog));
     this.child.on("error", (err) => this.die(1, err.message));
-    this.child.on("close", (code, signalName) => this.die(code ?? (signalName ? 128 : 1), signalName ? `terminated by ${signalName}` : `exited with code ${code ?? 1}`));
+    this.child.on("close", (code, signalName) =>
+      this.die(
+        code ?? (signalName ? 128 : 1),
+        signalName ? `terminated by ${signalName}` : `exited with code ${code ?? 1}`,
+      ),
+    );
     if (opts.stdinText) this.child.stdin?.write(opts.stdinText);
   }
 
@@ -561,7 +602,8 @@ class ClaudeSession implements EngineSession {
   }
 
   send(prompt: string): Promise<EngineResult> {
-    if (this.pending) return Promise.resolve({ exitCode: 1, error: "engine session is already running a turn", sessionId: this.sid });
+    if (this.pending)
+      return Promise.resolve({ exitCode: 1, error: "engine session is already running a turn", sessionId: this.sid });
     if (!this.alive) {
       const exitCode = this.exitCode || 1;
       const detail = failurePreview(exitCode, null, this.stderrTail, this.stdoutTail);
@@ -573,7 +615,7 @@ class ClaudeSession implements EngineSession {
         stdout: [] as string[],
         stderr: [] as string[],
         timer: null as NodeJS.Timeout | null,
-        noOutputTimer: null as NodeJS.Timeout | null
+        noOutputTimer: null as NodeJS.Timeout | null,
       };
       const timeoutMs = sessionTimeoutMs();
       if (timeoutMs > 0) {
@@ -581,7 +623,7 @@ class ClaudeSession implements EngineSession {
           this.settle({
             exitCode: 124,
             error: `claude engine turn exceeded KING_AI_SESSION_TIMEOUT_MS (${Math.round(timeoutMs / 1000)}s) - aborted; session will respawn`,
-            sessionId: this.sid
+            sessionId: this.sid,
           });
           this.stop();
         }, timeoutMs);
@@ -630,10 +672,15 @@ class ClaudeSession implements EngineSession {
           const resultText = String(obj.result ?? "").trim();
           this.settle({
             exitCode: isError ? 1 : 0,
-            error: isError ? (resultText && resultText !== "error" ? resultText : detail || "engine turn error").slice(0, MAX_FAILURE_CHARS) : undefined,
+            error: isError
+              ? (resultText && resultText !== "error" ? resultText : detail || "engine turn error").slice(
+                  0,
+                  MAX_FAILURE_CHARS,
+                )
+              : undefined,
             sessionId: this.sid,
             usage: obj.usage && typeof obj.usage === "object" ? (obj.usage as EngineUsage) : undefined,
-            model: this.currentModel
+            model: this.currentModel,
           });
         } else if (obj.type === "user") {
           this.flushSteer();
@@ -689,7 +736,7 @@ class ClaudeSession implements EngineSession {
       this.settle({
         exitCode: 124,
         error: engineNoOutputError("claude", timeoutMs),
-        sessionId: this.sid
+        sessionId: this.sid,
       });
       this.stop();
     }, timeoutMs);
@@ -740,7 +787,11 @@ class CodexSession implements EngineSession {
   private stdoutTail: string[] = [];
   readonly carriesStandingPrompt: boolean;
 
-  constructor(bin: string, args: string[], private readonly opts: Omit<EngineRunArgs, "prompt" | "signal">) {
+  constructor(
+    bin: string,
+    args: string[],
+    private readonly opts: Omit<EngineRunArgs, "prompt" | "signal">,
+  ) {
     this.threadId = opts.resumeSessionId ?? null;
     this.carriesStandingPrompt = !!opts.standingPrompt;
     this.child = spawn(bin, args, { cwd: opts.home, env: opts.env, stdio: ["pipe", "pipe", "pipe"] });
@@ -754,9 +805,14 @@ class CodexSession implements EngineSession {
       }
     });
     this.child.on("error", (err) => this.die(1, err.message));
-    this.child.on("close", (code, sig) => this.die(code ?? (sig ? 128 : 1), sig ? `terminated by ${sig}` : `exited with code ${code ?? 1}`));
+    this.child.on("close", (code, sig) =>
+      this.die(code ?? (sig ? 128 : 1), sig ? `terminated by ${sig}` : `exited with code ${code ?? 1}`),
+    );
     queueMicrotask(() => {
-      this.initializeId = this.req("initialize", { clientInfo: { name: "king-ai", version: "0.1.0" }, capabilities: { experimentalApi: true } });
+      this.initializeId = this.req("initialize", {
+        clientInfo: { name: "king-ai", version: "0.1.0" },
+        capabilities: { experimentalApi: true },
+      });
     });
   }
 
@@ -769,23 +825,35 @@ class CodexSession implements EngineSession {
   }
 
   send(prompt: string, options?: EngineTurnOptions): Promise<EngineResult> {
-    if (this.pending) return Promise.resolve({ exitCode: 1, error: "engine session is already running a turn", sessionId: this.threadId });
+    if (this.pending)
+      return Promise.resolve({
+        exitCode: 1,
+        error: "engine session is already running a turn",
+        sessionId: this.threadId,
+      });
     if (!this.alive) {
       const exitCode = this.exitCode || 1;
-      return Promise.resolve({ exitCode, error: failurePreview(exitCode, null, this.stderrTail, this.stdoutTail), sessionId: this.threadId });
+      return Promise.resolve({
+        exitCode,
+        error: failurePreview(exitCode, null, this.stderrTail, this.stdoutTail),
+        sessionId: this.threadId,
+      });
     }
     return new Promise((resolve) => {
       const pending = {
         resolve,
         timer: null as NodeJS.Timeout | null,
         noOutputTimer: null as NodeJS.Timeout | null,
-        sawOutput: false
+        sawOutput: false,
       };
       const timeoutMs = sessionTimeoutMs();
       if (timeoutMs > 0) {
         pending.timer = setTimeout(() => {
           this.stop();
-          this.settle(`codex engine turn exceeded KING_AI_SESSION_TIMEOUT_MS (${Math.round(timeoutMs / 1000)}s) - aborted; session will respawn`, 124);
+          this.settle(
+            `codex engine turn exceeded KING_AI_SESSION_TIMEOUT_MS (${Math.round(timeoutMs / 1000)}s) - aborted; session will respawn`,
+            124,
+          );
         }, timeoutMs);
         pending.timer.unref?.();
       }
@@ -802,7 +870,7 @@ class CodexSession implements EngineSession {
     this.req("turn/steer", {
       threadId: this.threadId,
       expectedTurnId: this.activeTurnId,
-      input: codexUserInput(text)
+      input: codexUserInput(text),
     });
   }
 
@@ -834,7 +902,7 @@ class CodexSession implements EngineSession {
       sandbox: "danger-full-access",
       experimentalRawEvents: true,
       ...(this.opts.standingPrompt ? { developerInstructions: this.opts.standingPrompt } : {}),
-      ...(this.opts.model ? { model: this.opts.model } : {})
+      ...(this.opts.model ? { model: this.opts.model } : {}),
     };
   }
 
@@ -883,7 +951,9 @@ class CodexSession implements EngineSession {
     }
     if (msg.id === this.threadReqId && msg.error) {
       if (this.threadWasResume) {
-        this.opts.onLog(`[codex] thread/resume failed (${errorMessage(msg.error, "unknown error")}) - starting a fresh thread`);
+        this.opts.onLog(
+          `[codex] thread/resume failed (${errorMessage(msg.error, "unknown error")}) - starting a fresh thread`,
+        );
         this.threadId = null;
         this.threadWasResume = false;
         this.startThread();
@@ -934,7 +1004,7 @@ class CodexSession implements EngineSession {
     this.usage = {
       input: Math.max(this.usage.input, num(rec.inputTokens)),
       cached: Math.max(this.usage.cached, num(rec.cachedInputTokens)),
-      output: Math.max(this.usage.output, num(rec.outputTokens) + num(rec.reasoningOutputTokens))
+      output: Math.max(this.usage.output, num(rec.outputTokens) + num(rec.reasoningOutputTokens)),
     };
   }
 
@@ -944,7 +1014,7 @@ class CodexSession implements EngineSession {
     return {
       input_tokens: Math.max(0, inputTotal - cached),
       cache_read_input_tokens: cached,
-      output_tokens: Math.max(0, this.usage.output - this.turnStart.output)
+      output_tokens: Math.max(0, this.usage.output - this.turnStart.output),
     };
   }
 
@@ -959,7 +1029,7 @@ class CodexSession implements EngineSession {
       error,
       sessionId: this.threadId,
       usage: this.turnUsage(),
-      model: this.opts.model ?? null
+      model: this.opts.model ?? null,
     });
   }
 
@@ -1011,15 +1081,21 @@ class ClaudeAdapter implements EngineAdapter {
     const model = ["--model", args.model || "haiku"];
     const { command, shell, wantsStdinPrompt } = resolveSpawn(this.bin);
     const usingJson = extra.length === 0;
-    const base = extra.length ? [...extra, "-p"] : ["-p", ...model, "--output-format", "json", "--dangerously-skip-permissions", "--strict-mcp-config"];
-    const argv = wantsStdinPrompt ? base : extra.length ? [...base, args.prompt] : ["-p", args.prompt, ...base.slice(1)];
+    const base = extra.length
+      ? [...extra, "-p"]
+      : ["-p", ...model, "--output-format", "json", "--dangerously-skip-permissions", "--strict-mcp-config"];
+    const argv = wantsStdinPrompt
+      ? base
+      : extra.length
+        ? [...base, args.prompt]
+        : ["-p", args.prompt, ...base.slice(1)];
     const res = await spawnCapture(command, argv, {
       cwd: args.cwd,
       env: { ...args.env, MAX_THINKING_TOKENS: "0" },
       signal: args.signal,
       shell,
       stdinText: wantsStdinPrompt ? args.prompt : undefined,
-      onLog: args.onLog
+      onLog: args.onLog,
     });
     if (res.error || !usingJson) return res;
     try {
@@ -1040,7 +1116,7 @@ class ClaudeAdapter implements EngineAdapter {
       env: { ...args.env, MAX_THINKING_TOKENS: "0" },
       signal: args.signal,
       shell,
-      stdinText: wantsStdinPrompt ? DOCTOR_PROMPT : undefined
+      stdinText: wantsStdinPrompt ? DOCTOR_PROMPT : undefined,
     });
   }
 
@@ -1049,15 +1125,21 @@ class ClaudeAdapter implements EngineAdapter {
     const model = args.model ? ["--model", args.model] : [];
     const resume = args.resumeSessionId ? ["--resume", args.resumeSessionId] : [];
     const { command, shell, wantsStdinPrompt } = resolveSpawn(this.bin);
-    const base = extra.length ? [...extra, ...resume, "-p"] : ["-p", ...resume, ...model, "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions"];
-    const argv = wantsStdinPrompt ? base : extra.length ? [...base, args.prompt] : ["-p", args.prompt, ...base.slice(1)];
+    const base = extra.length
+      ? [...extra, ...resume, "-p"]
+      : ["-p", ...resume, ...model, "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions"];
+    const argv = wantsStdinPrompt
+      ? base
+      : extra.length
+        ? [...base, args.prompt]
+        : ["-p", args.prompt, ...base.slice(1)];
     const env: NodeJS.ProcessEnv = { ...args.env, MAX_THINKING_TOKENS: args.env.MAX_THINKING_TOKENS ?? "0" };
     if (args.fastModel) env.ANTHROPIC_SMALL_FAST_MODEL = args.fastModel;
     return spawnEngine(command, argv, {
       ...args,
       env,
       shell,
-      stdinText: wantsStdinPrompt ? args.prompt : undefined
+      stdinText: wantsStdinPrompt ? args.prompt : undefined,
     });
   }
 
@@ -1087,7 +1169,7 @@ class ClaudeAdapter implements EngineAdapter {
       ...resume,
       ...systemPrompt,
       ...model,
-      "--dangerously-skip-permissions"
+      "--dangerously-skip-permissions",
     ];
     const env: NodeJS.ProcessEnv = { ...args.env, MAX_THINKING_TOKENS: args.env.MAX_THINKING_TOKENS ?? "0" };
     if (args.fastModel) env.ANTHROPIC_SMALL_FAST_MODEL = args.fastModel;
@@ -1108,13 +1190,15 @@ class CodexAdapter implements EngineAdapter {
     const extra = envExtraArgs("KING_AI_TRIAGE_ARGS");
     const model = ["--model", args.model || "gpt-5.4-mini"];
     const { command, shell } = resolveSpawn(this.bin);
-    const argv = extra.length ? ["exec", ...extra, args.prompt] : ["exec", ...model, "--skip-git-repo-check", args.prompt];
+    const argv = extra.length
+      ? ["exec", ...extra, args.prompt]
+      : ["exec", ...model, "--skip-git-repo-check", args.prompt];
     return spawnCapture(command, argv, {
       cwd: args.cwd,
       env: args.env,
       signal: args.signal,
       shell,
-      onLog: args.onLog
+      onLog: args.onLog,
     });
   }
 
@@ -1125,7 +1209,7 @@ class CodexAdapter implements EngineAdapter {
       cwd: args.cwd,
       env: args.env,
       signal: args.signal,
-      shell
+      shell,
     });
   }
 
@@ -1136,20 +1220,19 @@ class CodexAdapter implements EngineAdapter {
     const base = extra.length ? extra : ["--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check"];
     return spawnEngine(command, ["exec", ...model, ...codexImageArgs(args.imagePaths), ...base, args.prompt], {
       ...args,
-      shell
+      shell,
     });
   }
 
   startSession(args: Omit<EngineRunArgs, "prompt" | "signal">): EngineSession | null {
-    if (
-      IS_WIN ||
-      envExtraArgs("KING_AI_CODEX_ARGS").length ||
-      process.env.KING_AI_CODEX_NO_APP_SERVER === "1"
-    ) return null;
+    if (IS_WIN || envExtraArgs("KING_AI_CODEX_ARGS").length || process.env.KING_AI_CODEX_NO_APP_SERVER === "1")
+      return null;
     try {
       ensureGitRepoForCodex(args.home);
     } catch (err) {
-      args.onLog(`[codex] could not initialize git repo for app-server: ${err instanceof Error ? err.message : String(err)}`);
+      args.onLog(
+        `[codex] could not initialize git repo for app-server: ${err instanceof Error ? err.message : String(err)}`,
+      );
       return null;
     }
     return new CodexSession(this.bin, ["app-server", "--listen", "stdio://"], args);
@@ -1168,7 +1251,7 @@ function grokUsageFromMeta(meta: Record<string, unknown> | undefined): EngineUsa
   return {
     input_tokens: Math.max(0, inputTokens - cached),
     cache_read_input_tokens: cached,
-    output_tokens: output
+    output_tokens: output,
   };
 }
 
@@ -1189,7 +1272,7 @@ async function grokImageBlocks(imagePaths: readonly string[]): Promise<GrokPromp
     blocks.push({
       type: "image",
       data: bytes.toString("base64"),
-      mimeType: grokImageMimeType(rawPath)
+      mimeType: grokImageMimeType(rawPath),
     });
   }
   return blocks;
@@ -1217,13 +1300,13 @@ async function grokHeadlessArgv(args: {
     ...model,
     ...extra,
     ...rules,
-    ...resume
+    ...resume,
   ];
   const imagePaths = (args.imagePaths ?? []).filter((path) => path.trim());
   if (imagePaths.length > 0) {
     const blocks: GrokPromptBlock[] = [
-      ...await grokImageBlocks(imagePaths),
-      { type: "text", text: stripLoneSurrogates(args.prompt) }
+      ...(await grokImageBlocks(imagePaths)),
+      { type: "text", text: stripLoneSurrogates(args.prompt) },
     ];
     return [...base, "--prompt-json", JSON.stringify(blocks), "--output-format", args.outputFormat];
   }
@@ -1269,21 +1352,28 @@ function grokTurnFromStdout(stdout: string, model?: string | null): EngineResult
     error,
     sessionId,
     usage,
-    model: resolvedModel
+    model: resolvedModel,
   };
 }
 
 function spawnGrokTurn(
   bin: string,
   argv: string[],
-  opts: { home: string; env: NodeJS.ProcessEnv; signal: AbortSignal; onLog: (line: string) => void; shell?: boolean; model?: string | null }
+  opts: {
+    home: string;
+    env: NodeJS.ProcessEnv;
+    signal: AbortSignal;
+    onLog: (line: string) => void;
+    shell?: boolean;
+    model?: string | null;
+  },
 ): Promise<EngineResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(bin, argv, {
       cwd: opts.home,
       env: opts.env,
       stdio: ["ignore", "pipe", "pipe"],
-      shell: opts.shell ?? false
+      shell: opts.shell ?? false,
     });
     const stderr: string[] = [];
     const stdout: string[] = [];
@@ -1333,7 +1423,7 @@ class GrokSession implements EngineSession {
   constructor(
     private readonly bin: string,
     private readonly opts: Omit<EngineRunArgs, "prompt" | "signal">,
-    standingPrompt?: string
+    standingPrompt?: string,
   ) {
     this.sid = opts.resumeSessionId ?? null;
     this.carriesStandingPrompt = !!standingPrompt;
@@ -1349,7 +1439,8 @@ class GrokSession implements EngineSession {
   }
 
   send(prompt: string, options?: EngineTurnOptions): Promise<EngineResult> {
-    if (this.pending) return Promise.resolve({ exitCode: 1, error: "engine session is already running a turn", sessionId: this.sid });
+    if (this.pending)
+      return Promise.resolve({ exitCode: 1, error: "engine session is already running a turn", sessionId: this.sid });
     if (!this.alive) return Promise.resolve({ exitCode: 1, error: "engine session is not alive", sessionId: this.sid });
     const controller = new AbortController();
     const timeoutMs = sessionTimeoutMs();
@@ -1377,7 +1468,7 @@ class GrokSession implements EngineSession {
         resumeSessionId,
         standingPrompt,
         outputFormat: "streaming-json",
-        imagePaths: options?.imagePaths
+        imagePaths: options?.imagePaths,
       });
       return spawnGrokTurn(command, argv, {
         home: this.opts.home,
@@ -1392,7 +1483,7 @@ class GrokSession implements EngineSession {
             noOutputTimer = null;
           }
           this.opts.onLog(line);
-        })
+        }),
       });
     };
 
@@ -1409,7 +1500,7 @@ class GrokSession implements EngineSession {
         result = {
           exitCode: 124,
           error: engineNoOutputError("grok", noOutputMs),
-          sessionId: this.sid
+          sessionId: this.sid,
         };
         this.exited = true;
       }
@@ -1447,14 +1538,14 @@ class GrokAdapter implements EngineAdapter {
       home: args.cwd,
       prompt: args.prompt,
       model: args.model || GROK_SMALL_MODEL,
-      outputFormat: "json"
+      outputFormat: "json",
     });
     const res = await spawnCapture(command, argv, {
       cwd: args.cwd,
       env: args.env,
       signal: args.signal,
       shell,
-      onLog: args.onLog
+      onLog: args.onLog,
     });
     if (res.error) return res;
     try {
@@ -1479,13 +1570,13 @@ class GrokAdapter implements EngineAdapter {
       "-p",
       DOCTOR_PROMPT,
       "--output-format",
-      "plain"
+      "plain",
     ];
     return spawnCapture(command, argv, {
       cwd: args.cwd,
       env: args.env,
       signal: args.signal,
-      shell
+      shell,
     });
   }
 
@@ -1498,7 +1589,7 @@ class GrokAdapter implements EngineAdapter {
       resumeSessionId: args.resumeSessionId,
       standingPrompt: args.standingPrompt,
       outputFormat: "streaming-json",
-      imagePaths: args.imagePaths
+      imagePaths: args.imagePaths,
     });
     return spawnGrokTurn(command, argv, {
       home: args.home,
@@ -1506,7 +1597,7 @@ class GrokAdapter implements EngineAdapter {
       signal: args.signal,
       shell,
       model: args.model ?? null,
-      onLog: args.onLog
+      onLog: args.onLog,
     });
   }
 
@@ -1519,7 +1610,7 @@ class GrokAdapter implements EngineAdapter {
 export const ADAPTERS: Record<EngineId, EngineAdapter> = {
   claude: new ClaudeAdapter(),
   codex: new CodexAdapter(),
-  grok: new GrokAdapter()
+  grok: new GrokAdapter(),
 };
 
 export function getAdapter(id: EngineId): EngineAdapter {
@@ -1528,7 +1619,7 @@ export function getAdapter(id: EngineId): EngineAdapter {
 
 export async function detectEngines(): Promise<EngineId[]> {
   const entries = await Promise.all(
-    ENGINE_PREFERENCE_ORDER.map(async (id) => ((await binOnPath(ADAPTERS[id].bin)) ? id : null))
+    ENGINE_PREFERENCE_ORDER.map(async (id) => ((await binOnPath(ADAPTERS[id].bin)) ? id : null)),
   );
   return entries.filter((id): id is EngineId => id != null);
 }
@@ -1545,7 +1636,9 @@ function extractJsonObject(text: string): string {
   return start >= 0 && end > start ? body.slice(start, end + 1) : body.trim();
 }
 
-function salvageTriage(text: string): { actionable: boolean; reason?: string; promptNote?: string; responseMode?: "me" | "each" | "one-of-us" } | null {
+function salvageTriage(
+  text: string,
+): { actionable: boolean; reason?: string; promptNote?: string; responseMode?: "me" | "each" | "one-of-us" } | null {
   const actionable = text.match(/"actionable"\s*:\s*(true|false)/i);
   if (!actionable) return null;
   const reason = text.match(/"reason"\s*:\s*"((?:[^"\\]|\\.)*)"/i);
@@ -1555,21 +1648,35 @@ function salvageTriage(text: string): { actionable: boolean; reason?: string; pr
     actionable: actionable[1].toLowerCase() === "true",
     reason: reason ? reason[1].replace(/\\"/g, '"').slice(0, 500) : "recovered from partial triage output",
     promptNote: promptNote ? promptNote[1].replace(/\\"/g, '"').slice(0, 1200) : undefined,
-    responseMode: parseResponseMode(responseMode?.[1])
+    responseMode: parseResponseMode(responseMode?.[1]),
   };
 }
 
-export function parseTriage(text: string): { actionable: boolean; reason?: string; promptNote?: string; responseMode?: "me" | "each" | "one-of-us" } | null {
+export function parseTriage(
+  text: string,
+): { actionable: boolean; reason?: string; promptNote?: string; responseMode?: "me" | "each" | "one-of-us" } | null {
   const cleaned = stripLoneSurrogates(text).trim();
   const raw = extractJsonObject(cleaned);
   try {
-    const obj = JSON.parse(raw) as { actionable?: unknown; reason?: unknown; promptNote?: unknown; prompt_note?: unknown; responseMode?: unknown; response_mode?: unknown };
+    const obj = JSON.parse(raw) as {
+      actionable?: unknown;
+      reason?: unknown;
+      promptNote?: unknown;
+      prompt_note?: unknown;
+      responseMode?: unknown;
+      response_mode?: unknown;
+    };
     if (typeof obj.actionable !== "boolean") return salvageTriage(cleaned);
     return {
       actionable: obj.actionable,
       reason: typeof obj.reason === "string" ? obj.reason.slice(0, 500) : undefined,
-      promptNote: typeof obj.promptNote === "string" ? obj.promptNote.slice(0, 1200) : typeof obj.prompt_note === "string" ? obj.prompt_note.slice(0, 1200) : undefined,
-      responseMode: parseResponseMode(obj.responseMode ?? obj.response_mode)
+      promptNote:
+        typeof obj.promptNote === "string"
+          ? obj.promptNote.slice(0, 1200)
+          : typeof obj.prompt_note === "string"
+            ? obj.prompt_note.slice(0, 1200)
+            : undefined,
+      responseMode: parseResponseMode(obj.responseMode ?? obj.response_mode),
     };
   } catch {
     return salvageTriage(cleaned);

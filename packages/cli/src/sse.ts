@@ -8,7 +8,7 @@ export const DEFAULT_SSE_MAX_BUFFER_BYTES = 1024 * 1024;
 
 export async function* parseSseStream(
   body: AsyncIterable<Uint8Array | string>,
-  options: { maxBufferBytes?: number } = {}
+  options: { maxBufferBytes?: number } = {},
 ): AsyncGenerator<SseEvent> {
   const decoder = new TextDecoder("utf-8");
   const maxBufferBytes = options.maxBufferBytes ?? DEFAULT_SSE_MAX_BUFFER_BYTES;

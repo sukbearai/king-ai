@@ -10,7 +10,9 @@ test("appendJsonl serializes concurrent writes without interleaving lines", asyn
   const path = join(dir, "log.jsonl");
   const count = 200;
   // Fire all appends concurrently; the per-path lock must serialize them into intact lines.
-  await Promise.all(Array.from({ length: count }, (_unused, index) => appendJsonl(path, { index, value: `row-${index}` })));
+  await Promise.all(
+    Array.from({ length: count }, (_unused, index) => appendJsonl(path, { index, value: `row-${index}` })),
+  );
 
   const raw = await readFile(path, "utf8");
   const lines = raw.split("\n").filter(Boolean);
@@ -40,7 +42,10 @@ test("compactJsonl rewrites the log into the reduced snapshot atomically", async
   assert.equal(result.written, 2);
 
   const compacted = await readJsonl(path);
-  assert.deepEqual(compacted, [{ id: "a", v: 2 }, { id: "b", v: 1 }]);
+  assert.deepEqual(compacted, [
+    { id: "a", v: 2 },
+    { id: "b", v: 1 },
+  ]);
 });
 
 test("readJsonl returns an empty list for a missing file", async () => {

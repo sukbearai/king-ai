@@ -40,7 +40,7 @@ export function anyRunnerBusy(runners: Iterable<{ isBusy: boolean }>): boolean {
 export async function waitForRunnerIdle(
   runner: { isBusy: boolean },
   deadlineMs: number,
-  pollMs = 100
+  pollMs = 100,
 ): Promise<boolean> {
   const deadline = Date.now() + deadlineMs;
   while (runner.isBusy && Date.now() < deadline) {
@@ -55,7 +55,10 @@ export function shouldExitForUpdate(args: { updateReady: boolean; shuttingDown: 
 
 export function installProcessErrorLogging(): void {
   process.on("unhandledRejection", (reason) => {
-    console.error("[king-ai] unhandledRejection (kept alive):", reason instanceof Error ? reason.stack || reason.message : reason);
+    console.error(
+      "[king-ai] unhandledRejection (kept alive):",
+      reason instanceof Error ? reason.stack || reason.message : reason,
+    );
   });
   process.on("uncaughtException", (err) => {
     console.error("[king-ai] uncaughtException (kept alive):", err instanceof Error ? err.stack || err.message : err);
@@ -81,7 +84,11 @@ export function installLogTimestamps(now: () => Date = () => new Date()): void {
   }
 }
 
-export function resolveHostName(base: string | undefined | null, platform: NodeJS.Platform, platformNames: string[] = []): string {
+export function resolveHostName(
+  base: string | undefined | null,
+  platform: NodeJS.Platform,
+  platformNames: string[] = [],
+): string {
   if (base && base.toLowerCase() !== "localhost") return base;
   if (platform === "darwin") {
     const found = platformNames.map((name) => name.trim()).find(Boolean);
@@ -116,7 +123,7 @@ export function missingEngineMessage(): string {
     "  - Grok: install the `grok` CLI, then run `grok login` (or set XAI_API_KEY)",
     "",
     "After that, rerun:",
-    "  king-ai agent computer --pair <code>"
+    "  king-ai agent computer --pair <code>",
   ].join("\n");
 }
 
@@ -159,7 +166,7 @@ export function formatDoctorReport(results: DoctorResult[], version = CURRENT_VE
   const lines = [
     `king-ai ${version} engine doctor`,
     "probing local engines (big brain = main reasoning, small brain = triage cerebellum)...",
-    ""
+    "",
   ];
   let anyUsable = false;
   for (const result of results) {
@@ -172,7 +179,7 @@ export function formatDoctorReport(results: DoctorResult[], version = CURRENT_VE
     lines.push(`o ${result.id} - ${result.path ?? "on PATH"}`);
     for (const [label, probe] of [
       ["big brain  ", result.big],
-      ["small brain", result.small]
+      ["small brain", result.small],
     ] as const) {
       if (!probe) continue;
       if (probe.ok) {
@@ -180,7 +187,8 @@ export function formatDoctorReport(results: DoctorResult[], version = CURRENT_VE
       } else {
         const detail = probe.detail ?? "unknown failure";
         lines.push(`    x  ${label} FAILED: ${detail}`);
-        for (const line of formatRemediationBlock(engineRemediationAdvice(result.id, detail)).split("\n")) lines.push(`       ${line}`);
+        for (const line of formatRemediationBlock(engineRemediationAdvice(result.id, detail)).split("\n"))
+          lines.push(`       ${line}`);
       }
     }
     if (result.big?.ok && result.small?.ok) anyUsable = true;
@@ -213,7 +221,7 @@ export async function collectDoctorResults(): Promise<DoctorResult[]> {
         installed: true,
         path: adapter.bin,
         big: { ok: !big.error, detail: big.error },
-        small: { ok: !small.error, detail: small.error }
+        small: { ok: !small.error, detail: small.error },
       });
     } finally {
       clearTimeout(timeout);
@@ -222,7 +230,12 @@ export async function collectDoctorResults(): Promise<DoctorResult[]> {
   return results;
 }
 
-export async function doPair(code: string, serverUrl: string, preferredEngine?: EngineId, tenantId?: string): Promise<void> {
+export async function doPair(
+  code: string,
+  serverUrl: string,
+  preferredEngine?: EngineId,
+  tenantId?: string,
+): Promise<void> {
   const locator = parsePairLocator(code);
   const resolvedServerUrl = locator.serverUrl ?? serverUrl;
   const resolvedTenantId = locator.tenantId ?? tenantId;
@@ -230,32 +243,53 @@ export async function doPair(code: string, serverUrl: string, preferredEngine?: 
   if (detected.length === 0) throw new Error(missingEngineMessage());
   const engines = preferredEngine ? [preferredEngine, ...detected.filter((id) => id !== preferredEngine)] : detected;
   if (preferredEngine && !detected.includes(preferredEngine)) {
-    throw new Error(`--engine ${preferredEngine} chosen, but ${preferredEngine} is not installed on this machine. Installed: ${detected.join(", ") || "none"}.`);
+    throw new Error(
+      `--engine ${preferredEngine} chosen, but ${preferredEngine} is not installed on this machine. Installed: ${detected.join(", ") || "none"}.`,
+    );
   }
-  const paired = await api<{ computerId: string; deviceToken: string; tenantId?: string }>(resolvedServerUrl, "/api/computers/pair", {
-    method: "POST",
-    headers: tenantHeader(resolvedTenantId),
-    body: JSON.stringify({ code: locator.code, hostName: await detectHostName(), engines, version: CURRENT_VERSION, capabilities: detectLocalCapabilities() })
-  });
+  const paired = await api<{ computerId: string; deviceToken: string; tenantId?: string }>(
+    resolvedServerUrl,
+    "/api/computers/pair",
+    {
+      method: "POST",
+      headers: tenantHeader(resolvedTenantId),
+      body: JSON.stringify({
+        code: locator.code,
+        hostName: await detectHostName(),
+        engines,
+        version: CURRENT_VERSION,
+        capabilities: detectLocalCapabilities(),
+      }),
+    },
+  );
   const savedTenantId = paired.tenantId ?? resolvedTenantId;
-  await saveConfig({ serverUrl: resolvedServerUrl, computerId: paired.computerId, deviceToken: paired.deviceToken, ...(savedTenantId ? { tenantId: savedTenantId } : {}) });
+  await saveConfig({
+    serverUrl: resolvedServerUrl,
+    computerId: paired.computerId,
+    deviceToken: paired.deviceToken,
+    ...(savedTenantId ? { tenantId: savedTenantId } : {}),
+  });
   await clearLocalRuntimeState();
-  console.log(`paired as ${paired.computerId}${savedTenantId ? ` tenant=${savedTenantId}` : ""}; default engine: ${engines[0] ?? "none"}; available engines: ${engines.join(", ") || "none"}`);
+  console.log(
+    `paired as ${paired.computerId}${savedTenantId ? ` tenant=${savedTenantId}` : ""}; default engine: ${engines[0] ?? "none"}; available engines: ${engines.join(", ") || "none"}`,
+  );
 }
 
-export async function clearLocalRuntimeState(paths = {
-  agentsRoot: AGENTS_ROOT,
-  sessionsDir: SESSIONS_DIR,
-  triageDir: TRIAGE_DIR,
-  runningStatePath: RUNNING_STATE_PATH,
-  heartbeatPath: HEARTBEAT_PATH
-}): Promise<void> {
+export async function clearLocalRuntimeState(
+  paths = {
+    agentsRoot: AGENTS_ROOT,
+    sessionsDir: SESSIONS_DIR,
+    triageDir: TRIAGE_DIR,
+    runningStatePath: RUNNING_STATE_PATH,
+    heartbeatPath: HEARTBEAT_PATH,
+  },
+): Promise<void> {
   await Promise.all([
     rm(paths.agentsRoot, { recursive: true, force: true }),
     rm(paths.sessionsDir, { recursive: true, force: true }),
     rm(paths.triageDir, { recursive: true, force: true }),
     rm(paths.runningStatePath, { force: true }),
-    rm(paths.heartbeatPath, { force: true })
+    rm(paths.heartbeatPath, { force: true }),
   ]);
 }
 
@@ -276,7 +310,11 @@ export async function doRun(serverOverride?: string, tenantOverride?: string): P
   installLogTimestamps();
   const cfg = await loadConfig();
   if (!cfg) throw new Error("not paired. Run: king-ai agent computer --pair <code> --server <url>");
-  const runtimeCfg: ComputerConfig = { ...cfg, serverUrl: serverOverride ?? cfg.serverUrl, tenantId: tenantOverride ?? cfg.tenantId };
+  const runtimeCfg: ComputerConfig = {
+    ...cfg,
+    serverUrl: serverOverride ?? cfg.serverUrl,
+    tenantId: tenantOverride ?? cfg.tenantId,
+  };
   const available = await detectEngines();
   if (available.length === 0) throw new Error(missingEngineMessage());
   console.log(`king-ai ${CURRENT_VERSION} starting ${runtimeCfg.computerId} @ ${runtimeCfg.serverUrl}`);
@@ -285,7 +323,7 @@ export async function doRun(serverOverride?: string, tenantOverride?: string): P
     runId: `${runtimeCfg.computerId}-${Date.now()}`,
     version: CURRENT_VERSION,
     computerId: runtimeCfg.computerId,
-    serverUrl: runtimeCfg.serverUrl
+    serverUrl: runtimeCfg.serverUrl,
   });
   fileHeartbeat.write();
   const capabilities = detectLocalCapabilities();
@@ -294,7 +332,11 @@ export async function doRun(serverOverride?: string, tenantOverride?: string): P
     computerId: runtimeCfg.computerId,
     capabilities,
     agents: [],
-    event: { at: new Date().toISOString(), kind: "daemon.started", detail: `${runtimeCfg.computerId} @ ${runtimeCfg.serverUrl}` }
+    event: {
+      at: new Date().toISOString(),
+      kind: "daemon.started",
+      detail: `${runtimeCfg.computerId} @ ${runtimeCfg.serverUrl}`,
+    },
   });
   await rotateLogsIfNeeded();
 
@@ -302,17 +344,14 @@ export async function doRun(serverOverride?: string, tenantOverride?: string): P
   const publishRunningAgents = (extra: RunningAgentState[] = []) => {
     recordRunningState({
       capabilities: detectLocalCapabilities(),
-      agents: [
-        ...[...runners.values()].map((runner) => runner.runningState()),
-        ...extra
-      ]
+      agents: [...[...runners.values()].map((runner) => runner.runningState()), ...extra],
     });
   };
   const runSync = async () => {
     let agents: AgentConfig[];
     try {
       agents = await api<AgentConfig[]>(runtimeCfg.serverUrl, "/api/computers/me/agents", {
-        headers: { Authorization: `Bearer ${runtimeCfg.deviceToken}`, ...tenantHeader(runtimeCfg.tenantId) }
+        headers: { Authorization: `Bearer ${runtimeCfg.deviceToken}`, ...tenantHeader(runtimeCfg.tenantId) },
       });
     } catch (err) {
       console.warn(`agent sync failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -329,7 +368,7 @@ export async function doRun(serverOverride?: string, tenantOverride?: string): P
         }
         disabledAgents.push({ ...agent, lifecycle });
         recordRunningState({
-          event: { at: new Date().toISOString(), kind: "agent.disabled", detail: agent.id }
+          event: { at: new Date().toISOString(), kind: "agent.disabled", detail: agent.id },
         });
         continue;
       }
@@ -342,15 +381,28 @@ export async function doRun(serverOverride?: string, tenantOverride?: string): P
         }
         const idle = await waitForRunnerIdle(existing, REHOST_GRACE_MS);
         if (!idle) {
-          console.warn(`${agent.id} still busy after ${Math.round(REHOST_GRACE_MS / 1000)}s; re-hosting on ${engine} anyway`);
+          console.warn(
+            `${agent.id} still busy after ${Math.round(REHOST_GRACE_MS / 1000)}s; re-hosting on ${engine} anyway`,
+          );
         }
         existing.stop();
       }
-      const runner = new AgentRunner(runtimeCfg, { ...agent, lifecycle }, engine, available, () => publishRunningAgents(), requestResync);
+      const runner = new AgentRunner(
+        runtimeCfg,
+        { ...agent, lifecycle },
+        engine,
+        available,
+        () => publishRunningAgents(),
+        requestResync,
+      );
       runners.set(agent.id, runner);
       console.log(`hosting ${agent.name} (${agent.id}) on ${engine} lifecycle=${lifecycle}`);
       recordRunningState({
-        event: { at: new Date().toISOString(), kind: "agent.hosting", detail: `${agent.id} on ${engine} lifecycle=${lifecycle}` }
+        event: {
+          at: new Date().toISOString(),
+          kind: "agent.hosting",
+          detail: `${agent.id} on ${engine} lifecycle=${lifecycle}`,
+        },
       });
       await runner.start();
     }
@@ -360,23 +412,23 @@ export async function doRun(serverOverride?: string, tenantOverride?: string): P
         runner.stop();
         runners.delete(id);
         recordRunningState({
-          event: { at: new Date().toISOString(), kind: "agent.removed", detail: id }
+          event: { at: new Date().toISOString(), kind: "agent.removed", detail: id },
         });
       }
     }
     publishRunningAgents(
       disabledAgents.map((agent) => ({
-          id: agent.id,
-          name: agent.name,
-          engine: agent.engine ?? "disabled",
-          lifecycle: "disabled" as const,
-          status: "disabled" as const,
-          configWarnings: validateAgentConfig(agent, agent.engine ?? "disabled", available),
-          updatedAt: new Date().toISOString()
-        }))
+        id: agent.id,
+        name: agent.name,
+        engine: agent.engine ?? "disabled",
+        lifecycle: "disabled" as const,
+        status: "disabled" as const,
+        configWarnings: validateAgentConfig(agent, agent.engine ?? "disabled", available),
+        updatedAt: new Date().toISOString(),
+      })),
     );
     recordRunningState({
-      lastSyncAt: new Date().toISOString()
+      lastSyncAt: new Date().toISOString(),
     });
   };
 
@@ -414,15 +466,21 @@ export async function doRun(serverOverride?: string, tenantOverride?: string): P
     const capabilities = detectLocalCapabilities();
     return fetch(`${runtimeCfg.serverUrl}/api/computers/heartbeat`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${runtimeCfg.deviceToken}`, ...tenantHeader(runtimeCfg.tenantId) },
-      body: JSON.stringify({ version: CURRENT_VERSION, capabilities })
-    }).then(() => {
-      fileHeartbeat.tick();
-      recordRunningState({ lastHeartbeatAt: at, capabilities });
-    }).catch(() => {
-      fileHeartbeat.tick();
-      recordRunningState({ event: { at, kind: "heartbeat.failed", detail: runtimeCfg.serverUrl } });
-    });
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${runtimeCfg.deviceToken}`,
+        ...tenantHeader(runtimeCfg.tenantId),
+      },
+      body: JSON.stringify({ version: CURRENT_VERSION, capabilities }),
+    })
+      .then(() => {
+        fileHeartbeat.tick();
+        recordRunningState({ lastHeartbeatAt: at, capabilities });
+      })
+      .catch(() => {
+        fileHeartbeat.tick();
+        recordRunningState({ event: { at, kind: "heartbeat.failed", detail: runtimeCfg.serverUrl } });
+      });
   };
 
   await heartbeat();
@@ -469,7 +527,9 @@ export async function doRun(serverOverride?: string, tenantOverride?: string): P
         }
         exitForUpdateWhenIdle();
       } else {
-        console.log(`king-ai ${latest} available. Restart to update, or install the background service for automatic restarts.`);
+        console.log(
+          `king-ai ${latest} available. Restart to update, or install the background service for automatic restarts.`,
+        );
       }
     });
   };

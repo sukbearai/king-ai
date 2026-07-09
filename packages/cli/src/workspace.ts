@@ -33,7 +33,7 @@ export function resolveWorkspaceAllowlist(env: NodeJS.ProcessEnv = process.env):
 export function detectLocalCapabilities(env: NodeJS.ProcessEnv = process.env): LocalCapabilities {
   return {
     workspaces: resolveWorkspaceAllowlist(env),
-    agentWorkspaceRoot: resolveAgentWorkspaceBase(env)
+    agentWorkspaceRoot: resolveAgentWorkspaceBase(env),
   };
 }
 
@@ -48,17 +48,23 @@ export function agentWorkspaceRoot(agentId: string, agentHome: string, env: Node
 }
 
 export function formatWorkspacePolicy(workspaces: string[], agentRoot?: string): string {
-  const rootLine = agentRoot ? `Agent workspace root: ${agentRoot}. Use this as your default project workspace for clones, builds, downloads, and scratch files.` : "";
+  const rootLine = agentRoot
+    ? `Agent workspace root: ${agentRoot}. Use this as your default project workspace for clones, builds, downloads, and scratch files.`
+    : "";
   if (workspaces.length === 0) {
     return [
       rootLine,
-      "Workspace access: no external workspace directories are explicitly allowed. Stay in your agent workspace root unless the operator configures KING_AI_WORKSPACES."
-    ].filter(Boolean).join("\n");
+      "Workspace access: no external workspace directories are explicitly allowed. Stay in your agent workspace root unless the operator configures KING_AI_WORKSPACES.",
+    ]
+      .filter(Boolean)
+      .join("\n");
   }
   return [
     rootLine,
     "Workspace access: the operator has allowed these external workspace directories for this agent:",
     ...workspaces.map((path) => `- ${path}`),
-    "You may read or work in those directories only when the runtime task asks for it. For unrelated scratch work, use your agent workspace root."
-  ].filter(Boolean).join("\n");
+    "You may read or work in those directories only when the runtime task asks for it. For unrelated scratch work, use your agent workspace root.",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }

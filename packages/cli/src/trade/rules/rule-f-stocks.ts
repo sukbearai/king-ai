@@ -14,7 +14,7 @@ const DEFAULT_WATCHLIST: Record<string, string> = {
   SMCI: "Super Micro",
   TSLA: "特斯拉",
   NVDA: "英伟达",
-  AAPL: "苹果"
+  AAPL: "苹果",
 };
 
 const ETF_SYMBOLS = new Set(["GLD", "SH000001", "SZ399001"]);
@@ -45,13 +45,22 @@ function yahooSymbol(symbol: string): string {
 }
 
 async function ashareQuote(symbol: string): Promise<{ price: number; change_pct?: number } | null> {
-  const result = await runOpencli([
-    "xueqiu", "stock", symbol,
-    "--window", "background",
-    "--site-session", "persistent",
-    "--keep-tab", "true",
-    "--format", "json"
-  ], 15_000);
+  const result = await runOpencli(
+    [
+      "xueqiu",
+      "stock",
+      symbol,
+      "--window",
+      "background",
+      "--site-session",
+      "persistent",
+      "--keep-tab",
+      "true",
+      "--format",
+      "json",
+    ],
+    15_000,
+  );
   if (result.ok && result.data.length) {
     const row = result.data[0] as Record<string, unknown>;
     const price = Number(row.price ?? row.Price);
@@ -76,15 +85,15 @@ async function yahooFinanceQuoteExtended(symbol: string): Promise<StockQuoteResu
   try {
     const res = await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0 king-ai/1.0" },
-      signal: AbortSignal.timeout(10_000)
+      signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) {
-        return {
-          price: base.price,
-          change_pct: base.change_pct,
-          extended_price: null,
-          extended_change_pct: 0,
-          session: "regular"
+      return {
+        price: base.price,
+        change_pct: base.change_pct,
+        extended_price: null,
+        extended_change_pct: 0,
+        session: "regular",
       };
     }
 
@@ -109,7 +118,7 @@ async function yahooFinanceQuoteExtended(symbol: string): Promise<StockQuoteResu
         change_pct: base.change_pct,
         extended_price: null,
         extended_change_pct: 0,
-        session: "regular"
+        session: "regular",
       };
     }
 
@@ -148,7 +157,7 @@ async function yahooFinanceQuoteExtended(symbol: string): Promise<StockQuoteResu
       change_pct: base.change_pct,
       extended_price: extendedPrice,
       extended_change_pct: Math.round(extendedPct * 100) / 100,
-      session
+      session,
     };
   } catch {
     return {
@@ -156,7 +165,7 @@ async function yahooFinanceQuoteExtended(symbol: string): Promise<StockQuoteResu
       change_pct: base.change_pct,
       extended_price: null,
       extended_change_pct: 0,
-      session: "regular"
+      session: "regular",
     };
   }
 }
@@ -170,7 +179,7 @@ async function fetchStock(symbol: string): Promise<StockQuoteResult | null> {
       change_pct: result.change_pct,
       extended_price: null,
       extended_change_pct: 0,
-      session: "regular"
+      session: "regular",
     };
   }
 
@@ -184,7 +193,7 @@ async function fetchStock(symbol: string): Promise<StockQuoteResult | null> {
       change_pct: base.change_pct,
       extended_price: null,
       extended_change_pct: 0,
-      session: "regular"
+      session: "regular",
     };
   }
   return null;
@@ -224,16 +233,18 @@ export function createRuleF(threshold = 5): AlertRule {
               lastPushedPrice[symbol] = priceStr;
               const currency = isAshareSymbol(symbol) ? "¥" : "$";
               const direction = change > 0 ? "暴涨" : "暴跌";
-              alerts.push(createAlert({
-                rule: "股票异动",
-                severity: Math.abs(change) >= 8 ? "critical" : "info",
-                title: `${name} (${symbol}) ${direction} ${change >= 0 ? "+" : ""}${change.toFixed(1)}%`,
-                detail: `当前价格: ${currency}${priceStr}`,
-                timestamp: nowDisplay(),
-                direction: change > 0 ? 1 : -1,
-                strength: Math.min(Math.abs(change) / 10, 1),
-                asset: symbol
-              }));
+              alerts.push(
+                createAlert({
+                  rule: "股票异动",
+                  severity: Math.abs(change) >= 8 ? "critical" : "info",
+                  title: `${name} (${symbol}) ${direction} ${change >= 0 ? "+" : ""}${change.toFixed(1)}%`,
+                  detail: `当前价格: ${currency}${priceStr}`,
+                  timestamp: nowDisplay(),
+                  direction: change > 0 ? 1 : -1,
+                  strength: Math.min(Math.abs(change) / 10, 1),
+                  asset: symbol,
+                }),
+              );
             }
           }
         }
@@ -247,22 +258,24 @@ export function createRuleF(threshold = 5): AlertRule {
               lastPushedExtended[symbol] = extStr;
               const sessionLabel = session === "post" ? "盘后" : "盘前";
               const direction = extChange > 0 ? "暴涨" : "暴跌";
-              alerts.push(createAlert({
-                rule: "股票异动",
-                severity: Math.abs(extChange) >= 8 ? "warning" : "info",
-                title: `${name} (${symbol}) ${sessionLabel}${direction} ${extChange >= 0 ? "+" : ""}${extChange.toFixed(1)}%`,
-                detail: `${sessionLabel}价: $${extPrice} (收盘 $${price}, 日内 ${change >= 0 ? "+" : ""}${change.toFixed(1)}%)`,
-                timestamp: nowDisplay(),
-                direction: extChange > 0 ? 1 : -1,
-                strength: Math.min(Math.abs(extChange) / 10, 1),
-                asset: symbol
-              }));
+              alerts.push(
+                createAlert({
+                  rule: "股票异动",
+                  severity: Math.abs(extChange) >= 8 ? "warning" : "info",
+                  title: `${name} (${symbol}) ${sessionLabel}${direction} ${extChange >= 0 ? "+" : ""}${extChange.toFixed(1)}%`,
+                  detail: `${sessionLabel}价: $${extPrice} (收盘 $${price}, 日内 ${change >= 0 ? "+" : ""}${change.toFixed(1)}%)`,
+                  timestamp: nowDisplay(),
+                  direction: extChange > 0 ? 1 : -1,
+                  strength: Math.min(Math.abs(extChange) / 10, 1),
+                  asset: symbol,
+                }),
+              );
             }
           }
         }
       }
 
       return alerts;
-    }
+    },
   };
 }

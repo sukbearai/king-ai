@@ -4,7 +4,7 @@ import {
   dotGet,
   enabledAlertRules,
   loadTradeConfig,
-  ruleStaggerMs
+  ruleStaggerMs,
 } from "./config.js";
 import { AlertState, COOLDOWN_DEFAULTS, runRuleTick, type AlertRule } from "./alert-rule.js";
 import { getRuleStateStore } from "./rule-state.js";
@@ -32,13 +32,13 @@ export async function runUnifiedRuleScheduler(options: UnifiedRuleSchedulerOptio
   const cdOverrides = (dotGet(config, "alerts.cooldowns", {}) ?? {}) as Record<string, number>;
   const cooldownConfig = { ...COOLDOWN_DEFAULTS, ...cdOverrides };
   const states = new Map<string, AlertState>(
-    rules.map((rule) => [rule.ruleKey, new AlertState(cooldownConfig, sharedCooldowns)])
+    rules.map((rule) => [rule.ruleKey, new AlertState(cooldownConfig, sharedCooldowns)]),
   );
   const useConfluence = confluenceEnabled(config);
   const confluenceWindow = Number(dotGet(config, "alerts.confluence_window_seconds", 900)) || 900;
 
   process.stderr.write(
-    `[rule-scheduler] unified poll — rules=[${rules.map((r) => r.ruleKey).join(",")}] interval=${pollSeconds}s stagger=${staggerMs}ms\n`
+    `[rule-scheduler] unified poll — rules=[${rules.map((r) => r.ruleKey).join(",")}] interval=${pollSeconds}s stagger=${staggerMs}ms\n`,
   );
 
   for (;;) {
@@ -49,7 +49,7 @@ export async function runUnifiedRuleScheduler(options: UnifiedRuleSchedulerOptio
         dryRun: options.dryRun,
         onStatus: options.onStatus,
         confluenceEnabled: useConfluence,
-        confluenceWindowSeconds: confluenceWindow
+        confluenceWindowSeconds: confluenceWindow,
       });
       if (staggerMs > 0) await sleep(staggerMs);
     }

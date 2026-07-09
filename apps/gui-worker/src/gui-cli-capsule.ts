@@ -21,10 +21,7 @@ export type GuiCliCapsule = {
   updated_at: number;
 };
 
-export type RunCapsuleCommandDeps<
-  S extends { capsules: GuiCliCapsule[] },
-  C extends GuiCliCapsule
-> = {
+export type RunCapsuleCommandDeps<S extends { capsules: GuiCliCapsule[] }, C extends GuiCliCapsule> = {
   defaultAgentId: string;
   findCapsule: (state: S, id: string | undefined) => C | undefined;
   formatCapsuleLine: (capsule: C) => string;
@@ -37,21 +34,23 @@ export type RunCapsuleCommandDeps<
   isCapsuleScopeType: (value: string) => value is GuiCliCapsuleScopeType;
 };
 
-export function runCapsuleCommand<
-  S extends { capsules: GuiCliCapsule[] },
-  C extends GuiCliCapsule
->(state: S, args: string[], deps: RunCapsuleCommandDeps<S, C>): string {
+export function runCapsuleCommand<S extends { capsules: GuiCliCapsule[] }, C extends GuiCliCapsule>(
+  state: S,
+  args: string[],
+  deps: RunCapsuleCommandDeps<S, C>,
+): string {
   const cmd = args[0] || "list";
   if (cmd === "list") {
     const status = deps.readOption(args, "--status");
     const owner = deps.readOption(args, "--owner");
     const reviewer = deps.readOption(args, "--reviewer");
     const initiative = deps.readOption(args, "--initiative");
-    const capsules = state.capsules.filter((capsule) =>
-      (!status || capsule.status === status) &&
-      (!owner || capsule.ownerAgent === owner) &&
-      (!reviewer || capsule.reviewer === reviewer) &&
-      (!initiative || capsule.initiativeId === initiative)
+    const capsules = state.capsules.filter(
+      (capsule) =>
+        (!status || capsule.status === status) &&
+        (!owner || capsule.ownerAgent === owner) &&
+        (!reviewer || capsule.reviewer === reviewer) &&
+        (!initiative || capsule.initiativeId === initiative),
     ) as C[];
     if (capsules.length === 0) return "No capsules found.";
     return capsules.map((capsule) => deps.formatCapsuleLine(capsule)).join("\n") + `\n\n${capsules.length} capsule(s)`;
@@ -59,22 +58,39 @@ export function runCapsuleCommand<
   if (cmd === "mine") {
     const agent = deps.readOption(args, "--agent") || deps.defaultAgentId;
     const status = deps.readOption(args, "--status");
-    const capsules = state.capsules.filter((capsule) =>
-      capsule.ownerAgent === agent &&
-      (!status || capsule.status === status)
+    const capsules = state.capsules.filter(
+      (capsule) => capsule.ownerAgent === agent && (!status || capsule.status === status),
     ) as C[];
     if (capsules.length === 0) return "No owned capsules found.";
-    return capsules.map((capsule) => `${deps.formatCapsuleLine(capsule)}\n  acceptance: ${capsule.acceptance}`).join("\n");
+    return capsules
+      .map((capsule) => `${deps.formatCapsuleLine(capsule)}\n  acceptance: ${capsule.acceptance}`)
+      .join("\n");
   }
   if (cmd === "get") {
     const capsule = deps.findCapsule(state, args[1]);
     return capsule ? JSON.stringify(capsule, null, 2) : `capsule not found: ${args[1] || ""}`;
   }
   if (cmd === "create") {
-    const goal = deps.readOption(args, "--goal") || deps.stripOptions(args.slice(1), [
-      "--owner", "--branch", "--base", "--paths", "--path", "--acceptance", "--reviewer",
-      "--initiative", "--task", "--subsystem", "--scope-type", "--blocked-by", "--supersedes"
-    ]).join(" ").trim();
+    const goal =
+      deps.readOption(args, "--goal") ||
+      deps
+        .stripOptions(args.slice(1), [
+          "--owner",
+          "--branch",
+          "--base",
+          "--paths",
+          "--path",
+          "--acceptance",
+          "--reviewer",
+          "--initiative",
+          "--task",
+          "--subsystem",
+          "--scope-type",
+          "--blocked-by",
+          "--supersedes",
+        ])
+        .join(" ")
+        .trim();
     const ownerAgent = deps.readOption(args, "--owner") || deps.defaultAgentId;
     const branch = deps.readOption(args, "--branch") || `king-ai/${ownerAgent}/${Date.now()}`;
     const baseCommit = deps.readOption(args, "--base") || "unknown";
@@ -103,12 +119,16 @@ export function runCapsuleCommand<
       blockedBy: deps.parseCsvOption(args, "--blocked-by"),
       supersedes: deps.readOption(args, "--supersedes"),
       created_at: now,
-      updated_at: now
+      updated_at: now,
     } as C;
     const conflicts = deps.capsuleConflicts(state, capsule);
     state.capsules.push(capsule);
-    return `Capsule ${capsule.id} created on ${capsule.branch} [${capsule.status}]` +
-      (conflicts.length ? `\nConflicts: ${conflicts.map((conflict) => `${conflict.id.slice(0, 14)}(${conflict.level})`).join(", ")}` : "");
+    return (
+      `Capsule ${capsule.id} created on ${capsule.branch} [${capsule.status}]` +
+      (conflicts.length
+        ? `\nConflicts: ${conflicts.map((conflict) => `${conflict.id.slice(0, 14)}(${conflict.level})`).join(", ")}`
+        : "")
+    );
   }
   if (cmd === "update") {
     const capsule = deps.findCapsule(state, args[1]);

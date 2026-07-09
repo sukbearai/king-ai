@@ -22,14 +22,14 @@ describe("slim trade pipeline", () => {
 
   it("telegram brief path parses json and channel config", () => {
     const rows = parseTelegramChannels({
-      "方程式快讯": "方程式新闻 BWEnews",
-      "meme 链上监控": "meme链上监控"
+      方程式快讯: "方程式新闻 BWEnews",
+      "meme 链上监控": "meme链上监控",
     });
     assert.equal(rows[0]?.chat, "方程式新闻 BWEnews");
 
     const raw = JSON.stringify({
       ok: true,
-      data: [{ content: "headline" }]
+      data: [{ content: "headline" }],
     });
     assert.deepEqual(parseTgRecentMessages(raw), ["headline"]);
   });

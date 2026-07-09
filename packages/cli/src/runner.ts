@@ -6,10 +6,24 @@ import { AGENTS_ROOT, SESSIONS_DIR, TRIAGE_DIR, learnedSkillsDir } from "./paths
 import { formatEngineLogLine, getAdapter, parseTriage } from "./engine.js";
 import { parseSseStream } from "./sse.js";
 import { writeShim } from "./shim.js";
-import type { AgentConfig, ComputerConfig, EngineAdapter, EngineId, EngineSession, RuntimeRun, RuntimeRunContract, TriageVerdict } from "./types.js";
+import type {
+  AgentConfig,
+  ComputerConfig,
+  EngineAdapter,
+  EngineId,
+  EngineSession,
+  RuntimeRun,
+  RuntimeRunContract,
+  TriageVerdict,
+} from "./types.js";
 import { authFailureHint, concise, hashText, isRateLimited } from "./text.js";
 import { agentWorkspaceRoot, detectLocalCapabilities, formatWorkspacePolicy } from "./workspace.js";
-import { formatWorktreePlanForPrompt, formatWorktreePreparationResults, planAgentWorktrees, prepareWorktreePlans } from "./worktree.js";
+import {
+  formatWorktreePlanForPrompt,
+  formatWorktreePreparationResults,
+  planAgentWorktrees,
+  prepareWorktreePlans,
+} from "./worktree.js";
 import type { RunningAgentState } from "./service.js";
 import { checkTokenBudget, emptyAgentRunStats, recordAgentRunStats, tokenBudgetFromEnv } from "./usage.js";
 import type { AgentRunStats } from "./usage.js";
@@ -43,7 +57,8 @@ export const FAIL_OPEN_STREAK_LIMIT = 3;
 export const NO_STATE_ACTION_ACK_STREAK = 2;
 const WAKE_STREAM_HEALTH_FACTOR = 3;
 const ENGINE_NO_OUTPUT_RERUN_LIMIT = 1;
-const PREPARE_WORKTREES = process.env.KING_AI_PREPARE_WORKTREES === "1" || process.env.KING_AI_AGENT_PREPARE_WORKTREES === "1";
+const PREPARE_WORKTREES =
+  process.env.KING_AI_PREPARE_WORKTREES === "1" || process.env.KING_AI_AGENT_PREPARE_WORKTREES === "1";
 const NESTED_ENV_BLOCKLIST = [
   "CODEX_CI",
   "CODEX_SANDBOX_NETWORK_DISABLED",
@@ -67,7 +82,7 @@ const NESTED_ENV_BLOCKLIST = [
   "KING_AI_AGENT_SKILL_SNAPSHOT_ID",
   "KING_AI_AGENT_SKILL_SNAPSHOT_PATH",
   "KING_AI_AGENT_SKILL_SNAPSHOT_MANIFEST",
-  "KING_AI_AGENT_LEARNED_SKILLS"
+  "KING_AI_AGENT_LEARNED_SKILLS",
 ] as const;
 
 interface InboxRow {
@@ -176,8 +191,16 @@ export function sanitizeNestedEngineEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessE
   return clean;
 }
 
-export function selectSteerMessage(rows: InboxRow[], conversationId: string, agentId: string, lastSteeredMsgId?: string | null): InboxRow | null {
-  const inConversation = sortRuntimeMessages(rows.filter((row) => row.conversation_id === conversationId), agentId)
+export function selectSteerMessage(
+  rows: InboxRow[],
+  conversationId: string,
+  agentId: string,
+  lastSteeredMsgId?: string | null,
+): InboxRow | null {
+  const inConversation = sortRuntimeMessages(
+    rows.filter((row) => row.conversation_id === conversationId),
+    agentId,
+  )
     .filter((item) => item.route === "steer" || item.route === "respond")
     .map((item) => item.row);
   if (inConversation.length === 0) return null;
@@ -266,8 +289,10 @@ export function formatTriageNote(triage?: TriageVerdict | null): string {
     triage.routeHint ? `Route hint: ${triage.routeHint}.` : "",
     triage.priority ? `Priority: ${triage.priority}.` : "",
     note ? `Instruction: ${note}` : "",
-    reason ? `Reason: ${reason.slice(0, 500)}` : ""
-  ].filter(Boolean).join("\n");
+    reason ? `Reason: ${reason.slice(0, 500)}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function simpleTurnFastPathInstruction(triage?: TriageVerdict | null): string {
@@ -277,25 +302,26 @@ export function simpleTurnFastPathInstruction(triage?: TriageVerdict | null): st
     "Fast path for simple routed work:",
     "If the fetched context is just a roll-call, acknowledgement, direct confirmation, or other low-risk one-line reply, do one brief reply and immediately close the assigned task with king-ai task done.",
     "Do not run king-ai inbox, messages, or task list just to rediscover the same context; use the already fetched unread digest and the Conversation Glance snapshot in the runtime preamble when the wake pins a conversation.",
-    "For pinned single-conversation work, post and close in one shell when ready: king-ai reply <conversationId> --file notes/reply.md --quote <messageId> && king-ai task done <taskId>."
+    "For pinned single-conversation work, post and close in one shell when ready: king-ai reply <conversationId> --file notes/reply.md --quote <messageId> && king-ai task done <taskId>.",
   ].join("\n");
 }
 
 export function engineTurnToolHint(engine: EngineId, triage?: TriageVerdict | null): string {
   if (triage?.actionable !== true) return "";
   if (triage.source !== "routed-task" && triage.responseMode !== "me") return "";
-  const chain = "king-ai reply <conversationId> --file notes/reply.md --quote <messageId> && king-ai task done <taskId>";
+  const chain =
+    "king-ai reply <conversationId> --file notes/reply.md --quote <messageId> && king-ai task done <taskId>";
   if (engine === "codex") {
     return [
       "Codex tool-chain fast path:",
       "The runtime preamble already includes a Conversation Glance snapshot — do NOT run king-ai glance first for a pinned conversation.",
-      `Post and close in one shell: ${chain}.`
+      `Post and close in one shell: ${chain}.`,
     ].join("\n");
   }
   return [
     "Tool-chain fast path:",
     "Use the preamble Conversation Glance snapshot instead of a separate king-ai glance when the wake pins one conversation.",
-    `When ready, combine reply and task close: ${chain}.`
+    `When ready, combine reply and task close: ${chain}.`,
   ].join("\n");
 }
 
@@ -304,7 +330,7 @@ export function buildChatDelta(
   memoryDigest: string,
   rosterDigest: string,
   triage?: TriageVerdict | null,
-  toolHint?: string
+  toolHint?: string,
 ): string {
   const triageNote = formatTriageNote(triage);
   const fastPath = simpleTurnFastPathInstruction(triage);
@@ -347,8 +373,10 @@ export function appendRuntimePreamble(delta: string, preamble?: string): string 
   return section ? `${section}\n\n${delta}` : delta;
 }
 
-const CONTEXT_OVERFLOW_RE = /context window|context length|context_length_exceeded|maximum context|reached its context|prompt is too long|input is too long|too many tokens/i;
-const POISONED_BODY_RE = /no (?:low|high) surrogate|unpaired surrogate|lone surrogate|surrogate in string|request body is not valid json/i;
+const CONTEXT_OVERFLOW_RE =
+  /context window|context length|context_length_exceeded|maximum context|reached its context|prompt is too long|input is too long|too many tokens/i;
+const POISONED_BODY_RE =
+  /no (?:low|high) surrogate|unpaired surrogate|lone surrogate|surrogate in string|request body is not valid json/i;
 const ENGINE_NO_OUTPUT_RE = /engine produced no output|session\.send|interactive prompt/i;
 
 export function isContextOverflow(error: string): boolean {
@@ -379,16 +407,23 @@ export function shouldRetryEngineNoOutputTurn(args: { error?: string; attempts: 
   return !!args.error && ENGINE_NO_OUTPUT_RE.test(args.error) && args.attempts < limit;
 }
 
-export function planEngineFailureAttempt(args: { error?: string; attempts: number; limit?: number }): { retry: boolean; publishFailureNotice: boolean; nextAttempts: number } {
+export function planEngineFailureAttempt(args: { error?: string; attempts: number; limit?: number }): {
+  retry: boolean;
+  publishFailureNotice: boolean;
+  nextAttempts: number;
+} {
   const retry = shouldRetryEngineNoOutputTurn(args);
   return {
     retry,
     publishFailureNotice: shouldPublishEngineFailureNotice(args.error) && !retry,
-    nextAttempts: retry ? args.attempts + 1 : args.attempts
+    nextAttempts: retry ? args.attempts + 1 : args.attempts,
   };
 }
 
-export function engineStatusPayload(status: string, remediation?: RemediationAdvice | null): { status: string; remediation?: RemediationAdvice | null } {
+export function engineStatusPayload(
+  status: string,
+  remediation?: RemediationAdvice | null,
+): { status: string; remediation?: RemediationAdvice | null } {
   return remediation === undefined ? { status } : { status, remediation };
 }
 
@@ -401,11 +436,12 @@ export function swallowTurnRejection(task: Promise<void>, onError: (message: str
 const DEFAULT_SESSION_SCOPE = "default";
 
 function sessionScopeFilePart(scope: string): string {
-  const readable = scope
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40) || "scope";
+  const readable =
+    scope
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40) || "scope";
   return `${readable}-${hashText(scope)}`;
 }
 
@@ -414,7 +450,10 @@ export function conversationSessionScope(conversationId?: string | null): string
   return id ? `conversation:${id}` : DEFAULT_SESSION_SCOPE;
 }
 
-export function turnSessionScope(contract: RuntimeRunContract | null | undefined, seenConversationIds: Iterable<string>): string {
+export function turnSessionScope(
+  contract: RuntimeRunContract | null | undefined,
+  seenConversationIds: Iterable<string>,
+): string {
   if (contract?.conversationId) return conversationSessionScope(contract.conversationId);
   const ids = [...seenConversationIds].filter((id) => id.trim());
   return ids.length === 1 ? conversationSessionScope(ids[0]) : DEFAULT_SESSION_SCOPE;
@@ -426,9 +465,27 @@ export function agentSessionFile(agentId: string, engine: EngineId, scope = DEFA
 }
 
 export function parseWakeEventInfo(rawData: string | undefined, now = Date.now()): WakeEventInfo {
-  if (!rawData) return { conversationId: null, requestId: null, messageId: null, taskId: null, agentId: null, sentAt: null, deliveryLatencyMs: null, resetState: false };
+  if (!rawData)
+    return {
+      conversationId: null,
+      requestId: null,
+      messageId: null,
+      taskId: null,
+      agentId: null,
+      sentAt: null,
+      deliveryLatencyMs: null,
+      resetState: false,
+    };
   try {
-    const data = JSON.parse(rawData) as { conversationId?: unknown; requestId?: unknown; messageId?: unknown; taskId?: unknown; agentId?: unknown; at?: unknown; resetState?: unknown };
+    const data = JSON.parse(rawData) as {
+      conversationId?: unknown;
+      requestId?: unknown;
+      messageId?: unknown;
+      taskId?: unknown;
+      agentId?: unknown;
+      at?: unknown;
+      resetState?: unknown;
+    };
     const conversationId = typeof data.conversationId === "string" ? data.conversationId : null;
     const messageId = typeof data.messageId === "string" ? data.messageId : null;
     const requestId = typeof data.requestId === "string" ? data.requestId : messageId;
@@ -443,10 +500,19 @@ export function parseWakeEventInfo(rawData: string | undefined, now = Date.now()
       agentId,
       sentAt,
       deliveryLatencyMs: sentAt == null ? null : Math.max(0, now - sentAt),
-      resetState: data.resetState === true
+      resetState: data.resetState === true,
     };
   } catch {
-    return { conversationId: null, requestId: null, messageId: null, taskId: null, agentId: null, sentAt: null, deliveryLatencyMs: null, resetState: false };
+    return {
+      conversationId: null,
+      requestId: null,
+      messageId: null,
+      taskId: null,
+      agentId: null,
+      sentAt: null,
+      deliveryLatencyMs: null,
+      resetState: false,
+    };
   }
 }
 
@@ -456,7 +522,10 @@ export function shouldHandleWakeEvent(info: WakeEventInfo, agentId: string): boo
 
 // Task-routing SSE wakes carry a taskId contract. When the inbox snapshot is momentarily empty,
 // do not fall through to the slow agenda quiet-path — act on the pinned task immediately.
-export function shouldForceActionableTurn(args: { hasRealUnread: boolean; contract?: RuntimeRunContract | null }): boolean {
+export function shouldForceActionableTurn(args: {
+  hasRealUnread: boolean;
+  contract?: RuntimeRunContract | null;
+}): boolean {
   return !args.hasRealUnread && Boolean(args.contract?.taskId?.trim());
 }
 
@@ -465,7 +534,8 @@ export function routedTaskTriageVerdict(taskId: string): TriageVerdict {
     actionable: true,
     source: "routed-task",
     reason: `SSE wake pinned task ${taskId}`,
-    promptNote: "This wake targeted an assigned task. Use the Conversation Glance snapshot in the runtime preamble, complete the pinned task, and close with king-ai task done when finished. Combine reply and task close in one shell when possible."
+    promptNote:
+      "This wake targeted an assigned task. Use the Conversation Glance snapshot in the runtime preamble, complete the pinned task, and close with king-ai task done when finished. Combine reply and task close in one shell when possible.",
   };
 }
 
@@ -491,7 +561,12 @@ export function shouldSkipPollWake(args: { wakeStreamHealthy: boolean; busy: boo
   return args.busy || args.stopped || args.wakeStreamHealthy;
 }
 
-export function isWakeStreamHealthy(lastWakeStreamAt: number, now: number, pollMs: number, factor = WAKE_STREAM_HEALTH_FACTOR): boolean {
+export function isWakeStreamHealthy(
+  lastWakeStreamAt: number,
+  now: number,
+  pollMs: number,
+  factor = WAKE_STREAM_HEALTH_FACTOR,
+): boolean {
   return lastWakeStreamAt > 0 && now - lastWakeStreamAt < pollMs * factor;
 }
 
@@ -504,14 +579,23 @@ export function nextNoStateActionStreak(current: number, acked: boolean): number
 }
 
 export function unreadBatchKey(seen: Map<string, string>): string {
-  return [...seen].sort(([a], [b]) => a.localeCompare(b)).map(([conversationId, messageId]) => `${conversationId}\0${messageId}`).join("\0");
+  return [...seen]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([conversationId, messageId]) => `${conversationId}\0${messageId}`)
+    .join("\0");
 }
 
 export function shouldFallbackAckAfterStreak(streak: number, limit = NO_STATE_ACTION_ACK_STREAK): boolean {
   return streak >= limit;
 }
 
-export function shouldContinuePendingRerun(args: { pendingRerun: boolean; hasRealUnread: boolean; hasAgendaWork: boolean; hasPinnedTask: boolean; stopped: boolean }): boolean {
+export function shouldContinuePendingRerun(args: {
+  pendingRerun: boolean;
+  hasRealUnread: boolean;
+  hasAgendaWork: boolean;
+  hasPinnedTask: boolean;
+  stopped: boolean;
+}): boolean {
   return args.pendingRerun && (args.hasRealUnread || args.hasAgendaWork || args.hasPinnedTask) && !args.stopped;
 }
 
@@ -576,7 +660,7 @@ export class AgentRunner {
     engine: EngineId,
     private readonly availableEngines: EngineId[] = [engine],
     private readonly onStateChange?: () => void,
-    private readonly onConfigChange?: () => void
+    private readonly onConfigChange?: () => void,
   ) {
     this.home = join(AGENTS_ROOT, agent.id);
     this.binDir = join(this.home, "bin");
@@ -600,7 +684,7 @@ export class AgentRunner {
             id: this.sharedSkillSnapshot.id,
             root: this.sharedSkillSnapshot.root,
             manifestPath: this.sharedSkillSnapshot.manifestPath,
-            skills: this.sharedSkillSnapshot.skills.map((skill) => skill.name)
+            skills: this.sharedSkillSnapshot.skills.map((skill) => skill.name),
           }
         : null,
       hostHomeEntries: this.hostHomeEntries,
@@ -611,7 +695,7 @@ export class AgentRunner {
       tokenBudget: checkTokenBudget(this.runStats, tokenBudgetFromEnv()),
       remediation: this.remediation,
       configWarnings: this.configWarnings(),
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
     };
   }
 
@@ -631,7 +715,7 @@ export class AgentRunner {
     return planAgentWorktrees({
       agentId: this.agent.id,
       workspaces: detectLocalCapabilities().workspaces,
-      baseRoot: this.workspaceRoot()
+      baseRoot: this.workspaceRoot(),
     });
   }
 
@@ -654,42 +738,48 @@ export class AgentRunner {
     this.sharedSkillSnapshot = sharedSkills.snapshot;
     await mkdir(this.workspaceRoot(), { recursive: true });
     const worktreePlans = this.worktreePlans();
-    const worktreePreparation = PREPARE_WORKTREES
-      ? await prepareWorktreePlans(worktreePlans, { execute: true })
-      : [];
+    const worktreePreparation = PREPARE_WORKTREES ? await prepareWorktreePlans(worktreePlans, { execute: true }) : [];
     await writeShim(this.binDir);
     await this.loadSessionId();
-    await this.publishEvent("agent.started", {
-      engine: this.adapter.id,
-      lifecycle: normalizeAgentLifecycle(this.agent.lifecycle),
-      lifecycleNote: runtimeLifecycleNote(normalizeAgentLifecycle(this.agent.lifecycle)),
-      home: this.home,
-      workspaces: detectLocalCapabilities().workspaces,
-      worktreePlans,
-      worktreeMaterialization: {
-        enabled: PREPARE_WORKTREES,
-        results: worktreePreparation
+    await this.publishEvent(
+      "agent.started",
+      {
+        engine: this.adapter.id,
+        lifecycle: normalizeAgentLifecycle(this.agent.lifecycle),
+        lifecycleNote: runtimeLifecycleNote(normalizeAgentLifecycle(this.agent.lifecycle)),
+        home: this.home,
+        workspaces: detectLocalCapabilities().workspaces,
+        worktreePlans,
+        worktreeMaterialization: {
+          enabled: PREPARE_WORKTREES,
+          results: worktreePreparation,
+        },
+        sharedSkillRoots: sharedSkills.sourceRoots,
+        sharedSkills: sharedSkills.installed.map((skill) => skill.name),
+        sharedSkillSnapshot: sharedSkills.snapshot
+          ? {
+              id: sharedSkills.snapshot.id,
+              root: sharedSkills.snapshot.root,
+              manifestPath: sharedSkills.snapshot.manifestPath,
+              skills: sharedSkills.snapshot.skills.map((skill) => skill.name),
+            }
+          : null,
+        hostHomeEntries: this.hostHomeEntries,
       },
-      sharedSkillRoots: sharedSkills.sourceRoots,
-      sharedSkills: sharedSkills.installed.map((skill) => skill.name),
-      sharedSkillSnapshot: sharedSkills.snapshot
-        ? {
-            id: sharedSkills.snapshot.id,
-            root: sharedSkills.snapshot.root,
-            manifestPath: sharedSkills.snapshot.manifestPath,
-            skills: sharedSkills.snapshot.skills.map((skill) => skill.name)
-          }
-        : null,
-      hostHomeEntries: this.hostHomeEntries
-    }, "info", `${this.agent.name} started${PREPARE_WORKTREES ? `; ${formatWorktreePreparationResults(worktreePreparation, true).split("\n")[0]}` : ""}`);
+      "info",
+      `${this.agent.name} started${PREPARE_WORKTREES ? `; ${formatWorktreePreparationResults(worktreePreparation, true).split("\n")[0]}` : ""}`,
+    );
     void this.streamLoop();
     this.pollTimer = setInterval(() => {
       const now = Date.now();
-      if (shouldSkipPollWake({
-        busy: this.busy,
-        stopped: this.stopped,
-        wakeStreamHealthy: isWakeStreamHealthy(this.lastWakeStreamAt, now, INBOX_POLL_MS)
-      })) return;
+      if (
+        shouldSkipPollWake({
+          busy: this.busy,
+          stopped: this.stopped,
+          wakeStreamHealthy: isWakeStreamHealthy(this.lastWakeStreamAt, now, INBOX_POLL_MS),
+        })
+      )
+        return;
       this.scheduleWake("poll");
     }, INBOX_POLL_MS);
   }
@@ -863,8 +953,8 @@ export class AgentRunner {
       {
         method: "POST",
         headers: { Authorization: `Bearer ${this.cfg.deviceToken}`, ...tenantHeader(this.cfg.tenantId) },
-        body: "{}"
-      }
+        body: "{}",
+      },
     );
     this.token = minted.token;
     this.tokenExpiresAt = Date.now() + minted.expiresInSeconds * 1000;
@@ -898,7 +988,7 @@ export class AgentRunner {
       KING_AI_AGENT_SKILL_SNAPSHOT_ID: this.sharedSkillSnapshot?.id ?? "",
       KING_AI_AGENT_SKILL_SNAPSHOT_PATH: this.sharedSkillSnapshot?.root ?? "",
       KING_AI_AGENT_SKILL_SNAPSHOT_MANIFEST: this.sharedSkillSnapshot?.manifestPath ?? "",
-      KING_AI_AGENT_LEARNED_SKILLS: learnedSkillsDir(this.agent.id)
+      KING_AI_AGENT_LEARNED_SKILLS: learnedSkillsDir(this.agent.id),
     };
   }
 
@@ -910,19 +1000,18 @@ export class AgentRunner {
     this.activeRunContract = contract;
     try {
       await mkdir(this.binDir, { recursive: true });
-      await writeFile(
-        join(this.binDir, ".runtime-run"),
-        JSON.stringify({ runId, contract }),
-        { mode: 0o600 }
-      );
+      await writeFile(join(this.binDir, ".runtime-run"), JSON.stringify({ runId, contract }), { mode: 0o600 });
     } catch {
       // Best-effort: the spawn-time env still carries a (possibly stale) fallback for the shim.
     }
   }
 
   private standingPrompt(): string {
-    const note = formatWorktreePlanForPrompt(this.worktreePlans()) +
-      (PREPARE_WORKTREES ? "\nKING_AI_PREPARE_WORKTREES=1: the daemon attempted to create these local worktrees before starting this agent." : "");
+    const note =
+      formatWorktreePlanForPrompt(this.worktreePlans()) +
+      (PREPARE_WORKTREES
+        ? "\nKING_AI_PREPARE_WORKTREES=1: the daemon attempted to create these local worktrees before starting this agent."
+        : "");
     return buildStandingPrompt(detectLocalCapabilities().workspaces, this.workspaceRoot(), note);
   }
 
@@ -941,7 +1030,9 @@ export class AgentRunner {
       const s = (await readFile(sessionFile, "utf8")).trim();
       if (s) {
         this.sessionId = s;
-        console.log(`[${this.agent.id}/${this.adapter.id}] restored engine session ${s.slice(0, 8)} from disk for ${this.sessionScope}; will resume`);
+        console.log(
+          `[${this.agent.id}/${this.adapter.id}] restored engine session ${s.slice(0, 8)} from disk for ${this.sessionScope}; will resume`,
+        );
       }
     } catch {
       this.sessionId = null;
@@ -982,8 +1073,10 @@ export class AgentRunner {
       const prefix = `${this.agent.id}.${this.adapter.id}`;
       await Promise.all(
         entries
-          .filter((entry) => entry === `${prefix}.session` || (entry.startsWith(`${prefix}.`) && entry.endsWith(".session")))
-          .map((entry) => rm(join(SESSIONS_DIR, entry), { force: true }))
+          .filter(
+            (entry) => entry === `${prefix}.session` || (entry.startsWith(`${prefix}.`) && entry.endsWith(".session")),
+          )
+          .map((entry) => rm(join(SESSIONS_DIR, entry), { force: true })),
       );
     } catch {
       // Missing sessions directory is already clean.
@@ -999,7 +1092,14 @@ export class AgentRunner {
 
   private beatRun(token: string, runId?: string): () => void {
     if (!runId) return () => undefined;
-    const beat = () => void runtimePost(this.cfg.serverUrl, `/runs/${runId}/heartbeat`, token, { agentId: this.agent.id }, this.cfg.tenantId);
+    const beat = () =>
+      void runtimePost(
+        this.cfg.serverUrl,
+        `/runs/${runId}/heartbeat`,
+        token,
+        { agentId: this.agent.id },
+        this.cfg.tenantId,
+      );
     beat();
     const timer = setInterval(beat, RUN_HEARTBEAT_MS);
     return () => clearInterval(timer);
@@ -1016,61 +1116,114 @@ export class AgentRunner {
     return [...ids];
   }
 
-  private async publishEngineFailure(args: { token: string; runId?: string; conversationId?: string | null; error: string; exitCode: number }): Promise<void> {
-    await runtimePost(this.cfg.serverUrl, "/events", args.token, {
-      runId: args.runId,
-      kind: "engine.failed",
-      level: "error",
-      title: `${this.adapter.id} failed`,
-      data: { error: args.error, exitCode: args.exitCode }
-    }, this.cfg.tenantId);
+  private async publishEngineFailure(args: {
+    token: string;
+    runId?: string;
+    conversationId?: string | null;
+    error: string;
+    exitCode: number;
+  }): Promise<void> {
+    await runtimePost(
+      this.cfg.serverUrl,
+      "/events",
+      args.token,
+      {
+        runId: args.runId,
+        kind: "engine.failed",
+        level: "error",
+        title: `${this.adapter.id} failed`,
+        data: { error: args.error, exitCode: args.exitCode },
+      },
+      this.cfg.tenantId,
+    );
     const conversationIds = await this.failureConversationIds(args.token, args.conversationId);
     await Promise.all(
       conversationIds.map((conversationId) =>
-        runtimePost(this.cfg.serverUrl, "/notices", args.token, {
-          conversationId,
-          agentId: this.agent.id,
-          noticeKind: "byoa_engine_failed",
-          text: `${this.agent.name} could not run on local ${this.adapter.id}: ${args.error}\n${authFailureHint(this.adapter.id, args.error)}`,
-          dedupeKey: `byoa_engine_failed:${this.agent.id}:${conversationId}:${hashText(args.error)}`,
-          dedupeTtlSec: 900
-        }, this.cfg.tenantId)
-      )
+        runtimePost(
+          this.cfg.serverUrl,
+          "/notices",
+          args.token,
+          {
+            conversationId,
+            agentId: this.agent.id,
+            noticeKind: "byoa_engine_failed",
+            text: `${this.agent.name} could not run on local ${this.adapter.id}: ${args.error}\n${authFailureHint(this.adapter.id, args.error)}`,
+            dedupeKey: `byoa_engine_failed:${this.agent.id}:${conversationId}:${hashText(args.error)}`,
+            dedupeTtlSec: 900,
+          },
+          this.cfg.tenantId,
+        ),
+      ),
     );
   }
 
   private async publishStatus(token: string, status: string): Promise<void> {
-    await runtimePost(this.cfg.serverUrl, "/status", token, engineStatusPayload(status, this.remediation), this.cfg.tenantId);
+    await runtimePost(
+      this.cfg.serverUrl,
+      "/status",
+      token,
+      engineStatusPayload(status, this.remediation),
+      this.cfg.tenantId,
+    );
   }
 
-  private async publishAttempt(args: { token: string; runId?: string; attempt: number; status: "failed_retrying" | "failed_final"; message?: string }): Promise<void> {
+  private async publishAttempt(args: {
+    token: string;
+    runId?: string;
+    attempt: number;
+    status: "failed_retrying" | "failed_final";
+    message?: string;
+  }): Promise<void> {
     if (!args.runId) return;
-    await runtimePost(this.cfg.serverUrl, `/runs/${args.runId}/attempts`, args.token, {
-      attempt: args.attempt,
-      status: args.status,
-      message: args.message
-    }, this.cfg.tenantId).catch(() => undefined);
-    await runtimePost(this.cfg.serverUrl, `/runs/${args.runId}/heartbeat`, args.token, {
-      stream: {
-        type: "attempt",
+    await runtimePost(
+      this.cfg.serverUrl,
+      `/runs/${args.runId}/attempts`,
+      args.token,
+      {
         attempt: args.attempt,
         status: args.status,
-        message: args.message
-      }
-    }, this.cfg.tenantId);
+        message: args.message,
+      },
+      this.cfg.tenantId,
+    ).catch(() => undefined);
+    await runtimePost(
+      this.cfg.serverUrl,
+      `/runs/${args.runId}/heartbeat`,
+      args.token,
+      {
+        stream: {
+          type: "attempt",
+          attempt: args.attempt,
+          status: args.status,
+          message: args.message,
+        },
+      },
+      this.cfg.tenantId,
+    );
   }
 
-  private async publishEvent(kind: string, data: Record<string, unknown>, level = "info", title?: string): Promise<void> {
+  private async publishEvent(
+    kind: string,
+    data: Record<string, unknown>,
+    level = "info",
+    title?: string,
+  ): Promise<void> {
     try {
       const token = await this.ensureToken();
-      await runtimePost(this.cfg.serverUrl, "/events", token, {
-        kind,
-        level,
-        title: title ?? kind,
-        agentId: this.agent.id,
-        engine: this.adapter.id,
-        data
-      }, this.cfg.tenantId);
+      await runtimePost(
+        this.cfg.serverUrl,
+        "/events",
+        token,
+        {
+          kind,
+          level,
+          title: title ?? kind,
+          agentId: this.agent.id,
+          engine: this.adapter.id,
+          data,
+        },
+        this.cfg.tenantId,
+      );
     } catch {
       // Events are observability only; never block agent execution on them.
     }
@@ -1084,15 +1237,21 @@ export class AgentRunner {
     }
     if (check.state === this.lastBudgetEventState) return;
     this.lastBudgetEventState = check.state;
-    await runtimePost(this.cfg.serverUrl, "/events", token, {
-      runId,
-      kind: check.exceeded ? "agent.budget_exceeded" : "agent.budget_warning",
-      level: check.exceeded ? "error" : "warn",
-      title: `${this.agent.name} token budget ${check.state}`,
-      agentId: this.agent.id,
-      engine: this.adapter.id,
-      data: check
-    }, this.cfg.tenantId);
+    await runtimePost(
+      this.cfg.serverUrl,
+      "/events",
+      token,
+      {
+        runId,
+        kind: check.exceeded ? "agent.budget_exceeded" : "agent.budget_warning",
+        level: check.exceeded ? "error" : "warn",
+        title: `${this.agent.name} token budget ${check.state}`,
+        agentId: this.agent.id,
+        engine: this.adapter.id,
+        data: check,
+      },
+      this.cfg.tenantId,
+    );
   }
 
   private triageModel(): string {
@@ -1100,18 +1259,29 @@ export class AgentRunner {
   }
 
   private async recordTriageUsage(token: string, verdict: TriageVerdict, usage: unknown): Promise<void> {
-    await runtimePost(this.cfg.serverUrl, "/triage", token, {
-      source: `byoa-${this.adapter.id}`,
-      model: this.triageModel(),
-      actionable: verdict.actionable,
-      reason: verdict.reason ?? "",
-      responseMode: verdict.responseMode,
-      usage: usageForRuntime(usage)
-    }, this.cfg.tenantId);
+    await runtimePost(
+      this.cfg.serverUrl,
+      "/triage",
+      token,
+      {
+        source: `byoa-${this.adapter.id}`,
+        model: this.triageModel(),
+        actionable: verdict.actionable,
+        reason: verdict.reason ?? "",
+        responseMode: verdict.responseMode,
+        usage: usageForRuntime(usage),
+      },
+      this.cfg.tenantId,
+    );
   }
 
   private async inboxTriage(token: string): Promise<TriageVerdict | null> {
-    const payload = await runtimeGet<TriagePayload>(this.cfg.serverUrl, "/inbox-triage/payload", token, this.cfg.tenantId);
+    const payload = await runtimeGet<TriagePayload>(
+      this.cfg.serverUrl,
+      "/inbox-triage/payload",
+      token,
+      this.cfg.tenantId,
+    );
     if (!payload) return null;
     if (payload.verdict) return payload.verdict;
     if (!payload.instructions || !payload.input) return null;
@@ -1139,18 +1309,23 @@ export class AgentRunner {
         prompt: `${payload.instructions}\n\n${payload.input}`,
         env: this.engineEnv(),
         model: process.env.KING_AI_TRIAGE_MODEL,
-        signal: controller.signal
+        signal: controller.signal,
       });
       if (res.error || !res.text.trim()) {
         const errText = res.error || "no output";
         if (controller.signal.aborted || isRateLimited(errText)) {
-          return { actionable: false, source: "rate-limited", reason: `triage rate-limited (${errText.slice(0, 120)}); backing off` };
+          return {
+            actionable: false,
+            source: "rate-limited",
+            reason: `triage rate-limited (${errText.slice(0, 120)}); backing off`,
+          };
         }
         return {
           actionable: true,
           source: "fail-open",
           reason: `local triage failed (${errText.slice(0, 120)}); fail open`,
-          promptNote: "Local small-brain triage failed; read the inbox/context yourself and respond only if a human needs you. Do not silently ack unread human messages unless the thread clearly shows they are irrelevant or already handled."
+          promptNote:
+            "Local small-brain triage failed; read the inbox/context yourself and respond only if a human needs you. Do not silently ack unread human messages unless the thread clearly shows they are irrelevant or already handled.",
         };
       }
       const parsed = parseTriage(res.text);
@@ -1164,7 +1339,8 @@ export class AgentRunner {
         actionable: true,
         source: "fail-open",
         reason: "local triage produced no usable verdict; fail open",
-        promptNote: "Local small-brain triage gave no clear verdict; read the inbox/context yourself and respond only if a human needs you."
+        promptNote:
+          "Local small-brain triage gave no clear verdict; read the inbox/context yourself and respond only if a human needs you.",
       };
     } finally {
       clearTimeout(timer);
@@ -1172,7 +1348,9 @@ export class AgentRunner {
     }
   }
 
-  private async snapshotUnread(token: string): Promise<{ seen: Map<string, string>; digest: string; hasReal: boolean; imagePaths: string[] }> {
+  private async snapshotUnread(
+    token: string,
+  ): Promise<{ seen: Map<string, string>; digest: string; hasReal: boolean; imagePaths: string[] }> {
     const inbox = await runtimeGetStrict<InboxPayload>(this.cfg.serverUrl, "/inbox", token, this.cfg.tenantId);
     const rows = inbox.rows ?? [];
     const seen = new Map<string, string>();
@@ -1202,7 +1380,8 @@ export class AgentRunner {
       lines.push(`  [${row.id ?? "?"}] [${messageRouteTag(routed)}] ${who}: ${body}`);
       const attachments = await cacheLocalAttachments(normalizeRuntimeAttachments(row.attachments));
       for (const attachment of attachments) {
-        if (attachment.kind === "image" && attachment.decision === "accepted" && attachment.localPath) imagePaths.push(attachment.localPath);
+        if (attachment.kind === "image" && attachment.decision === "accepted" && attachment.localPath)
+          imagePaths.push(attachment.localPath);
       }
       const attachmentPrompt = formatAttachmentPrompt(attachments);
       if (attachmentPrompt) {
@@ -1215,14 +1394,29 @@ export class AgentRunner {
   private async ackSeen(token: string, seen: Map<string, string>): Promise<void> {
     await Promise.all(
       [...seen].map(([conversationId, upToMessageId]) =>
-        runtimePostStrict(this.cfg.serverUrl, "/conversation/mark-read", token, { conversationId, upToMessageId }, this.cfg.tenantId)
-      )
+        runtimePostStrict(
+          this.cfg.serverUrl,
+          "/conversation/mark-read",
+          token,
+          { conversationId, upToMessageId },
+          this.cfg.tenantId,
+        ),
+      ),
     );
   }
 
-  private async ackRunActions(token: string, runId: string | undefined, fallbackSeen: Map<string, string>): Promise<boolean> {
+  private async ackRunActions(
+    token: string,
+    runId: string | undefined,
+    fallbackSeen: Map<string, string>,
+  ): Promise<boolean> {
     if (!runId) return false;
-    const payload = await runtimeGetStrict<RunActionsPayload>(this.cfg.serverUrl, `/runs/${runId}/actions`, token, this.cfg.tenantId);
+    const payload = await runtimeGetStrict<RunActionsPayload>(
+      this.cfg.serverUrl,
+      `/runs/${runId}/actions`,
+      token,
+      this.cfg.tenantId,
+    );
     const seen = new Map<string, string>();
     for (const action of payload.actions ?? []) {
       if (!action.conversationId) continue;
@@ -1242,18 +1436,29 @@ export class AgentRunner {
   private async runtimePreamble(token: string, reason: string, runId?: string, steerReason?: string): Promise<string> {
     const params = new URLSearchParams({
       agent: this.agent.id,
-      reason
+      reason,
     });
     if (runId) params.set("runId", runId);
     if (steerReason) params.set("steerReason", steerReason);
-    const payload = await runtimeGet<RuntimePreamblePayload>(this.cfg.serverUrl, `/preamble?${params.toString()}`, token, this.cfg.tenantId);
+    const payload = await runtimeGet<RuntimePreamblePayload>(
+      this.cfg.serverUrl,
+      `/preamble?${params.toString()}`,
+      token,
+      this.cfg.tenantId,
+    );
     return typeof payload?.text === "string" ? payload.text.trim().slice(0, 4000) : "";
   }
 
-  private promptForTurn(digest: string, memoryDigest: string, rosterDigest: string, preamble: string, triage?: TriageVerdict | null): string {
+  private promptForTurn(
+    digest: string,
+    memoryDigest: string,
+    rosterDigest: string,
+    preamble: string,
+    triage?: TriageVerdict | null,
+  ): string {
     const delta = appendRuntimePreamble(
       buildChatDelta(digest, memoryDigest, rosterDigest, triage, engineTurnToolHint(this.adapter.id, triage)),
-      preamble
+      preamble,
     );
     if (this.engineSession?.carriesStandingPrompt) return delta;
     return `${this.standingPrompt()}
@@ -1287,21 +1492,24 @@ ${delta}`;
   private ensureEngineSession(): EngineSession | null {
     if (this.engineSession && this.engineSession.alive) return this.engineSession;
     const resumeSessionId = this.sessionId;
-    this.engineSession = this.adapter.startSession?.({
-      home: this.home,
-      env: this.engineEnv(),
-      model: this.agent.model,
-      fastModel: this.agent.fastModel,
-      resumeSessionId: this.sessionId,
-      standingPrompt: this.standingPrompt(),
-      onLog: (line) => this.logEngineLine(line)
-    }) ?? null;
+    this.engineSession =
+      this.adapter.startSession?.({
+        home: this.home,
+        env: this.engineEnv(),
+        model: this.agent.model,
+        fastModel: this.agent.fastModel,
+        resumeSessionId: this.sessionId,
+        standingPrompt: this.standingPrompt(),
+        onLog: (line) => this.logEngineLine(line),
+      }) ?? null;
     if (this.engineSession) {
       const resumeLabel = resumeSessionId ? `resume ${resumeSessionId.slice(0, 8)}` : "fresh";
-      console.log(`[${this.agent.id}/${this.adapter.id}] engine session spawned (${resumeLabel}); persistent mode active`);
+      console.log(
+        `[${this.agent.id}/${this.adapter.id}] engine session spawned (${resumeLabel}); persistent mode active`,
+      );
       void this.publishEvent("engine.session.started", {
         mode: "persistent",
-        resumeSessionId: resumeSessionId ?? null
+        resumeSessionId: resumeSessionId ?? null,
       });
     }
     return this.engineSession;
@@ -1331,7 +1539,9 @@ ${delta}`;
           snapshot = await this.snapshotUnread(token);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          console.warn(`[${this.agent.id}/${this.adapter.id}] runtime inbox unavailable: ${message}; backing off without acking unread`);
+          console.warn(
+            `[${this.agent.id}/${this.adapter.id}] runtime inbox unavailable: ${message}; backing off without acking unread`,
+          );
           await this.publishEvent("runtime.inbox_unavailable", { reason, error: message }, "warn");
           if (isRuntimeAuthError(message)) {
             this.invalidateRuntimeToken();
@@ -1350,9 +1560,10 @@ ${delta}`;
           continue;
         }
 
-        const triage = forceRoutedTask && activeContract?.taskId
-          ? routedTaskTriageVerdict(activeContract.taskId)
-          : await this.inboxTriage(token);
+        const triage =
+          forceRoutedTask && activeContract?.taskId
+            ? routedTaskTriageVerdict(activeContract.taskId)
+            : await this.inboxTriage(token);
         this.failOpenStreak = nextFailOpenStreak(this.failOpenStreak, triage?.source);
         if (triage?.source === "fail-open" && shouldDeferFailOpenTriage(this.failOpenStreak)) {
           const backoff = Math.min(TRIAGE_BACKOFF_MAX_MS, 60_000);
@@ -1360,7 +1571,9 @@ ${delta}`;
           this.failOpenBackoffUntil = Date.now() + backoff;
           this.failOpenStreak = failOpenStreakAfterDeferral(this.failOpenStreak);
           this.scheduleFailOpenBackoffWake(backoff);
-          console.warn(`[${this.agent.id}/${this.adapter.id}] triage fail-open streak ${deferredStreak}; deferring inbox turn ${Math.round(backoff / 1000)}s`);
+          console.warn(
+            `[${this.agent.id}/${this.adapter.id}] triage fail-open streak ${deferredStreak}; deferring inbox turn ${Math.round(backoff / 1000)}s`,
+          );
           // Do NOT ack unread here: triage is degraded and the big brain has not read these
           // messages, so acking would mark them read and silently drop human input. Back off one
           // cycle without acking, then allow fail-open to reach the big brain again even if triage
@@ -1372,7 +1585,9 @@ ${delta}`;
           this.triageTroubleStreak += 1;
           const backoff = Math.min(TRIAGE_BACKOFF_MAX_MS, 30_000 * 2 ** (this.triageTroubleStreak - 1));
           this.triageBackoffUntil = Date.now() + backoff;
-          console.warn(`[${this.agent.id}/${this.adapter.id}] triage rate-limited; backing off ${Math.round(backoff / 1000)}s without acking unread`);
+          console.warn(
+            `[${this.agent.id}/${this.adapter.id}] triage rate-limited; backing off ${Math.round(backoff / 1000)}s without acking unread`,
+          );
           await this.publishStatus(token, "avail");
           break;
         }
@@ -1396,22 +1611,40 @@ ${delta}`;
         const typingConvo = activeConversationId;
         if (typingConvo) {
           const ping = () => {
-            void runtimePost(this.cfg.serverUrl, "/typing", token, { conversationId: typingConvo, done: false }, this.cfg.tenantId);
-            void runtimePost(this.cfg.serverUrl, "/thinking/mark", token, { conversationIds: [typingConvo], ttlSec: 60 }, this.cfg.tenantId);
+            void runtimePost(
+              this.cfg.serverUrl,
+              "/typing",
+              token,
+              { conversationId: typingConvo, done: false },
+              this.cfg.tenantId,
+            );
+            void runtimePost(
+              this.cfg.serverUrl,
+              "/thinking/mark",
+              token,
+              { conversationIds: [typingConvo], ttlSec: 60 },
+              this.cfg.tenantId,
+            );
           };
           ping();
           typingTimer = setInterval(ping, 6000);
         }
-        const run = await runtimePost<RuntimeRun>(this.cfg.serverUrl, "/runs", token, {
-          trigger: { source: reason, engine: this.adapter.id },
-          contract: {
-            ...activeContract,
-            agentId: this.agent.id
-          }
-        }, this.cfg.tenantId);
+        const run = await runtimePost<RuntimeRun>(
+          this.cfg.serverUrl,
+          "/runs",
+          token,
+          {
+            trigger: { source: reason, engine: this.adapter.id },
+            contract: {
+              ...activeContract,
+              agentId: this.agent.id,
+            },
+          },
+          this.cfg.tenantId,
+        );
         await this.setActiveRun(
           run?.runId ?? null,
-          run?.contract ?? (activeContract ? { ...activeContract, agentId: this.agent.id } : null)
+          run?.contract ?? (activeContract ? { ...activeContract, agentId: this.agent.id } : null),
         );
         await this.publishEvent("turn.started", { reason, runId: run?.runId, conversationId: activeConversationId });
         const stopBeat = this.beatRun(token, run?.runId);
@@ -1427,7 +1660,7 @@ ${delta}`;
           const [memory, roster, preamble] = await Promise.all([
             this.memoryDigest(),
             this.rosterDigest(token),
-            this.runtimePreamble(token, reason, run?.runId)
+            this.runtimePreamble(token, reason, run?.runId),
           ]);
           const prompt = this.promptForTurn(digest, memory, roster, preamble, triage);
           const controller = new AbortController();
@@ -1445,7 +1678,7 @@ ${delta}`;
                 standingPrompt: this.standingPrompt(),
                 imagePaths,
                 signal: controller.signal,
-                onLog: (line) => this.logEngineLine(line)
+                onLog: (line) => this.logEngineLine(line),
               });
           exitCode = result.exitCode;
           turnModel = result.model;
@@ -1456,22 +1689,33 @@ ${delta}`;
           error = result.error ? visibleEngineError(this.adapter.id, this.home, exitCode, result.error) : undefined;
           if (result.sessionId) await this.setSessionId(result.sessionId);
           if (session && !session.alive) this.engineSession = null;
-          if (error && mustResetSession(error, !!resumeSessionId)) await this.resetEngineSession(sessionResetReason(error));
+          if (error && mustResetSession(error, !!resumeSessionId))
+            await this.resetEngineSession(sessionResetReason(error));
         } finally {
           bigBrainSem.release();
           stopBeat();
           if (typingTimer) clearInterval(typingTimer);
           if (typingConvo) {
-            await runtimePost(this.cfg.serverUrl, "/typing", token, { conversationId: typingConvo, done: true }, this.cfg.tenantId);
-            await runtimePost(this.cfg.serverUrl, "/thinking/unmark", token, { conversationIds: [typingConvo] }, this.cfg.tenantId);
+            await runtimePost(
+              this.cfg.serverUrl,
+              "/typing",
+              token,
+              { conversationId: typingConvo, done: true },
+              this.cfg.tenantId,
+            );
+            await runtimePost(
+              this.cfg.serverUrl,
+              "/thinking/unmark",
+              token,
+              { conversationIds: [typingConvo] },
+              this.cfg.tenantId,
+            );
           }
         }
 
         if (error) {
           if (isRateLimited(error)) this.engineBackoffUntil = Date.now() + ENGINE_BACKOFF_MS;
-          const retryKey = activeContract?.taskId
-            ? `task:${activeContract.taskId}`
-            : `unread:${unreadBatchKey(seen)}`;
+          const retryKey = activeContract?.taskId ? `task:${activeContract.taskId}` : `unread:${unreadBatchKey(seen)}`;
           if (retryKey !== this.noOutputRerunKey) {
             this.noOutputRerunKey = retryKey;
             this.noOutputRerunAttempts = 0;
@@ -1486,16 +1730,20 @@ ${delta}`;
               runId: run?.runId,
               attempt: this.noOutputRerunAttempts,
               status: "failed_retrying",
-              message: error
+              message: error,
             });
-            await this.publishEvent("turn.retry_scheduled", {
-              reason,
-              runId: run?.runId,
-              conversationId: typingConvo,
-              taskId: activeContract?.taskId ?? null,
-              cause: "engine produced no output",
-              attempt: this.noOutputRerunAttempts
-            }, "warn");
+            await this.publishEvent(
+              "turn.retry_scheduled",
+              {
+                reason,
+                runId: run?.runId,
+                conversationId: typingConvo,
+                taskId: activeContract?.taskId ?? null,
+                cause: "engine produced no output",
+                attempt: this.noOutputRerunAttempts,
+              },
+              "warn",
+            );
           }
           if (attemptPlan.publishFailureNotice) {
             await this.publishAttempt({
@@ -1503,7 +1751,7 @@ ${delta}`;
               runId: run?.runId,
               attempt: Math.max(1, this.noOutputRerunAttempts + 1),
               status: "failed_final",
-              message: error
+              message: error,
             });
             await this.publishEngineFailure({ token, runId: run?.runId, conversationId: typingConvo, error, exitCode });
           }
@@ -1514,7 +1762,9 @@ ${delta}`;
             this.failOpenStreak = nextFailOpenStreak(this.failOpenStreak, triage.source, true);
             this.clearFailOpenBackoff();
           }
-          const acked = await this.withRuntimeAuthRetry((freshToken) => this.ackRunActions(freshToken, run?.runId, seen));
+          const acked = await this.withRuntimeAuthRetry((freshToken) =>
+            this.ackRunActions(freshToken, run?.runId, seen),
+          );
           const unreadKey = unreadBatchKey(seen);
           if (acked || unreadKey !== this.noStateActionUnreadKey) {
             this.noStateActionUnreadKey = acked ? "" : unreadKey;
@@ -1522,13 +1772,17 @@ ${delta}`;
           }
           this.noStateActionStreak = nextNoStateActionStreak(this.noStateActionStreak, acked);
           if (!acked) {
-            await this.publishEvent("turn.no_state_action", {
-              reason,
-              runId: run?.runId,
-              conversationId: typingConvo,
-              messageCount: seen.size,
-              streak: this.noStateActionStreak
-            }, "warn");
+            await this.publishEvent(
+              "turn.no_state_action",
+              {
+                reason,
+                runId: run?.runId,
+                conversationId: typingConvo,
+                messageCount: seen.size,
+                streak: this.noStateActionStreak,
+              },
+              "warn",
+            );
             // The big brain ran but recorded no state action. Give it one grace turn before
             // acking (it may reply next turn); only fall back to acking unread once the same
             // unread has produced no action across NO_STATE_ACTION_ACK_STREAK turns, which still
@@ -1537,57 +1791,80 @@ ${delta}`;
               await this.withRuntimeAuthRetry((freshToken) => this.ackSeen(freshToken, seen));
               this.noStateActionStreak = 0;
               this.noStateActionUnreadKey = "";
-              await this.publishEvent("turn.fallback_ack", {
-                reason,
-                runId: run?.runId,
-                conversationId: typingConvo,
-                messageCount: seen.size
-              }, "warn");
+              await this.publishEvent(
+                "turn.fallback_ack",
+                {
+                  reason,
+                  runId: run?.runId,
+                  conversationId: typingConvo,
+                  messageCount: seen.size,
+                },
+                "warn",
+              );
             }
           }
         }
-        await this.withRuntimeAuthRetry((freshToken) => runtimePost(this.cfg.serverUrl, `/runs/${run?.runId}/finish`, freshToken, {
-          status: error ? "failed" : "completed",
-          summary: error ?? `local ${this.adapter.id} completed`,
-          error,
-          exitCode,
-          model: turnModel ?? this.agent.model,
-          usage: turnUsage ?? null
-        }, this.cfg.tenantId));
+        await this.withRuntimeAuthRetry((freshToken) =>
+          runtimePost(
+            this.cfg.serverUrl,
+            `/runs/${run?.runId}/finish`,
+            freshToken,
+            {
+              status: error ? "failed" : "completed",
+              summary: error ?? `local ${this.adapter.id} completed`,
+              error,
+              exitCode,
+              model: turnModel ?? this.agent.model,
+              usage: turnUsage ?? null,
+            },
+            this.cfg.tenantId,
+          ),
+        );
         const durationMs = Date.now() - runStartedAt;
         this.runStats = recordAgentRunStats(this.runStats, {
           status: error ? "failed" : "completed",
           usage: turnUsage && typeof turnUsage === "object" ? turnUsage : null,
           durationMs,
-          model: turnModel ?? this.agent.model ?? null
+          model: turnModel ?? this.agent.model ?? null,
         });
         this.notifyStateChange();
         await this.publishBudgetEvent(token, run?.runId);
-        await this.publishEvent(error ? "turn.failed" : "turn.completed", {
-          reason,
-          runId: run?.runId,
-          conversationId: typingConvo,
-          exitCode,
-          model: turnModel ?? this.agent.model ?? null,
-          usage: turnUsage ?? null,
-          durationMs
-        }, error ? "error" : "info");
+        await this.publishEvent(
+          error ? "turn.failed" : "turn.completed",
+          {
+            reason,
+            runId: run?.runId,
+            conversationId: typingConvo,
+            exitCode,
+            model: turnModel ?? this.agent.model ?? null,
+            usage: turnUsage ?? null,
+            durationMs,
+          },
+          error ? "error" : "info",
+        );
         await this.withRuntimeAuthRetry((freshToken) => this.publishStatus(freshToken, "avail"));
         await this.setActiveRun(null, null);
         this.lastTurnEndedAt = Date.now();
         if (this.pendingRerun && !this.stopped) {
-          const fresh = await this.withRuntimeAuthRetry((freshToken) => this.snapshotUnread(freshToken)).catch(() => null);
+          const fresh = await this.withRuntimeAuthRetry((freshToken) => this.snapshotUnread(freshToken)).catch(
+            () => null,
+          );
           const hasPinnedTask = Boolean(this.lastWakeContract?.taskId?.trim());
-          const agenda = fresh?.hasReal === true
-            ? null
-            : await runtimeGet<AgendaPayload>(this.cfg.serverUrl, "/agenda", token, this.cfg.tenantId).catch(() => null);
-          if (!shouldContinuePendingRerun({
-            pendingRerun: true,
-            hasRealUnread: fresh?.hasReal === true,
-            hasAgendaWork: agenda?.actionable === true,
-            hasPinnedTask,
-            stopped: this.stopped
-          })) {
+          const agenda =
+            fresh?.hasReal === true
+              ? null
+              : await runtimeGet<AgendaPayload>(this.cfg.serverUrl, "/agenda", token, this.cfg.tenantId).catch(
+                  () => null,
+                );
+          if (
+            !shouldContinuePendingRerun({
+              pendingRerun: true,
+              hasRealUnread: fresh?.hasReal === true,
+              hasAgendaWork: agenda?.actionable === true,
+              hasPinnedTask,
+              stopped: this.stopped,
+            })
+          ) {
             this.pendingRerun = false;
           }
         }
@@ -1609,9 +1886,15 @@ ${delta}`;
     await this.switchSessionScope(DEFAULT_SESSION_SCOPE);
     await this.publishEvent("agenda.started", { focus: agenda.focus ?? null });
     await this.publishStatus(token, "thinking");
-    const run = await runtimePost<RuntimeRun>(this.cfg.serverUrl, "/runs", token, {
-      trigger: { source: "agenda", engine: this.adapter.id }
-    }, this.cfg.tenantId);
+    const run = await runtimePost<RuntimeRun>(
+      this.cfg.serverUrl,
+      "/runs",
+      token,
+      {
+        trigger: { source: "agenda", engine: this.adapter.id },
+      },
+      this.cfg.tenantId,
+    );
     // Self-initiated agenda work carries no wake contract; point the run file at this run with no
     // task pin so the engine can act freely (and isn't constrained by a previous wake's contract).
     await this.setActiveRun(run?.runId ?? null, null);
@@ -1628,7 +1911,7 @@ ${delta}`;
       const [memory, roster, preamble] = await Promise.all([
         this.memoryDigest(),
         this.rosterDigest(token),
-        this.runtimePreamble(token, "agenda", run?.runId)
+        this.runtimePreamble(token, "agenda", run?.runId),
       ]);
       const prompt = this.promptForAgenda(agenda.brief, memory, roster, preamble);
       const controller = new AbortController();
@@ -1645,7 +1928,7 @@ ${delta}`;
             resumeSessionId: this.sessionId,
             standingPrompt: this.standingPrompt(),
             signal: controller.signal,
-            onLog: (line) => this.logEngineLine(line)
+            onLog: (line) => this.logEngineLine(line),
           });
       exitCode = result.exitCode;
       turnModel = result.model;
@@ -1664,33 +1947,44 @@ ${delta}`;
     }
     if (error) {
       if (isRateLimited(error)) this.engineBackoffUntil = Date.now() + ENGINE_BACKOFF_MS;
-      if (shouldPublishEngineFailureNotice(error)) await this.publishEngineFailure({ token, runId: run?.runId, conversationId: null, error, exitCode });
+      if (shouldPublishEngineFailureNotice(error))
+        await this.publishEngineFailure({ token, runId: run?.runId, conversationId: null, error, exitCode });
     }
-    await runtimePost(this.cfg.serverUrl, `/runs/${run?.runId}/finish`, token, {
-      status: error ? "failed" : "completed",
-      summary: error ?? `agenda ${this.adapter.id} completed`,
-      error,
-      exitCode,
-      model: turnModel ?? this.agent.model,
-      usage: turnUsage ?? null
-    }, this.cfg.tenantId);
+    await runtimePost(
+      this.cfg.serverUrl,
+      `/runs/${run?.runId}/finish`,
+      token,
+      {
+        status: error ? "failed" : "completed",
+        summary: error ?? `agenda ${this.adapter.id} completed`,
+        error,
+        exitCode,
+        model: turnModel ?? this.agent.model,
+        usage: turnUsage ?? null,
+      },
+      this.cfg.tenantId,
+    );
     const durationMs = Date.now() - runStartedAt;
     this.runStats = recordAgentRunStats(this.runStats, {
       status: error ? "failed" : "completed",
       usage: turnUsage && typeof turnUsage === "object" ? turnUsage : null,
       durationMs,
-      model: turnModel ?? this.agent.model ?? null
+      model: turnModel ?? this.agent.model ?? null,
     });
     this.notifyStateChange();
     await this.publishBudgetEvent(token, run?.runId);
-    await this.publishEvent(error ? "agenda.failed" : "agenda.completed", {
-      runId: run?.runId,
-      focus: agenda.focus ?? null,
-      exitCode,
-      model: turnModel ?? this.agent.model ?? null,
-      usage: turnUsage ?? null,
-      durationMs
-    }, error ? "error" : "info");
+    await this.publishEvent(
+      error ? "agenda.failed" : "agenda.completed",
+      {
+        runId: run?.runId,
+        focus: agenda.focus ?? null,
+        exitCode,
+        model: turnModel ?? this.agent.model ?? null,
+        usage: turnUsage ?? null,
+        durationMs,
+      },
+      error ? "error" : "info",
+    );
     await this.publishStatus(token, "avail");
     this.lastTurnEndedAt = Date.now();
   }
@@ -1707,14 +2001,20 @@ ${delta}`;
         const token = await this.ensureToken();
         this.wakeStreamController = replaceWakeStreamController(this.wakeStreamController);
         const res = await fetch(`${this.cfg.serverUrl}/runtime/wake-stream`, {
-          headers: { Authorization: `Bearer ${token}`, Accept: "text/event-stream", ...tenantHeader(this.cfg.tenantId) },
-          signal: this.wakeStreamController.signal
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "text/event-stream",
+            ...tenantHeader(this.cfg.tenantId),
+          },
+          signal: this.wakeStreamController.signal,
         });
         if (isWakeStreamAuthFailure(res.status)) {
           const message = `wake-stream HTTP ${res.status}`;
           this.token = "";
           this.tokenExpiresAt = 0;
-          console.error(`[${this.agent.id}/${this.adapter.id}] ${message}; authentication failed, stopping wake stream`);
+          console.error(
+            `[${this.agent.id}/${this.adapter.id}] ${message}; authentication failed, stopping wake stream`,
+          );
           await this.publishEvent("wake.stream.auth_failed", { status: res.status, error: message }, "error");
           break;
         }
@@ -1743,7 +2043,9 @@ ${delta}`;
           const info = parseWakeEventInfo(evt.data);
           if (!shouldHandleWakeEvent(info, this.agent.id)) continue;
           if (info.resetState) {
-            console.log(`[${this.agent.id}/${this.adapter.id}] reset-state wake received; clearing local agent home and engine session`);
+            console.log(
+              `[${this.agent.id}/${this.adapter.id}] reset-state wake received; clearing local agent home and engine session`,
+            );
             this.handleResetLocalState();
             break;
           }
@@ -1751,7 +2053,7 @@ ${delta}`;
           const eventKey = wakeEventKey(evt.event, info);
           if (!this.rememberWakeEvent(eventKey)) {
             console.log(
-              `[${this.agent.id}/${this.adapter.id}] duplicate SSE ${evt.event} ignored${conversationId ? ` conversation=${conversationId}` : ""}`
+              `[${this.agent.id}/${this.adapter.id}] duplicate SSE ${evt.event} ignored${conversationId ? ` conversation=${conversationId}` : ""}`,
             );
             continue;
           }
@@ -1760,7 +2062,7 @@ ${delta}`;
             conversationId: info.conversationId ?? undefined,
             requestId: info.requestId ?? undefined,
             messageId: info.messageId ?? undefined,
-            taskId: info.taskId ?? undefined
+            taskId: info.taskId ?? undefined,
           };
           if (evt.event === "steer") {
             if (conversationId) void this.maybeSteer(conversationId);
@@ -1770,13 +2072,13 @@ ${delta}`;
             }
           }
           console.log(
-            `[${this.agent.id}/${this.adapter.id}] SSE ${evt.event} received${conversationId ? ` conversation=${conversationId}` : ""}${info.deliveryLatencyMs == null ? "" : ` deliveryLatency=${info.deliveryLatencyMs}ms`}`
+            `[${this.agent.id}/${this.adapter.id}] SSE ${evt.event} received${conversationId ? ` conversation=${conversationId}` : ""}${info.deliveryLatencyMs == null ? "" : ` deliveryLatency=${info.deliveryLatencyMs}ms`}`,
           );
           await this.publishEvent("wake.received", {
             event: evt.event,
             ...contract,
             sentAt: info.sentAt,
-            deliveryLatencyMs: info.deliveryLatencyMs
+            deliveryLatencyMs: info.deliveryLatencyMs,
           });
           this.scheduleWake(`sse-${evt.event}`, contract);
         }

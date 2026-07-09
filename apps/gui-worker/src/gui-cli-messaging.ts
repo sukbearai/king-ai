@@ -37,7 +37,9 @@ export type NewAgentMessageInput = {
   messageType: "message" | "decision" | "blocker";
 };
 
-export type RunMessagingDeps<S extends { messages: GuiCliInboundMessage[]; agents: Array<{ id: string; name: string }> }> = {
+export type RunMessagingDeps<
+  S extends { messages: GuiCliInboundMessage[]; agents: Array<{ id: string; name: string }> },
+> = {
   defaultAgentId: string;
   newAgentMessage: (input: NewAgentMessageInput) => GuiCliOutboundMessage;
   resolveEscalationTarget: (state: S) => string;
@@ -48,12 +50,9 @@ export type RunMessagingDeps<S extends { messages: GuiCliInboundMessage[]; agent
   messageRouteTag: (routed: GuiCliRoutedMessageRow) => string;
 };
 
-export function runDmCommand<S extends { messages: GuiCliInboundMessage[]; agents: Array<{ id: string; name: string }> }>(
-  state: S,
-  args: string[],
-  actor: GuiCliMessageActor,
-  deps: RunMessagingDeps<S>
-): string {
+export function runDmCommand<
+  S extends { messages: GuiCliInboundMessage[]; agents: Array<{ id: string; name: string }> },
+>(state: S, args: string[], actor: GuiCliMessageActor, deps: RunMessagingDeps<S>): string {
   const target = args[0] || deps.defaultAgentId;
   const body = args.slice(1).join(" ").trim() || "(empty dm)";
   const message = deps.newAgentMessage({
@@ -64,25 +63,26 @@ export function runDmCommand<S extends { messages: GuiCliInboundMessage[]; agent
     fromEngine: actor.engine,
     body,
     priority: "normal",
-    messageType: "message"
+    messageType: "message",
   });
   message.readBy.push(actor.id);
   state.messages.push(message);
   return `dm posted ${message.conversation_id}`;
 }
 
-export function runSendCommand<S extends { messages: GuiCliInboundMessage[]; agents: Array<{ id: string; name: string }> }>(
-  state: S,
-  args: string[],
-  actor: GuiCliMessageActor,
-  deps: RunMessagingDeps<S>
-): string {
+export function runSendCommand<
+  S extends { messages: GuiCliInboundMessage[]; agents: Array<{ id: string; name: string }> },
+>(state: S, args: string[], actor: GuiCliMessageActor, deps: RunMessagingDeps<S>): string {
   const target = args[0];
   const messageType = deps.readOption(args, "--type") || "message";
   if (messageType !== "message" && messageType !== "decision" && messageType !== "blocker") {
     return "usage: king-ai send <agentId> <message> [--steer] [--type message|decision|blocker]";
   }
-  const body = deps.stripOptions(args.slice(1), ["--type"]).filter((arg) => arg !== "--steer").join(" ").trim();
+  const body = deps
+    .stripOptions(args.slice(1), ["--type"])
+    .filter((arg) => arg !== "--steer")
+    .join(" ")
+    .trim();
   if (!target || !body) return "usage: king-ai send <agentId> <message> [--steer] [--type message|decision|blocker]";
   const message = deps.newAgentMessage({
     target,
@@ -92,41 +92,41 @@ export function runSendCommand<S extends { messages: GuiCliInboundMessage[]; age
     fromEngine: actor.engine,
     body,
     priority: args.includes("--steer") ? "steer" : "normal",
-    messageType: messageType as "message" | "decision" | "blocker"
+    messageType: messageType as "message" | "decision" | "blocker",
   });
   message.readBy.push(actor.id);
   state.messages.push(message);
   return `Message ${message.id} queued -> ${target} (${messageType}, ${message.priority})`;
 }
 
-export function runRecvCommand<S extends { messages: GuiCliInboundMessage[]; agents: Array<{ id: string; name: string }> }>(
-  state: S,
-  args: string[],
-  deps: RunMessagingDeps<S>
-): string {
+export function runRecvCommand<
+  S extends { messages: GuiCliInboundMessage[]; agents: Array<{ id: string; name: string }> },
+>(state: S, args: string[], deps: RunMessagingDeps<S>): string {
   const agentId = deps.readOption(args, "--agent") || deps.defaultAgentId;
-  const routedRows = deps.sortRuntimeMessages(
-    state.messages.filter((message) =>
-      deps.isRuntimeVisibleMessage(message) &&
-      (!message.to_agent_id || message.to_agent_id === agentId) &&
-      !message.readBy.includes(agentId)
-    ),
-    agentId
-  ).slice(0, 10);
+  const routedRows = deps
+    .sortRuntimeMessages(
+      state.messages.filter(
+        (message) =>
+          deps.isRuntimeVisibleMessage(message) &&
+          (!message.to_agent_id || message.to_agent_id === agentId) &&
+          !message.readBy.includes(agentId),
+      ),
+      agentId,
+    )
+    .slice(0, 10);
   if (routedRows.length === 0) return "No pending messages.";
   for (const routed of routedRows) routed.row.readBy.push(agentId);
-  return routedRows.map((routed) => {
-    const row = routed.row;
-    return `[${deps.messageRouteTag(routed)}] ${row.author_name} (${new Date(row.created_at).toISOString()}): ${row.body}`;
-  }).join("\n");
+  return routedRows
+    .map((routed) => {
+      const row = routed.row;
+      return `[${deps.messageRouteTag(routed)}] ${row.author_name} (${new Date(row.created_at).toISOString()}): ${row.body}`;
+    })
+    .join("\n");
 }
 
-export function runEscalateCommand<S extends { messages: GuiCliInboundMessage[]; agents: Array<{ id: string; name: string }> }>(
-  state: S,
-  args: string[],
-  actor: GuiCliMessageActor,
-  deps: RunMessagingDeps<S>
-): string {
+export function runEscalateCommand<
+  S extends { messages: GuiCliInboundMessage[]; agents: Array<{ id: string; name: string }> },
+>(state: S, args: string[], actor: GuiCliMessageActor, deps: RunMessagingDeps<S>): string {
   const body = args.join(" ").trim();
   if (!body) return "usage: king-ai escalate <message>";
   const target = deps.resolveEscalationTarget(state);
@@ -138,7 +138,7 @@ export function runEscalateCommand<S extends { messages: GuiCliInboundMessage[];
     fromEngine: actor.engine,
     body,
     priority: "steer",
-    messageType: "decision"
+    messageType: "decision",
   });
   state.messages.push(message);
   return `Escalated to ${target}: ${message.id} (queued)`;

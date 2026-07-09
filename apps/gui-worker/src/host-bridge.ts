@@ -54,7 +54,9 @@ export function hostBridgeSdk(env: HostBridgeBindings, request: Request) {
 function normalizeHostBridgeCards(value: unknown): HostDecisionCard[] {
   if (!Array.isArray(value)) return [];
   return value
-    .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && typeof row.id === "string")
+    .filter(
+      (row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && typeof row.id === "string",
+    )
     .map((row) => {
       const decisionBy = typeof row.decisionBy === "string" ? row.decisionBy : undefined;
       const detail = typeof row.detail === "string" ? row.detail : undefined;
@@ -70,12 +72,16 @@ function normalizeHostBridgeCards(value: unknown): HostDecisionCard[] {
           decisionBy,
           detail,
           sourceId: typeof row.sourceId === "string" ? row.sourceId : undefined,
-          dependsOn: Array.isArray(row.dependsOn) ? row.dependsOn.filter((entry): entry is string => typeof entry === "string") : undefined,
-          acceptance: Array.isArray(row.acceptance) ? row.acceptance.filter((entry): entry is string => typeof entry === "string") : undefined,
-          result: typeof row.result === "string" ? row.result : undefined
+          dependsOn: Array.isArray(row.dependsOn)
+            ? row.dependsOn.filter((entry): entry is string => typeof entry === "string")
+            : undefined,
+          acceptance: Array.isArray(row.acceptance)
+            ? row.acceptance.filter((entry): entry is string => typeof entry === "string")
+            : undefined,
+          result: typeof row.result === "string" ? row.result : undefined,
         }),
         decisionBy,
-        detail
+        detail,
       };
     });
 }
@@ -83,7 +89,7 @@ function normalizeHostBridgeCards(value: unknown): HostDecisionCard[] {
 export async function fetchHostWorkflowSnapshot(
   env: HostBridgeBindings,
   request: Request,
-  gui: { tasks: GuiTaskLike[]; kanban: GuiKanbanCardLike[] }
+  gui: { tasks: GuiTaskLike[]; kanban: GuiKanbanCardLike[] },
 ): Promise<HostWorkflowSnapshot> {
   const host = await fetchHostDecisions(env, request);
   const guiCards = listGuiWorkflowCards({ tasks: gui.tasks, kanban: gui.kanban });
@@ -91,7 +97,7 @@ export async function fetchHostWorkflowSnapshot(
     configured: host.configured,
     hostCards: host.cards,
     workflowCards: mergeWorkflowCards(guiCards, host.cards),
-    error: host.error
+    error: host.error,
   };
 }
 
@@ -102,7 +108,7 @@ export async function fetchHostDecisions(env: HostBridgeBindings, request: Reque
     const result = await sdk.runCommand<{ cards?: unknown }>({
       command: "workflow-list",
       actorRole: "reviewer",
-      input: { kind: "decision", status: "waiting_human", limit: 50, ...hostBridgeOutputDir(env) }
+      input: { kind: "decision", status: "waiting_human", limit: 50, ...hostBridgeOutputDir(env) },
     });
     const cards = normalizeHostBridgeCards(result.json?.cards);
     return { configured: true, cards, error: result.ok ? undefined : result.error || "host command failed" };
@@ -115,7 +121,7 @@ export async function resolveHostDecision(
   env: HostBridgeBindings,
   request: Request,
   id: string,
-  decision: "approve" | "deny"
+  decision: "approve" | "deny",
 ): Promise<{ ok: boolean; card?: WorkflowCard; error?: string }> {
   const sdk = hostBridgeSdk(env, request);
   if (!sdk) return { ok: false, error: "host bridge not configured" };
@@ -129,12 +135,15 @@ export async function resolveHostDecision(
         result: decision === "approve" ? "approved from gui" : "denied from gui",
         humanApproved: decision === "approve" ? true : undefined,
         approvedBy: decision === "approve" ? "gui-human" : undefined,
-        ...hostBridgeOutputDir(env)
-      }
+        ...hostBridgeOutputDir(env),
+      },
     });
-    const card = result.json?.card && typeof result.json.card === "object" && typeof (result.json.card as { id?: unknown }).id === "string"
-      ? workflowCardFromHostRecord(result.json.card as { id: string })
-      : undefined;
+    const card =
+      result.json?.card &&
+      typeof result.json.card === "object" &&
+      typeof (result.json.card as { id?: unknown }).id === "string"
+        ? workflowCardFromHostRecord(result.json.card as { id: string })
+        : undefined;
     return { ok: result.ok, card, error: result.ok ? undefined : result.error || result.text };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -145,7 +154,7 @@ export async function runHostRemoteCommand<T = unknown>(
   env: HostBridgeBindings,
   request: Request,
   command: string,
-  input?: unknown
+  input?: unknown,
 ): Promise<{ configured: boolean; result?: HostCommandResult<T>; error?: string }> {
   const sdk = hostBridgeSdk(env, request);
   if (!sdk) return { configured: false, error: "host bridge not configured" };

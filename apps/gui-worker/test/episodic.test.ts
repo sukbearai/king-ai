@@ -7,14 +7,17 @@ import {
   isRecallableMessage,
   parseRecallArgs,
   recallEpisodic,
-  runRecallCommand
+  runRecallCommand,
 } from "../src/episodic.js";
 import { createFakeSql } from "./fake-sql.js";
 
 test("isRecallableMessage keeps human/agent text and drops system/empty", () => {
   assert.equal(isRecallableMessage({ id: "m1", conversation_id: "c", author_kind: "agent", body: "hello" }), true);
   assert.equal(isRecallableMessage({ id: "m2", conversation_id: "c", author_kind: "human", body: "hi" }), true);
-  assert.equal(isRecallableMessage({ id: "m3", conversation_id: "c", author_kind: "agent", kind: "system", body: "x" }), false);
+  assert.equal(
+    isRecallableMessage({ id: "m3", conversation_id: "c", author_kind: "agent", kind: "system", body: "x" }),
+    false,
+  );
   assert.equal(isRecallableMessage({ id: "m4", conversation_id: "c", author_kind: "agent", body: "   " }), false);
   assert.equal(isRecallableMessage({ id: "m5", conversation_id: "c", author_kind: "human" }), false);
   assert.equal(isRecallableMessage({ conversation_id: "c", author_kind: "human", body: "no id" }), false);
@@ -23,9 +26,31 @@ test("isRecallableMessage keeps human/agent text and drops system/empty", () => 
 test("indexEpisodicMessages indexes recallable messages once and dedupes", () => {
   const sql = createFakeSql();
   const messages = [
-    { id: "m1", conversation_id: "c1", author_kind: "human", author_name: "suk", body: "deploy the vless worker tonight", created_at: 1 },
-    { id: "m2", conversation_id: "c1", author_kind: "agent", author_name: "Ops", kind: "system", body: "system note", created_at: 2 },
-    { id: "m3", conversation_id: "c1", author_kind: "agent", author_name: "Dev", body: "I finished the migration", created_at: 3 }
+    {
+      id: "m1",
+      conversation_id: "c1",
+      author_kind: "human",
+      author_name: "suk",
+      body: "deploy the vless worker tonight",
+      created_at: 1,
+    },
+    {
+      id: "m2",
+      conversation_id: "c1",
+      author_kind: "agent",
+      author_name: "Ops",
+      kind: "system",
+      body: "system note",
+      created_at: 2,
+    },
+    {
+      id: "m3",
+      conversation_id: "c1",
+      author_kind: "agent",
+      author_name: "Dev",
+      body: "I finished the migration",
+      created_at: 3,
+    },
   ];
   assert.equal(indexEpisodicMessages(sql, messages), 2);
   // re-indexing the same ids writes nothing new
@@ -42,8 +67,22 @@ test("buildMatchExpression tokenizes and quotes, tolerating punctuation", () => 
 test("recallEpisodic finds indexed messages by keyword and respects the conversation filter", () => {
   const sql = createFakeSql();
   indexEpisodicMessages(sql, [
-    { id: "m1", conversation_id: "c1", author_kind: "human", author_name: "suk", body: "deploy the vless worker tonight", created_at: 1 },
-    { id: "m2", conversation_id: "c2", author_kind: "agent", author_name: "Dev", body: "the vless config is ready", created_at: 2 }
+    {
+      id: "m1",
+      conversation_id: "c1",
+      author_kind: "human",
+      author_name: "suk",
+      body: "deploy the vless worker tonight",
+      created_at: 1,
+    },
+    {
+      id: "m2",
+      conversation_id: "c2",
+      author_kind: "agent",
+      author_name: "Dev",
+      body: "the vless config is ready",
+      created_at: 2,
+    },
   ]);
   const all = recallEpisodic(sql, "vless");
   assert.equal(all.length, 2);
@@ -55,16 +94,35 @@ test("recallEpisodic finds indexed messages by keyword and respects the conversa
 });
 
 test("parseRecallArgs separates query from flags", () => {
-  assert.deepEqual(parseRecallArgs(["vless", "deploy"]), { query: "vless deploy", limit: undefined, conversationId: undefined });
-  assert.deepEqual(parseRecallArgs(["vless", "--limit", "3", "--conversation", "c2"]), { query: "vless", limit: 3, conversationId: "c2" });
-  assert.deepEqual(parseRecallArgs(["topic", "--in", "c9"]), { query: "topic", limit: undefined, conversationId: "c9" });
+  assert.deepEqual(parseRecallArgs(["vless", "deploy"]), {
+    query: "vless deploy",
+    limit: undefined,
+    conversationId: undefined,
+  });
+  assert.deepEqual(parseRecallArgs(["vless", "--limit", "3", "--conversation", "c2"]), {
+    query: "vless",
+    limit: 3,
+    conversationId: "c2",
+  });
+  assert.deepEqual(parseRecallArgs(["topic", "--in", "c9"]), {
+    query: "topic",
+    limit: undefined,
+    conversationId: "c9",
+  });
 });
 
 test("formatRecallHits and runRecallCommand produce useful output", () => {
   assert.match(formatRecallHits([], "vless"), /No episodic memory found for: vless/);
   const sql = createFakeSql();
   indexEpisodicMessages(sql, [
-    { id: "m1", conversation_id: "c1", author_kind: "human", author_name: "suk", body: "deploy the vless worker tonight", created_at: 1700000000000 }
+    {
+      id: "m1",
+      conversation_id: "c1",
+      author_kind: "human",
+      author_name: "suk",
+      body: "deploy the vless worker tonight",
+      created_at: 1700000000000,
+    },
   ]);
   const out = runRecallCommand(sql, ["vless"]);
   assert.match(out, /\[c1\]/);

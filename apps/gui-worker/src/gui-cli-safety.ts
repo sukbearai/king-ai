@@ -25,7 +25,7 @@ export type RunSafetyCommandDeps<S extends { approvals: GuiCliApprovalRequest[] 
 export function runSafetyCommand<S extends { approvals: GuiCliApprovalRequest[] }, A extends GuiCliApprovalRequest>(
   state: S,
   args: string[],
-  deps: RunSafetyCommandDeps<S, A>
+  deps: RunSafetyCommandDeps<S, A>,
 ): string {
   const cmd = args[0] || "list";
   if (cmd === "check") {
@@ -49,7 +49,7 @@ export function runSafetyCommand<S extends { approvals: GuiCliApprovalRequest[] 
       status: "pending",
       conversationId: deps.stringContextValue(context, "conversationId"),
       taskId: deps.stringContextValue(context, "taskId"),
-      createdAt: Date.now()
+      createdAt: Date.now(),
     } as A;
     state.approvals.push(request);
     return `approval requested ${request.id} action=${action}`;
@@ -58,7 +58,9 @@ export function runSafetyCommand<S extends { approvals: GuiCliApprovalRequest[] 
     const status = cmd === "pending" ? "pending" : deps.readOption(args, "--status");
     const rows = state.approvals.filter((approval) => !status || approval.status === status) as A[];
     if (rows.length === 0) return "No approval requests found.";
-    return rows.map((approval) => deps.formatApprovalLine(approval)).join("\n") + `\n\n${rows.length} approval request(s)`;
+    return (
+      rows.map((approval) => deps.formatApprovalLine(approval)).join("\n") + `\n\n${rows.length} approval request(s)`
+    );
   }
   if (cmd === "get") {
     const request = deps.findApproval(state, args[1]);
@@ -77,7 +79,8 @@ export function runSafetyCommand<S extends { approvals: GuiCliApprovalRequest[] 
     if (!request) return `approval not found: ${args[1] || ""}`;
     if (request.status !== "pending") return `Cannot deny ${request.id}: status=${request.status}`;
     request.status = "denied";
-    request.reason = deps.readOption(args, "--reason") || deps.stripOptions(args.slice(2), ["--reason"]).join(" ").trim() || "denied";
+    request.reason =
+      deps.readOption(args, "--reason") || deps.stripOptions(args.slice(2), ["--reason"]).join(" ").trim() || "denied";
     request.resolvedAt = Date.now();
     return `approval denied ${request.id}: ${request.reason}`;
   }

@@ -65,12 +65,22 @@ function packageDeps(projectPath: string): Record<string, unknown> {
 export function detectLanguages(projectPath: string): string[] {
   const languages: string[] = [];
   if (hasFile(projectPath, "package.json")) {
-    if (hasFile(projectPath, "tsconfig.json") || hasFile(projectPath, "tsconfig.base.json") || hasFile(projectPath, "tsconfig.build.json")) languages.push("typescript");
+    if (
+      hasFile(projectPath, "tsconfig.json") ||
+      hasFile(projectPath, "tsconfig.base.json") ||
+      hasFile(projectPath, "tsconfig.build.json")
+    )
+      languages.push("typescript");
     languages.push("javascript");
   }
   if (hasFile(projectPath, "Cargo.toml")) languages.push("rust");
   if (hasFile(projectPath, "go.mod")) languages.push("go");
-  if (hasFile(projectPath, "requirements.txt") || hasFile(projectPath, "pyproject.toml") || hasFile(projectPath, "setup.py")) languages.push("python");
+  if (
+    hasFile(projectPath, "requirements.txt") ||
+    hasFile(projectPath, "pyproject.toml") ||
+    hasFile(projectPath, "setup.py")
+  )
+    languages.push("python");
   if (hasFile(projectPath, "Gemfile")) languages.push("ruby");
   if (hasFile(projectPath, "pom.xml") || hasFile(projectPath, "build.gradle")) languages.push("java");
   if (hasFile(projectPath, "Package.swift")) languages.push("swift");
@@ -136,7 +146,7 @@ export function detectGitHubRemote(projectPath: string): string | undefined {
       cwd: projectPath,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
-      timeout: 5000
+      timeout: 5000,
     }).trim();
     if (remote.includes("github.com")) return remote;
   } catch {
@@ -154,7 +164,20 @@ export function scanReadme(projectPath: string): string | undefined {
 }
 
 export function detectCodeRoots(projectPath: string): string[] {
-  const roots = ["src", "app", "apps", "packages", "services", "backend", "frontend", "web", "api", "lib", "cmd", "gui-worker"];
+  const roots = [
+    "src",
+    "app",
+    "apps",
+    "packages",
+    "services",
+    "backend",
+    "frontend",
+    "web",
+    "api",
+    "lib",
+    "cmd",
+    "gui-worker",
+  ];
   return roots.filter((name) => {
     const dir = join(projectPath, name);
     return existsSync(dir) && statSync(dir).isDirectory();
@@ -196,9 +219,11 @@ function titleFromContent(filePath: string, content: string): string {
 function scoreDocument(relativePath: string): { score: number; kind: ProjectDocumentKind } {
   const normalized = relativePath.replace(/\\/g, "/").toLowerCase();
   if (/^readme(\.|$)/.test(normalized)) return { score: 100, kind: "readme" };
-  if (/(^|\/)(roadmap|todo|backlog|milestone|plan|vision|prd|strategy)/.test(normalized)) return { score: 95, kind: "roadmap" };
+  if (/(^|\/)(roadmap|todo|backlog|milestone|plan|vision|prd|strategy)/.test(normalized))
+    return { score: 95, kind: "roadmap" };
   if (/^agents\.md$|^claude\.md$/.test(normalized)) return { score: 85, kind: "notes" };
-  if (/^package\.json$|^pyproject\.toml$|^cargo\.toml$|^go\.mod$/.test(normalized)) return { score: 70, kind: "manifest" };
+  if (/^package\.json$|^pyproject\.toml$|^cargo\.toml$|^go\.mod$/.test(normalized))
+    return { score: 70, kind: "manifest" };
   if (/^docs\/.+\.(md|mdx|rst|txt)$/.test(normalized)) return { score: 60, kind: "docs" };
   if (/\.(md|mdx|rst|txt)$/.test(normalized)) return { score: 40, kind: "notes" };
   return { score: 0, kind: "notes" };
@@ -224,7 +249,25 @@ export function collectProjectDocs(projectPath: string): ProjectDocument[] {
     const key = relative(projectPath, file).replace(/\\/g, "/").toLowerCase();
     if (!candidates.has(key)) candidates.set(key, file);
   };
-  for (const name of ["README.md", "readme.md", "README.rst", "README", "AGENTS.md", "CLAUDE.md", "ROADMAP.md", "ROADMAP", "TODO.md", "TODO", "CHANGELOG.md", "PLAN.md", "VISION.md", "package.json", "pyproject.toml", "Cargo.toml", "go.mod"]) {
+  for (const name of [
+    "README.md",
+    "readme.md",
+    "README.rst",
+    "README",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "ROADMAP.md",
+    "ROADMAP",
+    "TODO.md",
+    "TODO",
+    "CHANGELOG.md",
+    "PLAN.md",
+    "VISION.md",
+    "package.json",
+    "pyproject.toml",
+    "Cargo.toml",
+    "go.mod",
+  ]) {
     const file = join(projectPath, name);
     if (existsSync(file) && statSync(file).isFile()) addCandidate(file);
   }
@@ -246,7 +289,7 @@ export function collectProjectDocs(projectPath: string): ProjectDocument[] {
         title: titleFromContent(filePath, excerpt),
         excerpt,
         headings: extractHeadings(excerpt),
-        score
+        score,
       } satisfies ProjectDocument;
     })
     .filter((doc) => doc.score > 0)
@@ -272,7 +315,7 @@ export function scanProject(projectPath: string): ProjectProfile {
     githubRemote,
     readmeExcerpt: scanReadme(absPath),
     codeRoots: detectCodeRoots(absPath),
-    packageScripts: detectPackageScripts(absPath)
+    packageScripts: detectPackageScripts(absPath),
   };
 }
 
@@ -294,17 +337,26 @@ function inferProjectSummary(profile: ProjectProfile, docs: ProjectDocument[]): 
     if (summary) return summary;
   }
   const stack = [profile.frameworks[0], profile.languages[0]].filter(Boolean).join(" / ");
-  return stack ? `${inferProjectName(profile, docs)} - ${stack} project` : `Maintain and advance ${inferProjectName(profile, docs)}`;
+  return stack
+    ? `${inferProjectName(profile, docs)} - ${stack} project`
+    : `Maintain and advance ${inferProjectName(profile, docs)}`;
 }
 
 function buildStrategicThemes(profile: ProjectProfile, docs: ProjectDocument[]): string[] {
   const themes = new Set<string>();
   const roadmapDocs = docs.filter((doc) => doc.kind === "roadmap");
   if (roadmapDocs.length > 0) themes.add("Advance incomplete roadmap, plan, and backlog items closest to user value");
-  if (profile.hasReadme || profile.hasDocs) themes.add("Keep README, docs, and changelog consistent with implementation");
-  if (profile.ci.length > 0 || profile.testFrameworks.length > 0) themes.add("Keep tests, CI, build, and release pipelines operational");
-  if (profile.codeRoots.length > 0) themes.add(`Review core code directories ${profile.codeRoots.join(", ")} for structural issues`);
-  themes.add(profile.issueTracker === "github" ? "Convert external issues and feedback into scoped local tasks" : "Mine backlog from code, docs, TODOs, and scripts when external issues are unavailable");
+  if (profile.hasReadme || profile.hasDocs)
+    themes.add("Keep README, docs, and changelog consistent with implementation");
+  if (profile.ci.length > 0 || profile.testFrameworks.length > 0)
+    themes.add("Keep tests, CI, build, and release pipelines operational");
+  if (profile.codeRoots.length > 0)
+    themes.add(`Review core code directories ${profile.codeRoots.join(", ")} for structural issues`);
+  themes.add(
+    profile.issueTracker === "github"
+      ? "Convert external issues and feedback into scoped local tasks"
+      : "Mine backlog from code, docs, TODOs, and scripts when external issues are unavailable",
+  );
   return Array.from(themes);
 }
 
@@ -325,8 +377,8 @@ export function buildProjectIntent(profile: ProjectProfile): ProjectIntent {
     mission: [
       `Continuously take over and advance ${projectName}${stack ? ` (${stack})` : ""}.`,
       `Project summary: ${summary}`,
-      `Operating principles: ${strategicThemes.join("; ")}`
-    ].join(" ")
+      `Operating principles: ${strategicThemes.join("; ")}`,
+    ].join(" "),
   };
 }
 
@@ -344,10 +396,12 @@ export function formatProjectProfile(profile: ProjectProfile, intent = buildProj
     `package scripts: ${profile.packageScripts.join(", ") || "none"}`,
     `issue tracker: ${profile.issueTracker}${profile.githubRemote ? ` (${profile.githubRemote})` : ""}`,
     "canonical docs:",
-    ...(intent.canonicalDocs.length ? intent.canonicalDocs.map((doc) => `  - ${doc.path} [${doc.kind}] ${doc.title}`) : ["  - none"]),
+    ...(intent.canonicalDocs.length
+      ? intent.canonicalDocs.map((doc) => `  - ${doc.path} [${doc.kind}] ${doc.title}`)
+      : ["  - none"]),
     "strategic themes:",
     ...intent.strategicThemes.map((theme) => `  - ${theme}`),
-    `mission: ${intent.mission}`
+    `mission: ${intent.mission}`,
   ];
   return lines.join("\n");
 }

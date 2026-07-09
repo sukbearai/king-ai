@@ -36,7 +36,7 @@ export function createRuleTTicker(): AlertRule {
         `SELECT ticker, COUNT(*) AS cnt_24h, SUM(views) AS views_24h, COUNT(DISTINCT author) AS authors_24h
          FROM ticker_mentions WHERE created_ts >= ${cutoff24h}
          GROUP BY ticker HAVING cnt_24h >= ${minMentions} AND views_24h >= ${minViews} AND authors_24h >= ${minAuthors}
-         ORDER BY cnt_24h DESC`
+         ORDER BY cnt_24h DESC`,
       );
       if (!rows.length) return [];
 
@@ -51,7 +51,7 @@ export function createRuleTTicker(): AlertRule {
         const baselineRows = await sqliteQuery(
           TRADE_MENTIONS_DB_PATH,
           `SELECT COUNT(*) FROM ticker_mentions WHERE ticker = '${ticker.replace(/'/g, "''")}'
-           AND created_ts >= ${cutoff24hPriorTo7d} AND created_ts < ${cutoff24h}`
+           AND created_ts >= ${cutoff24hPriorTo7d} AND created_ts < ${cutoff24h}`,
         );
         const baselineTotal = Number(baselineRows[0]?.[0] ?? 0);
         const baselinePerDay = baselineTotal / 7;
@@ -78,7 +78,7 @@ export function createRuleTTicker(): AlertRule {
           TRADE_MENTIONS_DB_PATH,
           `SELECT author, views, substr(text_snippet, 1, 120) FROM ticker_mentions
            WHERE ticker = '${ticker.replace(/'/g, "''")}' AND created_ts >= ${cutoff24h}
-           ORDER BY views DESC LIMIT 1`
+           ORDER BY views DESC LIMIT 1`,
         );
         let sampleText = "";
         if (sampleRows[0]) {
@@ -88,19 +88,21 @@ export function createRuleTTicker(): AlertRule {
 
         const alertKey = `ticker_${ticker}`;
         if (state.canAlert(alertKey, 86400)) {
-          alerts.push(createAlert({
-            rule: "提及加速",
-            severity,
-            title: `$${ticker} ${tag} (${cnt24h}条/${authors24h}作者/${views24h.toLocaleString()}👁)`,
-            detail: `24h: ${cnt24h} 条 | ${authors24h} 独立作者 | ${views24h.toLocaleString()} views | baseline: ${baselinePerDay.toFixed(1)}/天${sampleText}`,
-            timestamp: nowDisplay(),
-            direction: 0.5,
-            strength: isFirst ? 0.5 : Math.min(mult / 10, 1),
-            asset: ticker
-          }));
+          alerts.push(
+            createAlert({
+              rule: "提及加速",
+              severity,
+              title: `$${ticker} ${tag} (${cnt24h}条/${authors24h}作者/${views24h.toLocaleString()}👁)`,
+              detail: `24h: ${cnt24h} 条 | ${authors24h} 独立作者 | ${views24h.toLocaleString()} views | baseline: ${baselinePerDay.toFixed(1)}/天${sampleText}`,
+              timestamp: nowDisplay(),
+              direction: 0.5,
+              strength: isFirst ? 0.5 : Math.min(mult / 10, 1),
+              asset: ticker,
+            }),
+          );
         }
       }
       return alerts;
-    }
+    },
   };
 }

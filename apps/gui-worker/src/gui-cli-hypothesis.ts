@@ -29,22 +29,29 @@ export type RunHypothesisCommandDeps<S extends { hypotheses: GuiCliHypothesis[] 
 export function runHypothesisCommand<
   S extends { hypotheses: GuiCliHypothesis[] },
   H extends GuiCliHypothesis,
-  A extends GuiCliHypothesisActor
+  A extends GuiCliHypothesisActor,
 >(state: S, args: string[], actor: A, deps: RunHypothesisCommandDeps<S, H>): string {
   const cmd = args[0] || "list";
   if (cmd === "list") {
     const status = deps.readOption(args, "--status");
     const treeRoot = deps.readOption(args, "--tree");
-    const rows = state.hypotheses.filter((hypothesis) =>
-      (!status || hypothesis.status === status) &&
-      (!treeRoot || hypothesis.id === treeRoot || hypothesis.parentId === treeRoot)
+    const rows = state.hypotheses.filter(
+      (hypothesis) =>
+        (!status || hypothesis.status === status) &&
+        (!treeRoot || hypothesis.id === treeRoot || hypothesis.parentId === treeRoot),
     ) as H[];
     if (rows.length === 0) return "No hypotheses found.";
-    return rows.map((hypothesis) => deps.formatHypothesisLine(hypothesis)).join("\n") + `\n\n${rows.length} hypothesis(es)`;
+    return (
+      rows.map((hypothesis) => deps.formatHypothesisLine(hypothesis)).join("\n") + `\n\n${rows.length} hypothesis(es)`
+    );
   }
   if (cmd === "create") {
-    const title = deps.stripOptions(args.slice(1), ["--rationale", "--expected-value", "--estimated-cost", "--parent", "--agent"]).join(" ").trim();
-    if (!title) return "usage: king-ai hypothesis create <title> [--rationale text] [--expected-value text] [--estimated-cost text] [--parent id]";
+    const title = deps
+      .stripOptions(args.slice(1), ["--rationale", "--expected-value", "--estimated-cost", "--parent", "--agent"])
+      .join(" ")
+      .trim();
+    if (!title)
+      return "usage: king-ai hypothesis create <title> [--rationale text] [--expected-value text] [--estimated-cost text] [--parent id]";
     const now = Date.now();
     const hypothesis = {
       id: `hyp-${now}-${Math.random().toString(36).slice(2)}`,
@@ -56,7 +63,7 @@ export function runHypothesisCommand<
       expectedValue: deps.readOption(args, "--expected-value"),
       estimatedCost: deps.readOption(args, "--estimated-cost"),
       created_at: now,
-      updated_at: now
+      updated_at: now,
     } as H;
     state.hypotheses.push(hypothesis);
     return `Hypothesis ${hypothesis.id} created: ${hypothesis.title}`;

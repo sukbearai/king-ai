@@ -67,10 +67,14 @@ export async function listSharedSkills(sourceRoots: string[]): Promise<SharedSki
 export async function installSharedSkills(
   agentHome: string,
   sourceRoots = sharedSkillRoots(),
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<SharedSkillInstallResult> {
   const skills = await listSharedSkills(sourceRoots);
-  const targets = [join(agentHome, ".claude", "skills"), join(agentHome, ".codex", "skills"), join(agentHome, ".grok", "skills")];
+  const targets = [
+    join(agentHome, ".claude", "skills"),
+    join(agentHome, ".codex", "skills"),
+    join(agentHome, ".grok", "skills"),
+  ];
   const snapshot = await createSharedSkillSnapshot(agentHome, skills, env);
   for (const target of targets) await mkdir(target, { recursive: true });
   for (const skill of skills) {
@@ -86,7 +90,11 @@ export async function installSharedSkills(
   return { sourceRoots, installed: skills, targets, snapshot };
 }
 
-async function createSharedSkillSnapshot(agentHome: string, skills: SharedSkill[], env: NodeJS.ProcessEnv = process.env): Promise<SharedSkillSnapshot | undefined> {
+async function createSharedSkillSnapshot(
+  agentHome: string,
+  skills: SharedSkill[],
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<SharedSkillSnapshot | undefined> {
   if (skills.length === 0) return undefined;
   const snapshotId = `skills-${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID()}`;
   const root = join(sharedSkillSnapshotsRoot(env) || join(agentHome, ".king-ai", "skill-snapshots"), snapshotId);
@@ -99,7 +107,7 @@ async function createSharedSkillSnapshot(agentHome: string, skills: SharedSkill[
     snapshotSkills.push({
       name: skill.name,
       sourceDir: skill.sourceDir,
-      snapshotDir
+      snapshotDir,
     });
   }
 
@@ -108,7 +116,7 @@ async function createSharedSkillSnapshot(agentHome: string, skills: SharedSkill[
     createdAt: new Date().toISOString(),
     root,
     manifestPath: join(root, "manifest.json"),
-    skills: snapshotSkills
+    skills: snapshotSkills,
   };
   await writeFile(snapshot.manifestPath, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
   return snapshot;

@@ -4,12 +4,7 @@ import { dirname } from "node:path";
 import { dotGet, loadTradeConfig } from "./config.js";
 import { runOpencli } from "./data-helpers.js";
 import { recordTickerMentions, textHash } from "./ticker-mentions.js";
-import {
-  defaultTwitterCachePath,
-  entryTimestamp,
-  iterCacheRecords,
-  type TwitterCacheEntry
-} from "./twitter-cache.js";
+import { defaultTwitterCachePath, entryTimestamp, iterCacheRecords, type TwitterCacheEntry } from "./twitter-cache.js";
 
 const TWITTER_BROWSER_SESSION = "trade-twitter";
 
@@ -24,7 +19,7 @@ function normalizeTweet(row: Record<string, unknown>): TwitterCacheEntry | null 
     likes: Number(lower.likes ?? lower.favorite_count ?? 0),
     retweets: Number(lower.retweets ?? lower.retweet_count ?? 0),
     views: Number(lower.views ?? lower.view_count ?? 0),
-    url: String(lower.url ?? "")
+    url: String(lower.url ?? ""),
   };
   return tweet.id || tweet.text ? tweet : null;
 }
@@ -64,13 +59,33 @@ async function fetchOpencliBrowserTweets(limit: number): Promise<Array<Record<st
 })()`;
   for (let attempt = 0; attempt < 3; attempt++) {
     await runOpencli(["browser", TWITTER_BROWSER_SESSION, "close"], 10_000);
-    await runOpencli(["browser", TWITTER_BROWSER_SESSION, "--window", "background", "open", "https://x.com/home"], 30_000);
+    await runOpencli(
+      ["browser", TWITTER_BROWSER_SESSION, "--window", "background", "open", "https://x.com/home"],
+      30_000,
+    );
     await runOpencli(["browser", TWITTER_BROWSER_SESSION, "--window", "background", "wait", "time", "5"], 10_000);
-    await runOpencli(["browser", TWITTER_BROWSER_SESSION, "--window", "background", "wait", "selector", "article", "--timeout", "30000"], 35_000);
-    const evalResult = await runOpencli(["browser", TWITTER_BROWSER_SESSION, "--window", "background", "eval", js], 30_000);
+    await runOpencli(
+      [
+        "browser",
+        TWITTER_BROWSER_SESSION,
+        "--window",
+        "background",
+        "wait",
+        "selector",
+        "article",
+        "--timeout",
+        "30000",
+      ],
+      35_000,
+    );
+    const evalResult = await runOpencli(
+      ["browser", TWITTER_BROWSER_SESSION, "--window", "background", "eval", js],
+      30_000,
+    );
     if (!evalResult.ok) continue;
-    const rows = evalResult.data
-      .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row));
+    const rows = evalResult.data.filter(
+      (row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row),
+    );
     if (rows.length) return rows;
   }
   return [];
@@ -82,9 +97,7 @@ async function fetchTimelineRows(): Promise<TwitterCacheEntry[]> {
   const limit = Number(ds.limit) || 500;
 
   const rows = await fetchOpencliBrowserTweets(limit);
-  return rows
-    .map((r) => normalizeTweet(r as Record<string, unknown>))
-    .filter((t): t is TwitterCacheEntry => t != null);
+  return rows.map((r) => normalizeTweet(r as Record<string, unknown>)).filter((t): t is TwitterCacheEntry => t != null);
 }
 
 async function loadDedupSets(cachePath: string): Promise<{ ids: Set<string>; hashes: Set<string> }> {
@@ -165,8 +178,6 @@ export async function runTwitterCollector(cachePath = defaultTwitterCachePath())
     if (ts && ts.getTime() >= cutoff) recent24h += 1;
   }
 
-  process.stderr.write(
-    `[twitter-collector] new=${newCount} recent24h=${recent24h} total=${total}\n`
-  );
+  process.stderr.write(`[twitter-collector] new=${newCount} recent24h=${recent24h} total=${total}\n`);
   return { newCount, recent24h, total };
 }

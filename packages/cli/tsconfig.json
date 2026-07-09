@@ -1,22 +1,14 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "types": [
-      "node",
-      "@cloudflare/workers-types"
-    ],
+    "types": ["node", "@cloudflare/workers-types"],
     "rootDir": ".",
     "outDir": "dist",
     "declaration": true,
     "baseUrl": ".",
     "paths": {
-      "king-ai/host-sdk": [
-        "src/host-sdk.ts"
-      ]
+      "king-ai/host-sdk": ["src/host-sdk.ts"]
     }
   },
-  "include": [
-    "src/**/*.ts",
-    "test/**/*.ts"
-  ]
+  "include": ["src/**/*.ts", "test/**/*.ts"]
 }

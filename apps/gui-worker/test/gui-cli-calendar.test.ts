@@ -8,7 +8,7 @@ const deps = {
     const idx = args.indexOf(flag);
     return idx >= 0 ? args[idx + 1] : undefined;
   },
-  parseCron: () => ({})
+  parseCron: () => ({}),
 };
 
 test("calendar delete removes a due item", () => {
@@ -19,9 +19,9 @@ test("calendar delete removes a due item", () => {
         title: "Follow up",
         at: "2000-01-01T00:00:00.000Z",
         assignee: "king-ai-ceo",
-        created_at: 1
-      }
-    ]
+        created_at: 1,
+      },
+    ],
   };
   assert.match(runCalendarCommand(state, ["delete", "cal-test-1"], deps), /calendar deleted cal-test-1/);
   assert.equal(state.calendar.length, 0);

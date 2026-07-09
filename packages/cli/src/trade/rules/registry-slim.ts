@@ -15,5 +15,5 @@ export const SLIM_RULE_REGISTRY: Record<string, () => AlertRule> = {
   t: createRuleTCelebrity,
   tm: createRuleTTicker,
   discord_wba: createRuleDiscordWba,
-  q: createRuleQ
+  q: createRuleQ,
 };

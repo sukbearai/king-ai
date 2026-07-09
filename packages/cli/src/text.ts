@@ -3,9 +3,7 @@ import { engineRemediationAdvice, formatRemediationAdvice } from "./remediation.
 export const ANSI_RE = /\x1B\[[0-?]*[ -/]*[@-~]/g;
 
 export function stripLoneSurrogates(s: string): string {
-  return s
-    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, "")
-    .replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "");
+  return s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, "").replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "");
 }
 
 export function cleanLine(line: string): string {
@@ -26,7 +24,9 @@ export function hashText(text: string): string {
 }
 
 export function isRateLimited(text: string): boolean {
-  return /\b(429|503)\b|too many requests|rate.?limit|\bquota\b|resource_exhausted|usage limit|session limit|overloaded|insufficient_quota|service (temporarily )?unavailable/i.test(text);
+  return /\b(429|503)\b|too many requests|rate.?limit|\bquota\b|resource_exhausted|usage limit|session limit|overloaded|insufficient_quota|service (temporarily )?unavailable/i.test(
+    text,
+  );
 }
 
 export function authFailureHint(engine: string, detail: string): string {

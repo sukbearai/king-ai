@@ -10,7 +10,12 @@ import type { CommandName } from "./paths.js";
 import { loadConfig } from "./config.js";
 import type { LocalCapabilities } from "./workspace.js";
 import type { WorktreePlan } from "./worktree.js";
-import { cleanupWorktreePlans, formatWorktreeCleanupResults, formatWorktreePreparationResults, prepareWorktreePlans } from "./worktree.js";
+import {
+  cleanupWorktreePlans,
+  formatWorktreeCleanupResults,
+  formatWorktreePreparationResults,
+  prepareWorktreePlans,
+} from "./worktree.js";
 import type { AgentRunStats } from "./usage.js";
 import type { TokenBudgetCheck } from "./usage.js";
 import { formatAgentRunStats, formatTokenBudgetCheck } from "./usage.js";
@@ -79,12 +84,17 @@ export function daemonLogPath(): string {
   return join(CONFIG_DIR, "daemon.log");
 }
 
-export function serviceNames(commandName: CommandName = "king-ai"): { packageName: string; serviceUnit: string; displayName: string; serviceLabel: string } {
+export function serviceNames(commandName: CommandName = "king-ai"): {
+  packageName: string;
+  serviceUnit: string;
+  displayName: string;
+  serviceLabel: string;
+} {
   return {
     packageName: "@suwujs/king-ai",
     serviceUnit: "king-ai",
     displayName: "King AI",
-    serviceLabel: "io.king-ai.daemon"
+    serviceLabel: "io.king-ai.daemon",
   };
 }
 
@@ -129,20 +139,22 @@ export function windowsWrapperPath(commandName: CommandName = "king-ai"): string
 
 export function buildWindowsServiceWrapper(args: string[], logPath = daemonLogPath()): string {
   const quotedArgs = args.map(windowsCmdQuote).join(" ");
-  return [
-    "@echo off",
-    "setlocal",
-    "set KING_AI_SUPERVISED=1",
-    `echo [%date% %time%] starting King AI daemon>>${windowsCmdQuote(logPath)}`,
-    `${quotedArgs} >>${windowsCmdQuote(logPath)} 2>&1`
-  ].join("\r\n") + "\r\n";
+  return (
+    [
+      "@echo off",
+      "setlocal",
+      "set KING_AI_SUPERVISED=1",
+      `echo [%date% %time%] starting King AI daemon>>${windowsCmdQuote(logPath)}`,
+      `${quotedArgs} >>${windowsCmdQuote(logPath)} 2>&1`,
+    ].join("\r\n") + "\r\n"
+  );
 }
 
 export function parseWindowsTaskStatus(stdout: string): { status?: string; lastResult?: string; taskName?: string } {
   return {
     taskName: stdout.match(/^TaskName:\s*(.+)$/im)?.[1]?.trim(),
     status: stdout.match(/^Status:\s*(.+)$/im)?.[1]?.trim(),
-    lastResult: stdout.match(/^Last Result:\s*(.+)$/im)?.[1]?.trim()
+    lastResult: stdout.match(/^Last Result:\s*(.+)$/im)?.[1]?.trim(),
   };
 }
 
@@ -158,7 +170,7 @@ export function parseDarwinLaunchctlStatus(stdout: string): DarwinServiceStatus 
   const lastExitText = stdout.match(/"LastExitStatus"\s*=\s*(-?\d+)/)?.[1];
   return {
     pid: pidText ? Number(pidText) : null,
-    lastExitStatus: lastExitText ? Number(lastExitText) : null
+    lastExitStatus: lastExitText ? Number(lastExitText) : null,
   };
 }
 
@@ -192,7 +204,16 @@ export async function installService(serverUrl?: string, commandName: CommandNam
   if (process.platform === "darwin") {
     await mkdir(dirname(darwinPlistPath(commandName)), { recursive: true });
     const plistPath = darwinPlistPath(commandName);
-    const args = [npx, "-y", `${names.packageName}@latest`, "agent", "computer", "--server", resolvedServerUrl, ...tenantArgs];
+    const args = [
+      npx,
+      "-y",
+      `${names.packageName}@latest`,
+      "agent",
+      "computer",
+      "--server",
+      resolvedServerUrl,
+      ...tenantArgs,
+    ];
     const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -238,17 +259,30 @@ WantedBy=default.target
   }
   if (process.platform === "win32") {
     await mkdir(windowsServiceDir(commandName), { recursive: true });
-    const resolvedArgs = [resolveNpx(), "-y", `${names.packageName}@latest`, "agent", "computer", "--server", resolvedServerUrl, ...tenantArgs];
+    const resolvedArgs = [
+      resolveNpx(),
+      "-y",
+      `${names.packageName}@latest`,
+      "agent",
+      "computer",
+      "--server",
+      resolvedServerUrl,
+      ...tenantArgs,
+    ];
     const wrapperPath = windowsWrapperPath(commandName);
     await writeFile(wrapperPath, buildWindowsServiceWrapper(resolvedArgs), "utf8");
     await execFileP("schtasks", ["/Delete", "/TN", windowsTaskName(commandName), "/F"]).catch(() => undefined);
     await execFileP("schtasks", [
       "/Create",
-      "/TN", windowsTaskName(commandName),
-      "/SC", "ONLOGON",
-      "/TR", wrapperPath,
-      "/RL", "LIMITED",
-      "/F"
+      "/TN",
+      windowsTaskName(commandName),
+      "/SC",
+      "ONLOGON",
+      "/TR",
+      wrapperPath,
+      "/RL",
+      "LIMITED",
+      "/F",
     ]);
     await execFileP("schtasks", ["/Run", "/TN", windowsTaskName(commandName)]).catch(() => undefined);
     console.log(`installed Windows scheduled task ${windowsTaskName(commandName)}. Logs: ${daemonLogPath()}`);
@@ -305,7 +339,9 @@ export async function restartService(commandName: CommandName = "king-ai"): Prom
   }
   if (process.platform === "darwin") {
     const uid = process.getuid?.() ?? 0;
-    await execFileP("launchctl", ["kickstart", "-k", `gui/${uid}/${names.serviceLabel}`]).catch(() => reloadService(commandName));
+    await execFileP("launchctl", ["kickstart", "-k", `gui/${uid}/${names.serviceLabel}`]).catch(() =>
+      reloadService(commandName),
+    );
   } else if (process.platform === "linux") {
     await execFileP("systemctl", ["--user", "restart", names.serviceUnit]);
   } else if (process.platform === "win32") {
@@ -390,7 +426,11 @@ export async function printStatus(commandName: CommandName = "king-ai"): Promise
   const names = serviceNames(commandName);
   const cfg = await loadConfig();
   console.log(`cli:     ${names.displayName} ${CURRENT_VERSION} (this command)`);
-  console.log(cfg ? `paired:  computer ${cfg.computerId} @ ${cfg.serverUrl}` : `paired:  NO; run: ${names.displayName} agent computer --pair <code>`);
+  console.log(
+    cfg
+      ? `paired:  computer ${cfg.computerId} @ ${cfg.serverUrl}`
+      : `paired:  NO; run: ${names.displayName} agent computer --pair <code>`,
+  );
 
   let livePid: number | null = null;
   if (!isServiceInstalled(commandName)) {
@@ -404,7 +444,7 @@ export async function printStatus(commandName: CommandName = "king-ai"): Promise
         console.log(
           livePid
             ? `service: installed; running (pid ${livePid})`
-            : `service: installed; NOT running${status.lastExitStatus != null ? ` (last exit ${status.lastExitStatus})` : ""}`
+            : `service: installed; NOT running${status.lastExitStatus != null ? ` (last exit ${status.lastExitStatus})` : ""}`,
         );
       } catch {
         console.log(`service: installed; not loaded (try: launchctl load ${darwinPlistPath(commandName)})`);
@@ -423,7 +463,9 @@ export async function printStatus(commandName: CommandName = "king-ai"): Promise
         .then((result) => result.stdout)
         .catch(() => "");
       const status = parseWindowsTaskStatus(stdout);
-      console.log(`service: installed; ${status.status ?? "unknown"}${status.lastResult ? ` (last result ${status.lastResult})` : ""}`);
+      console.log(
+        `service: installed; ${status.status ?? "unknown"}${status.lastResult ? ` (last result ${status.lastResult})` : ""}`,
+      );
     }
   }
 
@@ -432,22 +474,30 @@ export async function printStatus(commandName: CommandName = "king-ai"): Promise
   if (running) {
     console.log(
       `running: ${names.displayName} ${running}${
-        running === CURRENT_VERSION ? " (same as this cli)" : " (differs from this cli; run --restart to pick up latest)"
-      }`
+        running === CURRENT_VERSION
+          ? " (same as this cli)"
+          : " (differs from this cli; run --restart to pick up latest)"
+      }`,
     );
   } else {
     console.log("running: unknown; run --restart to start it and record the version");
   }
   const snapshot = formatRunningStateSnapshot(state);
   if (snapshot) console.log(snapshot);
-  console.log(`logs:    ${process.platform === "linux" ? `journalctl --user -u ${names.serviceUnit} -f` : daemonLogPath()}`);
+  console.log(
+    `logs:    ${process.platform === "linux" ? `journalctl --user -u ${names.serviceUnit} -f` : daemonLogPath()}`,
+  );
 }
 
-export async function resolveRunningVersion(livePid?: number | null, commandName: CommandName = "king-ai"): Promise<string> {
+export async function resolveRunningVersion(
+  livePid?: number | null,
+  commandName: CommandName = "king-ai",
+): Promise<string> {
   const names = serviceNames(commandName);
   try {
     const state = JSON.parse(await readFile(RUNNING_STATE_PATH, "utf8")) as { version?: string; pid?: number };
-    if (typeof state.version === "string" && state.version && (livePid == null || state.pid === livePid)) return state.version;
+    if (typeof state.version === "string" && state.version && (livePid == null || state.pid === livePid))
+      return state.version;
   } catch {
     // Fall through to log parsing.
   }
@@ -456,7 +506,11 @@ export async function resolveRunningVersion(livePid?: number | null, commandName
       process.platform === "linux"
         ? (await execFileP("journalctl", ["--user", "-u", names.serviceUnit, "-n", "400", "--no-pager"])).stdout
         : await readFile(daemonLogPath(), "utf8");
-    const matches = [...text.matchAll(new RegExp(`${names.displayName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} (\\d+\\.\\d+\\.\\d+) starting`, "g"))];
+    const matches = [
+      ...text.matchAll(
+        new RegExp(`${names.displayName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} (\\d+\\.\\d+\\.\\d+) starting`, "g"),
+      ),
+    ];
     return matches.at(-1)?.[1] ?? "";
   } catch {
     return "";
@@ -474,30 +528,40 @@ export async function readRunningState(path = RUNNING_STATE_PATH): Promise<Runni
 
 export function updateRunningStateData(
   previous: RunningState | null,
-  patch: Partial<Omit<RunningState, "events">> & { event?: RunningEvent }
+  patch: Partial<Omit<RunningState, "events">> & { event?: RunningEvent },
 ): RunningState {
-  const base: RunningState = previous ?? { version: CURRENT_VERSION, pid: process.pid, startedAt: new Date().toISOString() };
+  const base: RunningState = previous ?? {
+    version: CURRENT_VERSION,
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+  };
   const events = [...(base.events ?? [])];
   if (patch.event) events.push(patch.event);
   return {
     ...base,
     ...patch,
-    events: events.slice(-50)
+    events: events.slice(-50),
   };
 }
 
-export async function writeRunningState(patch: Partial<Omit<RunningState, "events">> & { event?: RunningEvent } = {}): Promise<void> {
+export async function writeRunningState(
+  patch: Partial<Omit<RunningState, "events">> & { event?: RunningEvent } = {},
+): Promise<void> {
   await mkdir(CONFIG_DIR, { recursive: true });
   const previous = await readRunningState();
   await writeFile(
     RUNNING_STATE_PATH,
-    JSON.stringify(updateRunningStateData(previous, {
-      version: CURRENT_VERSION,
-      pid: process.pid,
-      startedAt: previous?.startedAt ?? new Date().toISOString(),
-      ...patch
-    }), null, 2),
-    "utf8"
+    JSON.stringify(
+      updateRunningStateData(previous, {
+        version: CURRENT_VERSION,
+        pid: process.pid,
+        startedAt: previous?.startedAt ?? new Date().toISOString(),
+        ...patch,
+      }),
+      null,
+      2,
+    ),
+    "utf8",
   );
 }
 
@@ -510,7 +574,7 @@ export function formatRecentRunningEvents(state: RunningState | null, max = 10):
   if (events.length === 0) return "";
   return [
     "recent daemon events:",
-    ...events.map((event) => `  ${event.at} ${event.kind}${event.detail ? `: ${event.detail}` : ""}`)
+    ...events.map((event) => `  ${event.at} ${event.kind}${event.detail ? `: ${event.detail}` : ""}`),
   ].join("\n");
 }
 
@@ -522,13 +586,16 @@ export function runningEventCategory(kind: string): RunningEventCategory {
   return "other";
 }
 
-export function groupRunningEvents(events: RunningEvent[] = [], maxPerCategory = 4): Record<RunningEventCategory, RunningEvent[]> {
+export function groupRunningEvents(
+  events: RunningEvent[] = [],
+  maxPerCategory = 4,
+): Record<RunningEventCategory, RunningEvent[]> {
   const grouped: Record<RunningEventCategory, RunningEvent[]> = {
     agent: [],
     turn: [],
     budget: [],
     daemon: [],
-    other: []
+    other: [],
   };
   for (const event of events) {
     grouped[runningEventCategory(event.kind)].push(event);
@@ -561,12 +628,16 @@ export function formatRunningStateSnapshot(state: RunningState | null, eventMax 
   if (state.lastHeartbeatAt) lines.push(`heartbeat: ${state.lastHeartbeatAt}`);
   if (state.lastSyncAt) lines.push(`agent sync: ${state.lastSyncAt}`);
   if (state.capabilities?.workspaces) {
-    lines.push(`workspaces: ${state.capabilities.workspaces.length ? state.capabilities.workspaces.join(", ") : "(none)"}`);
+    lines.push(
+      `workspaces: ${state.capabilities.workspaces.length ? state.capabilities.workspaces.join(", ") : "(none)"}`,
+    );
   }
   if (state.agents?.length) {
     lines.push("agents:");
     for (const agent of state.agents) {
-      lines.push(`  - ${agent.id} ${agent.name} on ${agent.engine}${agent.lifecycle ? ` lifecycle=${agent.lifecycle}` : ""}${agent.status ? ` status=${agent.status}` : ""}${agent.model ? ` model=${agent.model}` : ""}${agent.workspaceRoot ? ` workspace=${agent.workspaceRoot}` : ""}`);
+      lines.push(
+        `  - ${agent.id} ${agent.name} on ${agent.engine}${agent.lifecycle ? ` lifecycle=${agent.lifecycle}` : ""}${agent.status ? ` status=${agent.status}` : ""}${agent.model ? ` model=${agent.model}` : ""}${agent.workspaceRoot ? ` workspace=${agent.workspaceRoot}` : ""}`,
+      );
       const usage = formatAgentRunStats(agent.runStats);
       if (usage) lines.push(`    usage: ${usage}`);
       const budget = formatTokenBudgetCheck(agent.tokenBudget);
@@ -579,13 +650,19 @@ export function formatRunningStateSnapshot(state: RunningState | null, eventMax 
         lines.push(`    config warning: ${warning.code} - ${warning.summary}`);
       }
       if (agent.sharedSkillSnapshot) {
-        lines.push(`    skill snapshot: ${agent.sharedSkillSnapshot.id} (${agent.sharedSkillSnapshot.skills.join(", ") || "no skills"}) ${agent.sharedSkillSnapshot.manifestPath}`);
+        lines.push(
+          `    skill snapshot: ${agent.sharedSkillSnapshot.id} (${agent.sharedSkillSnapshot.skills.join(", ") || "no skills"}) ${agent.sharedSkillSnapshot.manifestPath}`,
+        );
       }
       for (const entry of agent.hostHomeEntries ?? []) {
-        lines.push(`    host home entry: ${entry.name} -> ${entry.target || "(not linked)"}${entry.linked ? "" : ` (${entry.reason ?? "skipped"})`}`);
+        lines.push(
+          `    host home entry: ${entry.name} -> ${entry.target || "(not linked)"}${entry.linked ? "" : ` (${entry.reason ?? "skipped"})`}`,
+        );
       }
       for (const plan of agent.worktreePlans ?? []) {
-        lines.push(`    worktree plan: ${plan.repoName} -> ${plan.worktreePath} (${plan.branch})${plan.repoUrl ? ` from ${plan.repoUrl}` : ""}`);
+        lines.push(
+          `    worktree plan: ${plan.repoName} -> ${plan.worktreePath} (${plan.branch})${plan.repoUrl ? ` from ${plan.repoUrl}` : ""}`,
+        );
       }
     }
   }
@@ -601,7 +678,8 @@ export function formatWatchSnapshot(state: RunningState | null, now = new Date()
     return lines.join("\n");
   }
   lines.push(`running: ${state.version} pid=${state.pid}`);
-  if (state.computerId || state.serverUrl) lines.push(`paired: ${state.computerId ?? "unknown"} @ ${state.serverUrl ?? "unknown"}`);
+  if (state.computerId || state.serverUrl)
+    lines.push(`paired: ${state.computerId ?? "unknown"} @ ${state.serverUrl ?? "unknown"}`);
   const snapshot = formatRunningStateSnapshot(state, 8);
   if (snapshot) lines.push(snapshot);
   return lines.join("\n");
@@ -643,15 +721,28 @@ export function worktreePlansFromRunningState(state: RunningState | null): Workt
 
 export async function prepareWorktrees(options: { execute?: boolean } = {}): Promise<void> {
   const plans = worktreePlansFromRunningState(await readRunningState());
-  console.log(formatWorktreePreparationResults(await prepareWorktreePlans(plans, { execute: options.execute }), Boolean(options.execute)));
+  console.log(
+    formatWorktreePreparationResults(
+      await prepareWorktreePlans(plans, { execute: options.execute }),
+      Boolean(options.execute),
+    ),
+  );
 }
 
 export async function cleanupWorktrees(options: { execute?: boolean } = {}): Promise<void> {
   const plans = worktreePlansFromRunningState(await readRunningState());
-  console.log(formatWorktreeCleanupResults(await cleanupWorktreePlans(plans, { execute: options.execute }), Boolean(options.execute)));
+  console.log(
+    formatWorktreeCleanupResults(
+      await cleanupWorktreePlans(plans, { execute: options.execute }),
+      Boolean(options.execute),
+    ),
+  );
 }
 
-export async function rotateLogsIfNeeded(logPath = join(CONFIG_DIR, "daemon.log"), maxBytes = LOG_MAX_BYTES): Promise<void> {
+export async function rotateLogsIfNeeded(
+  logPath = join(CONFIG_DIR, "daemon.log"),
+  maxBytes = LOG_MAX_BYTES,
+): Promise<void> {
   try {
     const st = await stat(logPath);
     if (st.size <= maxBytes) return;
@@ -664,10 +755,13 @@ export async function rotateLogsIfNeeded(logPath = join(CONFIG_DIR, "daemon.log"
   }
 }
 
-export async function checkForUpdate(fetchImpl: typeof fetch = fetch, commandName: CommandName = "king-ai"): Promise<string | null> {
+export async function checkForUpdate(
+  fetchImpl: typeof fetch = fetch,
+  commandName: CommandName = "king-ai",
+): Promise<string | null> {
   try {
     const res = await fetchImpl(updateRegistryUrl(commandName), {
-      headers: { Accept: "application/json" }
+      headers: { Accept: "application/json" },
     });
     if (!res.ok) return null;
     const body = (await res.json()) as { version?: unknown };
@@ -703,5 +797,5 @@ export async function tailLogs(commandName: CommandName = "king-ai"): Promise<vo
 }
 
 function windowsCmdQuote(value: string): string {
-  return `"${value.replace(/"/g, "\"\"")}"`;
+  return `"${value.replace(/"/g, '""')}"`;
 }

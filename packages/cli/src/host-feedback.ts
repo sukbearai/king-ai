@@ -70,7 +70,10 @@ export function hostFeedbackPathForOutputDir(outputDir = "deliverables"): string
   return join(resolve(outputDir), "run-feedback.jsonl");
 }
 
-export async function recordHostFeedback(input: HostFeedbackRecordInput, now: () => Date = () => new Date()): Promise<HostFeedbackRecord> {
+export async function recordHostFeedback(
+  input: HostFeedbackRecordInput,
+  now: () => Date = () => new Date(),
+): Promise<HostFeedbackRecord> {
   const inputTokens = nonNegativeInteger(input.inputTokens, "inputTokens") ?? 0;
   const outputTokens = nonNegativeInteger(input.outputTokens, "outputTokens") ?? 0;
   const totalTokens = nonNegativeInteger(input.totalTokens, "totalTokens") ?? inputTokens + outputTokens;
@@ -92,7 +95,7 @@ export async function recordHostFeedback(input: HostFeedbackRecordInput, now: ()
     taskCompleted: input.taskCompleted ?? status === "completed",
     errored: input.errored ?? status === "failed",
     humanIntervention: input.humanIntervention ?? false,
-    note: cleanString(input.note)
+    note: cleanString(input.note),
   };
   const cleaned = dropUndefined(record);
   await appendJsonl(feedbackPath(input), cleaned);
@@ -119,32 +122,46 @@ export async function summarizeHostFeedback(input: HostFeedbackListInput = {}): 
 
 export function formatHostFeedback(records: HostFeedbackRecord[]): string {
   if (records.length === 0) return "no host feedback";
-  return records.map((record) => {
-    const subject = [record.runId, record.taskId, record.capsuleId].filter(Boolean).join(" ") || "(no subject)";
-    return `${record.createdAt} ${record.status}${record.agent ? ` @${record.agent}` : ""} ${subject} tokens=${record.totalTokens}${record.note ? ` ${record.note}` : ""}`;
-  }).join("\n");
+  return records
+    .map((record) => {
+      const subject = [record.runId, record.taskId, record.capsuleId].filter(Boolean).join(" ") || "(no subject)";
+      return `${record.createdAt} ${record.status}${record.agent ? ` @${record.agent}` : ""} ${subject} tokens=${record.totalTokens}${record.note ? ` ${record.note}` : ""}`;
+    })
+    .join("\n");
 }
 
 export function formatHostFeedbackSummary(summary: HostFeedbackSummary): string {
   const lines = [
     `feedback: records=${summary.records} completed=${summary.completed} failed=${summary.failed} partial=${summary.partial} cancelled=${summary.cancelled}`,
     `tasks: completed=${summary.taskCompleted} errored=${summary.errored} humanIntervention=${summary.humanIntervention}`,
-    `usage: durationMs=${summary.totalDurationMs} tokens=${summary.totalTokens}`
+    `usage: durationMs=${summary.totalDurationMs} tokens=${summary.totalTokens}`,
   ];
   if (summary.byAgent.length) {
     lines.push("by agent:");
-    for (const entry of summary.byAgent) lines.push(`  - ${entry.agent}: records=${entry.records} completed=${entry.completed} failed=${entry.failed} tokens=${entry.totalTokens}`);
+    for (const entry of summary.byAgent)
+      lines.push(
+        `  - ${entry.agent}: records=${entry.records} completed=${entry.completed} failed=${entry.failed} tokens=${entry.totalTokens}`,
+      );
   }
   if (summary.bySkill.length) {
     lines.push("by skill:");
-    for (const entry of summary.bySkill) lines.push(`  - ${entry.skill}: records=${entry.records} completed=${entry.completed} failed=${entry.failed} tokens=${entry.totalTokens}`);
+    for (const entry of summary.bySkill)
+      lines.push(
+        `  - ${entry.skill}: records=${entry.records} completed=${entry.completed} failed=${entry.failed} tokens=${entry.totalTokens}`,
+      );
   }
   return lines.join("\n");
 }
 
 function summarizeFeedback(records: HostFeedbackRecord[]): HostFeedbackSummary {
-  const byAgent = new Map<string, { agent: string; records: number; completed: number; failed: number; totalTokens: number }>();
-  const bySkill = new Map<string, { skill: string; records: number; completed: number; failed: number; totalTokens: number }>();
+  const byAgent = new Map<
+    string,
+    { agent: string; records: number; completed: number; failed: number; totalTokens: number }
+  >();
+  const bySkill = new Map<
+    string,
+    { skill: string; records: number; completed: number; failed: number; totalTokens: number }
+  >();
   const summary: HostFeedbackSummary = {
     records: records.length,
     completed: 0,
@@ -157,7 +174,7 @@ function summarizeFeedback(records: HostFeedbackRecord[]): HostFeedbackSummary {
     totalDurationMs: 0,
     totalTokens: 0,
     byAgent: [],
-    bySkill: []
+    bySkill: [],
   };
   for (const record of records) {
     summary[record.status] += 1;
@@ -174,7 +191,11 @@ function summarizeFeedback(records: HostFeedbackRecord[]): HostFeedbackSummary {
   return summary;
 }
 
-function addGroup(groups: Map<string, { agent: string; records: number; completed: number; failed: number; totalTokens: number }>, agent: string, record: HostFeedbackRecord): void {
+function addGroup(
+  groups: Map<string, { agent: string; records: number; completed: number; failed: number; totalTokens: number }>,
+  agent: string,
+  record: HostFeedbackRecord,
+): void {
   const entry = groups.get(agent) ?? { agent, records: 0, completed: 0, failed: 0, totalTokens: 0 };
   entry.records += 1;
   if (record.status === "completed") entry.completed += 1;
@@ -183,7 +204,11 @@ function addGroup(groups: Map<string, { agent: string; records: number; complete
   groups.set(agent, entry);
 }
 
-function addSkillGroup(groups: Map<string, { skill: string; records: number; completed: number; failed: number; totalTokens: number }>, skill: string, record: HostFeedbackRecord): void {
+function addSkillGroup(
+  groups: Map<string, { skill: string; records: number; completed: number; failed: number; totalTokens: number }>,
+  skill: string,
+  record: HostFeedbackRecord,
+): void {
   const entry = groups.get(skill) ?? { skill, records: 0, completed: 0, failed: 0, totalTokens: 0 };
   entry.records += 1;
   if (record.status === "completed") entry.completed += 1;
@@ -199,7 +224,11 @@ function feedbackPath(input: HostFeedbackPathInput): string {
 function isFeedbackRecord(value: unknown): value is HostFeedbackRecord {
   if (!value || typeof value !== "object") return false;
   const record = value as HostFeedbackRecord;
-  return record.schema === "king-ai.host-feedback.v1" && typeof record.createdAt === "string" && typeof record.totalTokens === "number";
+  return (
+    record.schema === "king-ai.host-feedback.v1" &&
+    typeof record.createdAt === "string" &&
+    typeof record.totalTokens === "number"
+  );
 }
 
 function normalizeStatus(value: unknown): HostFeedbackRecord["status"] {

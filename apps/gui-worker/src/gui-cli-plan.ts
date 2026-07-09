@@ -1,4 +1,4 @@
-import { createGuiTaskDraft } from "./workflow-state.js";
+import type { createGuiTaskDraft } from "./workflow-state.js";
 
 export type GuiCliPlannedTask = {
   title: string;
@@ -30,7 +30,7 @@ export type RunPlanCommandDeps<S extends { tasks: GuiCliPlanTask[] }, T extends 
 export function runPlanCommand<S extends { tasks: GuiCliPlanTask[] }, T extends GuiCliPlanTask>(
   state: S,
   args: string[],
-  deps: RunPlanCommandDeps<S, T>
+  deps: RunPlanCommandDeps<S, T>,
 ): string {
   const cmd = args[0] || "parse";
   if (cmd !== "parse" && cmd !== "apply") {
@@ -45,9 +45,10 @@ export function runPlanCommand<S extends { tasks: GuiCliPlanTask[] }, T extends 
   if (cmd === "parse") {
     return [
       `plan ${plan.optionId}: ${plan.tasks.length} task(s), estimatedTokens=${plan.totalEstimatedTokens}`,
-      ...plan.tasks.map((task) =>
-        `- P${task.priority} ${task.title} paths=${task.scope.paths.join(",") || "none"} after=${task.dependencies.join(",") || "none"}`
-      )
+      ...plan.tasks.map(
+        (task) =>
+          `- P${task.priority} ${task.title} paths=${task.scope.paths.join(",") || "none"} after=${task.dependencies.join(",") || "none"}`,
+      ),
     ].join("\n");
   }
   const assign = deps.readOption(args, "--assign") || deps.readOption(args, "--assignee") || deps.defaultAgentId;
@@ -64,7 +65,7 @@ export function runPlanCommand<S extends { tasks: GuiCliPlanTask[] }, T extends 
       dependsOn: planned.dependencies.map((title) => byTitle.get(title) || title).filter(Boolean),
       initiativeId,
       scope: planned.scope,
-      executionProfile: `plan:${plan.optionId}`
+      executionProfile: `plan:${plan.optionId}`,
     });
     state.tasks.push(task);
     created.push(task);
@@ -72,8 +73,9 @@ export function runPlanCommand<S extends { tasks: GuiCliPlanTask[] }, T extends 
   }
   return [
     `plan applied ${plan.optionId}: ${created.length} task(s) created`,
-    ...created.map((task) =>
-      `- ${task.id} "${task.title}"${task.dependsOn?.length ? ` after=${task.dependsOn.map((id) => id.slice(0, 10)).join(",")}` : ""}`
-    )
+    ...created.map(
+      (task) =>
+        `- ${task.id} "${task.title}"${task.dependsOn?.length ? ` after=${task.dependsOn.map((id) => id.slice(0, 10)).join(",")}` : ""}`,
+    ),
   ].join("\n");
 }

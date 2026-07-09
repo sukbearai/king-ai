@@ -5,7 +5,7 @@ import {
   runInitiativeAdvanceCommand,
   runInitiativePersistCommand,
   type InitiativeLinkedCapsule,
-  type InitiativeLinkedTask
+  type InitiativeLinkedTask,
 } from "./gui-cli-initiative-advance.js";
 
 export type GuiCliInitiativeStatus = "active" | "paused" | "completed" | "abandoned";
@@ -31,7 +31,7 @@ export type RunInitiativeCommandDeps<
     docs: GuiCliDoc[];
     context: GuiCliContextEntry[];
   },
-  I extends GuiCliInitiative
+  I extends GuiCliInitiative,
 > = {
   defaultAgentId: string;
   actorId?: string;
@@ -47,7 +47,7 @@ export type RunInitiativeCommandDeps<
   applyExecutionPlan: (
     state: S,
     plan: GuiCliExecutionPlan,
-    options: { assign?: string; initiativeId: string }
+    options: { assign?: string; initiativeId: string },
   ) => string;
 };
 
@@ -59,7 +59,7 @@ export function runInitiativeCommand<
     docs: GuiCliDoc[];
     context: GuiCliContextEntry[];
   },
-  I extends GuiCliInitiative
+  I extends GuiCliInitiative,
 >(state: S, args: string[], deps: RunInitiativeCommandDeps<S, I>): string {
   const cmd = args[0] || "list";
   if (cmd === "advance") {
@@ -72,25 +72,37 @@ export function runInitiativeCommand<
       findInitiative: deps.findInitiative,
       readOption: deps.readOption,
       readBooleanOption: deps.readBooleanOption,
-      normalizePriority: deps.normalizePriority
+      normalizePriority: deps.normalizePriority,
     });
   }
   if (cmd === "list") {
     const status = deps.readOption(args, "--status");
     const initiatives = state.initiatives.filter((initiative) => !status || initiative.status === status) as I[];
     if (initiatives.length === 0) return "No initiatives found.";
-    return initiatives.map((initiative) => deps.formatInitiativeLine(state, initiative)).join("\n") + `\n\n${initiatives.length} initiative(s)`;
+    return (
+      initiatives.map((initiative) => deps.formatInitiativeLine(state, initiative)).join("\n") +
+      `\n\n${initiatives.length} initiative(s)`
+    );
   }
   if (cmd === "get") {
     const initiative = deps.findInitiative(state, args[1]);
-    return initiative ? JSON.stringify({
-      ...initiative,
-      taskCount: state.tasks.filter((task) => task.initiativeId === initiative.id).length,
-      capsuleCount: state.capsules.filter((capsule) => capsule.initiativeId === initiative.id).length
-    }, null, 2) : `initiative not found: ${args[1] || ""}`;
+    return initiative
+      ? JSON.stringify(
+          {
+            ...initiative,
+            taskCount: state.tasks.filter((task) => task.initiativeId === initiative.id).length,
+            capsuleCount: state.capsules.filter((capsule) => capsule.initiativeId === initiative.id).length,
+          },
+          null,
+          2,
+        )
+      : `initiative not found: ${args[1] || ""}`;
   }
   if (cmd === "create") {
-    const title = deps.stripOptions(args.slice(1), ["--goal", "--summary", "--priority", "--source", "--status", "--agent"]).join(" ").trim();
+    const title = deps
+      .stripOptions(args.slice(1), ["--goal", "--summary", "--priority", "--source", "--status", "--agent"])
+      .join(" ")
+      .trim();
     const goal = deps.readOption(args, "--goal");
     const status = deps.readOption(args, "--status") || "active";
     if (!title || !goal) {
@@ -108,7 +120,7 @@ export function runInitiativeCommand<
       sources: deps.parseCsvOption(args, "--source"),
       agentId: deps.readOption(args, "--agent") || deps.defaultAgentId,
       created_at: now,
-      updated_at: now
+      updated_at: now,
     } as I;
     state.initiatives.push(initiative);
     return `Initiative ${initiative.id} created: "${initiative.title}" [${initiative.status}]`;

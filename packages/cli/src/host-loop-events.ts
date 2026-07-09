@@ -70,18 +70,19 @@ export interface HostLoopResultsInput {
   resultsFile?: string;
 }
 
-export const HOST_LOOP_RESULTS_HEADER = [
-  "run_id",
-  "loop",
-  "timestamp",
-  "classification",
-  "tasks_created",
-  "tasks_done",
-  "artifacts_created",
-  "pending_messages",
-  "completion_rate",
-  "notes"
-].join("\t") + "\n";
+export const HOST_LOOP_RESULTS_HEADER =
+  [
+    "run_id",
+    "loop",
+    "timestamp",
+    "classification",
+    "tasks_created",
+    "tasks_done",
+    "artifacts_created",
+    "pending_messages",
+    "completion_rate",
+    "notes",
+  ].join("\t") + "\n";
 
 export async function appendHostLoopEvent(input: HostLoopEventAppendInput): Promise<string> {
   const file = resolveLoopEventsPath(input);
@@ -107,7 +108,7 @@ export async function readHostLoopEvents(input: HostLoopEventsInput = {}): Promi
     totalEvents: events.length,
     filteredEvents: filtered.length,
     summary: summarizeLoopEvents(filtered),
-    results
+    results,
   };
 }
 
@@ -115,7 +116,8 @@ export async function readHostLoopResults(input: HostLoopResultsInput = {}): Pro
   const eventsFile = resolveLoopEventsPath(input);
   const file = resolveLoopResultsPath(input, eventsFile);
   const existing = await readFile(file, "utf8").catch((err: unknown) => {
-    if (err && typeof err === "object" && "code" in err && (err as { code?: string }).code === "ENOENT") return undefined;
+    if (err && typeof err === "object" && "code" in err && (err as { code?: string }).code === "ENOENT")
+      return undefined;
     throw err;
   });
   if (existing !== undefined) {
@@ -123,7 +125,7 @@ export async function readHostLoopResults(input: HostLoopResultsInput = {}): Pro
       file,
       rows: parseLoopResultsTable(existing),
       written: false,
-      text: existing
+      text: existing,
     };
   }
 
@@ -136,20 +138,17 @@ export async function readHostLoopResults(input: HostLoopResultsInput = {}): Pro
     file,
     rows,
     written: false,
-    text: formatLoopResultsTable(rows)
+    text: formatLoopResultsTable(rows),
   };
 }
 
 export function formatHostLoopEvents(result: HostLoopEventsResult): string {
   if (result.events.length === 0) {
-    return [
-      `host run events: ${result.file}`,
-      "no loop events"
-    ].join("\n");
+    return [`host run events: ${result.file}`, "no loop events"].join("\n");
   }
   const lines = [
     `host run events: ${result.file}`,
-    `${result.events.length} shown (${result.filteredEvents} matched, ${result.totalEvents} total)`
+    `${result.events.length} shown (${result.filteredEvents} matched, ${result.totalEvents} total)`,
   ];
   for (const event of result.events) {
     lines.push(formatHostLoopEvent(event));
@@ -209,14 +208,19 @@ function summarizeLoopEvents(events: HostLoopEvent[]): HostLoopEventsSummary {
   return {
     loops,
     classifications,
-    productiveRate: loops > 0 ? Math.round((productive / loops) * 100) : 0
+    productiveRate: loops > 0 ? Math.round((productive / loops) * 100) : 0,
   };
 }
 
-async function maybeWriteLoopResults(events: HostLoopEvent[], input: HostLoopEventsInput, eventsFile: string): Promise<HostLoopResultsTable> {
+async function maybeWriteLoopResults(
+  events: HostLoopEvent[],
+  input: HostLoopEventsInput,
+  eventsFile: string,
+): Promise<HostLoopResultsTable> {
   const file = resolveLoopResultsPath(input, eventsFile);
   const rows = buildLoopResultsRows(events);
-  if (input.writeResults === false || (events.length === 0 && input.writeResults !== true)) return { file, rows, written: false };
+  if (input.writeResults === false || (events.length === 0 && input.writeResults !== true))
+    return { file, rows, written: false };
   await mkdir(dirname(file), { recursive: true });
   await writeFile(file, formatLoopResultsTable(rows), "utf8");
   return { file, rows, written: true };
@@ -238,27 +242,41 @@ export function buildLoopResultsRows(events: HostLoopEvent[]): HostLoopResultsRo
       tasksCreated: loopEvents.filter((entry) => entry.type === "task.created").length,
       tasksDone: loopEvents.filter((entry) => entry.type === "task.transition" && doneStatus(entry.to)).length,
       artifactsCreated: loopEvents.filter((entry) => entry.type === "artifact.created").length,
-      pendingMessages: maxNumber(loopEvents.map((entry) => numberValue(entry.pendingMessages) ?? numberValue(entry.pending))),
+      pendingMessages: maxNumber(
+        loopEvents.map((entry) => numberValue(entry.pendingMessages) ?? numberValue(entry.pending)),
+      ),
       completionRate: completionRateValue(event),
-      notes: notesValue(event)
+      notes: notesValue(event),
     });
   }
-  return rows.sort((a, b) => a.runId.localeCompare(b.runId) || a.loop - b.loop || a.timestamp.localeCompare(b.timestamp));
+  return rows.sort(
+    (a, b) => a.runId.localeCompare(b.runId) || a.loop - b.loop || a.timestamp.localeCompare(b.timestamp),
+  );
 }
 
 export function formatLoopResultsTable(rows: HostLoopResultsRow[]): string {
-  return HOST_LOOP_RESULTS_HEADER + rows.map((row) => [
-    row.runId,
-    String(row.loop),
-    row.timestamp,
-    row.classification,
-    String(row.tasksCreated),
-    String(row.tasksDone),
-    String(row.artifactsCreated),
-    String(row.pendingMessages),
-    row.completionRate,
-    row.notes
-  ].map(tsvCell).join("\t")).join("\n") + (rows.length ? "\n" : "");
+  return (
+    HOST_LOOP_RESULTS_HEADER +
+    rows
+      .map((row) =>
+        [
+          row.runId,
+          String(row.loop),
+          row.timestamp,
+          row.classification,
+          String(row.tasksCreated),
+          String(row.tasksDone),
+          String(row.artifactsCreated),
+          String(row.pendingMessages),
+          row.completionRate,
+          row.notes,
+        ]
+          .map(tsvCell)
+          .join("\t"),
+      )
+      .join("\n") +
+    (rows.length ? "\n" : "")
+  );
 }
 
 export function parseLoopResultsTable(text: string): HostLoopResultsRow[] {
@@ -278,14 +296,14 @@ export function parseLoopResultsTable(text: string): HostLoopResultsRow[] {
       artifactsCreated: Number.parseInt(cell(cells, index, "artifacts_created") || "0", 10) || 0,
       pendingMessages: Number.parseInt(cell(cells, index, "pending_messages") || "0", 10) || 0,
       completionRate: cell(cells, index, "completion_rate"),
-      notes: cell(cells, index, "notes")
+      notes: cell(cells, index, "notes"),
     };
   });
 }
 
 function cell(cells: string[], index: Map<string, number>, name: string): string {
   const i = index.get(name);
-  return i === undefined ? "" : cells[i] ?? "";
+  return i === undefined ? "" : (cells[i] ?? "");
 }
 
 function sameLoop(event: HostLoopEvent, runId: string, loop: number): boolean {

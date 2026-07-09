@@ -14,15 +14,20 @@ test("extractJsonFromText parses bare object", () => {
 
 test("summarizeAgentError redacts long prompts and classifies quota/auth failures", () => {
   const prompt = "你是一个加密货币事件交易分析师。".repeat(80);
-  const quota = summarizeAgentError(new Error(`Command failed: grok -p ${prompt}
-personal-team-blocked:spending-limit: You have run out of credits or need a Grok subscription.`));
+  const quota = summarizeAgentError(
+    new Error(`Command failed: grok -p ${prompt}
+personal-team-blocked:spending-limit: You have run out of credits or need a Grok subscription.`),
+  );
   assert.equal(quota, "quota blocked: Grok credits or subscription required");
 
-  const auth = summarizeAgentError(new Error("Failed to authenticate. API Error: 401 Invalid authentication credentials"));
+  const auth = summarizeAgentError(
+    new Error("Failed to authenticate. API Error: 401 Invalid authentication credentials"),
+  );
   assert.equal(auth, "auth failed: invalid or expired credentials");
 
   const stdoutAuth = new Error("Command failed: claude --print");
-  (stdoutAuth as Error & { stdout: string }).stdout = "Failed to authenticate. API Error: 401 Invalid authentication credentials";
+  (stdoutAuth as Error & { stdout: string }).stdout =
+    "Failed to authenticate. API Error: 401 Invalid authentication credentials";
   (stdoutAuth as Error & { stderr: string }).stderr = "Warning: no stdin data received";
   assert.equal(summarizeAgentError(stdoutAuth), "auth failed: invalid or expired credentials");
 

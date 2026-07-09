@@ -32,7 +32,7 @@ async function runPanews(args: string[]): Promise<Array<Record<string, string>>>
   try {
     const { stdout } = await execFileP("node", [panewsCliPath(), ...args], {
       timeout: 30_000,
-      maxBuffer: 5 * 1024 * 1024
+      maxBuffer: 5 * 1024 * 1024,
     });
     const articles: Array<Record<string, string>> = [];
     let current: Record<string, string> = {};
@@ -64,7 +64,7 @@ export function buildPanewsUnclassifiedAlert(art: Record<string, string>): Alert
     timestamp: nowDisplay(),
     direction: 0,
     strength: 0.3,
-    asset: "CRYPTO"
+    asset: "CRYPTO",
   });
 }
 
@@ -76,7 +76,7 @@ async function llmClassify(candidates: Array<Record<string, string>>): Promise<A
   if (!raw) return [];
   if (/rejected|high risk|cannot fulfill/i.test(raw)) return [];
   const parsed = extractJsonFromText(raw);
-  return Array.isArray(parsed) ? parsed as Array<Record<string, unknown>> : [];
+  return Array.isArray(parsed) ? (parsed as Array<Record<string, unknown>>) : [];
 }
 
 export function createRuleQ(): AlertRule {
@@ -152,18 +152,20 @@ export function createRuleQ(): AlertRule {
         if (direction > 0) detailParts.push(`📈 信号: 偏多 (${direction >= 0 ? "+" : ""}${direction.toFixed(1)})`);
         else if (direction < 0) detailParts.push(`📉 信号: 偏空 (${direction.toFixed(1)})`);
 
-        alerts.push(createAlert({
-          rule: "PANews事件",
-          severity,
-          title,
-          detail: detailParts.join("\n"),
-          timestamp: nowDisplay(),
-          direction,
-          strength,
-          asset: assetKey
-        }));
+        alerts.push(
+          createAlert({
+            rule: "PANews事件",
+            severity,
+            title,
+            detail: detailParts.join("\n"),
+            timestamp: nowDisplay(),
+            direction,
+            strength,
+            asset: assetKey,
+          }),
+        );
       }
       return alerts;
-    }
+    },
   };
 }

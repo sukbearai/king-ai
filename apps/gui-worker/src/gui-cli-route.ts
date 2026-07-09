@@ -18,10 +18,12 @@ export type GuiCliExternalEvent = {
   timestamp?: number;
 };
 
-export type RunRouteCommandDeps<S extends {
-  eventRoutes: GuiCliEventRoute[];
-  agents: GuiCliRouteAgent[];
-}> = {
+export type RunRouteCommandDeps<
+  S extends {
+    eventRoutes: GuiCliEventRoute[];
+    agents: GuiCliRouteAgent[];
+  },
+> = {
   defaultAgentId: string;
   ensureRouteAgent: (state: S, agentId: string) => string | undefined;
   formatEventRouteLine: (route: GuiCliEventRoute) => string;
@@ -32,10 +34,12 @@ export type RunRouteCommandDeps<S extends {
   countPendingMessages: (state: S, agentId: string) => number;
 };
 
-export function runRouteCommand<S extends {
-  eventRoutes: GuiCliEventRoute[];
-  agents: GuiCliRouteAgent[];
-}>(state: S, args: string[], deps: RunRouteCommandDeps<S>): string {
+export function runRouteCommand<
+  S extends {
+    eventRoutes: GuiCliEventRoute[];
+    agents: GuiCliRouteAgent[];
+  },
+>(state: S, args: string[], deps: RunRouteCommandDeps<S>): string {
   const cmd = args[0] || "list";
   if (cmd === "list") {
     const eventType = (args[1] && !args[1].startsWith("--") ? args[1] : undefined) || deps.readOption(args, "--type");
@@ -62,7 +66,9 @@ export function runRouteCommand<S extends {
     const agentId = deps.readOption(args, "--agent") || args[2];
     if (!eventType) return "usage: king-ai route delete <eventType> [--agent <agentId>]";
     const before = state.eventRoutes.length;
-    state.eventRoutes = state.eventRoutes.filter((route) => route.eventType !== eventType || (agentId && route.agentId !== agentId));
+    state.eventRoutes = state.eventRoutes.filter(
+      (route) => route.eventType !== eventType || (agentId && route.agentId !== agentId),
+    );
     for (const agent of state.agents) {
       if (!agentId || agent.id === agentId) agent.events = (agent.events ?? []).filter((event) => event !== eventType);
     }
@@ -80,7 +86,7 @@ export function runRouteCommand<S extends {
         type: "queue.backlog",
         agent: agentId,
         pendingMessages: deps.countPendingMessages(state, agentId),
-        payload: event
+        payload: event,
       });
     }
     return routed.length

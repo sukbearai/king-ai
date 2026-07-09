@@ -76,7 +76,7 @@ function parseFrontmatter(markdown, skillName) {
 }
 
 function isQuotedYamlScalar(value) {
-  return (value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'"));
+  return (value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"));
 }
 
 function unquoteYamlScalar(value) {

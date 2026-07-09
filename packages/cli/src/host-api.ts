@@ -42,7 +42,11 @@ export interface HostStatusSnapshot {
   text: string;
 }
 
-export function buildHostStatusSnapshot(state: RunningState | null, budget?: number | null, pricingRules: UsagePricingRule[] = []): HostStatusSnapshot {
+export function buildHostStatusSnapshot(
+  state: RunningState | null,
+  budget?: number | null,
+  pricingRules: UsagePricingRule[] = [],
+): HostStatusSnapshot {
   return {
     ok: Boolean(state),
     version: state?.version,
@@ -51,7 +55,7 @@ export function buildHostStatusSnapshot(state: RunningState | null, budget?: num
     serverUrl: state?.serverUrl,
     computerId: state?.computerId,
     capabilities: {
-      workspaces: state?.capabilities?.workspaces ?? []
+      workspaces: state?.capabilities?.workspaces ?? [],
     },
     agents: (state?.agents ?? []).map((agent) => ({
       id: agent.id,
@@ -65,22 +69,22 @@ export function buildHostStatusSnapshot(state: RunningState | null, budget?: num
       hostHomeEntries: agent.hostHomeEntries?.map((entry) => ({
         name: entry.name,
         linked: entry.linked,
-        reason: entry.reason
+        reason: entry.reason,
       })),
       remediation: agent.remediation
         ? {
             category: agent.remediation.category,
             severity: agent.remediation.severity,
             summary: agent.remediation.summary,
-            actions: agent.remediation.actions
+            actions: agent.remediation.actions,
           }
         : null,
-      configWarnings: agent.configWarnings ?? []
+      configWarnings: agent.configWarnings ?? [],
     })),
     usage: summarizeAgentUsage(state?.agents ?? [], budget, pricingRules),
     worktrees: worktreePlansFromRunningState(state),
     events: state?.events?.slice(-20) ?? [],
-    text: formatRunningStateSnapshot(state)
+    text: formatRunningStateSnapshot(state),
   };
 }
 
@@ -92,7 +96,7 @@ export function formatHostStatusSnapshot(snapshot: HostStatusSnapshot): string {
       ? `paired: ${snapshot.computerId ?? "unknown"} @ ${snapshot.serverUrl ?? "unknown"}`
       : "paired: unknown",
     `agents=${snapshot.agents.length} workspaces=${snapshot.capabilities.workspaces.length} worktrees=${snapshot.worktrees.length}`,
-    `usage: runs=${snapshot.usage.turns} failed=${snapshot.usage.failed} tokens=${snapshot.usage.totalTokens}`
+    `usage: runs=${snapshot.usage.turns} failed=${snapshot.usage.failed} tokens=${snapshot.usage.totalTokens}`,
   ];
   if (snapshot.text) lines.push(snapshot.text);
   return lines.join("\n");

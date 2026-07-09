@@ -65,12 +65,15 @@ export async function planHostExport(input: HostExportInput = {}): Promise<HostE
   const includeWorkspace = input.includeWorkspace ?? Boolean(workspaceRoot);
   const includeRepoPatch = input.includeRepoPatch ?? Boolean(repoRoot);
   const capsuleId = cleanString(input.capsuleId);
-  const capsule = capsuleId ? await getHostCapsule({ outputDir, capsulesFile: input.capsulesFile, id: capsuleId }) ?? undefined : undefined;
+  const capsule = capsuleId
+    ? ((await getHostCapsule({ outputDir, capsulesFile: input.capsulesFile, id: capsuleId })) ?? undefined)
+    : undefined;
   if (capsuleId && !capsule) throw new Error(`host capsule not found: ${capsuleId}`);
   const workspaceFileCount = includeWorkspace && workspaceRoot ? countFiles(workspaceRoot) : 0;
   const repoDirty = includeRepoPatch && repoRoot ? gitStatus(repoRoot).trim().length > 0 : false;
   const files: string[] = [];
-  if (includeWorkspace && workspaceRoot && workspaceFileCount > 0) files.push(`${basename(workspaceRoot) || "workspace"}/`);
+  if (includeWorkspace && workspaceRoot && workspaceFileCount > 0)
+    files.push(`${basename(workspaceRoot) || "workspace"}/`);
   if (includeRepoPatch && repoRoot && repoDirty) {
     files.push("repo-status.txt");
     if (gitDiff(repoRoot, false).trim()) files.push("repo.patch");
@@ -91,7 +94,7 @@ export async function planHostExport(input: HostExportInput = {}): Promise<HostE
     workspaceFileCount,
     repoDirty,
     files,
-    summary: ""
+    summary: "",
   };
   plan.summary = formatHostExportPlan(plan);
   return plan;
@@ -109,7 +112,7 @@ export async function exportHostArtifacts(input: HostExportInput = {}): Promise<
       recursive: true,
       force: true,
       dereference: false,
-      filter: (source) => !shouldSkipExportPath(source)
+      filter: (source) => !shouldSkipExportPath(source),
     });
     writtenFiles.push(target);
   }
@@ -143,7 +146,7 @@ export async function exportHostArtifacts(input: HostExportInput = {}): Promise<
 
   return {
     ...plan,
-    writtenFiles
+    writtenFiles,
   };
 }
 
@@ -153,7 +156,7 @@ export function formatHostExportPlan(plan: HostExportPlan): string {
     `output: ${plan.exportDir}`,
     `workspace: ${plan.workspaceRoot ?? "(none)"} files=${plan.workspaceFileCount}`,
     `repo: ${plan.repoRoot ?? "(none)"} dirty=${plan.repoDirty ? "yes" : "no"}`,
-    `capsule: ${plan.capsule?.id ?? "(none)"}`
+    `capsule: ${plan.capsule?.id ?? "(none)"}`,
   ];
   if (plan.files.length) {
     lines.push("planned files:");
@@ -164,7 +167,11 @@ export function formatHostExportPlan(plan: HostExportPlan): string {
   return lines.join("\n");
 }
 
-export function createHostExportMeta(plan: HostExportPlan, writtenFiles: string[], now: Date = new Date()): HostExportMeta {
+export function createHostExportMeta(
+  plan: HostExportPlan,
+  writtenFiles: string[],
+  now: Date = new Date(),
+): HostExportMeta {
   return {
     schema: "king-ai.host-export.v1",
     runId: plan.runId,
@@ -180,7 +187,7 @@ export function createHostExportMeta(plan: HostExportPlan, writtenFiles: string[
     workspaceFileCount: plan.workspaceFileCount,
     repoDirty: plan.repoDirty,
     files: plan.files,
-    writtenFiles
+    writtenFiles,
   };
 }
 
@@ -228,13 +235,13 @@ function countFiles(dir: string): number {
 function gitStatus(repoRoot: string): string {
   return execFileSync("git", ["-C", repoRoot, "status", "--short"], {
     encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"]
+    stdio: ["ignore", "pipe", "pipe"],
   });
 }
 
 function gitDiff(repoRoot: string, staged: boolean): string {
   return execFileSync("git", ["-C", repoRoot, "diff", "--binary", ...(staged ? ["--cached"] : [])], {
     encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"]
+    stdio: ["ignore", "pipe", "pipe"],
   });
 }

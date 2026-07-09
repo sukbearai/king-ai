@@ -52,7 +52,11 @@ export function isGroupRollCallMessage(conversation: ConversationTeamLike, messa
   if (mode === "single") return false;
   const body = messageBody.trim();
   if (!body) return false;
-  if (/\b(everyone|everybody|all hands|team)\b/i.test(body) && /\b(roll call|presence check|attendance check|reply with \d+)\b/i.test(body)) return true;
+  if (
+    /\b(everyone|everybody|all hands|team)\b/i.test(body) &&
+    /\b(roll call|presence check|attendance check|reply with \d+)\b/i.test(body)
+  )
+    return true;
   if (/(所有人|大家|全员).*(回个?|回复|报个?)\s*\d+/.test(body)) return true;
   if (/(有人|都|还).{0,6}(在吗|在不在)/.test(body)) return true;
   return false;
@@ -67,8 +71,17 @@ export function isGroupSequentialCountMessage(conversation: ConversationTeamLike
   if (/轮流报数|按顺序报数?|接龙报数|顺序报数|依次报数/.test(body)) return true;
   if (/(轮流|按顺序|依次|接龙).{0,8}(报数|报个?数|数数)/.test(body)) return true;
   if (/(大家|所有人|全员).{0,8}(轮流|按顺序|依次).{0,8}(报|回|回复)/.test(body)) return true;
-  if (/\b(round[- ]?robin|count in order|sequential count|take turns)\b/i.test(body) && /\b(count|number|reply|say)\b/i.test(body)) return true;
-  if (/\b(everyone|everybody|team)\b/i.test(body) && /\b(count|number)\b/i.test(body) && /\b(order|sequence|turns?)\b/i.test(body)) return true;
+  if (
+    /\b(round[- ]?robin|count in order|sequential count|take turns)\b/i.test(body) &&
+    /\b(count|number|reply|say)\b/i.test(body)
+  )
+    return true;
+  if (
+    /\b(everyone|everybody|team)\b/i.test(body) &&
+    /\b(count|number)\b/i.test(body) &&
+    /\b(order|sequence|turns?)\b/i.test(body)
+  )
+    return true;
   return false;
 }
 
@@ -89,7 +102,7 @@ export function isLightweightCoordinationMessage(conversation: ConversationTeamL
 export function triageResponseMode(
   conversation: ConversationTeamLike | undefined,
   top: RoutedRuntimeMessage | undefined,
-  agentId: string
+  agentId: string,
 ): "me" | "each" | "one-of-us" {
   if (top?.row.to_agent_id === agentId) return "me";
   if (conversation?.kind === "direct") return "me";
@@ -130,7 +143,10 @@ export function resolveWakeData(ctx: WakeResolveContext, data: Record<string, un
   return { ...base, agentId: ctx.fallbackAgentId };
 }
 
-export function resolveWakeEvent(ctx: WakeResolveContext, evt: { event: string; data: unknown }): { event: string; data: unknown } {
+export function resolveWakeEvent(
+  ctx: WakeResolveContext,
+  evt: { event: string; data: unknown },
+): { event: string; data: unknown } {
   if (evt.event !== "wake" || !evt.data || typeof evt.data !== "object") return evt;
   return { ...evt, data: resolveWakeData(ctx, evt.data as Record<string, unknown>) };
 }
@@ -190,11 +206,12 @@ export function agentReplyForMessage(ctx: WakeDedupContext, messageId: string, a
   const message = ctx.messages.find((row) => row.id === messageId);
   if (!message) return false;
 
-  const quotedReply = ctx.messages.some((row) =>
-    row.status !== "pending" &&
-    row.quoted_message_id === messageId &&
-    row.author_kind === "agent" &&
-    row.author_agent_id === agentId
+  const quotedReply = ctx.messages.some(
+    (row) =>
+      row.status !== "pending" &&
+      row.quoted_message_id === messageId &&
+      row.author_kind === "agent" &&
+      row.author_agent_id === agentId,
   );
   if (quotedReply) return true;
 
@@ -206,9 +223,7 @@ export function agentReplyForMessage(ctx: WakeDedupContext, messageId: string, a
     .sort((a, b) => a.created_at - b.created_at);
   const index = convoMessages.findIndex((row) => row.id === messageId);
   if (index < 0) return false;
-  return convoMessages.slice(index + 1).some((row) =>
-    row.author_kind === "agent" && row.author_agent_id === agentId
-  );
+  return convoMessages.slice(index + 1).some((row) => row.author_kind === "agent" && row.author_agent_id === agentId);
 }
 
 export function taskForRequestMessage(ctx: WakeDedupContext, messageId: string): WakeDedupTask | undefined {
@@ -241,9 +256,11 @@ export function shouldSuppressAgentWake(ctx: WakeDedupContext, data: Record<stri
   if (!agentId) return { suppress: false };
 
   const messageId =
-    typeof data.messageId === "string" ? data.messageId :
-      typeof data.requestId === "string" ? data.requestId :
-        undefined;
+    typeof data.messageId === "string"
+      ? data.messageId
+      : typeof data.requestId === "string"
+        ? data.requestId
+        : undefined;
   const taskId = typeof data.taskId === "string" ? data.taskId : undefined;
   const conversationId = typeof data.conversationId === "string" ? data.conversationId : undefined;
 
@@ -264,7 +281,7 @@ export function shouldSuppressAgentWake(ctx: WakeDedupContext, data: Record<stri
     return {
       suppress: true,
       reason: "message already answered",
-      autoRead: conversationId ? { conversationId, messageId: requestMessageId, agentId } : undefined
+      autoRead: conversationId ? { conversationId, messageId: requestMessageId, agentId } : undefined,
     };
   }
 
@@ -278,8 +295,8 @@ export function shouldSuppressAgentWake(ctx: WakeDedupContext, data: Record<stri
       autoRead: {
         conversationId: conversationId ?? task.conversationId ?? "",
         messageId: requestMessageId,
-        agentId
-      }
+        agentId,
+      },
     };
   }
 
@@ -290,8 +307,8 @@ export function shouldSuppressAgentWake(ctx: WakeDedupContext, data: Record<stri
       autoRead: {
         conversationId: conversationId ?? task.conversationId ?? "",
         messageId: requestMessageId,
-        agentId
-      }
+        agentId,
+      },
     };
   }
 
@@ -300,7 +317,7 @@ export function shouldSuppressAgentWake(ctx: WakeDedupContext, data: Record<stri
 
 export function applyAgentReadUpTo(
   ctx: WakeDedupContext,
-  spec: { conversationId: string; messageId: string; agentId: string }
+  spec: { conversationId: string; messageId: string; agentId: string },
 ): void {
   if (!spec.conversationId) return;
   const conversationMessages = ctx.messages.filter((row) => row.conversation_id === spec.conversationId);
@@ -314,7 +331,7 @@ export function applyAgentReadUpTo(
 /** After a task reaches a terminal state, clear steer inbox noise for everyone who was routed on it. */
 export function settleTaskInboxForAgents(
   messages: WakeDedupMessage[],
-  spec: { conversationId?: string; agentIds: string[] }
+  spec: { conversationId?: string; agentIds: string[] },
 ): void {
   const conversationId = spec.conversationId?.trim();
   if (!conversationId) return;

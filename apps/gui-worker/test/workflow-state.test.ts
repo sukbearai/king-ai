@@ -13,7 +13,7 @@ import {
   listGuiWorkflowCards,
   mergeGuiAndHostWorkflowCards,
   updateGuiTaskFromPatch,
-  workflowStatusToGuiTaskStatus
+  workflowStatusToGuiTaskStatus,
 } from "../src/workflow-state.js";
 
 test("createGuiTaskDraft assigns pending status without assignee", () => {
@@ -24,18 +24,21 @@ test("createGuiTaskDraft assigns pending status without assignee", () => {
 });
 
 test("applyGuiTaskDone routes builder work to reviewer when configured", () => {
-  const task = createGuiTaskDraft({
-    title: "Build",
-    status: "assigned",
-    assignee: "dev",
-    reviewerRole: "reviewer"
-  }, 1_000);
+  const task = createGuiTaskDraft(
+    {
+      title: "Build",
+      status: "assigned",
+      assignee: "dev",
+      reviewerRole: "reviewer",
+    },
+    1_000,
+  );
   const result = applyGuiTaskDone(task, {
     actorId: "dev",
     coordinatorId: "king-ai-ceo",
     reviewerId: "reviewer",
     hasConversation: true,
-    resultText: "done"
+    resultText: "done",
   });
   assert.equal(result.outcome, "review");
   assert.equal(task.status, "review");
@@ -69,15 +72,17 @@ test("createGuiKanbanDraft and kanban patch helpers keep column semantics", () =
 test("listGuiWorkflowCards and mergeGuiAndHostWorkflowCards unify ledgers", () => {
   const gui = listGuiWorkflowCards({
     tasks: [{ id: "task-1", status: "assigned", title: "GUI task", assignee: "dev" }],
-    kanban: [{ id: "card-1", title: "Board", column: "doing", assignee: "dev" }]
+    kanban: [{ id: "card-1", title: "Board", column: "doing", assignee: "dev" }],
   });
   assert.equal(gui.length, 2);
-  const merged = mergeGuiAndHostWorkflowCards(gui, [{
-    id: "task-1",
-    kind: "decision",
-    status: "waiting_human",
-    title: "Host override"
-  }]);
+  const merged = mergeGuiAndHostWorkflowCards(gui, [
+    {
+      id: "task-1",
+      kind: "decision",
+      status: "waiting_human",
+      title: "Host override",
+    },
+  ]);
   assert.equal(merged.length, 2);
   assert.equal(merged.find((card) => card.id === "task-1")?.kind, "decision");
   assert.equal(merged.find((card) => card.id === "card-1")?.status, "in_progress");

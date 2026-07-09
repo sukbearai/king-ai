@@ -6,7 +6,7 @@ import {
   celebrityAlertSeverity,
   extractChainFmRefs,
   isCelebritySeenRecordActive,
-  isLikelyTweetUiFragment
+  isLikelyTweetUiFragment,
 } from "../src/trade/rules/rule-t-celebrity.js";
 import { buildPanewsUnclassifiedAlert } from "../src/trade/rules/rule-q-panews.js";
 import { createRule, listRuleIds } from "../src/trade/rules/registry.js";
@@ -33,12 +33,30 @@ describe("buildPanewsUnclassifiedAlert", () => {
 
 describe("directionLabel", () => {
   it("uses direction field when set", () => {
-    assert.equal(directionLabel(createAlert({
-      rule: "x", severity: "info", title: "t", detail: "d", direction: -1
-    })), "跌破");
-    assert.equal(directionLabel(createAlert({
-      rule: "x", severity: "info", title: "t", detail: "d", direction: 1
-    })), "突破");
+    assert.equal(
+      directionLabel(
+        createAlert({
+          rule: "x",
+          severity: "info",
+          title: "t",
+          detail: "d",
+          direction: -1,
+        }),
+      ),
+      "跌破",
+    );
+    assert.equal(
+      directionLabel(
+        createAlert({
+          rule: "x",
+          severity: "info",
+          title: "t",
+          detail: "d",
+          direction: 1,
+        }),
+      ),
+      "突破",
+    );
   });
 });
 
@@ -59,7 +77,9 @@ describe("celebrity rule helpers", () => {
   });
 
   it("filters browser UI fragments before LLM extraction", () => {
-    assert.equal(isLikelyTweetUiFragment(`Donald J. Trump
+    assert.equal(
+      isLikelyTweetUiFragment(
+        `Donald J. Trump
 @realDonaldTrump
 ·
 May 23
@@ -67,7 +87,11 @@ May 23
 72K
 112K
 909K
-99M`, "realDonaldTrump"), true);
+99M`,
+        "realDonaldTrump",
+      ),
+      true,
+    );
     assert.equal(isLikelyTweetUiFragment("Launching a new token today on Solana", "realDonaldTrump"), false);
   });
 

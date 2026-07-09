@@ -2,14 +2,26 @@ import type { HostStatusSnapshot } from "./host-api.js";
 import type { HostCommandDefinition, HostCommandRequest, HostCommandResult } from "./host-control.js";
 import type { DoctorResult } from "./daemon.js";
 import type { HostExportInput, HostExportPlan, HostExportResult } from "./host-export.js";
-import type { HostLoopEvent, HostLoopEventsInput, HostLoopEventsResult, HostLoopResultsInput, HostLoopResultsTable } from "./host-loop-events.js";
+import type {
+  HostLoopEvent,
+  HostLoopEventsInput,
+  HostLoopEventsResult,
+  HostLoopResultsInput,
+  HostLoopResultsTable,
+} from "./host-loop-events.js";
 import type { HostRunExecuteResult } from "./host-run-executor.js";
 import type { HostRunHeartbeatReadInput, HostRunHeartbeatReadResult } from "./host-run-heartbeat.js";
 import type { HostRunMetaReadInput, HostRunMetaReadResult } from "./host-run-meta.js";
 import type { HostRunLayoutResult } from "./host-run-layout.js";
 import type { HostPolicyCheck } from "./host-policy.js";
 import type { HostRunSpecInput, JsonSafeHostLaunchPlan, ProjectRunSpec, ThreadSyncSpec } from "./host-run-spec.js";
-import type { HostRunRequest, HostRunRequestStatus, HostRunSubmitInput, HostRunSubmitResult, HostRunUpdateResult } from "./host-runs.js";
+import type {
+  HostRunRequest,
+  HostRunRequestStatus,
+  HostRunSubmitInput,
+  HostRunSubmitResult,
+  HostRunUpdateResult,
+} from "./host-runs.js";
 import type { HostTimelineEvent } from "./host-timeline.js";
 import { DEFAULT_SSE_MAX_BUFFER_BYTES } from "./sse.js";
 import type { EngineId } from "./types.js";
@@ -110,9 +122,7 @@ export type HostSdkStreamFrame =
   | { event: "timeline"; data: HostTimelineEvent[] }
   | { event: "runs"; data: HostRunRequest[] };
 
-export type HostSdkWatchFrame =
-  | { event: "snapshot"; data: HostSnapshotResponse }
-  | HostSdkStreamFrame;
+export type HostSdkWatchFrame = { event: "snapshot"; data: HostSnapshotResponse } | HostSdkStreamFrame;
 
 export interface HostSdkRunOptions {
   loops?: number;
@@ -158,26 +168,20 @@ export interface KingHostSdkBindings {
   hostEnv: HostSdkEnvLike;
 }
 
-export interface KingHostSdkAdapters<
-  TProjectRunSpec,
-  TPreparedTakeoverPlan,
-  TConcreteTakeoverOptions extends object
-> {
+export interface KingHostSdkAdapters<TProjectRunSpec, TPreparedTakeoverPlan, TConcreteTakeoverOptions extends object> {
   runGoal(
     goal: string,
     options: HostSdkRunOptions,
     spec: TProjectRunSpec,
-    bindings: KingHostSdkBindings
+    bindings: KingHostSdkBindings,
   ): Promise<void>;
   prepareTakeoverPlan(options: TConcreteTakeoverOptions): TPreparedTakeoverPlan;
   executePreparedTakeoverPlan(
     plan: TPreparedTakeoverPlan,
     options: HostSdkRunOptions,
-    bindings: KingHostSdkBindings
+    bindings: KingHostSdkBindings,
   ): Promise<void>;
-  normalizeTakeoverOptions(
-    options: TConcreteTakeoverOptions | KingHostTakeoverOptions
-  ): TConcreteTakeoverOptions;
+  normalizeTakeoverOptions(options: TConcreteTakeoverOptions | KingHostTakeoverOptions): TConcreteTakeoverOptions;
 }
 
 export interface HostHealth {
@@ -278,17 +282,17 @@ export type HostSdkSubmitAndWatchStateFrame =
 type HostSdkReadableBody =
   | AsyncIterable<Uint8Array>
   | {
-    getReader: () => {
-      read: () => Promise<{ done?: boolean; value?: Uint8Array }>;
-      releaseLock?: () => void;
+      getReader: () => {
+        read: () => Promise<{ done?: boolean; value?: Uint8Array }>;
+        releaseLock?: () => void;
+      };
     };
-  };
 
 export type HostSdk = ReturnType<typeof createHostSdk>;
 export interface KingAdapterHostSdk<
   TProjectRunSpec = unknown,
   TPreparedTakeoverPlan = unknown,
-  TTakeoverInvocation = KingHostTakeoverOptions
+  TTakeoverInvocation = KingHostTakeoverOptions,
 > {
   run(goal: string, options?: KingHostRunInvocation, spec?: TProjectRunSpec): Promise<void>;
   prepareTakeover(options: TTakeoverInvocation): TPreparedTakeoverPlan;
@@ -299,7 +303,7 @@ export interface KingAdapterHostSdk<
 export type KingHostSdk<
   TProjectRunSpec = unknown,
   TPreparedTakeoverPlan = unknown,
-  TTakeoverInvocation = KingHostTakeoverOptions
+  TTakeoverInvocation = KingHostTakeoverOptions,
 > = HostSdk | KingAdapterHostSdk<TProjectRunSpec, TPreparedTakeoverPlan, TTakeoverInvocation>;
 
 export function createDefaultHostSdkRunOptions(overrides: HostSdkRunOptions = {}): HostSdkRunOptions {
@@ -319,7 +323,7 @@ export function createDefaultHostSdkRunOptions(overrides: HostSdkRunOptions = {}
     noBrain: overrides.noBrain ?? (overrides.enableBrain === undefined ? false : !overrides.enableBrain),
     outputDir: cleanSdkString(overrides.outputDir ?? overrides.output) ?? "./deliverables",
     keepArtifacts: overrides.keepArtifacts ?? overrides.keep ?? false,
-    errorLimit: Math.max(1, Math.floor(overrides.errorLimit ?? 20))
+    errorLimit: Math.max(1, Math.floor(overrides.errorLimit ?? 20)),
   };
 }
 
@@ -331,7 +335,7 @@ export function createHostSdkTakeoverRunOptions(overrides: HostSdkRunOptions = {
   return createDefaultHostSdkRunOptions({
     infinite: true,
     loops: Infinity,
-    ...overrides
+    ...overrides,
   });
 }
 
@@ -352,94 +356,273 @@ export function createHostSdk(options: HostSdkOptions = {}) {
     doctor: () => getJson<HostCommandResult & { json?: HostDoctorResponse }>(fetchImpl, baseUrl, "/doctor"),
     commands: () => getJson<HostCommandsResponse>(fetchImpl, baseUrl, "/commands"),
     capabilities: () => getJson<HostCapabilitiesResponse>(fetchImpl, baseUrl, "/capabilities"),
-    snapshot: (limit = 20, status?: HostRunRequestStatus) => getJson<HostSnapshotResponse>(fetchImpl, baseUrl, pathWithQuery("/host/snapshot", { limit, status })),
+    snapshot: (limit = 20, status?: HostRunRequestStatus) =>
+      getJson<HostSnapshotResponse>(fetchImpl, baseUrl, pathWithQuery("/host/snapshot", { limit, status })),
     waitForReady: (waitOptions?: HostSdkWaitOptions) => waitForHostReady(fetchImpl, baseUrl, waitOptions),
     watch: (watchOptions?: HostSdkWatchOptions) => watchHost(fetchImpl, baseUrl, watchOptions),
     hostStream: (streamOptions?: HostSdkHostStreamOptions) => streamHostFrames(fetchImpl, baseUrl, streamOptions),
-    timelineStream: (streamOptions?: HostSdkTimelineStreamOptions) => streamHostTimeline(fetchImpl, baseUrl, streamOptions),
+    timelineStream: (streamOptions?: HostSdkTimelineStreamOptions) =>
+      streamHostTimeline(fetchImpl, baseUrl, streamOptions),
     run: (goal: string, options: HostSdkRunOptions = {}, spec: Partial<HostRunSpecInput> = {}) => {
-      return postJson<HostCommandResult & { json?: JsonSafeHostLaunchPlan }>(fetchImpl, baseUrl, "/runs/preflight", hostRunSpecFromSdk(goal, createHostSdkRunOptions(options), spec, "run"));
+      return postJson<HostCommandResult & { json?: JsonSafeHostLaunchPlan }>(
+        fetchImpl,
+        baseUrl,
+        "/runs/preflight",
+        hostRunSpecFromSdk(goal, createHostSdkRunOptions(options), spec, "run"),
+      );
     },
-    runAndWatch: (goal: string, options: HostSdkRunOptions = {}, spec: Partial<HostRunSubmitInput> = {}, watchOptions?: HostSdkSubmitAndWatchOptions) => {
-      return submitAndWatchHostRun(fetchImpl, baseUrl, hostRunSubmitInputFromSdk(goal, createHostSdkRunOptions(options), spec, "run"), watchOptions);
+    runAndWatch: (
+      goal: string,
+      options: HostSdkRunOptions = {},
+      spec: Partial<HostRunSubmitInput> = {},
+      watchOptions?: HostSdkSubmitAndWatchOptions,
+    ) => {
+      return submitAndWatchHostRun(
+        fetchImpl,
+        baseUrl,
+        hostRunSubmitInputFromSdk(goal, createHostSdkRunOptions(options), spec, "run"),
+        watchOptions,
+      );
     },
-    runAndWatchState: (goal: string, options: HostSdkRunOptions = {}, spec: Partial<HostRunSubmitInput> = {}, watchOptions?: HostSdkSubmitAndWatchOptions) => {
-      return submitAndWatchHostRunState(fetchImpl, baseUrl, hostRunSubmitInputFromSdk(goal, createHostSdkRunOptions(options), spec, "run"), watchOptions);
+    runAndWatchState: (
+      goal: string,
+      options: HostSdkRunOptions = {},
+      spec: Partial<HostRunSubmitInput> = {},
+      watchOptions?: HostSdkSubmitAndWatchOptions,
+    ) => {
+      return submitAndWatchHostRunState(
+        fetchImpl,
+        baseUrl,
+        hostRunSubmitInputFromSdk(goal, createHostSdkRunOptions(options), spec, "run"),
+        watchOptions,
+      );
     },
-    takeover: async (options: HostSdkTakeoverOptions, runOptions: HostSdkRunOptions = {}) => (await prepareHostSdkTakeover(fetchImpl, baseUrl, options, runOptions)).preflight,
-    prepareTakeover: (options: HostSdkTakeoverOptions, runOptions: HostSdkRunOptions = {}) => prepareHostSdkTakeover(fetchImpl, baseUrl, options, runOptions),
-    executePreparedTakeover: (prepared: HostSdkPreparedTakeover, spec: Partial<HostRunSubmitInput> = {}, watchOptions?: HostSdkSubmitAndWatchOptions) => {
+    takeover: async (options: HostSdkTakeoverOptions, runOptions: HostSdkRunOptions = {}) =>
+      (await prepareHostSdkTakeover(fetchImpl, baseUrl, options, runOptions)).preflight,
+    prepareTakeover: (options: HostSdkTakeoverOptions, runOptions: HostSdkRunOptions = {}) =>
+      prepareHostSdkTakeover(fetchImpl, baseUrl, options, runOptions),
+    executePreparedTakeover: (
+      prepared: HostSdkPreparedTakeover,
+      spec: Partial<HostRunSubmitInput> = {},
+      watchOptions?: HostSdkSubmitAndWatchOptions,
+    ) => {
       const goal = prepared.input.goal;
-      return submitAndWatchHostRun(fetchImpl, baseUrl, hostRunSubmitInputFromSdk(goal, prepared.runOptions, {
-        ...prepared.input,
-        ...spec,
-        options: {
-          ...prepared.input.options,
-          ...spec.options
-        }
-      }, "takeover"), watchOptions);
+      return submitAndWatchHostRun(
+        fetchImpl,
+        baseUrl,
+        hostRunSubmitInputFromSdk(
+          goal,
+          prepared.runOptions,
+          {
+            ...prepared.input,
+            ...spec,
+            options: {
+              ...prepared.input.options,
+              ...spec.options,
+            },
+          },
+          "takeover",
+        ),
+        watchOptions,
+      );
     },
-    executePreparedTakeoverState: (prepared: HostSdkPreparedTakeover, spec: Partial<HostRunSubmitInput> = {}, watchOptions?: HostSdkSubmitAndWatchOptions) => {
+    executePreparedTakeoverState: (
+      prepared: HostSdkPreparedTakeover,
+      spec: Partial<HostRunSubmitInput> = {},
+      watchOptions?: HostSdkSubmitAndWatchOptions,
+    ) => {
       const goal = prepared.input.goal;
-      return submitAndWatchHostRunState(fetchImpl, baseUrl, hostRunSubmitInputFromSdk(goal, prepared.runOptions, {
-        ...prepared.input,
-        ...spec,
-        options: {
-          ...prepared.input.options,
-          ...spec.options
-        }
-      }, "takeover"), watchOptions);
+      return submitAndWatchHostRunState(
+        fetchImpl,
+        baseUrl,
+        hostRunSubmitInputFromSdk(
+          goal,
+          prepared.runOptions,
+          {
+            ...prepared.input,
+            ...spec,
+            options: {
+              ...prepared.input.options,
+              ...spec.options,
+            },
+          },
+          "takeover",
+        ),
+        watchOptions,
+      );
     },
-    takeoverAndWatch: (options: HostSdkTakeoverOptions, runOptions: HostSdkRunOptions = {}, spec: Partial<HostRunSubmitInput> = {}, watchOptions?: HostSdkSubmitAndWatchOptions) => {
+    takeoverAndWatch: (
+      options: HostSdkTakeoverOptions,
+      runOptions: HostSdkRunOptions = {},
+      spec: Partial<HostRunSubmitInput> = {},
+      watchOptions?: HostSdkSubmitAndWatchOptions,
+    ) => {
       const merged = { ...runOptions, ...options };
-      const goal = options.goalOverride ?? `Take over ${options.projectPath ?? options.projectDir ?? options.repoSourceDir ?? "project"}`;
-      return submitAndWatchHostRun(fetchImpl, baseUrl, hostRunSubmitInputFromSdk(goal, createHostSdkTakeoverRunOptions({
-          ...merged,
-          projectDir: options.projectPath ?? merged.projectDir
-        }), spec, "takeover"), watchOptions);
+      const goal =
+        options.goalOverride ??
+        `Take over ${options.projectPath ?? options.projectDir ?? options.repoSourceDir ?? "project"}`;
+      return submitAndWatchHostRun(
+        fetchImpl,
+        baseUrl,
+        hostRunSubmitInputFromSdk(
+          goal,
+          createHostSdkTakeoverRunOptions({
+            ...merged,
+            projectDir: options.projectPath ?? merged.projectDir,
+          }),
+          spec,
+          "takeover",
+        ),
+        watchOptions,
+      );
     },
-    takeoverAndWatchState: (options: HostSdkTakeoverOptions, runOptions: HostSdkRunOptions = {}, spec: Partial<HostRunSubmitInput> = {}, watchOptions?: HostSdkSubmitAndWatchOptions) => {
+    takeoverAndWatchState: (
+      options: HostSdkTakeoverOptions,
+      runOptions: HostSdkRunOptions = {},
+      spec: Partial<HostRunSubmitInput> = {},
+      watchOptions?: HostSdkSubmitAndWatchOptions,
+    ) => {
       const merged = { ...runOptions, ...options };
-      const goal = options.goalOverride ?? `Take over ${options.projectPath ?? options.projectDir ?? options.repoSourceDir ?? "project"}`;
-      return submitAndWatchHostRunState(fetchImpl, baseUrl, hostRunSubmitInputFromSdk(goal, createHostSdkTakeoverRunOptions({
-          ...merged,
-          projectDir: options.projectPath ?? merged.projectDir
-        }), spec, "takeover"), watchOptions);
+      const goal =
+        options.goalOverride ??
+        `Take over ${options.projectPath ?? options.projectDir ?? options.repoSourceDir ?? "project"}`;
+      return submitAndWatchHostRunState(
+        fetchImpl,
+        baseUrl,
+        hostRunSubmitInputFromSdk(
+          goal,
+          createHostSdkTakeoverRunOptions({
+            ...merged,
+            projectDir: options.projectPath ?? merged.projectDir,
+          }),
+          spec,
+          "takeover",
+        ),
+        watchOptions,
+      );
     },
     runCommand: <TJson = unknown>(request: HostCommandRequest) => runHostSdkCommand<TJson>(fetchImpl, baseUrl, request),
-    planRun: (input: HostRunSpecInput) => postJson<HostCommandResult & { json?: JsonSafeHostLaunchPlan }>(fetchImpl, baseUrl, "/runs/plan", input),
-    preflight: (input: HostRunSpecInput) => postJson<HostCommandResult & { json?: JsonSafeHostLaunchPlan }>(fetchImpl, baseUrl, "/runs/preflight", input),
-    prepareRunLayout: (input: HostSdkPrepareRunLayoutInput) => postJson<HostCommandResult & { json?: HostRunLayoutResult }>(fetchImpl, baseUrl, "/runs/prepare-layout", input),
-    submitRun: (input: HostRunSubmitInput) => postJson<HostCommandResult & { json?: HostRunSubmitResult }>(fetchImpl, baseUrl, "/runs", input),
+    planRun: (input: HostRunSpecInput) =>
+      postJson<HostCommandResult & { json?: JsonSafeHostLaunchPlan }>(fetchImpl, baseUrl, "/runs/plan", input),
+    preflight: (input: HostRunSpecInput) =>
+      postJson<HostCommandResult & { json?: JsonSafeHostLaunchPlan }>(fetchImpl, baseUrl, "/runs/preflight", input),
+    prepareRunLayout: (input: HostSdkPrepareRunLayoutInput) =>
+      postJson<HostCommandResult & { json?: HostRunLayoutResult }>(fetchImpl, baseUrl, "/runs/prepare-layout", input),
+    submitRun: (input: HostRunSubmitInput) =>
+      postJson<HostCommandResult & { json?: HostRunSubmitResult }>(fetchImpl, baseUrl, "/runs", input),
     submitAndExecuteRun: (input: HostRunSubmitInput) => submitAndExecuteHostRun(fetchImpl, baseUrl, input),
-    submitAndWatchRun: (input: HostRunSubmitInput, watchOptions?: HostSdkSubmitAndWatchOptions) => submitAndWatchHostRun(fetchImpl, baseUrl, input, watchOptions),
-    submitAndWatchRunState: (input: HostRunSubmitInput, watchOptions?: HostSdkSubmitAndWatchOptions) => submitAndWatchHostRunState(fetchImpl, baseUrl, input, watchOptions),
-    runRequests: (limit = 20, status?: HostRunRequestStatus) => getJson<HostCommandResult & { json?: HostRunRequestsResponse }>(fetchImpl, baseUrl, pathWithQuery("/runs", { limit, status })),
-    runRequestsStream: (streamOptions?: HostSdkRunRequestsStreamOptions) => streamHostRunRequests(fetchImpl, baseUrl, streamOptions),
-    runRequest: (id: string) => getJson<HostCommandResult & { json?: HostRunRequestResponse }>(fetchImpl, baseUrl, `/runs/${encodeURIComponent(id)}`),
-    runRequestStream: (id: string, streamOptions?: HostSdkRunRequestStreamOptions) => streamHostRunRequest(fetchImpl, baseUrl, id, streamOptions),
-    runStateStream: (id: string, streamOptions?: HostSdkRunRequestStreamOptions) => streamHostRunState(fetchImpl, baseUrl, id, streamOptions),
-    emitRunEvent: (id: string, event: HostSdkRunEventEmitInput) => postJson<HostCommandResult & { json?: { file: string; event: HostLoopEvent } }>(fetchImpl, baseUrl, `/runs/${encodeURIComponent(id)}/events`, { event }),
-    runEvents: (id: string, eventsOptions: HostSdkRunEventsOptions = {}) => getJson<HostCommandResult & { json?: HostLoopEventsResult }>(fetchImpl, baseUrl, pathWithQuery(`/runs/${encodeURIComponent(id)}/events`, eventsOptions)),
-    watchRun: (id: string, eventsOptions: HostSdkRunEventsOptions = {}) => getJson<HostCommandResult & { json?: HostLoopEventsResult }>(fetchImpl, baseUrl, pathWithQuery(`/runs/${encodeURIComponent(id)}/events`, eventsOptions)),
-    runResults: (id: string, resultsOptions: HostSdkRunResultsOptions = {}) => getJson<HostCommandResult & { json?: HostLoopResultsTable }>(fetchImpl, baseUrl, pathWithQuery(`/runs/${encodeURIComponent(id)}/results`, resultsOptions)),
-    runHeartbeat: (id: string, heartbeatOptions: HostSdkRunHeartbeatOptions = {}) => getJson<HostCommandResult & { json?: HostRunHeartbeatReadResult }>(fetchImpl, baseUrl, pathWithQuery(`/runs/${encodeURIComponent(id)}/heartbeat`, heartbeatOptions)),
-    runMeta: (id: string, metaOptions: HostSdkRunMetaOptions = {}) => getJson<HostCommandResult & { json?: HostRunMetaReadResult }>(fetchImpl, baseUrl, pathWithQuery(`/runs/${encodeURIComponent(id)}/meta`, metaOptions)),
-    waitForRun: (id: string, waitOptions?: HostSdkWaitForRunOptions) => waitForHostRun(fetchImpl, baseUrl, id, waitOptions),
-    updateRun: (id: string, status: Exclude<HostRunRequestStatus, "pending">, detail?: string) => patchJson<HostCommandResult & { json?: HostRunUpdateResult }>(fetchImpl, baseUrl, `/runs/${encodeURIComponent(id)}`, { status, detail }),
-    completeRun: (id: string, detail?: string) => patchJson<HostCommandResult & { json?: HostRunUpdateResult }>(fetchImpl, baseUrl, `/runs/${encodeURIComponent(id)}`, { status: "completed", detail }),
-    failRun: (id: string, detail?: string) => patchJson<HostCommandResult & { json?: HostRunUpdateResult }>(fetchImpl, baseUrl, `/runs/${encodeURIComponent(id)}`, { status: "failed", detail }),
-    cancelRun: (id: string, detail?: string) => deleteJson<HostCommandResult & { json?: HostRunUpdateResult }>(fetchImpl, baseUrl, `/runs/${encodeURIComponent(id)}`, { detail }),
-    executeRun: (id?: string) => postJson<HostCommandResult & { json?: HostRunExecuteResult }>(fetchImpl, baseUrl, id ? `/runs/${encodeURIComponent(id)}/execute` : "/runs/execute", {}),
-    planExport: (input: HostExportInput) => postJson<HostCommandResult & { json?: HostExportPlan }>(fetchImpl, baseUrl, "/exports/plan", input),
-    exportArtifacts: (input: HostExportInput & { confirmed?: boolean; confirmation?: string }) => postJson<HostCommandResult & { json?: HostExportResult }>(fetchImpl, baseUrl, "/exports", input),
+    submitAndWatchRun: (input: HostRunSubmitInput, watchOptions?: HostSdkSubmitAndWatchOptions) =>
+      submitAndWatchHostRun(fetchImpl, baseUrl, input, watchOptions),
+    submitAndWatchRunState: (input: HostRunSubmitInput, watchOptions?: HostSdkSubmitAndWatchOptions) =>
+      submitAndWatchHostRunState(fetchImpl, baseUrl, input, watchOptions),
+    runRequests: (limit = 20, status?: HostRunRequestStatus) =>
+      getJson<HostCommandResult & { json?: HostRunRequestsResponse }>(
+        fetchImpl,
+        baseUrl,
+        pathWithQuery("/runs", { limit, status }),
+      ),
+    runRequestsStream: (streamOptions?: HostSdkRunRequestsStreamOptions) =>
+      streamHostRunRequests(fetchImpl, baseUrl, streamOptions),
+    runRequest: (id: string) =>
+      getJson<HostCommandResult & { json?: HostRunRequestResponse }>(
+        fetchImpl,
+        baseUrl,
+        `/runs/${encodeURIComponent(id)}`,
+      ),
+    runRequestStream: (id: string, streamOptions?: HostSdkRunRequestStreamOptions) =>
+      streamHostRunRequest(fetchImpl, baseUrl, id, streamOptions),
+    runStateStream: (id: string, streamOptions?: HostSdkRunRequestStreamOptions) =>
+      streamHostRunState(fetchImpl, baseUrl, id, streamOptions),
+    emitRunEvent: (id: string, event: HostSdkRunEventEmitInput) =>
+      postJson<HostCommandResult & { json?: { file: string; event: HostLoopEvent } }>(
+        fetchImpl,
+        baseUrl,
+        `/runs/${encodeURIComponent(id)}/events`,
+        { event },
+      ),
+    runEvents: (id: string, eventsOptions: HostSdkRunEventsOptions = {}) =>
+      getJson<HostCommandResult & { json?: HostLoopEventsResult }>(
+        fetchImpl,
+        baseUrl,
+        pathWithQuery(`/runs/${encodeURIComponent(id)}/events`, eventsOptions),
+      ),
+    watchRun: (id: string, eventsOptions: HostSdkRunEventsOptions = {}) =>
+      getJson<HostCommandResult & { json?: HostLoopEventsResult }>(
+        fetchImpl,
+        baseUrl,
+        pathWithQuery(`/runs/${encodeURIComponent(id)}/events`, eventsOptions),
+      ),
+    runResults: (id: string, resultsOptions: HostSdkRunResultsOptions = {}) =>
+      getJson<HostCommandResult & { json?: HostLoopResultsTable }>(
+        fetchImpl,
+        baseUrl,
+        pathWithQuery(`/runs/${encodeURIComponent(id)}/results`, resultsOptions),
+      ),
+    runHeartbeat: (id: string, heartbeatOptions: HostSdkRunHeartbeatOptions = {}) =>
+      getJson<HostCommandResult & { json?: HostRunHeartbeatReadResult }>(
+        fetchImpl,
+        baseUrl,
+        pathWithQuery(`/runs/${encodeURIComponent(id)}/heartbeat`, heartbeatOptions),
+      ),
+    runMeta: (id: string, metaOptions: HostSdkRunMetaOptions = {}) =>
+      getJson<HostCommandResult & { json?: HostRunMetaReadResult }>(
+        fetchImpl,
+        baseUrl,
+        pathWithQuery(`/runs/${encodeURIComponent(id)}/meta`, metaOptions),
+      ),
+    waitForRun: (id: string, waitOptions?: HostSdkWaitForRunOptions) =>
+      waitForHostRun(fetchImpl, baseUrl, id, waitOptions),
+    updateRun: (id: string, status: Exclude<HostRunRequestStatus, "pending">, detail?: string) =>
+      patchJson<HostCommandResult & { json?: HostRunUpdateResult }>(
+        fetchImpl,
+        baseUrl,
+        `/runs/${encodeURIComponent(id)}`,
+        { status, detail },
+      ),
+    completeRun: (id: string, detail?: string) =>
+      patchJson<HostCommandResult & { json?: HostRunUpdateResult }>(
+        fetchImpl,
+        baseUrl,
+        `/runs/${encodeURIComponent(id)}`,
+        { status: "completed", detail },
+      ),
+    failRun: (id: string, detail?: string) =>
+      patchJson<HostCommandResult & { json?: HostRunUpdateResult }>(
+        fetchImpl,
+        baseUrl,
+        `/runs/${encodeURIComponent(id)}`,
+        { status: "failed", detail },
+      ),
+    cancelRun: (id: string, detail?: string) =>
+      deleteJson<HostCommandResult & { json?: HostRunUpdateResult }>(
+        fetchImpl,
+        baseUrl,
+        `/runs/${encodeURIComponent(id)}`,
+        { detail },
+      ),
+    executeRun: (id?: string) =>
+      postJson<HostCommandResult & { json?: HostRunExecuteResult }>(
+        fetchImpl,
+        baseUrl,
+        id ? `/runs/${encodeURIComponent(id)}/execute` : "/runs/execute",
+        {},
+      ),
+    planExport: (input: HostExportInput) =>
+      postJson<HostCommandResult & { json?: HostExportPlan }>(fetchImpl, baseUrl, "/exports/plan", input),
+    exportArtifacts: (input: HostExportInput & { confirmed?: boolean; confirmation?: string }) =>
+      postJson<HostCommandResult & { json?: HostExportResult }>(fetchImpl, baseUrl, "/exports", input),
     policy: (command: string, input: { confirmed?: boolean; confirmation?: string } = {}) => {
       const path = `/policy/${encodeURIComponent(command)}`;
       return input.confirmed !== undefined || input.confirmation !== undefined
         ? postJson<HostCommandResult & { json?: HostPolicyCheck }>(fetchImpl, baseUrl, path, input)
         : getJson<HostCommandResult & { json?: HostPolicyCheck }>(fetchImpl, baseUrl, path);
     },
-    timeline: (limit = 20) => getJson<HostCommandResult & { json?: HostTimelineResponse }>(fetchImpl, baseUrl, pathWithQuery("/timeline", { limit }))
+    timeline: (limit = 20) =>
+      getJson<HostCommandResult & { json?: HostTimelineResponse }>(
+        fetchImpl,
+        baseUrl,
+        pathWithQuery("/timeline", { limit }),
+      ),
   };
 }
 
@@ -447,27 +630,33 @@ export function createKingHostSdk(config?: HostSdkOptions): HostSdk;
 export function createKingHostSdk<
   TProjectRunSpec = unknown,
   TPreparedTakeoverPlan = unknown,
-  TConcreteTakeoverOptions extends object = KingHostTakeoverOptions
+  TConcreteTakeoverOptions extends object = KingHostTakeoverOptions,
 >(
   config: KingHostSdkConfig,
-  adapters: KingHostSdkAdapters<TProjectRunSpec, TPreparedTakeoverPlan, TConcreteTakeoverOptions>
+  adapters: KingHostSdkAdapters<TProjectRunSpec, TPreparedTakeoverPlan, TConcreteTakeoverOptions>,
 ): KingAdapterHostSdk<TProjectRunSpec, TPreparedTakeoverPlan, TConcreteTakeoverOptions | KingHostTakeoverOptions>;
 export function createKingHostSdk<
   TProjectRunSpec = unknown,
   TPreparedTakeoverPlan = unknown,
-  TConcreteTakeoverOptions extends object = KingHostTakeoverOptions
+  TConcreteTakeoverOptions extends object = KingHostTakeoverOptions,
 >(
   config: KingHostSdkConfig = {},
-  adapters?: KingHostSdkAdapters<TProjectRunSpec, TPreparedTakeoverPlan, TConcreteTakeoverOptions>
-): HostSdk | KingAdapterHostSdk<TProjectRunSpec, TPreparedTakeoverPlan, TConcreteTakeoverOptions | KingHostTakeoverOptions> {
+  adapters?: KingHostSdkAdapters<TProjectRunSpec, TPreparedTakeoverPlan, TConcreteTakeoverOptions>,
+):
+  | HostSdk
+  | KingAdapterHostSdk<TProjectRunSpec, TPreparedTakeoverPlan, TConcreteTakeoverOptions | KingHostTakeoverOptions> {
   if (!adapters) return createHostSdk(config);
   const bindings: KingHostSdkBindings = {
     hostEnv: {
       ...process.env,
-      ...(config.env ?? {})
-    }
+      ...(config.env ?? {}),
+    },
   };
-  const sdk: KingAdapterHostSdk<TProjectRunSpec, TPreparedTakeoverPlan, TConcreteTakeoverOptions | KingHostTakeoverOptions> = {
+  const sdk: KingAdapterHostSdk<
+    TProjectRunSpec,
+    TPreparedTakeoverPlan,
+    TConcreteTakeoverOptions | KingHostTakeoverOptions
+  > = {
     async run(goal, options = {}, spec = {} as TProjectRunSpec) {
       await adapters.runGoal(goal, createRunOptions(options), spec, bindings);
     },
@@ -480,15 +669,18 @@ export function createKingHostSdk<
     async takeover(options, runOptions = {}) {
       const plan = sdk.prepareTakeover(options);
       await sdk.executePreparedTakeover(plan, runOptions);
-    }
+    },
   };
   return sdk;
 }
 
-export function createEnvBackedHostSdk(env: HostSdkEnvLike = process.env, options: Omit<HostSdkOptions, "baseUrl"> = {}): HostSdk {
+export function createEnvBackedHostSdk(
+  env: HostSdkEnvLike = process.env,
+  options: Omit<HostSdkOptions, "baseUrl"> = {},
+): HostSdk {
   return createHostSdk({
     ...options,
-    baseUrl: hostBaseUrlFromEnv(env)
+    baseUrl: hostBaseUrlFromEnv(env),
   });
 }
 
@@ -496,21 +688,23 @@ export function createEnvBackedKingHostSdk(env?: HostSdkEnvLike, options?: Omit<
 export function createEnvBackedKingHostSdk<
   TProjectRunSpec = unknown,
   TPreparedTakeoverPlan = unknown,
-  TConcreteTakeoverOptions extends object = KingHostTakeoverOptions
+  TConcreteTakeoverOptions extends object = KingHostTakeoverOptions,
 >(
   env: HostSdkEnvLike,
   config: Omit<KingHostSdkConfig, "env">,
-  adapters: KingHostSdkAdapters<TProjectRunSpec, TPreparedTakeoverPlan, TConcreteTakeoverOptions>
+  adapters: KingHostSdkAdapters<TProjectRunSpec, TPreparedTakeoverPlan, TConcreteTakeoverOptions>,
 ): KingAdapterHostSdk<TProjectRunSpec, TPreparedTakeoverPlan, TConcreteTakeoverOptions | KingHostTakeoverOptions>;
 export function createEnvBackedKingHostSdk<
   TProjectRunSpec = unknown,
   TPreparedTakeoverPlan = unknown,
-  TConcreteTakeoverOptions extends object = KingHostTakeoverOptions
+  TConcreteTakeoverOptions extends object = KingHostTakeoverOptions,
 >(
   env: HostSdkEnvLike = process.env,
   config: Omit<KingHostSdkConfig, "env"> = {},
-  adapters?: KingHostSdkAdapters<TProjectRunSpec, TPreparedTakeoverPlan, TConcreteTakeoverOptions>
-): HostSdk | KingAdapterHostSdk<TProjectRunSpec, TPreparedTakeoverPlan, TConcreteTakeoverOptions | KingHostTakeoverOptions> {
+  adapters?: KingHostSdkAdapters<TProjectRunSpec, TPreparedTakeoverPlan, TConcreteTakeoverOptions>,
+):
+  | HostSdk
+  | KingAdapterHostSdk<TProjectRunSpec, TPreparedTakeoverPlan, TConcreteTakeoverOptions | KingHostTakeoverOptions> {
   if (!adapters) return createEnvBackedHostSdk(env, config);
   return createKingHostSdk({ ...config, env }, adapters);
 }
@@ -518,7 +712,7 @@ export function createEnvBackedKingHostSdk<
 export function createBrowserHostSdk(options: HostSdkBrowserOptions = {}): HostSdk {
   return createHostSdk({
     ...options,
-    baseUrl: options.baseUrl ?? hostBaseUrlFromLocation(options.location ?? globalLocationLike(), options)
+    baseUrl: options.baseUrl ?? hostBaseUrlFromLocation(options.location ?? globalLocationLike(), options),
   });
 }
 
@@ -529,7 +723,10 @@ export function hostBaseUrlFromEnv(env: HostSdkEnvLike = process.env): string {
   return `http://${host}:${port}`;
 }
 
-export function hostBaseUrlFromLocation(location: HostSdkLocationLike | undefined, options: { port?: number | string; useCurrentOrigin?: boolean } = {}): string {
+export function hostBaseUrlFromLocation(
+  location: HostSdkLocationLike | undefined,
+  options: { port?: number | string; useCurrentOrigin?: boolean } = {},
+): string {
   if (options.useCurrentOrigin && location?.origin) return location.origin;
   const port = options.port ?? location?.port ?? "8799";
   const hostname = location && isLocalHostName(location.hostname) ? location.hostname : "127.0.0.1";
@@ -540,7 +737,7 @@ export function hostBaseUrlFromLocation(location: HostSdkLocationLike | undefine
 export async function waitForHostReady(
   fetchImpl: typeof fetch,
   baseUrl: string,
-  options: HostSdkWaitOptions = {}
+  options: HostSdkWaitOptions = {},
 ): Promise<HostStatusSnapshot> {
   const timeoutMs = Math.max(1, Math.floor(options.timeoutMs ?? 10_000));
   const intervalMs = Math.max(1, Math.floor(options.intervalMs ?? 250));
@@ -569,31 +766,42 @@ export async function waitForHostRun(
   fetchImpl: typeof fetch,
   baseUrl: string,
   id: string,
-  options: HostSdkWaitForRunOptions = {}
+  options: HostSdkWaitForRunOptions = {},
 ): Promise<HostCommandResult & { json?: HostRunRequestResponse }> {
   const timeoutMs = Math.max(1, Math.floor(options.timeoutMs ?? 30_000));
   const intervalMs = Math.max(1, Math.floor(options.intervalMs ?? 250));
   const terminals = new Set<HostRunRequestStatus>(options.terminalStatuses ?? ["completed", "failed", "cancelled"]);
   const deadline = Date.now() + timeoutMs;
-  let last: HostCommandResult & { json?: HostRunRequestResponse } | undefined;
+  let last: (HostCommandResult & { json?: HostRunRequestResponse }) | undefined;
 
   while (Date.now() <= deadline) {
-    last = await getJson<HostCommandResult & { json?: HostRunRequestResponse }>(fetchImpl, baseUrl, `/runs/${encodeURIComponent(id)}`);
+    last = await getJson<HostCommandResult & { json?: HostRunRequestResponse }>(
+      fetchImpl,
+      baseUrl,
+      `/runs/${encodeURIComponent(id)}`,
+    );
     const status = last.json?.request.status;
     if (status && terminals.has(status)) return last;
     await delay(intervalMs);
   }
 
   const status = last?.json?.request.status;
-  throw new Error(`host run ${id} did not reach a terminal status within ${timeoutMs}ms${status ? `; last status=${status}` : ""}`);
+  throw new Error(
+    `host run ${id} did not reach a terminal status within ${timeoutMs}ms${status ? `; last status=${status}` : ""}`,
+  );
 }
 
 export async function submitAndExecuteHostRun(
   fetchImpl: typeof fetch,
   baseUrl: string,
-  input: HostRunSubmitInput
+  input: HostRunSubmitInput,
 ): Promise<HostSdkSubmitAndExecuteResult> {
-  const submitted = await postJson<HostCommandResult & { json?: HostRunSubmitResult }>(fetchImpl, baseUrl, "/runs", input);
+  const submitted = await postJson<HostCommandResult & { json?: HostRunSubmitResult }>(
+    fetchImpl,
+    baseUrl,
+    "/runs",
+    input,
+  );
   const id = submitted.json?.request.id;
   if (!submitted.ok || !id) {
     return {
@@ -603,11 +811,16 @@ export async function submitAndExecuteHostRun(
         command: "execute-run",
         exitCode: 1,
         text: "host run was not submitted",
-        error: submitted.error ?? "host run was not submitted"
-      }
+        error: submitted.error ?? "host run was not submitted",
+      },
     };
   }
-  const executed = await postJson<HostCommandResult & { json?: HostRunExecuteResult }>(fetchImpl, baseUrl, `/runs/${encodeURIComponent(id)}/execute`, {});
+  const executed = await postJson<HostCommandResult & { json?: HostRunExecuteResult }>(
+    fetchImpl,
+    baseUrl,
+    `/runs/${encodeURIComponent(id)}/execute`,
+    {},
+  );
   return { submitted, executed };
 }
 
@@ -615,13 +828,20 @@ export async function* submitAndWatchHostRun(
   fetchImpl: typeof fetch,
   baseUrl: string,
   input: HostRunSubmitInput,
-  options: HostSdkSubmitAndWatchOptions = {}
+  options: HostSdkSubmitAndWatchOptions = {},
 ): AsyncGenerator<HostSdkSubmitAndWatchFrame> {
-  const submitted = await postJson<HostCommandResult & { json?: HostRunSubmitResult }>(fetchImpl, baseUrl, "/runs", input);
+  const submitted = await postJson<HostCommandResult & { json?: HostRunSubmitResult }>(
+    fetchImpl,
+    baseUrl,
+    "/runs",
+    input,
+  );
   yield { event: "submitted", data: submitted };
   const id = submitted.json?.request.id;
   if (!submitted.ok || !id) return;
-  const terminalStatuses = new Set<HostRunRequestStatus>(options.terminalStatuses ?? ["completed", "failed", "cancelled"]);
+  const terminalStatuses = new Set<HostRunRequestStatus>(
+    options.terminalStatuses ?? ["completed", "failed", "cancelled"],
+  );
   for await (const request of streamHostRunRequest(fetchImpl, baseUrl, id, options)) {
     yield { event: "run", data: request };
     if (request && terminalStatuses.has(request.status)) return;
@@ -632,13 +852,20 @@ export async function* submitAndWatchHostRunState(
   fetchImpl: typeof fetch,
   baseUrl: string,
   input: HostRunSubmitInput,
-  options: HostSdkSubmitAndWatchOptions = {}
+  options: HostSdkSubmitAndWatchOptions = {},
 ): AsyncGenerator<HostSdkSubmitAndWatchStateFrame> {
-  const submitted = await postJson<HostCommandResult & { json?: HostRunSubmitResult }>(fetchImpl, baseUrl, "/runs", input);
+  const submitted = await postJson<HostCommandResult & { json?: HostRunSubmitResult }>(
+    fetchImpl,
+    baseUrl,
+    "/runs",
+    input,
+  );
   yield { event: "submitted", data: submitted };
   const id = submitted.json?.request.id;
   if (!submitted.ok || !id) return;
-  const terminalStatuses = new Set<HostRunRequestStatus>(options.terminalStatuses ?? ["completed", "failed", "cancelled"]);
+  const terminalStatuses = new Set<HostRunRequestStatus>(
+    options.terminalStatuses ?? ["completed", "failed", "cancelled"],
+  );
   for await (const state of streamHostRunState(fetchImpl, baseUrl, id, options)) {
     yield { event: "state", data: state };
     const status = state.request?.status;
@@ -650,35 +877,42 @@ export async function prepareHostSdkTakeover(
   fetchImpl: typeof fetch,
   baseUrl: string,
   options: HostSdkTakeoverOptions,
-  runOptions: HostSdkRunOptions = {}
+  runOptions: HostSdkRunOptions = {},
 ): Promise<HostSdkPreparedTakeover> {
   const merged = { ...runOptions, ...options };
   const normalizedRunOptions = createHostSdkTakeoverRunOptions({
     ...merged,
-    projectDir: options.projectPath ?? merged.projectDir
+    projectDir: options.projectPath ?? merged.projectDir,
   });
-  const goal = options.goalOverride ?? `Take over ${options.projectPath ?? options.projectDir ?? options.repoSourceDir ?? "project"}`;
+  const goal =
+    options.goalOverride ??
+    `Take over ${options.projectPath ?? options.projectDir ?? options.repoSourceDir ?? "project"}`;
   const input = hostRunSpecFromSdk(goal, normalizedRunOptions, {}, "takeover");
-  const preflight = await postJson<HostCommandResult & { json?: JsonSafeHostLaunchPlan }>(fetchImpl, baseUrl, "/runs/preflight", input);
+  const preflight = await postJson<HostCommandResult & { json?: JsonSafeHostLaunchPlan }>(
+    fetchImpl,
+    baseUrl,
+    "/runs/preflight",
+    input,
+  );
   return {
     options,
     runOptions: normalizedRunOptions,
     input,
-    preflight
+    preflight,
   };
 }
 
 export async function* streamHostStatus(
   fetchImpl: typeof fetch,
   baseUrl: string,
-  options: HostSdkStatusStreamOptions = {}
+  options: HostSdkStatusStreamOptions = {},
 ): AsyncGenerator<HostStatusSnapshot> {
   const path = pathWithQuery("/status/stream", { interval: options.intervalMs });
   const response = await fetchImpl(urlFor(baseUrl, path), {
     headers: {
-      Accept: "text/event-stream"
+      Accept: "text/event-stream",
     },
-    signal: options.signal
+    signal: options.signal,
   });
   if (!response.ok || !response.body) {
     throw new Error(`host status stream failed with HTTP ${response.status}`);
@@ -696,14 +930,14 @@ export async function* streamHostStatus(
 export async function* streamHostTimeline(
   fetchImpl: typeof fetch,
   baseUrl: string,
-  options: HostSdkTimelineStreamOptions = {}
+  options: HostSdkTimelineStreamOptions = {},
 ): AsyncGenerator<HostTimelineEvent[]> {
   const path = pathWithQuery("/timeline/stream", { interval: options.intervalMs, limit: options.limit });
   const response = await fetchImpl(urlFor(baseUrl, path), {
     headers: {
-      Accept: "text/event-stream"
+      Accept: "text/event-stream",
     },
-    signal: options.signal
+    signal: options.signal,
   });
   if (!response.ok || !response.body) {
     throw new Error(`host timeline stream failed with HTTP ${response.status}`);
@@ -721,20 +955,20 @@ export async function* streamHostTimeline(
 export async function* streamHostFrames(
   fetchImpl: typeof fetch,
   baseUrl: string,
-  options: HostSdkHostStreamOptions = {}
+  options: HostSdkHostStreamOptions = {},
 ): AsyncGenerator<HostSdkStreamFrame> {
   const path = pathWithQuery("/host/stream", {
     interval: options.intervalMs,
     limit: options.limit,
     timelineLimit: options.timelineLimit,
     runLimit: options.runLimit,
-    status: options.status
+    status: options.status,
   });
   const response = await fetchImpl(urlFor(baseUrl, path), {
     headers: {
-      Accept: "text/event-stream"
+      Accept: "text/event-stream",
     },
-    signal: options.signal
+    signal: options.signal,
   });
   if (!response.ok || !response.body) {
     throw new Error(`host stream failed with HTTP ${response.status}`);
@@ -761,13 +995,17 @@ export async function* streamHostFrames(
 export async function* watchHost(
   fetchImpl: typeof fetch,
   baseUrl: string,
-  options: HostSdkWatchOptions = {}
+  options: HostSdkWatchOptions = {},
 ): AsyncGenerator<HostSdkWatchFrame> {
   if (options.includeInitialSnapshot !== false) {
     const limit = options.limit ?? Math.max(options.timelineLimit ?? 0, options.runLimit ?? 0, 20);
     yield {
       event: "snapshot",
-      data: await getJson<HostSnapshotResponse>(fetchImpl, baseUrl, pathWithQuery("/host/snapshot", { limit, status: options.status }))
+      data: await getJson<HostSnapshotResponse>(
+        fetchImpl,
+        baseUrl,
+        pathWithQuery("/host/snapshot", { limit, status: options.status }),
+      ),
     };
   }
   yield* streamHostFrames(fetchImpl, baseUrl, options);
@@ -776,14 +1014,18 @@ export async function* watchHost(
 export async function* streamHostRunRequests(
   fetchImpl: typeof fetch,
   baseUrl: string,
-  options: HostSdkRunRequestsStreamOptions = {}
+  options: HostSdkRunRequestsStreamOptions = {},
 ): AsyncGenerator<HostRunRequest[]> {
-  const path = pathWithQuery("/runs/stream", { interval: options.intervalMs, limit: options.limit, status: options.status });
+  const path = pathWithQuery("/runs/stream", {
+    interval: options.intervalMs,
+    limit: options.limit,
+    status: options.status,
+  });
   const response = await fetchImpl(urlFor(baseUrl, path), {
     headers: {
-      Accept: "text/event-stream"
+      Accept: "text/event-stream",
     },
-    signal: options.signal
+    signal: options.signal,
   });
   if (!response.ok || !response.body) {
     throw new Error(`host run requests stream failed with HTTP ${response.status}`);
@@ -805,7 +1047,7 @@ export async function* streamHostRunRequest(
   fetchImpl: typeof fetch,
   baseUrl: string,
   id: string,
-  options: HostSdkRunRequestStreamOptions = {}
+  options: HostSdkRunRequestStreamOptions = {},
 ): AsyncGenerator<HostRunRequest | null> {
   for await (const frame of streamHostRunState(fetchImpl, baseUrl, id, options)) {
     yield frame.request;
@@ -816,14 +1058,14 @@ export async function* streamHostRunState(
   fetchImpl: typeof fetch,
   baseUrl: string,
   id: string,
-  options: HostSdkRunRequestStreamOptions = {}
+  options: HostSdkRunRequestStreamOptions = {},
 ): AsyncGenerator<HostSdkRunStateFrame> {
   const path = pathWithQuery(`/runs/${encodeURIComponent(id)}/stream`, { interval: options.intervalMs });
   const response = await fetchImpl(urlFor(baseUrl, path), {
     headers: {
-      Accept: "text/event-stream"
+      Accept: "text/event-stream",
     },
-    signal: options.signal
+    signal: options.signal,
   });
   if (!response.ok || !response.body) {
     throw new Error(`host run request stream failed with HTTP ${response.status}`);
@@ -841,25 +1083,29 @@ export async function* streamHostRunState(
 }
 
 function parseHostRunStateFrame(data: unknown): HostSdkRunStateFrame {
-  const value = data && typeof data === "object" ? data as { request?: unknown; heartbeat?: unknown; meta?: unknown } : {};
+  const value =
+    data && typeof data === "object" ? (data as { request?: unknown; heartbeat?: unknown; meta?: unknown }) : {};
   return {
-    request: value.request && typeof value.request === "object" ? value.request as HostRunRequest : null,
-    heartbeat: value.heartbeat && typeof value.heartbeat === "object" ? value.heartbeat as HostRunHeartbeatReadResult["heartbeat"] : null,
-    meta: value.meta && typeof value.meta === "object" ? value.meta as HostRunMetaReadResult["meta"] : null
+    request: value.request && typeof value.request === "object" ? (value.request as HostRunRequest) : null,
+    heartbeat:
+      value.heartbeat && typeof value.heartbeat === "object"
+        ? (value.heartbeat as HostRunHeartbeatReadResult["heartbeat"])
+        : null,
+    meta: value.meta && typeof value.meta === "object" ? (value.meta as HostRunMetaReadResult["meta"]) : null,
   };
 }
 
 export async function runHostSdkCommand<TJson = unknown>(
   fetchImpl: typeof fetch,
   baseUrl: string,
-  request: HostCommandRequest
+  request: HostCommandRequest,
 ): Promise<HostCommandResult & { json?: TJson }> {
   const response = await fetchImpl(urlFor(baseUrl, "/commands/run"), {
     method: "POST",
     headers: {
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
     },
-    body: JSON.stringify(request)
+    body: JSON.stringify(request),
   });
   const result = await readJson<HostCommandResult & { json?: TJson }>(response);
   if (!response.ok && !result.error) {
@@ -877,9 +1123,9 @@ async function postJson<T>(fetchImpl: typeof fetch, baseUrl: string, path: strin
   const response = await fetchImpl(urlFor(baseUrl, path), {
     method: "POST",
     headers: {
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
     },
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
   });
   return readJson<T>(response);
 }
@@ -888,9 +1134,9 @@ async function patchJson<T>(fetchImpl: typeof fetch, baseUrl: string, path: stri
   const response = await fetchImpl(urlFor(baseUrl, path), {
     method: "PATCH",
     headers: {
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
     },
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
   });
   return readJson<T>(response);
 }
@@ -899,9 +1145,9 @@ async function deleteJson<T>(fetchImpl: typeof fetch, baseUrl: string, path: str
   const response = await fetchImpl(urlFor(baseUrl, path), {
     method: "DELETE",
     headers: {
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
     },
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
   });
   return readJson<T>(response);
 }
@@ -932,7 +1178,7 @@ function globalLocationLike(): HostSdkLocationLike | undefined {
     protocol: location.protocol,
     hostname: location.hostname,
     port: typeof location.port === "string" ? location.port : undefined,
-    origin: typeof location.origin === "string" ? location.origin : undefined
+    origin: typeof location.origin === "string" ? location.origin : undefined,
   };
 }
 
@@ -1012,7 +1258,7 @@ function hostRunSpecFromSdk(
   goal: string,
   options: HostSdkRunOptions,
   spec: Partial<HostRunSpecInput>,
-  mode: "run" | "takeover"
+  mode: "run" | "takeover",
 ): HostRunSpecInput {
   const loopMode = options.infinite ? "infinite" : spec.options?.loopMode;
   return {
@@ -1035,13 +1281,13 @@ function hostRunSpecFromSdk(
       workerModel: options.workerModel ?? spec.options?.workerModel,
       workerKey: options.workerKey ?? spec.options?.workerKey,
       noBrain: options.noBrain ?? spec.options?.noBrain,
-      loops: options.infinite ? undefined : options.loops ?? spec.options?.loops,
+      loops: options.infinite ? undefined : (options.loops ?? spec.options?.loops),
       loopMode,
       pollIntervalSeconds: options.pollIntervalSeconds ?? spec.options?.pollIntervalSeconds,
       outputDir: options.outputDir ?? spec.options?.outputDir,
       keepArtifacts: options.keepArtifacts ?? spec.options?.keepArtifacts,
-      errorLimit: options.errorLimit ?? spec.options?.errorLimit
-    }
+      errorLimit: options.errorLimit ?? spec.options?.errorLimit,
+    },
   };
 }
 
@@ -1049,13 +1295,13 @@ function hostRunSubmitInputFromSdk(
   goal: string,
   options: HostSdkRunOptions,
   spec: Partial<HostRunSubmitInput>,
-  mode: "run" | "takeover"
+  mode: "run" | "takeover",
 ): HostRunSubmitInput {
   const { requestId, executor, ...planSpec } = spec;
   return {
     ...hostRunSpecFromSdk(goal, options, planSpec, mode),
     requestId,
-    executor
+    executor,
   };
 }
 

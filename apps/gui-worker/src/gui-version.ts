@@ -17,7 +17,7 @@ export const WORKER_RUNTIME_FEATURES = [
   "lightweight-coordination",
   "sequential-coordination",
   "planner-guidance-routing",
-  "task-inbox-settle"
+  "task-inbox-settle",
 ] as const;
 
 export type WorkerRuntimeFeature = (typeof WORKER_RUNTIME_FEATURES)[number];
@@ -38,6 +38,6 @@ export function buildWorkerHealthPayload(now = Date.now()): WorkerHealthPayload 
     version: WORKER_PACKAGE_VERSION,
     cliPackage: `@suwujs/king-ai@${WORKER_PACKAGE_VERSION}`,
     runtimeFeatures: [...WORKER_RUNTIME_FEATURES],
-    checkedAt: new Date(now).toISOString()
+    checkedAt: new Date(now).toISOString(),
   };
 }

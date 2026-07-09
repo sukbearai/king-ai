@@ -7,7 +7,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
-import { claudeStreamUserMessage, createGrokLogSink, ENGINE_PREFERENCE_ORDER, formatEngineLogLine, getAdapter, parseTriage, personaHeader, reduceCodexAppEvent, splitExtraArgs } from "../src/engine.js";
+import {
+  claudeStreamUserMessage,
+  createGrokLogSink,
+  ENGINE_PREFERENCE_ORDER,
+  formatEngineLogLine,
+  getAdapter,
+  parseTriage,
+  personaHeader,
+  reduceCodexAppEvent,
+  splitExtraArgs,
+} from "../src/engine.js";
 import { writeShim } from "../src/shim.js";
 import { authFailureHint, hashText, isRateLimited } from "../src/text.js";
 
@@ -34,7 +44,7 @@ test("parseTriage accepts raw JSON", () => {
     actionable: false,
     reason: "noise",
     promptNote: undefined,
-    responseMode: undefined
+    responseMode: undefined,
   });
 });
 
@@ -43,7 +53,7 @@ test("parseTriage extracts JSON from model prose", () => {
     actionable: true,
     reason: undefined,
     promptNote: "reply briefly",
-    responseMode: undefined
+    responseMode: undefined,
   });
 });
 
@@ -52,12 +62,15 @@ test("parseTriage rejects missing actionable", () => {
 });
 
 test("parseTriage accepts fenced JSON and response_mode", () => {
-  assert.deepEqual(parseTriage('```json\n{"actionable":true,"response_mode":"one-of-us","prompt_note":"claim first"}\n```'), {
-    actionable: true,
-    reason: undefined,
-    promptNote: "claim first",
-    responseMode: "one-of-us"
-  });
+  assert.deepEqual(
+    parseTriage('```json\n{"actionable":true,"response_mode":"one-of-us","prompt_note":"claim first"}\n```'),
+    {
+      actionable: true,
+      reason: undefined,
+      promptNote: "claim first",
+      responseMode: "one-of-us",
+    },
+  );
 });
 
 test("parseTriage salvages partial JSON", () => {
@@ -65,7 +78,7 @@ test("parseTriage salvages partial JSON", () => {
     actionable: false,
     reason: "already handled",
     promptNote: undefined,
-    responseMode: "me"
+    responseMode: "me",
   });
 });
 
@@ -73,7 +86,7 @@ test("formatEngineLogLine summarizes Claude stream JSON", () => {
   assert.equal(formatEngineLogLine("claude", '{"type":"system","subtype":"init"}'), "[claude] session initialized");
   assert.equal(
     formatEngineLogLine("claude", '{"type":"assistant","message":{"content":[{"type":"text","text":"hello there"}]}}'),
-    "[claude] hello there"
+    "[claude] hello there",
   );
   assert.equal(formatEngineLogLine("claude", '{"type":"result","is_error":false}'), "[claude] turn completed");
 });
@@ -81,21 +94,30 @@ test("formatEngineLogLine summarizes Claude stream JSON", () => {
 test("claudeStreamUserMessage strips malformed surrogate characters", () => {
   const encoded = claudeStreamUserMessage("hello \uD800 world");
   assert.equal(encoded.endsWith("\n"), true);
-  const parsed = JSON.parse(encoded) as { type: string; message: { role: string; content: Array<{ type: string; text: string }> } };
+  const parsed = JSON.parse(encoded) as {
+    type: string;
+    message: { role: string; content: Array<{ type: string; text: string }> };
+  };
   assert.equal(parsed.type, "user");
   assert.equal(parsed.message.role, "user");
   assert.deepEqual(parsed.message.content, [{ type: "text", text: "hello  world" }]);
 });
 
 test("formatEngineLogLine drops noisy engine JSON", () => {
-  assert.equal(formatEngineLogLine("claude", '{"type":"assistant","message":{"content":[{"type":"thinking","text":"hidden"}]}}'), null);
+  assert.equal(
+    formatEngineLogLine("claude", '{"type":"assistant","message":{"content":[{"type":"thinking","text":"hidden"}]}}'),
+    null,
+  );
   assert.equal(formatEngineLogLine("codex", '{"method":"thread/started","params":{"thread":{"id":"t1"}}}'), null);
 });
 
 test("formatEngineLogLine summarizes Grok streaming JSON", () => {
   assert.equal(formatEngineLogLine("grok", '{"type":"text","data":"hello there"}'), "[grok] hello there");
   assert.equal(formatEngineLogLine("grok", '{"type":"end","stopReason":"EndTurn"}'), "[grok] turn completed");
-  assert.equal(formatEngineLogLine("grok", '{"type":"error","message":"Session does not exist"}'), "[grok] failed: Session does not exist");
+  assert.equal(
+    formatEngineLogLine("grok", '{"type":"error","message":"Session does not exist"}'),
+    "[grok] failed: Session does not exist",
+  );
   assert.equal(formatEngineLogLine("grok", '{"type":"thought","data":"hidden"}'), null);
 });
 
@@ -115,12 +137,15 @@ test("ENGINE_PREFERENCE_ORDER prefers grok before claude and codex", () => {
 
 test("formatEngineLogLine summarizes Codex app-server events", () => {
   assert.equal(
-    formatEngineLogLine("codex", '{"method":"item/started","params":{"item":{"type":"commandExecution","command":"king-ai reply demo hi"}}}'),
-    "[codex] $ king-ai reply demo hi"
+    formatEngineLogLine(
+      "codex",
+      '{"method":"item/started","params":{"item":{"type":"commandExecution","command":"king-ai reply demo hi"}}}',
+    ),
+    "[codex] $ king-ai reply demo hi",
   );
   assert.equal(
     formatEngineLogLine("codex", '{"method":"item/completed","params":{"item":{"type":"agentMessage","text":"done"}}}'),
-    "[codex] done"
+    "[codex] done",
   );
 });
 
@@ -146,7 +171,10 @@ test("reduceCodexAppEvent tracks thread and turn lifecycle", () => {
   assert.equal(turn.activeTurnId, "turn-1");
   assert.equal(turn.steerGate, false);
 
-  const completed = reduceCodexAppEvent({ activeTurnId: "turn-1", steerGate: true }, { method: "turn/completed", params: { turn: { status: "completed" } } });
+  const completed = reduceCodexAppEvent(
+    { activeTurnId: "turn-1", steerGate: true },
+    { method: "turn/completed", params: { turn: { status: "completed" } } },
+  );
   assert.equal(completed.activeTurnId, null);
   assert.equal(completed.steerGate, false);
   assert.equal(completed.turnCompletedError, undefined);
@@ -156,31 +184,37 @@ test("reduceCodexAppEvent summarizes Codex native app-server events", () => {
   assert.deepEqual(
     reduceCodexAppEvent(
       { activeTurnId: "turn-1", steerGate: false },
-      { method: "account/rateLimits/updated", params: { rateLimits: { primary: { usedPercent: 93.4 } } } }
+      { method: "account/rateLimits/updated", params: { rateLimits: { primary: { usedPercent: 93.4 } } } },
     ).logs,
-    ["[codex] account rate limit at 93% - turns will start failing when it reaches 100%"]
+    ["[codex] account rate limit at 93% - turns will start failing when it reaches 100%"],
   );
   assert.deepEqual(
-    reduceCodexAppEvent({ activeTurnId: "turn-1", steerGate: false }, { method: "item/started", params: { item: { type: "contextCompaction" } } }).logs,
-    ["[codex] native context compaction started"]
+    reduceCodexAppEvent(
+      { activeTurnId: "turn-1", steerGate: false },
+      { method: "item/started", params: { item: { type: "contextCompaction" } } },
+    ).logs,
+    ["[codex] native context compaction started"],
   );
   assert.deepEqual(
-    reduceCodexAppEvent({ activeTurnId: "turn-1", steerGate: false }, { method: "item/completed", params: { item: { type: "contextCompaction" } } }).logs,
-    ["[codex] native context compaction finished"]
+    reduceCodexAppEvent(
+      { activeTurnId: "turn-1", steerGate: false },
+      { method: "item/completed", params: { item: { type: "contextCompaction" } } },
+    ).logs,
+    ["[codex] native context compaction finished"],
   );
 });
 
 test("reduceCodexAppEvent gates steering around completed items and deltas", () => {
   const completed = reduceCodexAppEvent(
     { activeTurnId: "turn-1", steerGate: false },
-    { method: "item/completed", params: { item: { type: "agentMessage", text: "done" } } }
+    { method: "item/completed", params: { item: { type: "agentMessage", text: "done" } } },
   );
   assert.equal(completed.steerGate, true);
   assert.deepEqual(completed.logs, ["[codex] done"]);
 
   const delta = reduceCodexAppEvent(
     { activeTurnId: "turn-1", steerGate: true },
-    { method: "item/agentMessage/delta", params: { delta: "more" } }
+    { method: "item/agentMessage/delta", params: { delta: "more" } },
   );
   assert.equal(delta.steerGate, false);
 });
@@ -188,7 +222,7 @@ test("reduceCodexAppEvent gates steering around completed items and deltas", () 
 test("reduceCodexAppEvent reports failed turn completion", () => {
   const result = reduceCodexAppEvent(
     { activeTurnId: "turn-1", steerGate: true },
-    { method: "turn/completed", params: { turn: { status: "failed", error: { message: "quota exhausted" } } } }
+    { method: "turn/completed", params: { turn: { status: "failed", error: { message: "quota exhausted" } } } },
   );
   assert.equal(result.activeTurnId, null);
   assert.equal(result.steerGate, false);
@@ -225,7 +259,7 @@ rl.on('line', (line) => {
   }
 });
 `,
-    "utf8"
+    "utf8",
   );
   await chmod(codex, 0o755);
 
@@ -236,7 +270,7 @@ rl.on('line', (line) => {
     env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}`, SEEN_FILE: seenFile },
     resumeSessionId: "stale-thread",
     standingPrompt: "standing",
-    onLog: (line) => logs.push(line)
+    onLog: (line) => logs.push(line),
   });
   assert.ok(session);
   const result = await session.send("hello", { imagePaths: [imagePath] });
@@ -247,15 +281,18 @@ rl.on('line', (line) => {
   assert.deepEqual(result.usage, {
     input_tokens: 10,
     cache_read_input_tokens: 2,
-    output_tokens: 7
+    output_tokens: 7,
   });
   assert.match(logs.join("\n"), /thread\/resume failed \(missing thread\) - starting a fresh thread/);
   assert.match(logs.join("\n"), /\[codex\] ok/);
-  const seen = JSON.parse(await readFile(seenFile, "utf8")) as Array<{ method?: string; params?: { input?: unknown[] } }>;
+  const seen = JSON.parse(await readFile(seenFile, "utf8")) as Array<{
+    method?: string;
+    params?: { input?: unknown[] };
+  }>;
   const turnStart = seen.find((msg) => msg.method === "turn/start");
   assert.deepEqual(turnStart?.params?.input, [
     { type: "text", text: "hello", text_elements: [] },
-    { type: "localImage", path: imagePath }
+    { type: "localImage", path: imagePath },
   ]);
 });
 
@@ -276,7 +313,7 @@ rl.on('line', (line) => {
   else if (msg.method === 'thread/start') send({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: 'thread-1' } } });
 });
 `,
-    "utf8"
+    "utf8",
   );
   await chmod(codex, 0o755);
 
@@ -287,7 +324,7 @@ rl.on('line', (line) => {
       home: dir,
       env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` },
       standingPrompt: "standing",
-      onLog: () => {}
+      onLog: () => {},
     });
     assert.ok(session);
     const result = await session.send("hello");
@@ -316,15 +353,15 @@ test("writeShim reports errors under the invoked command name", async () => {
   await assert.rejects(
     execFileP(join(dir, "king-ai"), [], {
       env: {
-        PATH: process.env.PATH
-      }
+        PATH: process.env.PATH,
+      },
     }),
     (err) => {
       const actual = err as { code?: number; stderr?: string };
       assert.equal(actual.code, 70);
       assert.match(actual.stderr ?? "", /^king-ai: runtime env not set/);
       return true;
-    }
+    },
   );
 });
 
@@ -352,20 +389,26 @@ test("writeShim forwards --file and --stdin bodies as single CLI args", async ()
     await writeShim(dir);
 
     await execFileP(join(dir, "king-ai"), ["reply", "demo-convo", "--file", bodyPath], {
-      env: { PATH: process.env.PATH, KING_AI_AGENT_RUNTIME_URL: url, KING_AI_AGENT_RUNTIME_TOKEN: "token", KING_AI_AGENT_ID: "demo-agent", KING_AI_AGENT_ENGINE: "claude" }
+      env: {
+        PATH: process.env.PATH,
+        KING_AI_AGENT_RUNTIME_URL: url,
+        KING_AI_AGENT_RUNTIME_TOKEN: "token",
+        KING_AI_AGENT_ID: "demo-agent",
+        KING_AI_AGENT_ENGINE: "claude",
+      },
     });
     await runWithStdin(join(dir, "king-ai"), ["reply", "demo-convo", "--stdin"], "from stdin\nwith quotes", {
       PATH: process.env.PATH,
       KING_AI_AGENT_RUNTIME_URL: url,
-      KING_AI_AGENT_RUNTIME_TOKEN: "token"
+      KING_AI_AGENT_RUNTIME_TOKEN: "token",
     });
 
     assert.deepEqual(
-      seen.map((row) => (row as { argv?: string[]; agentId?: string; engine?: string })),
+      seen.map((row) => row as { argv?: string[]; agentId?: string; engine?: string }),
       [
         { argv: ["reply", "demo-convo", "line 1\n`code` and $var"], agentId: "demo-agent", engine: "claude" },
-        { argv: ["reply", "demo-convo", "from stdin\nwith quotes"] }
-      ]
+        { argv: ["reply", "demo-convo", "from stdin\nwith quotes"] },
+      ],
     );
   } finally {
     server.close();
@@ -394,7 +437,7 @@ test("splitExtraArgs preserves quoted values", () => {
     "--flag=two words",
     "--name",
     "Demo Agent",
-    "escaped value"
+    "escaped value",
   ]);
 });
 
@@ -411,7 +454,11 @@ test("codex seedHome refreshes generated persona files", async () => {
   try {
     const adapter = getAdapter("codex");
     await adapter.seedHome(home, { id: "ielts-tutor", name: "IELTS Reading & Writing Coach", role: "Old role" });
-    await adapter.seedHome(home, { id: "ielts-tutor", name: "IELTS Reading & Writing Coach", role: "New compact role" });
+    await adapter.seedHome(home, {
+      id: "ielts-tutor",
+      name: "IELTS Reading & Writing Coach",
+      role: "New compact role",
+    });
     const text = await readFile(join(home, "AGENTS.md"), "utf8");
     assert.match(text, /New compact role/);
     assert.doesNotMatch(text, /Old role/);
@@ -425,7 +472,13 @@ test("Grok headless run passes images via --prompt-json", async () => {
   const binDir = join(dir, "bin");
   const imagePath = join(dir, "photo.png");
   await mkdir(binDir);
-  await writeFile(imagePath, Buffer.from("89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de0000000c49444154789c63000100000500010d0a2db40000000049454e44ae426082", "hex"));
+  await writeFile(
+    imagePath,
+    Buffer.from(
+      "89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de0000000c49444154789c63000100000500010d0a2db40000000049454e44ae426082",
+      "hex",
+    ),
+  );
   const seenFile = join(dir, "seen.json");
   const grok = join(binDir, "grok");
   await writeFile(
@@ -437,7 +490,7 @@ require("node:fs").writeFileSync(process.env.SEEN_FILE, JSON.stringify({ blocks 
 process.stdout.write(JSON.stringify({ type: "text", data: "ok" }) + "\\n");
 process.stdout.write(JSON.stringify({ type: "end", stopReason: "EndTurn", sessionId: "grok-image-session" }) + "\\n");
 `,
-    "utf8"
+    "utf8",
   );
   await chmod(grok, 0o755);
 
@@ -447,7 +500,7 @@ process.stdout.write(JSON.stringify({ type: "end", stopReason: "EndTurn", sessio
     env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}`, SEEN_FILE: seenFile },
     imagePaths: [imagePath],
     signal: AbortSignal.timeout(5000),
-    onLog: () => {}
+    onLog: () => {},
   });
 
   assert.equal(result.exitCode, 0);
@@ -480,7 +533,7 @@ if (resume) {
 process.stdout.write(JSON.stringify({ type: "text", data: "ok" }) + "\\n");
 process.stdout.write(JSON.stringify({ type: "end", stopReason: "EndTurn", sessionId: "fresh-grok-session" }) + "\\n");
 `,
-    "utf8"
+    "utf8",
   );
   await chmod(grok, 0o755);
 
@@ -490,7 +543,7 @@ process.stdout.write(JSON.stringify({ type: "end", stopReason: "EndTurn", sessio
     env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` },
     resumeSessionId: "stale-grok-session",
     standingPrompt: "standing",
-    onLog: (line) => logs.push(line)
+    onLog: (line) => logs.push(line),
   });
   assert.ok(session);
   const result = await session.send("hello");

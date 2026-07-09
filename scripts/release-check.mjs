@@ -9,7 +9,7 @@ const pathsSourcePath = "packages/cli/src/paths.ts";
 function run(command, args) {
   const result = spawnSync(command, args, {
     stdio: "inherit",
-    shell: false
+    shell: false,
   });
 
   if (result.status !== 0) {
@@ -49,11 +49,7 @@ try {
   await assertCliVersionSynced();
   run("pnpm", ["verify"]);
   await copyFile("README.md", packageReadmePath);
-  run("npm", [
-    "pack",
-    "./packages/cli",
-    "--dry-run"
-  ]);
+  run("npm", ["pack", "./packages/cli", "--dry-run"]);
 } finally {
   if (existsSync(packageReadmePath)) {
     rmSync(packageReadmePath);

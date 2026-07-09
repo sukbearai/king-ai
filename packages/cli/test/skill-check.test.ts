@@ -9,7 +9,7 @@ import {
   extractCommands,
   findSkillFiles,
   formatDashboard,
-  validateCommand
+  validateCommand,
 } from "../src/skill-check.js";
 
 test("extractCommands finds king-ai command references", () => {
@@ -67,31 +67,37 @@ test("findSkillFiles and checkAllSkills scan nested skill folders", async () => 
     const files = findSkillFiles(dir);
     assert.equal(files.length, 2);
     const results = checkAllSkills(dir);
-    assert.deepEqual(results.map((result) => result.skillName), ["outer", "inner"]);
+    assert.deepEqual(
+      results.map((result) => result.skillName),
+      ["outer", "inner"],
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
 });
 
 test("formatDashboard renders pass, warnings, and failures without unicode markers", () => {
-  const text = formatDashboard([
-    {
-      skillName: "valid",
-      filePath: "/tmp/valid/SKILL.md",
-      referencedCommands: ["reply"],
-      invalidCommands: [],
-      warnings: [],
-      valid: true
-    },
-    {
-      skillName: "invalid",
-      filePath: "/tmp/invalid/SKILL.md",
-      referencedCommands: ["takeover"],
-      invalidCommands: ["takeover"],
-      warnings: ["No king-ai CLI commands referenced"],
-      valid: false
-    }
-  ], "king-ai");
+  const text = formatDashboard(
+    [
+      {
+        skillName: "valid",
+        filePath: "/tmp/valid/SKILL.md",
+        referencedCommands: ["reply"],
+        invalidCommands: [],
+        warnings: [],
+        valid: true,
+      },
+      {
+        skillName: "invalid",
+        filePath: "/tmp/invalid/SKILL.md",
+        referencedCommands: ["takeover"],
+        invalidCommands: ["takeover"],
+        warnings: ["No king-ai CLI commands referenced"],
+        valid: false,
+      },
+    ],
+    "king-ai",
+  );
   assert.match(text, /king-ai skill-check/);
   assert.match(text, /\[ok\] valid/);
   assert.match(text, /\[fail\] invalid/);

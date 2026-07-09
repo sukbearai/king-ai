@@ -41,7 +41,7 @@ export const DEFAULT_TREASURY_CONFIG: TreasuryConfig = {
   yield_rise_warning_bps: 5,
   yield_rise_critical_bps: 10,
   yield_high_lookback_years: 5,
-  yield_near_high_bps: 5
+  yield_near_high_bps: 5,
 };
 
 export function parseTreasuryConfig(raw: unknown): TreasuryConfig {
@@ -49,12 +49,27 @@ export function parseTreasuryConfig(raw: unknown): TreasuryConfig {
   return {
     price_watchlist: recordOrDefault(ds.price_watchlist, DEFAULT_TREASURY_CONFIG.price_watchlist),
     yield_watchlist: recordOrDefault(ds.yield_watchlist, DEFAULT_TREASURY_CONFIG.yield_watchlist),
-    price_drop_warning_pct: positiveOrDefault(ds.price_drop_warning_pct, DEFAULT_TREASURY_CONFIG.price_drop_warning_pct),
-    price_drop_critical_pct: positiveOrDefault(ds.price_drop_critical_pct, DEFAULT_TREASURY_CONFIG.price_drop_critical_pct),
-    yield_rise_warning_bps: positiveOrDefault(ds.yield_rise_warning_bps, DEFAULT_TREASURY_CONFIG.yield_rise_warning_bps),
-    yield_rise_critical_bps: positiveOrDefault(ds.yield_rise_critical_bps, DEFAULT_TREASURY_CONFIG.yield_rise_critical_bps),
-    yield_high_lookback_years: positiveOrDefault(ds.yield_high_lookback_years, DEFAULT_TREASURY_CONFIG.yield_high_lookback_years),
-    yield_near_high_bps: positiveOrDefault(ds.yield_near_high_bps, DEFAULT_TREASURY_CONFIG.yield_near_high_bps)
+    price_drop_warning_pct: positiveOrDefault(
+      ds.price_drop_warning_pct,
+      DEFAULT_TREASURY_CONFIG.price_drop_warning_pct,
+    ),
+    price_drop_critical_pct: positiveOrDefault(
+      ds.price_drop_critical_pct,
+      DEFAULT_TREASURY_CONFIG.price_drop_critical_pct,
+    ),
+    yield_rise_warning_bps: positiveOrDefault(
+      ds.yield_rise_warning_bps,
+      DEFAULT_TREASURY_CONFIG.yield_rise_warning_bps,
+    ),
+    yield_rise_critical_bps: positiveOrDefault(
+      ds.yield_rise_critical_bps,
+      DEFAULT_TREASURY_CONFIG.yield_rise_critical_bps,
+    ),
+    yield_high_lookback_years: positiveOrDefault(
+      ds.yield_high_lookback_years,
+      DEFAULT_TREASURY_CONFIG.yield_high_lookback_years,
+    ),
+    yield_near_high_bps: positiveOrDefault(ds.yield_near_high_bps, DEFAULT_TREASURY_CONFIG.yield_near_high_bps),
   };
 }
 
@@ -65,7 +80,7 @@ export function yieldChangeBps(currentPct: number, prevPct: number): number {
 
 export function classifyPriceDropSeverity(
   changePct: number,
-  cfg: Pick<TreasuryConfig, "price_drop_warning_pct" | "price_drop_critical_pct">
+  cfg: Pick<TreasuryConfig, "price_drop_warning_pct" | "price_drop_critical_pct">,
 ): "none" | "warning" | "critical" {
   if (!Number.isFinite(changePct) || changePct > -cfg.price_drop_warning_pct) return "none";
   if (changePct <= -cfg.price_drop_critical_pct) return "critical";
@@ -74,7 +89,7 @@ export function classifyPriceDropSeverity(
 
 export function classifyYieldRiseSeverity(
   changeBps: number,
-  cfg: Pick<TreasuryConfig, "yield_rise_warning_bps" | "yield_rise_critical_bps">
+  cfg: Pick<TreasuryConfig, "yield_rise_warning_bps" | "yield_rise_critical_bps">,
 ): "none" | "warning" | "critical" {
   if (!Number.isFinite(changeBps) || changeBps < cfg.yield_rise_warning_bps) return "none";
   if (changeBps >= cfg.yield_rise_critical_bps) return "critical";
@@ -86,7 +101,7 @@ export function buildYieldHighContext(
   currentYieldPct: number,
   periodHighPct: number,
   lookbackYears: number,
-  nearHighBps: number
+  nearHighBps: number,
 ): TreasuryYieldHighContext {
   const bpsBelowHigh = yieldChangeBps(currentYieldPct, periodHighPct);
   const isNewHigh = bpsBelowHigh >= 0.5;
@@ -97,7 +112,7 @@ export function buildYieldHighContext(
     period_high_pct: periodHighPct,
     bps_below_high: bpsBelowHigh,
     is_new_high: isNewHigh,
-    is_near_high: isNearHigh
+    is_near_high: isNearHigh,
   };
 }
 
@@ -115,7 +130,7 @@ export async function fetchTreasuryYieldQuote(symbol: string): Promise<TreasuryY
     symbol,
     yield_pct: q.price,
     change_bps: yieldChangeBps(q.price, prev),
-    prev_yield_pct: prev
+    prev_yield_pct: prev,
   };
 }
 
@@ -125,7 +140,7 @@ export async function fetchYieldPeriodHigh(symbol: string, years: number): Promi
   try {
     const res = await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0 king-ai/1.0" },
-      signal: AbortSignal.timeout(12_000)
+      signal: AbortSignal.timeout(12_000),
     });
     if (!res.ok) return null;
     const body = (await res.json()) as {
@@ -158,7 +173,7 @@ export function formatTreasuryBriefLine(
   priceQuote: TreasuryPriceQuote | null,
   yieldQuote: TreasuryYieldQuote | null,
   highCtx: TreasuryYieldHighContext | null,
-  cfg: TreasuryConfig
+  cfg: TreasuryConfig,
 ): string {
   if (priceQuote) {
     const flag = classifyPriceDropSeverity(priceQuote.change_pct, cfg) !== "none" ? " ⚠️" : "";

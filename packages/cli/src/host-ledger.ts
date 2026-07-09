@@ -1,11 +1,25 @@
 import { join, resolve } from "node:path";
 import { appendJsonl, compactJsonl, readJsonl, type CompactJsonlResult } from "./jsonl.js";
 import type { KingHandoffPolicy, KingWorkflowObjectType } from "./team-workflow.js";
-import { workflowCardFromCapsule, workflowCardFromTask, workflowReadiness, type WorkflowCard, type WorkflowCapsuleLike } from "./workflow-core.js";
+import {
+  workflowCardFromCapsule,
+  workflowCardFromTask,
+  workflowReadiness,
+  type WorkflowCard,
+  type WorkflowCapsuleLike,
+} from "./workflow-core.js";
 
 export type HostTaskStatus = "pending" | "in_progress" | "blocked" | "done" | "cancelled";
 export type HostCapsuleStatus = "open" | "in_review" | "accepted" | "abandoned";
-export type HostWorkflowStatus = "open" | "assigned" | "in_progress" | "blocked" | "review" | "waiting_human" | "done" | "cancelled";
+export type HostWorkflowStatus =
+  | "open"
+  | "assigned"
+  | "in_progress"
+  | "blocked"
+  | "review"
+  | "waiting_human"
+  | "done"
+  | "cancelled";
 
 export interface HostLedgerPathInput {
   outputDir?: string;
@@ -262,7 +276,10 @@ export function hostWorkflowPathForOutputDir(outputDir = "deliverables"): string
   return join(resolve(outputDir), "workflow.jsonl");
 }
 
-export async function createHostTask(input: HostTaskCreateInput, now: () => Date = () => new Date()): Promise<HostTask> {
+export async function createHostTask(
+  input: HostTaskCreateInput,
+  now: () => Date = () => new Date(),
+): Promise<HostTask> {
   const createdAt = now().toISOString();
   const task: HostTask = {
     id: safeId(input.id) ?? buildId("task", createdAt),
@@ -276,13 +293,16 @@ export async function createHostTask(input: HostTaskCreateInput, now: () => Date
     dependsOn: normalizeStringArray(input.dependsOn, "dependsOn"),
     capsuleId: cleanString(input.capsuleId),
     acceptance: normalizeStringArray(input.acceptance, "acceptance"),
-    detail: cleanString(input.detail)
+    detail: cleanString(input.detail),
   };
   await appendJsonl(taskPath(input), task);
   return task;
 }
 
-export async function updateHostTask(input: HostTaskUpdateInput, now: () => Date = () => new Date()): Promise<HostTask> {
+export async function updateHostTask(
+  input: HostTaskUpdateInput,
+  now: () => Date = () => new Date(),
+): Promise<HostTask> {
   const id = requiredId(input.id, "task id");
   const tasks = await listHostTasks({ outputDir: input.outputDir, tasksFile: input.tasksFile });
   const existing = tasks.find((task) => task.id === id);
@@ -299,7 +319,7 @@ export async function updateHostTask(input: HostTaskUpdateInput, now: () => Date
     capsuleId: cleanString(input.capsuleId),
     acceptance: input.acceptance === undefined ? undefined : normalizeStringArray(input.acceptance, "acceptance"),
     detail: cleanString(input.detail),
-    result: cleanString(input.result)
+    result: cleanString(input.result),
   });
   const next = applyTaskUpdate(existing, update);
   validateTaskUpdate(existing, next, tasks);
@@ -322,7 +342,9 @@ export async function listHostTasks(input: HostTaskListInput = {}): Promise<Host
 
 export async function buildHostAgenda(input: HostAgendaInput = {}): Promise<HostAgenda> {
   const tasks = await listHostTasks(input);
-  const done = new Set(tasks.filter((task) => task.status === "done" || task.status === "cancelled").map((task) => task.id));
+  const done = new Set(
+    tasks.filter((task) => task.status === "done" || task.status === "cancelled").map((task) => task.id),
+  );
   const agendaTasks = tasks
     .filter((task) => task.status !== "done" && task.status !== "cancelled")
     .map((task): HostAgendaTask => {
@@ -330,22 +352,25 @@ export async function buildHostAgenda(input: HostAgendaInput = {}): Promise<Host
       return {
         ...task,
         blockedBy,
-        ready: task.status !== "blocked" && blockedBy.length === 0
+        ready: task.status !== "blocked" && blockedBy.length === 0,
       };
     });
   const ready = agendaTasks.filter((task) => task.ready);
   const blocked = agendaTasks.filter((task) => !task.ready);
   const limit = normalizeLimit(input.limit);
-  const selected = (limit ? agendaTasks.slice(0, limit) : agendaTasks);
+  const selected = limit ? agendaTasks.slice(0, limit) : agendaTasks;
   return {
     tasks: selected,
     readyCount: ready.length,
     blockedCount: blocked.length,
-    summary: formatHostAgenda({ tasks: selected, readyCount: ready.length, blockedCount: blocked.length })
+    summary: formatHostAgenda({ tasks: selected, readyCount: ready.length, blockedCount: blocked.length }),
   };
 }
 
-export async function createHostCapsule(input: HostCapsuleCreateInput, now: () => Date = () => new Date()): Promise<HostCapsule> {
+export async function createHostCapsule(
+  input: HostCapsuleCreateInput,
+  now: () => Date = () => new Date(),
+): Promise<HostCapsule> {
   const createdAt = now().toISOString();
   const capsule: HostCapsule = {
     id: safeId(input.id) ?? buildId("capsule", createdAt),
@@ -358,15 +383,20 @@ export async function createHostCapsule(input: HostCapsuleCreateInput, now: () =
     allowedPaths: requiredStringArray(input.allowedPaths, "allowedPaths"),
     acceptance: requiredStringArray(input.acceptance, "acceptance"),
     reviewer: requiredString(input.reviewer, "capsule reviewer"),
-    verificationCommands: requiredStringArray(input.verificationCommands, "verificationCommands")
+    verificationCommands: requiredStringArray(input.verificationCommands, "verificationCommands"),
   };
   await appendJsonl(capsulePath(input), capsule);
   return capsule;
 }
 
-export async function updateHostCapsule(input: HostCapsuleUpdateInput, now: () => Date = () => new Date()): Promise<HostCapsule> {
+export async function updateHostCapsule(
+  input: HostCapsuleUpdateInput,
+  now: () => Date = () => new Date(),
+): Promise<HostCapsule> {
   const id = requiredId(input.id, "capsule id");
-  const existing = (await listHostCapsules({ outputDir: input.outputDir, capsulesFile: input.capsulesFile })).find((capsule) => capsule.id === id);
+  const existing = (await listHostCapsules({ outputDir: input.outputDir, capsulesFile: input.capsulesFile })).find(
+    (capsule) => capsule.id === id,
+  );
   if (!existing) throw new Error(`host capsule not found: ${id}`);
   const update: HostCapsuleUpdate = dropUndefined({
     id,
@@ -376,10 +406,14 @@ export async function updateHostCapsule(input: HostCapsuleUpdateInput, now: () =
     goal: cleanString(input.goal),
     owner: cleanString(input.owner),
     branchOrWorktree: cleanString(input.branchOrWorktree),
-    allowedPaths: input.allowedPaths === undefined ? undefined : requiredStringArray(input.allowedPaths, "allowedPaths"),
+    allowedPaths:
+      input.allowedPaths === undefined ? undefined : requiredStringArray(input.allowedPaths, "allowedPaths"),
     acceptance: input.acceptance === undefined ? undefined : requiredStringArray(input.acceptance, "acceptance"),
     reviewer: cleanString(input.reviewer),
-    verificationCommands: input.verificationCommands === undefined ? undefined : requiredStringArray(input.verificationCommands, "verificationCommands")
+    verificationCommands:
+      input.verificationCommands === undefined
+        ? undefined
+        : requiredStringArray(input.verificationCommands, "verificationCommands"),
   });
   const next = applyCapsuleUpdate(existing, update);
   void workflowCardFromCapsule(next);
@@ -405,7 +439,10 @@ export async function getHostCapsule(input: HostLedgerPathInput & { id: string }
   return (await listHostCapsules(input)).find((capsule) => capsule.id === id) ?? null;
 }
 
-export async function createHostWorkflowCard(input: HostWorkflowCardCreateInput, now: () => Date = () => new Date()): Promise<HostWorkflowCard> {
+export async function createHostWorkflowCard(
+  input: HostWorkflowCardCreateInput,
+  now: () => Date = () => new Date(),
+): Promise<HostWorkflowCard> {
   const createdAt = now().toISOString();
   const card: HostWorkflowCard = {
     kind: normalizeWorkflowKind(input.kind),
@@ -426,13 +463,16 @@ export async function createHostWorkflowCard(input: HostWorkflowCardCreateInput,
     artifactPath: cleanString(input.artifactPath),
     detail: cleanString(input.detail),
     result: cleanString(input.result),
-    metadata: normalizeMetadata(input.metadata)
+    metadata: normalizeMetadata(input.metadata),
   };
   await appendJsonl(workflowPath(input), card);
   return card;
 }
 
-export async function updateHostWorkflowCard(input: HostWorkflowCardUpdateInput, now: () => Date = () => new Date()): Promise<HostWorkflowCard> {
+export async function updateHostWorkflowCard(
+  input: HostWorkflowCardUpdateInput,
+  now: () => Date = () => new Date(),
+): Promise<HostWorkflowCard> {
   const id = requiredId(input.id, "workflow id");
   const cards = await listHostWorkflowCards({ outputDir: input.outputDir, workflowFile: input.workflowFile });
   const existing = cards.find((card) => card.id === id);
@@ -454,7 +494,7 @@ export async function updateHostWorkflowCard(input: HostWorkflowCardUpdateInput,
     artifactPath: cleanString(input.artifactPath),
     detail: cleanString(input.detail),
     result: cleanString(input.result),
-    metadata: normalizeMetadata(input.metadata)
+    metadata: normalizeMetadata(input.metadata),
   });
   const merged = applyWorkflowUpdate(existing, update);
   validateWorkflowUpdate(existing, merged, cards);
@@ -483,33 +523,39 @@ export async function listHostWorkflowCards(input: HostWorkflowCardListInput = {
 
 export function formatHostWorkflowCards(cards: HostWorkflowCard[]): string {
   if (cards.length === 0) return "no host workflow cards";
-  return cards.map((card) => {
-    const owner = card.ownerRole ? ` ownerRole=${card.ownerRole}` : "";
-    const reviewer = card.reviewerRole ? ` reviewerRole=${card.reviewerRole}` : "";
-    const assignee = card.assignee ? ` @${card.assignee}` : "";
-    const deps = card.dependsOn.length ? ` dependsOn=${card.dependsOn.join(",")}` : "";
-    const artifact = card.artifactPath ? ` artifact=${card.artifactPath}` : "";
-    return `${card.id} ${card.kind} ${card.status}${assignee}${owner}${reviewer}${deps}${artifact}: ${card.title}`;
-  }).join("\n");
+  return cards
+    .map((card) => {
+      const owner = card.ownerRole ? ` ownerRole=${card.ownerRole}` : "";
+      const reviewer = card.reviewerRole ? ` reviewerRole=${card.reviewerRole}` : "";
+      const assignee = card.assignee ? ` @${card.assignee}` : "";
+      const deps = card.dependsOn.length ? ` dependsOn=${card.dependsOn.join(",")}` : "";
+      const artifact = card.artifactPath ? ` artifact=${card.artifactPath}` : "";
+      return `${card.id} ${card.kind} ${card.status}${assignee}${owner}${reviewer}${deps}${artifact}: ${card.title}`;
+    })
+    .join("\n");
 }
 
 export function formatHostTasks(tasks: HostTask[]): string {
   if (tasks.length === 0) return "no host tasks";
-  return tasks.map((task) => {
-    const deps = task.dependsOn.length ? ` dependsOn=${task.dependsOn.join(",")}` : "";
-    const capsule = task.capsuleId ? ` capsule=${task.capsuleId}` : "";
-    const owner = task.ownerRole ? ` ownerRole=${task.ownerRole}` : "";
-    const reviewer = task.reviewerRole ? ` reviewerRole=${task.reviewerRole}` : "";
-    return `${task.id} ${task.status}${task.assignee ? ` @${task.assignee}` : ""}${owner}${reviewer}${deps}${capsule}: ${task.title}`;
-  }).join("\n");
+  return tasks
+    .map((task) => {
+      const deps = task.dependsOn.length ? ` dependsOn=${task.dependsOn.join(",")}` : "";
+      const capsule = task.capsuleId ? ` capsule=${task.capsuleId}` : "";
+      const owner = task.ownerRole ? ` ownerRole=${task.ownerRole}` : "";
+      const reviewer = task.reviewerRole ? ` reviewerRole=${task.reviewerRole}` : "";
+      return `${task.id} ${task.status}${task.assignee ? ` @${task.assignee}` : ""}${owner}${reviewer}${deps}${capsule}: ${task.title}`;
+    })
+    .join("\n");
 }
 
 export function formatHostCapsules(capsules: HostCapsule[]): string {
   if (capsules.length === 0) return "no host capsules";
-  return capsules.map((capsule) => {
-    const task = capsule.taskId ? ` task=${capsule.taskId}` : "";
-    return `${capsule.id} ${capsule.status} owner=${capsule.owner} reviewer=${capsule.reviewer}${task}: ${capsule.goal}`;
-  }).join("\n");
+  return capsules
+    .map((capsule) => {
+      const task = capsule.taskId ? ` task=${capsule.taskId}` : "";
+      return `${capsule.id} ${capsule.status} owner=${capsule.owner} reviewer=${capsule.reviewer}${task}: ${capsule.goal}`;
+    })
+    .join("\n");
 }
 
 export function formatHostAgenda(agenda: Pick<HostAgenda, "tasks" | "readyCount" | "blockedCount">): string {
@@ -520,7 +566,9 @@ export function formatHostAgenda(agenda: Pick<HostAgenda, "tasks" | "readyCount"
   }
   for (const task of agenda.tasks) {
     const blockedBy = task.blockedBy.length ? ` blockedBy=${task.blockedBy.join(",")}` : "";
-    lines.push(`${task.ready ? "ready" : "blocked"} ${task.id}${task.assignee ? ` @${task.assignee}` : ""}${blockedBy}: ${task.title}`);
+    lines.push(
+      `${task.ready ? "ready" : "blocked"} ${task.id}${task.assignee ? ` @${task.assignee}` : ""}${blockedBy}: ${task.title}`,
+    );
   }
   return lines.join("\n");
 }
@@ -550,7 +598,7 @@ export function formatHostLedgerCompact(result: HostLedgerCompactResult): string
     "ledger compacted",
     line("tasks", result.tasks),
     line("capsules", result.capsules),
-    line("workflow", result.workflow)
+    line("workflow", result.workflow),
   ].join("\n");
 }
 
@@ -627,7 +675,7 @@ function applyTaskUpdate(task: HostTask, update: HostTaskUpdate): HostTask {
     acceptance: update.acceptance ?? task.acceptance,
     detail: update.detail ?? task.detail,
     result: update.result ?? task.result,
-    updatedAt: update.updatedAt
+    updatedAt: update.updatedAt,
   };
 }
 
@@ -649,17 +697,20 @@ function applyWorkflowUpdate(card: HostWorkflowCard, update: HostWorkflowCardUpd
     detail: update.detail ?? card.detail,
     result: update.result ?? card.result,
     metadata: update.metadata ?? card.metadata,
-    updatedAt: update.updatedAt
+    updatedAt: update.updatedAt,
   };
 }
 
 function validateTaskUpdate(existing: HostTask, next: HostTask, tasks: HostTask[]): void {
   if (next.status !== "done") return;
-  const done = new Set(tasks
-    .filter((task) => task.id !== next.id && (task.status === "done" || task.status === "cancelled"))
-    .map((task) => task.id));
+  const done = new Set(
+    tasks
+      .filter((task) => task.id !== next.id && (task.status === "done" || task.status === "cancelled"))
+      .map((task) => task.id),
+  );
   const readiness = workflowReadiness(workflowCardFromTask(next), done);
-  if (readiness.blockedBy.length > 0) throw new Error(`host task ${next.id} depends on unfinished tasks: ${readiness.blockedBy.join(", ")}`);
+  if (readiness.blockedBy.length > 0)
+    throw new Error(`host task ${next.id} depends on unfinished tasks: ${readiness.blockedBy.join(", ")}`);
   if (readiness.missingEvidence) throw new Error(`host task ${next.id} requires result before marking done`);
   void existing;
 }
@@ -667,15 +718,20 @@ function validateTaskUpdate(existing: HostTask, next: HostTask, tasks: HostTask[
 function validateWorkflowUpdate(existing: HostWorkflowCard, next: HostWorkflowCard, cards: HostWorkflowCard[]): void {
   if (next.status !== "done") return;
 
-  const done = new Set(cards
-    .filter((card) => card.id !== next.id && (card.status === "done" || card.status === "cancelled"))
-    .map((card) => card.id));
+  const done = new Set(
+    cards
+      .filter((card) => card.id !== next.id && (card.status === "done" || card.status === "cancelled"))
+      .map((card) => card.id),
+  );
   const readiness = workflowReadiness(next, done);
-  if (readiness.blockedBy.length > 0) throw new Error(`workflow card ${next.id} depends on unfinished workflow cards: ${readiness.blockedBy.join(", ")}`);
+  if (readiness.blockedBy.length > 0)
+    throw new Error(`workflow card ${next.id} depends on unfinished workflow cards: ${readiness.blockedBy.join(", ")}`);
 
-  if (readiness.missingEvidence) throw new Error(`workflow card ${next.id} requires result or artifactPath before marking done`);
+  if (readiness.missingEvidence)
+    throw new Error(`workflow card ${next.id} requires result or artifactPath before marking done`);
 
-  if (readiness.missingReviewVerdict) throw new Error(`review card ${next.id} requires result=approved or result=changes_requested before marking done`);
+  if (readiness.missingReviewVerdict)
+    throw new Error(`review card ${next.id} requires result=approved or result=changes_requested before marking done`);
 
   void existing;
 }
@@ -692,14 +748,20 @@ function applyCapsuleUpdate(capsule: HostCapsule, update: HostCapsuleUpdate): Ho
     acceptance: update.acceptance ?? capsule.acceptance,
     reviewer: update.reviewer ?? capsule.reviewer,
     verificationCommands: update.verificationCommands ?? capsule.verificationCommands,
-    updatedAt: update.updatedAt
+    updatedAt: update.updatedAt,
   };
 }
 
 function isTask(value: unknown): value is HostTask {
   if (!value || typeof value !== "object") return false;
   const record = value as HostTask;
-  return typeof record.id === "string" && typeof record.title === "string" && Array.isArray(record.dependsOn) && Array.isArray(record.acceptance) && isTaskStatus(record.status);
+  return (
+    typeof record.id === "string" &&
+    typeof record.title === "string" &&
+    Array.isArray(record.dependsOn) &&
+    Array.isArray(record.acceptance) &&
+    isTaskStatus(record.status)
+  );
 }
 
 function isTaskUpdate(value: unknown): value is HostTaskUpdate {
@@ -711,7 +773,12 @@ function isTaskUpdate(value: unknown): value is HostTaskUpdate {
 function isCapsule(value: unknown): value is HostCapsule {
   if (!value || typeof value !== "object") return false;
   const record = value as HostCapsule;
-  return typeof record.id === "string" && typeof record.goal === "string" && Array.isArray(record.allowedPaths) && isCapsuleStatus(record.status);
+  return (
+    typeof record.id === "string" &&
+    typeof record.goal === "string" &&
+    Array.isArray(record.allowedPaths) &&
+    isCapsuleStatus(record.status)
+  );
 }
 
 function isCapsuleUpdate(value: unknown): value is HostCapsuleUpdate {
@@ -723,7 +790,14 @@ function isCapsuleUpdate(value: unknown): value is HostCapsuleUpdate {
 function isWorkflowCard(value: unknown): value is HostWorkflowCard {
   if (!value || typeof value !== "object") return false;
   const record = value as HostWorkflowCard;
-  return typeof record.id === "string" && typeof record.title === "string" && isWorkflowKind(record.kind) && isWorkflowStatus(record.status) && Array.isArray(record.dependsOn) && Array.isArray(record.acceptance);
+  return (
+    typeof record.id === "string" &&
+    typeof record.title === "string" &&
+    isWorkflowKind(record.kind) &&
+    isWorkflowStatus(record.status) &&
+    Array.isArray(record.dependsOn) &&
+    Array.isArray(record.acceptance)
+  );
 }
 
 function isWorkflowUpdate(value: unknown): value is HostWorkflowCardUpdate {
@@ -738,7 +812,9 @@ function normalizeTaskStatus(value: unknown): HostTaskStatus {
 }
 
 function isTaskStatus(value: unknown): value is HostTaskStatus {
-  return value === "pending" || value === "in_progress" || value === "blocked" || value === "done" || value === "cancelled";
+  return (
+    value === "pending" || value === "in_progress" || value === "blocked" || value === "done" || value === "cancelled"
+  );
 }
 
 function normalizeCapsuleStatus(value: unknown): HostCapsuleStatus {
@@ -756,7 +832,14 @@ function normalizeWorkflowKind(value: unknown): KingWorkflowObjectType {
 }
 
 function isWorkflowKind(value: unknown): value is KingWorkflowObjectType {
-  return value === "initiative" || value === "task" || value === "handoff" || value === "review" || value === "decision" || value === "artifact";
+  return (
+    value === "initiative" ||
+    value === "task" ||
+    value === "handoff" ||
+    value === "review" ||
+    value === "decision" ||
+    value === "artifact"
+  );
 }
 
 function normalizeWorkflowStatus(value: unknown): HostWorkflowStatus {
@@ -765,7 +848,16 @@ function normalizeWorkflowStatus(value: unknown): HostWorkflowStatus {
 }
 
 function isWorkflowStatus(value: unknown): value is HostWorkflowStatus {
-  return value === "open" || value === "assigned" || value === "in_progress" || value === "blocked" || value === "review" || value === "waiting_human" || value === "done" || value === "cancelled";
+  return (
+    value === "open" ||
+    value === "assigned" ||
+    value === "in_progress" ||
+    value === "blocked" ||
+    value === "review" ||
+    value === "waiting_human" ||
+    value === "done" ||
+    value === "cancelled"
+  );
 }
 
 function defaultWorkflowStatus(kind: KingWorkflowObjectType): HostWorkflowStatus {
