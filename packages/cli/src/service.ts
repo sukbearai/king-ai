@@ -44,6 +44,7 @@ export type RunningAgentState = {
   lifecycle?: string;
   status?: "idle" | "running" | "disabled";
   model?: string;
+  reasoningEffort?: string;
   sharedSkillSnapshot?: {
     id: string;
     root: string;

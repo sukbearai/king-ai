@@ -270,12 +270,16 @@ test("buildStandingPrompt documents King AI command habits", () => {
   assert.match(prompt, /Agent workspace root: \/tmp\/agents\/demo-agent/);
   assert.match(prompt, /\/Users\/fayon\/workspace\/github/);
   assert.match(prompt, /king-ai glance <conversationId>/);
+  assert.match(prompt, /only when the wake is not pinned to a single conversation/);
+  assert.match(prompt, /For pinned single-conversation wakes/);
   assert.match(prompt, /king-ai card claim <cardId>/);
   assert.match(prompt, /context get\|set\|list/);
   assert.match(prompt, /artifact put\|list\|get/);
   assert.match(prompt, /hypothesis create\|list\|update/);
   assert.match(prompt, /task list\|create\|update\|done/);
   assert.match(prompt, /king-ai reply <conversationId> --file notes\/reply\.md/);
+  assert.match(prompt, /cat > notes\/reply\.md <<'REPLY'/);
+  assert.match(prompt, /must cost at most one tool round/);
   assert.match(prompt, /Shared skills:/);
   assert.match(prompt, /KING_AI_SHARED_SKILLS/);
   assert.match(prompt, /activation snapshot/);
@@ -303,6 +307,7 @@ test("buildChatDelta carries fetched inbox, roster, and response mode guidance",
   });
   assert.match(delta, /ALREADY FETCHED/);
   assert.match(delta, /no need to re-run king-ai inbox or messages/);
+  assert.match(delta, /use the preamble Conversation Glance snapshot for pinned single-conversation wakes/);
   assert.match(delta, /Response mode: one-of-us/);
   assert.match(formatTriageNote({ actionable: true, routeHint: "steer", priority: "urgent" }), /Priority: urgent/);
   assert.match(formatTriageNote({ actionable: true, routeHint: "steer", priority: "urgent" }), /Route hint: steer/);
@@ -318,6 +323,7 @@ test("buildChatDelta adds simple-turn fast path only for directed work", () => {
   assert.match(routed, /Do not run king-ai inbox, messages, or task list/);
   assert.match(routed, /Conversation Glance snapshot/);
   assert.match(routed, /king-ai reply <conversationId>.*king-ai task done/);
+  assert.match(routed, /cat > notes\/reply\.md <<'REPLY'/);
 
   const directed = buildChatDelta("Human: ack?", "memory", "dev\tDev", { actionable: true, responseMode: "me" });
   assert.match(directed, /Fast path for simple routed work/);
@@ -335,6 +341,7 @@ test("engineTurnToolHint tells codex to skip glance and chain reply with task do
   const codex = engineTurnToolHint("codex", triage);
   assert.match(codex, /do NOT run king-ai glance first/i);
   assert.match(codex, /king-ai reply <conversationId>.*king-ai task done <taskId>/);
+  assert.match(codex, /cat > notes\/reply\.md <<'REPLY'/);
   assert.equal(engineTurnToolHint("claude", { actionable: true, responseMode: "one-of-us" }), "");
   assert.match(engineTurnToolHint("claude", triage), /Conversation Glance snapshot/);
 });

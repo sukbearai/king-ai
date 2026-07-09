@@ -485,6 +485,7 @@ test("runAgentsCommand renders agent matrix", () => {
       status: "idle",
       model: "default",
       fastModel: "default",
+      reasoningEffort: "default",
       unreadMessages: 0,
       openClaims: 0,
       activeCards: 0,

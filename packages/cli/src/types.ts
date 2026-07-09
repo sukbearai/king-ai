@@ -15,6 +15,7 @@ export interface AgentConfig {
   engine?: EngineId;
   model?: string;
   fastModel?: string;
+  reasoningEffort?: string;
   lifecycle?: AgentLifecycle;
 }
 
@@ -74,6 +75,7 @@ export interface EngineRunArgs {
   env: NodeJS.ProcessEnv;
   model?: string;
   fastModel?: string;
+  reasoningEffort?: string;
   resumeSessionId?: string | null;
   standingPrompt?: string;
   imagePaths?: string[];

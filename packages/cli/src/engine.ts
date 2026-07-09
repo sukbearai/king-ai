@@ -1282,6 +1282,7 @@ async function grokHeadlessArgv(args: {
   home: string;
   prompt: string;
   model?: string;
+  reasoningEffort?: string;
   resumeSessionId?: string | null;
   standingPrompt?: string;
   outputFormat: "json" | "streaming-json" | "plain";
@@ -1289,6 +1290,7 @@ async function grokHeadlessArgv(args: {
 }): Promise<string[]> {
   const extra = envExtraArgs("KING_AI_GROK_ARGS");
   const model = args.model ? ["-m", args.model] : [];
+  const reasoningEffort = args.reasoningEffort?.trim() ? ["--reasoning-effort", args.reasoningEffort.trim()] : [];
   const resume = args.resumeSessionId ? ["--resume", args.resumeSessionId] : [];
   const rules = args.standingPrompt && !args.resumeSessionId ? ["--rules", args.standingPrompt] : [];
   const base = [
@@ -1298,6 +1300,7 @@ async function grokHeadlessArgv(args: {
     "--cwd",
     args.home,
     ...model,
+    ...reasoningEffort,
     ...extra,
     ...rules,
     ...resume,
@@ -1465,6 +1468,7 @@ class GrokSession implements EngineSession {
         home: this.opts.home,
         prompt,
         model: this.opts.model,
+        reasoningEffort: this.opts.reasoningEffort,
         resumeSessionId,
         standingPrompt,
         outputFormat: "streaming-json",
@@ -1586,6 +1590,7 @@ class GrokAdapter implements EngineAdapter {
       home: args.home,
       prompt: args.prompt,
       model: args.model,
+      reasoningEffort: args.reasoningEffort,
       resumeSessionId: args.resumeSessionId,
       standingPrompt: args.standingPrompt,
       outputFormat: "streaming-json",

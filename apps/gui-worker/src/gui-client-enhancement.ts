@@ -24,6 +24,7 @@ const TRANSLATIONS = {
     localCli: '本地 CLI',
     mainModel: '主模型',
     fastModel: '快速模型',
+    reasoningEffort: '推理强度',
     apply: '应用',
     saving: '保存中...',
     saved: '已保存',
@@ -146,6 +147,7 @@ const TRANSLATIONS = {
     revisionLabel: '退回原因',
     mainModelPlaceholder: '例如 opus / gpt-5，留空使用默认',
     fastModelPlaceholder: '留空使用默认小模型',
+    reasoningEffortPlaceholder: '留空使用引擎默认，如 low/medium/high',
     windowPlaceholder: '例如 发布计划 / 客户 A',
     workflowSoftwareDev: '软件开发',
     workflowIeltsStudy: '雅思学习',
@@ -177,6 +179,7 @@ const TRANSLATIONS = {
     localCli: 'Local CLI',
     mainModel: 'Main model',
     fastModel: 'Fast model',
+    reasoningEffort: 'Reasoning effort',
     apply: 'Apply',
     saving: 'Saving...',
     saved: 'Saved',
@@ -299,6 +302,7 @@ const TRANSLATIONS = {
     revisionLabel: 'Revision',
     mainModelPlaceholder: 'e.g. opus / gpt-5, blank means default',
     fastModelPlaceholder: 'Blank means default fast model',
+    reasoningEffortPlaceholder: 'e.g. low/medium/high, blank for engine default',
     windowPlaceholder: 'e.g. Release plan / Client A',
     workflowSoftwareDev: 'Software Development',
     workflowIeltsStudy: 'IELTS Study',
@@ -1796,7 +1800,8 @@ saveAgentConfig = async function() {
         engine: engine,
         lifecycle: 'on-demand',
         model: document.getElementById('model').value,
-        fastModel: document.getElementById('fastModel').value
+        fastModel: document.getElementById('fastModel').value,
+        reasoningEffort: document.getElementById('reasoningEffort').value
       })
     });
     await new Promise(function(resolve) { setTimeout(resolve, 5000); });

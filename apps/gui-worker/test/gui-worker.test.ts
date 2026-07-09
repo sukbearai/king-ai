@@ -3623,6 +3623,7 @@ test("gui runtime lets the page choose agent engine and models", async () => {
             lifecycle: "disabled",
             model: "opus-test",
             fastModel: "haiku-test",
+            reasoningEffort: "low",
           }),
         }),
         bindings,
@@ -3630,7 +3631,15 @@ test("gui runtime lets the page choose agent engine and models", async () => {
     );
 
     const agents = await json<
-      { name?: string; role?: string; engine?: string; lifecycle?: string; model?: string; fastModel?: string }[]
+      {
+        name?: string;
+        role?: string;
+        engine?: string;
+        lifecycle?: string;
+        model?: string;
+        fastModel?: string;
+        reasoningEffort?: string;
+      }[]
     >(
       await worker.fetch(
         new Request("https://gui/api/computers/me/agents", {
@@ -3645,6 +3654,7 @@ test("gui runtime lets the page choose agent engine and models", async () => {
     assert.equal(agents[0]?.lifecycle, "disabled");
     assert.equal(agents[0]?.model, "opus-test");
     assert.equal(agents[0]?.fastModel, "haiku-test");
+    assert.equal(agents[0]?.reasoningEffort, "low");
     // Runtime settings apply to the whole team, not just the coordinator agent.
     assert.ok(agents.length > 1);
     for (const agent of agents) {
@@ -3652,6 +3662,7 @@ test("gui runtime lets the page choose agent engine and models", async () => {
       assert.equal(agent.lifecycle, "disabled");
       assert.equal(agent.model, "opus-test");
       assert.equal(agent.fastModel, "haiku-test");
+      assert.equal(agent.reasoningEffort, "low");
     }
     // Name / role stay specific to the coordinator agent.
     assert.notEqual(agents[1]?.name, "King AI Helper");

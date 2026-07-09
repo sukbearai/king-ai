@@ -2392,15 +2392,17 @@ export class GuiState implements DurableObject {
     const role = typeof payload.role === "string" ? payload.role.trim() : "";
     const model = typeof payload.model === "string" ? payload.model.trim() : "";
     const fastModel = typeof payload.fastModel === "string" ? payload.fastModel.trim() : "";
+    const reasoningEffort = typeof payload.reasoningEffort === "string" ? payload.reasoningEffort.trim() : "";
     const lifecycle = isAgentLifecycle(payload.lifecycle)
       ? payload.lifecycle
       : (previous.lifecycle ?? DEFAULT_AGENT.lifecycle);
-    // Engine / model / fastModel / lifecycle are runtime (local CLI) settings that should apply to
-    // the whole team hosted on this computer, so propagate them to every agent. Name / role are
-    // coordinator-specific and only update the default operator agent.
+    // Engine / model / fastModel / reasoningEffort / lifecycle are runtime (local CLI) settings
+    // that should apply to the whole team hosted on this computer, so propagate them to every
+    // agent. Name / role are coordinator-specific and only update the default operator agent.
     const nextEngine = engine === "claude" || engine === "codex" || engine === "grok" ? engine : DEFAULT_AGENT.engine;
     const nextModel = model || undefined;
     const nextFastModel = fastModel || undefined;
+    const nextReasoningEffort = reasoningEffort || undefined;
     const agents = normalizeAgents(state.agents);
     const previousAgents = agents;
     state.agents = agents.map((agent) => {
@@ -2413,6 +2415,7 @@ export class GuiState implements DurableObject {
         lifecycle,
         model: nextModel,
         fastModel: nextFastModel,
+        reasoningEffort: nextReasoningEffort,
       };
     });
     const nextAgent = state.agents.find((agent) => agent.id === previous.id) ?? defaultAgentFor(state);
@@ -2425,7 +2428,8 @@ export class GuiState implements DurableObject {
         before.engine !== after.engine ||
         before.lifecycle !== after.lifecycle ||
         before.model !== after.model ||
-        before.fastModel !== after.fastModel
+        before.fastModel !== after.fastModel ||
+        before.reasoningEffort !== after.reasoningEffort
       );
     });
     state.agentConfigUpdatedAt = Date.now();

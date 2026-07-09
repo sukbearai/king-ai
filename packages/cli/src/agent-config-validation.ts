@@ -1,7 +1,11 @@
 import { normalizeAgentLifecycle } from "./lifecycle.js";
 import type { AgentConfig, EngineId } from "./types.js";
 
-export type AgentConfigWarningCode = "idle-cached-without-resume" | "missing-preferred-engine" | "unknown-lifecycle";
+export type AgentConfigWarningCode =
+  | "idle-cached-without-resume"
+  | "missing-preferred-engine"
+  | "reasoning-effort-ignored"
+  | "unknown-lifecycle";
 
 export interface AgentConfigWarning {
   code: AgentConfigWarningCode;
@@ -31,6 +35,14 @@ export function validateAgentConfig(
       severity: "warning",
       summary: `${agent.engine} is requested but not installed on this machine`,
       detail: `The daemon will use ${effectiveEngine || "the first available engine"} until ${agent.engine} is available.`,
+    });
+  }
+  if (agent.reasoningEffort?.trim() && effectiveEngine !== "grok") {
+    warnings.push({
+      code: "reasoning-effort-ignored",
+      severity: "warning",
+      summary: `reasoningEffort is configured but ${effectiveEngine} will not use it`,
+      detail: "Only the Grok adapter passes reasoningEffort to the local CLI as --reasoning-effort.",
     });
   }
   if (lifecycle === "idle_cached" && effectiveEngine !== "claude" && effectiveEngine !== "grok") {

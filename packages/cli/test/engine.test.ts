@@ -516,6 +516,43 @@ process.stdout.write(JSON.stringify({ type: "end", stopReason: "EndTurn", sessio
   await rm(dir, { recursive: true, force: true });
 });
 
+test("Grok headless run passes model and reasoning effort flags", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-grok-reasoning-"));
+  const binDir = join(dir, "bin");
+  await mkdir(binDir);
+  const seenFile = join(dir, "seen.json");
+  const grok = join(binDir, "grok");
+  await writeFile(
+    grok,
+    `#!/usr/bin/env node
+require("node:fs").writeFileSync(process.env.SEEN_FILE, JSON.stringify(process.argv.slice(2)));
+process.stdout.write(JSON.stringify({ type: "text", data: "ok" }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "end", stopReason: "EndTurn", sessionId: "grok-reasoning-session" }) + "\\n");
+`,
+    "utf8",
+  );
+  await chmod(grok, 0o755);
+
+  const result = await getAdapter("grok").run({
+    home: dir,
+    prompt: "hello",
+    env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}`, SEEN_FILE: seenFile },
+    model: "grok-chat-fast",
+    reasoningEffort: " low ",
+    signal: AbortSignal.timeout(5000),
+    onLog: () => {},
+  });
+
+  assert.equal(result.exitCode, 0);
+  const argv = JSON.parse(await readFile(seenFile, "utf8")) as string[];
+  assert.deepEqual(argv.slice(argv.indexOf("-m"), argv.indexOf("-m") + 2), ["-m", "grok-chat-fast"]);
+  assert.deepEqual(argv.slice(argv.indexOf("--reasoning-effort"), argv.indexOf("--reasoning-effort") + 2), [
+    "--reasoning-effort",
+    "low",
+  ]);
+  await rm(dir, { recursive: true, force: true });
+});
+
 test("Grok headless session resumes after a stale session id", async () => {
   const dir = await mkdtemp(join(tmpdir(), "king-ai-grok-session-"));
   const binDir = join(dir, "bin");

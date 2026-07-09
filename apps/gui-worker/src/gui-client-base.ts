@@ -196,7 +196,8 @@ async function saveAgentConfig() {
       engine: document.getElementById('engine').value,
       lifecycle: 'on-demand',
       model: document.getElementById('model').value,
-      fastModel: document.getElementById('fastModel').value
+      fastModel: document.getElementById('fastModel').value,
+      reasoningEffort: document.getElementById('reasoningEffort').value
     })
   });
   await refresh();
@@ -461,6 +462,7 @@ function renderSummary(summary) {
   if (!settingsOpen) {
     document.getElementById('model').value = agent.model === 'default' ? '' : (agent.model || '');
     document.getElementById('fastModel').value = agent.fastModel === 'default' ? '' : (agent.fastModel || '');
+    document.getElementById('reasoningEffort').value = agent.reasoningEffort === 'default' ? '' : (agent.reasoningEffort || '');
   }
   const modelRows = ['claude', 'codex', 'grok'].map(function(engine) {
     const available = engines.includes(engine);

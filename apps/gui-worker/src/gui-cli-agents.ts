@@ -13,6 +13,7 @@ export type GuiCliAgentStateSummary = {
   status: string;
   model: string;
   fastModel: string;
+  reasoningEffort: string;
   unreadMessages: number;
   openClaims: number;
   activeCards: number;

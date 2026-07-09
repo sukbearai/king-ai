@@ -234,7 +234,7 @@ Remote test diagnostics: when a human asks you to investigate bugs, logs, databa
 Memory: durable memory lives in memory/MEMORY.md and detail files under memory/. When asked to remember something, write it to a memory file and add a one-line pointer to MEMORY.md.
 
 Coordination:
-- Before you commit a reply or shared tool action, run king-ai glance <conversationId>. Treat the composing list as raised hands ordered by who started first.
+- Before you commit a reply or shared tool action, run king-ai glance <conversationId> only when the wake is not pinned to a single conversation, or when composing in a group where the preamble snapshot may be stale. For pinned single-conversation wakes, trust the runtime preamble's Conversation Glance snapshot instead of glancing again. Treat the composing list as raised hands ordered by who started first.
 - If another teammate already posted the same angle, do not repeat it. React, stay silent, or build on it only when you add something new.
 - Ordinary agent room chatter does not wake peers into their runtime inbox unless it is directed, uses @<agent-id>, or is marked steer/decision/blocker. If you need a specific teammate to act, mention their exact id or use king-ai send/dm/task.
 - If a teammate has an earlier composing claim and your planned reply or shared tool action is redundant, wait and glance again until their claim clears or their reply lands.
@@ -243,7 +243,10 @@ Coordination:
 - For sequence, relay, round-robin, no-duplicates, or "who starts" tasks, continue from the newest visible message. Never restart the count or fork the opener.
 - Presence checks (你在？, 在吗, roll call) and sequential count games (轮流报数, round-robin): at most one brief human-facing reply per turn; continue the sequence from the newest visible number. Reviewers react or task done only — no public digits or review write-ups. Coordinators stay silent once a teammate already answered.
 
-Posting: for replies with backticks, code, $, quotes, or multiple lines, write a draft under notes/ and send it with king-ai reply <conversationId> --file notes/reply.md or king-ai reply <conversationId> --file notes/reply.md. For short plain text, king-ai reply <conversationId> '<text>' is fine. When answering a specific message, use --quote <messageId>. Address teammates by @<agent-id>, not by display name.
+Posting: a prepared reply must cost at most one tool round. For short plain text, prefer one shell command: king-ai reply <conversationId> '<text>' && king-ai task done <taskId>. For replies with backticks, code, $, quotes, or multiple lines, create notes/reply.md and post it in the same shell command with a quoted heredoc, then close the task: cat > notes/reply.md <<'REPLY'
+...draft...
+REPLY
+king-ai reply <conversationId> --file notes/reply.md --quote <messageId> && king-ai task done <taskId>. Do not split draft-file creation and posting into separate tool rounds. When answering a specific message, use --quote <messageId>. Address teammates by @<agent-id>, not by display name.
 
 Expressiveness: King AI clients can render Skype shortcode text such as (smile), (clap), (ok), (think), (coffee), or (wfh). Use at most one when it genuinely helps tone; plain text is usually better.
 
@@ -302,7 +305,7 @@ export function simpleTurnFastPathInstruction(triage?: TriageVerdict | null): st
     "Fast path for simple routed work:",
     "If the fetched context is just a roll-call, acknowledgement, direct confirmation, or other low-risk one-line reply, do one brief reply and immediately close the assigned task with king-ai task done.",
     "Do not run king-ai inbox, messages, or task list just to rediscover the same context; use the already fetched unread digest and the Conversation Glance snapshot in the runtime preamble when the wake pins a conversation.",
-    "For pinned single-conversation work, post and close in one shell when ready: king-ai reply <conversationId> --file notes/reply.md --quote <messageId> && king-ai task done <taskId>.",
+    "For pinned single-conversation work, post and close in one shell when ready. Short plain text: king-ai reply <conversationId> '<text>' && king-ai task done <taskId>. Prepared reply: cat > notes/reply.md <<'REPLY'\n...draft...\nREPLY\nking-ai reply <conversationId> --file notes/reply.md --quote <messageId> && king-ai task done <taskId>.",
   ].join("\n");
 }
 
@@ -310,7 +313,7 @@ export function engineTurnToolHint(engine: EngineId, triage?: TriageVerdict | nu
   if (triage?.actionable !== true) return "";
   if (triage.source !== "routed-task" && triage.responseMode !== "me") return "";
   const chain =
-    "king-ai reply <conversationId> --file notes/reply.md --quote <messageId> && king-ai task done <taskId>";
+    "short plain text: king-ai reply <conversationId> '<text>' && king-ai task done <taskId>; prepared reply: cat > notes/reply.md <<'REPLY'\n...draft...\nREPLY\nking-ai reply <conversationId> --file notes/reply.md --quote <messageId> && king-ai task done <taskId>";
   if (engine === "codex") {
     return [
       "Codex tool-chain fast path:",
@@ -336,7 +339,7 @@ export function buildChatDelta(
   const fastPath = simpleTurnFastPathInstruction(triage);
   return `You've been woken because there's new runtime activity, and local triage already decided whether you should respond. If triage marked it relevant, your job is to act, not re-litigate whether to wake.
 
-${triageNote ? `${triageNote}\n\n` : ""}${fastPath ? `${fastPath}\n\n` : ""}${toolHint ? `${toolHint}\n\n` : ""}Your unread messages (ALREADY FETCHED - no need to re-run king-ai inbox or messages just to reread these; do run king-ai glance before posting in a group to catch anything posted while you compose):
+${triageNote ? `${triageNote}\n\n` : ""}${fastPath ? `${fastPath}\n\n` : ""}${toolHint ? `${toolHint}\n\n` : ""}Your unread messages (ALREADY FETCHED - no need to re-run king-ai inbox or messages just to reread these; use the preamble Conversation Glance snapshot for pinned single-conversation wakes, and run king-ai glance before posting in a group to catch anything posted while you compose):
 ${digest || "(none)"}
 
 Your memory index (memory/MEMORY.md):
@@ -679,6 +682,7 @@ export class AgentRunner {
       lifecycle: normalizeAgentLifecycle(this.agent.lifecycle),
       status: this.busy ? "running" : "idle",
       model: this.agent.model,
+      reasoningEffort: this.agent.reasoningEffort,
       sharedSkillSnapshot: this.sharedSkillSnapshot
         ? {
             id: this.sharedSkillSnapshot.id,
@@ -726,6 +730,7 @@ export class AgentRunner {
       this.agent.role === agent.role &&
       this.agent.model === agent.model &&
       this.agent.fastModel === agent.fastModel &&
+      this.agent.reasoningEffort === agent.reasoningEffort &&
       normalizeAgentLifecycle(this.agent.lifecycle) === normalizeAgentLifecycle(agent.lifecycle)
     );
   }
@@ -1498,6 +1503,7 @@ ${delta}`;
         env: this.engineEnv(),
         model: this.agent.model,
         fastModel: this.agent.fastModel,
+        reasoningEffort: this.agent.reasoningEffort,
         resumeSessionId: this.sessionId,
         standingPrompt: this.standingPrompt(),
         onLog: (line) => this.logEngineLine(line),
@@ -1674,6 +1680,7 @@ ${delta}`;
                 env: this.engineEnv(),
                 model: this.agent.model,
                 fastModel: this.agent.fastModel,
+                reasoningEffort: this.agent.reasoningEffort,
                 resumeSessionId: this.sessionId,
                 standingPrompt: this.standingPrompt(),
                 imagePaths,
@@ -1925,6 +1932,7 @@ ${delta}`;
             env: this.engineEnv(),
             model: this.agent.model,
             fastModel: this.agent.fastModel,
+            reasoningEffort: this.agent.reasoningEffort,
             resumeSessionId: this.sessionId,
             standingPrompt: this.standingPrompt(),
             signal: controller.signal,

@@ -40,3 +40,35 @@ test("validateAgentConfig warns about missing preferred engines and unknown life
   );
   assert.match(warnings[1]?.detail ?? "", /codex/);
 });
+
+test("validateAgentConfig warns when reasoning effort is configured for non-grok engines", () => {
+  const warnings = validateAgentConfig(
+    {
+      id: "demo",
+      name: "Demo",
+      engine: "codex",
+      reasoningEffort: "low",
+    },
+    "codex",
+    ["codex", "grok"],
+  );
+
+  assert.deepEqual(
+    warnings.map((warning) => warning.code),
+    ["reasoning-effort-ignored"],
+  );
+  assert.match(warnings[0]?.detail ?? "", /--reasoning-effort/);
+  assert.deepEqual(
+    validateAgentConfig(
+      {
+        id: "chat",
+        name: "Chat",
+        engine: "grok",
+        reasoningEffort: "low",
+      },
+      "grok",
+      ["grok"],
+    ),
+    [],
+  );
+});

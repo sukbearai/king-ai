@@ -51,6 +51,7 @@ export type Agent = {
   lifecycle?: "on-demand" | "24/7" | "idle_cached" | "disabled";
   model?: string;
   fastModel?: string;
+  reasoningEffort?: string;
   events?: string[];
 };
 
@@ -65,6 +66,7 @@ export type AgentStateSummary = {
   status: string;
   model: string;
   fastModel: string;
+  reasoningEffort: string;
   unreadMessages: number;
   openClaims: number;
   activeCards: number;
@@ -684,6 +686,7 @@ export type AgentConfigPayload = {
   engine?: unknown;
   model?: unknown;
   fastModel?: unknown;
+  reasoningEffort?: unknown;
   lifecycle?: unknown;
 };
 

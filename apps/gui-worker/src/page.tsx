@@ -290,6 +290,16 @@ export function renderPage(styles: string): string {
                   </label>
                   <input id="fastModel" placeholder="留空使用默认小模型" data-i18n-placeholder="fastModelPlaceholder" />
                 </div>
+                <div class="field">
+                  <label for="reasoningEffort" data-i18n="reasoningEffort">
+                    Reasoning effort
+                  </label>
+                  <input
+                    id="reasoningEffort"
+                    placeholder="留空使用引擎默认，如 low/medium/high"
+                    data-i18n-placeholder="reasoningEffortPlaceholder"
+                  />
+                </div>
                 <div class="apply-row">
                   <span id="applyStatus" class="apply-status"></span>
                   <button id="applyAgentButton" onclick="saveAgentConfig()" data-i18n="apply">

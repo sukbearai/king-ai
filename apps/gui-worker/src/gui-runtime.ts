@@ -1421,6 +1421,8 @@ function normalizeWorkflowAgentDefinition(value: unknown): Agent | undefined {
     lifecycle: isAgentLifecycle(row.lifecycle) ? row.lifecycle : "on-demand",
     model: typeof row.model === "string" && row.model.trim() ? row.model.trim() : undefined,
     fastModel: typeof row.fastModel === "string" && row.fastModel.trim() ? row.fastModel.trim() : undefined,
+    reasoningEffort:
+      typeof row.reasoningEffort === "string" && row.reasoningEffort.trim() ? row.reasoningEffort.trim() : undefined,
     events: Array.isArray(row.events)
       ? row.events.filter((event): event is string => typeof event === "string" && Boolean(event.trim()))
       : undefined,
@@ -1598,7 +1600,7 @@ function normalizeAgents(agents: Agent[] | undefined): Agent[] {
     const existing = byId.get(agent.id);
     // Built-in role templates are maintained in source, so refresh a built-in agent's role from
     // the template on load instead of freezing whatever was first persisted. Other persisted
-    // fields (engine, lifecycle, model, fastModel, name) are kept. The default operator agent
+    // fields (engine, lifecycle, model, fastModel, reasoningEffort, name) are kept. The default operator agent
     // stays user-editable via agent-config, so it keeps its persisted role.
     const role = agent.id === DEFAULT_AGENT.id ? existing?.role || agent.role : agent.role;
     byId.set(agent.id, { ...agent, ...existing, role });
@@ -2452,6 +2454,7 @@ function agentStateSummary(state: State, agent: Agent): AgentStateSummary {
     status,
     model: agent.model ?? "default",
     fastModel: agent.fastModel ?? "default",
+    reasoningEffort: agent.reasoningEffort ?? "default",
     unreadMessages: unreadMessagesFor(state, agent.id).length,
     openClaims: state.claims.filter((claim) => claim.owner === agent.id).length,
     activeCards: state.cards.filter(
@@ -2477,6 +2480,7 @@ function formatRosterAgent(agent: AgentStateSummary): string {
     `status=${agent.status}`,
     `model=${agent.model}`,
     `fastModel=${agent.fastModel}`,
+    `reasoningEffort=${agent.reasoningEffort}`,
     `unread=${agent.unreadMessages}`,
     `claims=${agent.openClaims}`,
     `cards=${agent.activeCards}`,

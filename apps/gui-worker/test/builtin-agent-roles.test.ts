@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { roleTemplateForAgent } from "@suwujs/king-ai/team-workflow";
 import { DEFAULT_TEAM_AGENTS, IELTS_WORKFLOW_AGENTS } from "../src/gui-types.js";
-import { normalizeAgents } from "../src/gui-runtime.js";
+import { normalizeAgents, normalizeWorkflowAgentDefinitions } from "../src/gui-runtime.js";
 
 const TEMPLATE_MARKER = /Role template:\s*[a-z-]+\./;
 
@@ -89,4 +89,30 @@ test("normalizeAgents keeps only the four built-in system agents", () => {
   assert.equal(tutor?.model, "custom-model");
   // The default operator agent keeps its user-customized role.
   assert.equal(ceo?.role, "Answer in a concise operator voice.");
+});
+
+test("normalizeWorkflowAgentDefinitions keeps non-empty reasoning effort only", () => {
+  const normalized = normalizeWorkflowAgentDefinitions([
+    {
+      id: "dev",
+      name: "Dev",
+      role: "Build.",
+      engine: "grok",
+      lifecycle: "on-demand",
+      model: " grok-4 ",
+      fastModel: " grok-fast ",
+      reasoningEffort: " low ",
+    },
+    {
+      id: "reviewer",
+      name: "Reviewer",
+      role: "Review.",
+      engine: "grok",
+      lifecycle: "on-demand",
+      reasoningEffort: "   ",
+    },
+  ]);
+
+  assert.equal(normalized[0]?.reasoningEffort, "low");
+  assert.equal(normalized[1]?.reasoningEffort, undefined);
 });
