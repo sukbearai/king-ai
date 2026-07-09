@@ -1,0 +1,3 @@
+display_name: Codex First
+short_description: Route implementation work to Codex CLI.
+default_prompt: Use $codex-first in Claude Code to delegate scoped implementation work to Codex CLI while retaining Claude-side design, review, and verification.
