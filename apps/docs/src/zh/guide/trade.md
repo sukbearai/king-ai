@@ -54,7 +54,7 @@ king-ai trade daemon --push-tg
 | `alerts.rule_stagger_ms` | 一轮轮询中规则之间的间隔毫秒（默认 `1000`） |
 | `briefing.enabled` | 晨报板块，例如 `market`、`stocks`、`telegram`、`twitter`、`leaderboard`、`pumpfun` |
 | `briefing.schedule_hour` | 晨报 cron 小时（本地时间，默认 `5`） |
-| `verify.step_timeout_ms` | `verify-tg` 每个告警规则和晨报板块的单源超时时间（默认 `60000`） |
+| `verify.step_timeout_ms` | `verify-tg` 每个告警规则和晨报板块的单源超时时间（默认 `60000`；名人推验证默认 `240000`，显式配置后按配置值） |
 | `data_sources.pumpfun` | Pump.fun 板块：`stage`（默认 `MIGRATED`）、`limit`、市值/持有人/成交量/Top10 过滤；可读摘要 + LLM 归纳 |
 | `data_sources.leaderboard` | 聪明钱榜单：`chains`、`limit`、`time_frame`、`sort_by`；可读摘要 + LLM 归纳 |
 | `treasury` | 美债抛售 / 收益率：`^TYX`（30Y）、`^TNX`（10Y）、`TLT` 价格；阶段新高与 bp 飙升告警 |
@@ -89,7 +89,7 @@ king-ai trade alert run tm --once --push-tg
 | `discord_wba` | Discord WBA 频道（OpenCLI browser） |
 
 `info` 级告警写入 JSONL；Telegram 默认只推 `warning` 及以上。告警 cooldown 持久化在 `~/.king-ai/trade/rule_state.json`。
-名人推文解析在本地 agent 未返回有效分类时会保留重试机会；判定为非 alpha 的推文只短期静默，之后会重新检查。
+名人推文解析在本地 agent 未返回有效分类时会保留重试机会；判定为非 alpha 的推文只短期静默，之后会重新检查。X 搜索页会先做页面状态分类，已加载的无结果页会作为空结果返回，不再耗满 selector 等待时间。
 
 ## Daemon Supervisor
 
@@ -119,7 +119,7 @@ king-ai trade verify-celebrity --dry-run
 king-ai trade watchdog --kill
 ```
 
-`verify-tg` 会各跑一遍当前启用的告警规则和当前配置的晨报板块，每个源推一条 Telegram。每个源都会受 `verify.step_timeout_ms` 独立保护，一个慢采集器或 LLM 摘要只会被报告为该源失败，不会拖住整体验证。晨报摘要与 PANews 分类走本地 agent CLI 链（`grok` → `claude` → `codex`），由 `llm.default_backend` 控制首选后端。如果所有本地 agent 后端都不可用，晨报摘要会降级为压缩后的本地文本，而不是直接发送完整原始 feed。
+`verify-tg` 会各跑一遍当前启用的告警规则和当前配置的晨报板块，每个源推一条 Telegram。每个源都会受 `verify.step_timeout_ms` 独立保护，一个慢采集器或 LLM 摘要只会被报告为该源失败，不会拖住整体验证。名人推验证默认预算更长，因为它可能打开多个 X 搜索页并调用本地 agent；设置 `verify.step_timeout_ms` 后会覆盖该默认值。晨报摘要与 PANews 分类走本地 agent CLI 链（`grok` → `claude` → `codex`），由 `llm.default_backend` 控制首选后端。如果所有本地 agent 后端都不可用，晨报摘要会降级为压缩后的本地文本，而不是直接发送完整原始 feed。
 `verify-celebrity --dry-run` 会检查每个已配置名人账号的 X 搜索页，报告可读、无结果、需要登录、验证码/挑战或错误状态；不会调用 LLM，也不会发送 Telegram。
 
 Twitter 晨报默认开启相关性过滤，只保留市场、宏观、加密、AI/芯片、上市公司和监管相关内容，并过滤体育、信用卡、账号池、VPN、促销等低价值噪声。需要检查原始时间线时，可将 `data_sources.twitter.relevance_filter` 设为 `false`。

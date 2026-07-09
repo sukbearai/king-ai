@@ -5,6 +5,7 @@ import { dotGet, loadTradeConfig } from "../config.js";
 import { nowDisplay, runOpencli } from "../data-helpers.js";
 import { extractJsonFromText, runAgent } from "../llm-utils.js";
 import { TRADE_STATE_DIR } from "../../paths.js";
+import { classifyCelebritySearchSnapshot } from "../celebrity-search.js";
 
 const SEEN_TWEETS_DB = `${TRADE_STATE_DIR}/celebrity_seen.jsonl`;
 const TWITTER_SEARCH_SESSION = "trade-twitter-search";
@@ -151,16 +152,28 @@ async function fetchTweets(username: string, fetchLimit: number): Promise<Array<
     });
     if (out.length >= ${Math.max(1, Math.min(fetchLimit, 50))}) break;
   }
-  return out;
+  return {
+    title: document.title,
+    url: location.href,
+    text: document.body.innerText.slice(0, 1600),
+    articles: document.querySelectorAll('article').length,
+    tweets: out
+  };
 })()`;
     for (let attempt = 0; attempt < 3; attempt++) {
       await runOpencli(["browser", TWITTER_SEARCH_SESSION, "close"], 10_000);
-      await runOpencli(["browser", TWITTER_SEARCH_SESSION, "--window", "background", "open", url], 30_000);
+      const opened = await runOpencli(["browser", TWITTER_SEARCH_SESSION, "--window", "background", "open", url], 30_000);
+      if (!opened.ok) continue;
       await runOpencli(["browser", TWITTER_SEARCH_SESSION, "--window", "background", "wait", "time", "5"], 10_000);
-      await runOpencli(["browser", TWITTER_SEARCH_SESSION, "--window", "background", "wait", "selector", "article", "--timeout", "30000"], 35_000);
       const evalResult = await runOpencli(["browser", TWITTER_SEARCH_SESSION, "--window", "background", "eval", js], 30_000);
       if (!evalResult.ok) continue;
-      const rows = evalResult.data
+      const page = evalResult.data.find((row): row is Record<string, unknown> => (
+        Boolean(row) && typeof row === "object" && !Array.isArray(row)
+      ));
+      const status = classifyCelebritySearchSnapshot(username, page ?? { url }).status;
+      if (status === "no-results" || status === "auth-required" || status === "challenge") return [];
+      const tweets = Array.isArray(page?.tweets) ? page.tweets : [];
+      const rows = tweets
         .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row));
       if (rows.length) return rows;
     }

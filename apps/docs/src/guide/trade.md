@@ -54,7 +54,7 @@ Key config sections:
 | `alerts.rule_stagger_ms` | Delay between rules in one poll round (default `1000`) |
 | `briefing.enabled` | Morning brief sections, such as `market`, `stocks`, `telegram`, `twitter`, `leaderboard`, `pumpfun` |
 | `briefing.schedule_hour` | Morning brief cron hour (local, default `5`) |
-| `verify.step_timeout_ms` | Per-source timeout for `verify-tg` rules and brief sections (default `60000`) |
+| `verify.step_timeout_ms` | Per-source timeout for `verify-tg` rules and brief sections (default `60000`; celebrity tweet verification uses `240000` unless this is explicitly set) |
 | `data_sources.pumpfun` | Pump.fun section: `stage` (default `MIGRATED`), `limit`, market-cap/holder/volume/Top10 filters; human-readable lines plus LLM summary |
 | `data_sources.leaderboard` | Smart-money leaderboard: `chains`, `limit`, `time_frame`, `sort_by`; human-readable lines plus LLM summary |
 | `treasury` | Treasury stress: `^TYX` (30Y), `^TNX` (10Y), `TLT` price; period-high and basis-point spike alerts |
@@ -89,7 +89,7 @@ king-ai trade alert run tm --once --push-tg
 | `discord_wba` | Discord WBA channel (OpenCLI browser) |
 
 Info-level alerts are written to JSONL; Telegram pushes default to `warning` and above. Alert cooldowns persist in `~/.king-ai/trade/rule_state.json`.
-Celebrity tweet parsing retries when the local agent cannot return a valid classification; non-alpha classifications are suppressed briefly and rechecked later.
+Celebrity tweet parsing retries when the local agent cannot return a valid classification; non-alpha classifications are suppressed briefly and rechecked later. X search pages are classified before waiting for tweet articles, so a loaded no-results page returns an empty result instead of spending the full selector timeout.
 
 ## Daemon Supervisor
 
@@ -119,7 +119,7 @@ king-ai trade verify-celebrity --dry-run
 king-ai trade watchdog --kill
 ```
 
-`verify-tg` runs each enabled alert rule and each configured morning-brief section once, then pushes one Telegram message per source. Each source is isolated by `verify.step_timeout_ms`, so one slow collector or LLM summary is reported as that source's failure instead of blocking the whole verification run. Trade AI summaries and PANews classification use the local agent CLI chain (`grok` → `claude` → `codex`) via `llm.default_backend`. If every local agent backend is unavailable, morning brief summaries fall back to compacted local text instead of sending the full raw feed.
+`verify-tg` runs each enabled alert rule and each configured morning-brief section once, then pushes one Telegram message per source. Each source is isolated by `verify.step_timeout_ms`, so one slow collector or LLM summary is reported as that source's failure instead of blocking the whole verification run. Celebrity tweet verification has a longer default budget because it may open multiple X searches and call the local agent; set `verify.step_timeout_ms` to override it. Trade AI summaries and PANews classification use the local agent CLI chain (`grok` → `claude` → `codex`) via `llm.default_backend`. If every local agent backend is unavailable, morning brief summaries fall back to compacted local text instead of sending the full raw feed.
 `verify-celebrity --dry-run` checks each configured celebrity account's X search page and reports readable, no-results, login-required, challenge, or error states without calling the LLM or Telegram.
 
 The Twitter brief applies a relevance filter by default, keeping market, macro, crypto, AI/chip, listed-company, and regulatory items while dropping low-value sports, credit-card, account-pool, VPN, and promotion noise. Set `data_sources.twitter.relevance_filter` to `false` to inspect the raw timeline.

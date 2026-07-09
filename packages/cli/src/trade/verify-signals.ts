@@ -8,6 +8,7 @@ import { runTwitterCollector } from "./twitter-collector.js";
 
 const DEFAULT_VERIFY_BRIEF_SECTIONS: BriefSection[] = ["market", "stocks", "treasury", "telegram", "twitter"];
 const DEFAULT_VERIFY_STEP_TIMEOUT_MS = 60_000;
+const DEFAULT_VERIFY_CELEBRITY_RULE_TIMEOUT_MS = 240_000;
 
 const RULE_LABELS: Record<string, string> = {
   b: "美债抛售 / 收益率 (Yahoo)",
@@ -34,6 +35,12 @@ export function resolveVerifyBriefSections(config: TradeConfig): BriefSection[] 
 export function verifyStepTimeoutMs(config: TradeConfig): number {
   const value = Number(dotGet(config, "verify.step_timeout_ms", DEFAULT_VERIFY_STEP_TIMEOUT_MS));
   return Number.isFinite(value) && value > 0 ? value : DEFAULT_VERIFY_STEP_TIMEOUT_MS;
+}
+
+export function verifyRuleTimeoutMs(config: TradeConfig, ruleId: string): number {
+  const configured = Number(dotGet(config, "verify.step_timeout_ms", NaN));
+  if (Number.isFinite(configured) && configured > 0) return configured;
+  return ruleId === "t" ? DEFAULT_VERIFY_CELEBRITY_RULE_TIMEOUT_MS : DEFAULT_VERIFY_STEP_TIMEOUT_MS;
 }
 
 export async function withVerifyTimeout<T>(label: string, timeoutMs: number, task: () => Promise<T>): Promise<T> {
@@ -73,9 +80,10 @@ export async function runVerifySignalsPush(options: VerifySignalsOptions = {}): 
   for (const ruleId of verifyRules) {
     const label = RULE_LABELS[ruleId] ?? ruleId;
     const header = `🧪 信号验证 [${ruleId}] ${label} — ${stamp}`;
+    const ruleTimeoutMs = verifyRuleTimeoutMs(config, ruleId);
     let body: string;
     try {
-      body = await withVerifyTimeout(`rule:${ruleId}`, timeoutMs, async () => {
+      body = await withVerifyTimeout(`rule:${ruleId}`, ruleTimeoutMs, async () => {
         const rule = await createRuleAsync(ruleId);
         if (!rule) {
           return `${header}\n\n❌ 规则未注册`;

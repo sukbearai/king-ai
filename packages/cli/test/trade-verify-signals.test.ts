@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   resolveVerifyBriefSections,
+  verifyRuleTimeoutMs,
   verifyStepTimeoutMs,
   withVerifyTimeout
 } from "../src/trade/verify-signals.js";
@@ -26,6 +27,17 @@ describe("verifyStepTimeoutMs", () => {
   it("reads a positive verify timeout and falls back on invalid values", () => {
     assert.equal(verifyStepTimeoutMs({ verify: { step_timeout_ms: 1234 } }), 1234);
     assert.equal(verifyStepTimeoutMs({ verify: { step_timeout_ms: 0 } }), 60_000);
+  });
+});
+
+describe("verifyRuleTimeoutMs", () => {
+  it("uses a longer default budget for celebrity tweet verification", () => {
+    assert.equal(verifyRuleTimeoutMs({}, "t"), 240_000);
+    assert.equal(verifyRuleTimeoutMs({}, "q"), 60_000);
+  });
+
+  it("lets explicit verify timeout override rule defaults", () => {
+    assert.equal(verifyRuleTimeoutMs({ verify: { step_timeout_ms: 90_000 } }, "t"), 90_000);
   });
 });
 
