@@ -8,6 +8,8 @@ import { TRADE_STATE_DIR } from "../../paths.js";
 
 const SEEN_TWEETS_DB = `${TRADE_STATE_DIR}/celebrity_seen.jsonl`;
 const TWITTER_SEARCH_SESSION = "trade-twitter-search";
+const SEEN_TWEET_TTL_SECONDS = 86400 * 3;
+const NON_ALPHA_RETRY_SECONDS = 5 * 60;
 
 const ENTITY_BLACKLIST = new Set([
   "USD", "USDT", "USDC", "AI", "CEO", "CFO", "IPO", "ETF",
@@ -51,8 +53,24 @@ interface ChainFmRef {
   url: string;
 }
 
+interface SeenTweetRecord {
+  id?: string;
+  ts?: number;
+  ttl_seconds?: number;
+}
+
 function chainFmUrl(chain: string, address: string): string {
   return `https://chain.fm/token/${chain}/${address}`;
+}
+
+export function isCelebritySeenRecordActive(
+  record: SeenTweetRecord,
+  nowSeconds = Date.now() / 1000
+): boolean {
+  if (!record.id || !record.ts) return false;
+  const ttl = Number(record.ttl_seconds ?? SEEN_TWEET_TTL_SECONDS);
+  if (!Number.isFinite(ttl) || ttl <= 0) return false;
+  return nowSeconds - record.ts < ttl;
 }
 
 export function extractChainFmRefs(text: string): ChainFmRef[] {
@@ -78,13 +96,13 @@ export function extractChainFmRefs(text: string): ChainFmRef[] {
 
 async function loadSeenIds(): Promise<Set<string>> {
   const ids = new Set<string>();
-  const cutoff = Date.now() / 1000 - 86400 * 3;
+  const now = Date.now() / 1000;
   try {
     const raw = await readFile(SEEN_TWEETS_DB, "utf8");
     for (const line of raw.split(/\r?\n/).filter(Boolean)) {
       try {
-        const rec = JSON.parse(line) as { id?: string; ts?: number };
-        if ((rec.ts ?? 0) >= cutoff && rec.id) ids.add(rec.id);
+        const rec = JSON.parse(line) as SeenTweetRecord;
+        if (isCelebritySeenRecordActive(rec, now) && rec.id) ids.add(rec.id);
       } catch {
         continue;
       }
@@ -95,9 +113,13 @@ async function loadSeenIds(): Promise<Set<string>> {
   return ids;
 }
 
-async function persistSeen(tid: string): Promise<void> {
+async function persistSeen(tid: string, ttlSeconds = SEEN_TWEET_TTL_SECONDS): Promise<void> {
   await mkdir(dirname(SEEN_TWEETS_DB), { recursive: true });
-  await appendFile(SEEN_TWEETS_DB, `${JSON.stringify({ id: tid, ts: Date.now() / 1000 })}\n`, "utf8");
+  await appendFile(
+    SEEN_TWEETS_DB,
+    `${JSON.stringify({ id: tid, ts: Date.now() / 1000, ttl_seconds: ttlSeconds })}\n`,
+    "utf8"
+  );
 }
 
 async function fetchTweets(username: string, fetchLimit: number): Promise<Array<Record<string, unknown>>> {
@@ -153,6 +175,7 @@ async function extractEntities(text: string, author: string): Promise<{ entities
   const result = await runAgent(prompt, { timeoutMs: 45_000, task: "celebrity_extract" });
   const parsed = extractJsonFromText(result) as Record<string, unknown> | null;
   if (!parsed || typeof parsed !== "object") return { entities: [], meta: {} };
+  if (typeof parsed.is_alpha !== "boolean") return { entities: [], meta: {} };
   const meta = {
     is_alpha: Boolean(parsed.is_alpha),
     alpha_type: String(parsed.alpha_type ?? "none"),
@@ -209,15 +232,31 @@ export function createRuleTCelebrity(): AlertRule {
         for (const tw of await fetchTweets(user, fetchLimit)) {
           const tid = String(tw.id ?? "");
           if (!tid || seen.has(tid)) continue;
-          seen.add(tid);
-          await persistSeen(tid);
+          const markSeen = async (ttlSeconds = SEEN_TWEET_TTL_SECONDS) => {
+            seen.add(tid);
+            await persistSeen(tid, ttlSeconds);
+          };
           const text = String(tw.text ?? "").trim();
-          if (text.length < 10) continue;
-          if (isLikelyTweetUiFragment(text, user)) continue;
+          if (text.length < 10) {
+            await markSeen();
+            continue;
+          }
+          if (isLikelyTweetUiFragment(text, user)) {
+            await markSeen();
+            continue;
+          }
 
           const { entities, meta } = await extractEntities(text, user);
-          if (!meta.is_alpha || !entities.length) continue;
-          if (!state.canAlert(`t_${tid}`, 600)) continue;
+          if (!Object.keys(meta).length) continue;
+          if (!meta.is_alpha) {
+            await markSeen(NON_ALPHA_RETRY_SECONDS);
+            continue;
+          }
+          if (!entities.length) continue;
+          if (!state.canAlert(`t_${tid}`, 600)) {
+            await markSeen();
+            continue;
+          }
 
           const alphaType = String(meta.alpha_type ?? "none");
           const reason = String(meta.reason ?? "");
@@ -249,6 +288,7 @@ export function createRuleTCelebrity(): AlertRule {
             tokenContract: primaryRef?.address ?? "",
             tokenChain: primaryRef?.chain ?? ""
           }));
+          await markSeen();
         }
       }
       return alerts;

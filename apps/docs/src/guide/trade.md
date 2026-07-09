@@ -89,6 +89,7 @@ king-ai trade alert run tm --once --push-tg
 | `discord_wba` | Discord WBA channel (OpenCLI browser) |
 
 Info-level alerts are written to JSONL; Telegram pushes default to `warning` and above. Alert cooldowns persist in `~/.king-ai/trade/rule_state.json`.
+Celebrity tweet parsing retries when the local agent cannot return a valid classification; non-alpha classifications are suppressed briefly and rechecked later.
 
 ## Daemon Supervisor
 
@@ -114,10 +115,12 @@ king-ai trade logs
 king-ai trade brief --push-tg
 king-ai trade collect
 king-ai trade verify-tg --dry-run
+king-ai trade verify-celebrity --dry-run
 king-ai trade watchdog --kill
 ```
 
 `verify-tg` runs each enabled alert rule and each configured morning-brief section once, then pushes one Telegram message per source. Each source is isolated by `verify.step_timeout_ms`, so one slow collector or LLM summary is reported as that source's failure instead of blocking the whole verification run. Trade AI summaries and PANews classification use the local agent CLI chain (`grok` → `claude` → `codex`) via `llm.default_backend`. If every local agent backend is unavailable, morning brief summaries fall back to compacted local text instead of sending the full raw feed.
+`verify-celebrity --dry-run` checks each configured celebrity account's X search page and reports readable, no-results, login-required, challenge, or error states without calling the LLM or Telegram.
 
 The Twitter brief applies a relevance filter by default, keeping market, macro, crypto, AI/chip, listed-company, and regulatory items while dropping low-value sports, credit-card, account-pool, VPN, and promotion noise. Set `data_sources.twitter.relevance_filter` to `false` to inspect the raw timeline.
 
@@ -152,4 +155,5 @@ PANews article fetch uses `~/.king-ai/trade/skills/panews/cli.mjs`. Copy it from
 pnpm dev -- trade status
 pnpm dev -- trade daemon --push-tg
 pnpm dev -- trade verify-tg --dry-run
+pnpm dev -- trade verify-celebrity --dry-run
 ```

@@ -5,6 +5,7 @@ import { parseMemeTradeAmount } from "../src/trade/rules/rule-e-meme.js";
 import {
   celebrityAlertSeverity,
   extractChainFmRefs,
+  isCelebritySeenRecordActive,
   isLikelyTweetUiFragment
 } from "../src/trade/rules/rule-t-celebrity.js";
 import { buildPanewsUnclassifiedAlert } from "../src/trade/rules/rule-q-panews.js";
@@ -68,6 +69,14 @@ May 23
 909K
 99M`, "realDonaldTrump"), true);
     assert.equal(isLikelyTweetUiFragment("Launching a new token today on Solana", "realDonaldTrump"), false);
+  });
+
+  it("expires non-alpha seen records sooner than terminal records", () => {
+    const now = 10_000;
+    assert.equal(isCelebritySeenRecordActive({ id: "tweet-1", ts: now - 3600, ttl_seconds: 7200 }, now), true);
+    assert.equal(isCelebritySeenRecordActive({ id: "tweet-1", ts: now - 7201, ttl_seconds: 7200 }, now), false);
+    assert.equal(isCelebritySeenRecordActive({ id: "tweet-2", ts: now - 2 * 86400 }, now), true);
+    assert.equal(isCelebritySeenRecordActive({ id: "tweet-2", ts: now - 4 * 86400 }, now), false);
   });
 });
 

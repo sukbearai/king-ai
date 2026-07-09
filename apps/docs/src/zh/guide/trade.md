@@ -89,6 +89,7 @@ king-ai trade alert run tm --once --push-tg
 | `discord_wba` | Discord WBA 频道（OpenCLI browser） |
 
 `info` 级告警写入 JSONL；Telegram 默认只推 `warning` 及以上。告警 cooldown 持久化在 `~/.king-ai/trade/rule_state.json`。
+名人推文解析在本地 agent 未返回有效分类时会保留重试机会；判定为非 alpha 的推文只短期静默，之后会重新检查。
 
 ## Daemon Supervisor
 
@@ -114,10 +115,12 @@ king-ai trade logs
 king-ai trade brief --push-tg
 king-ai trade collect
 king-ai trade verify-tg --dry-run
+king-ai trade verify-celebrity --dry-run
 king-ai trade watchdog --kill
 ```
 
 `verify-tg` 会各跑一遍当前启用的告警规则和当前配置的晨报板块，每个源推一条 Telegram。每个源都会受 `verify.step_timeout_ms` 独立保护，一个慢采集器或 LLM 摘要只会被报告为该源失败，不会拖住整体验证。晨报摘要与 PANews 分类走本地 agent CLI 链（`grok` → `claude` → `codex`），由 `llm.default_backend` 控制首选后端。如果所有本地 agent 后端都不可用，晨报摘要会降级为压缩后的本地文本，而不是直接发送完整原始 feed。
+`verify-celebrity --dry-run` 会检查每个已配置名人账号的 X 搜索页，报告可读、无结果、需要登录、验证码/挑战或错误状态；不会调用 LLM，也不会发送 Telegram。
 
 Twitter 晨报默认开启相关性过滤，只保留市场、宏观、加密、AI/芯片、上市公司和监管相关内容，并过滤体育、信用卡、账号池、VPN、促销等低价值噪声。需要检查原始时间线时，可将 `data_sources.twitter.relevance_filter` 设为 `false`。
 
@@ -150,4 +153,5 @@ PANews 文章拉取使用 `~/.king-ai/trade/skills/panews/cli.mjs`。
 pnpm dev -- trade status
 pnpm dev -- trade daemon --push-tg
 pnpm dev -- trade verify-tg --dry-run
+pnpm dev -- trade verify-celebrity --dry-run
 ```

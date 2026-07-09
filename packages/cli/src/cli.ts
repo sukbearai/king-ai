@@ -27,6 +27,7 @@ import { runProcessWatchdog } from "./trade/process-watchdog.js";
 import { runTwitterCollector } from "./trade/twitter-collector.js";
 
 import { runVerifySignalsPush } from "./trade/verify-signals.js";
+import { runVerifyCelebrity } from "./trade/verify-celebrity.js";
 import {
   installTradeService,
   killRunningTradeDaemons,
@@ -1829,6 +1830,17 @@ const tradeVerifyTgCommand = command({
   await runVerifySignalsPush({ collect: !argv.flags.noCollect, dryRun: argv.flags.dryRun });
 });
 
+const tradeVerifyCelebrityCommand = command({
+  name: "verify-celebrity",
+  flags: {
+    help: { type: Boolean, alias: "h", description: "Show help" },
+    dryRun: { type: Boolean, description: "Browser health check only; do not push Telegram" }
+  },
+  help: { description: "Check celebrity Twitter/X search pages for articles, no-results, login, or challenge states" }
+}, async (argv) => {
+  await runVerifyCelebrity({ dryRun: argv.flags.dryRun });
+});
+
 const tradeWatchdogCommand = command({
   name: "watchdog",
   flags: {
@@ -1867,6 +1879,7 @@ const tradeCommand = command({
         tradeLogsCommand,
         tradeCollectCommand,
         tradeVerifyTgCommand,
+        tradeVerifyCelebrityCommand,
         tradeWatchdogCommand,
         tradeAlertCommand,
         tradeBriefCommand
@@ -1947,7 +1960,8 @@ async function main(): Promise<void> {
           `${commandNameFromArgv(process.argv[1])} trade daemon --push-tg`,
           `${commandNameFromArgv(process.argv[1])} trade alert run q --once`,
           `${commandNameFromArgv(process.argv[1])} trade brief --push-tg`,
-          `${commandNameFromArgv(process.argv[1])} trade verify-tg --dry-run`
+          `${commandNameFromArgv(process.argv[1])} trade verify-tg --dry-run`,
+          `${commandNameFromArgv(process.argv[1])} trade verify-celebrity --dry-run`
         ]
       }
     },
