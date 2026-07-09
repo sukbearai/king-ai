@@ -110,6 +110,8 @@ Persistent engine sessions have a no-output watchdog. If a local CLI such as Cod
 
 Grok uses the xAI CLI headless mode (`grok -p`) with `--output-format streaming-json` for turns and `--resume <sessionId>` for session reuse. When a turn includes accepted image attachments, King AI switches to `grok --prompt-json` and sends ACP image content blocks with base64 payloads instead of plain `-p` text. In scripted runs King AI also passes `--no-auto-update` and `--always-approve`. Optional extra flags can be supplied with `KING_AI_GROK_ARGS`.
 
+Agent runtime settings in the GUI include an optional **Reasoning effort** field. Leave it blank to use the selected engine default. For Grok agents, set it to `low`, `medium`, or `high` to pass `--reasoning-effort <value>` to the local `grok` CLI. Claude and Codex adapters do not consume this setting; if it is configured for a non-Grok effective engine, the daemon reports a warning and ignores the value.
+
 ## IELTS Coach Audio
 
 The GUI Worker uses Cloudflare Workers AI for IELTS coach text-to-speech when the `AI` binding is available. Agent messages show a play button that calls `/gui/tts`, runs `xai/grok-tts`, and streams the generated audio back to the browser. The deployed Cloudflare account must have Workers AI access and enough balance or BYOK configuration.

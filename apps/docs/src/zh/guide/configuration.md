@@ -110,6 +110,8 @@ king-ai agent computer --doctor
 
 Grok 通过 xAI CLI 的 headless 模式（`grok -p`）运行 turn，使用 `--output-format streaming-json`，并通过 `--resume <sessionId>` 复用 session。当 turn 带有已接受的图片附件时，King AI 会改用 `grok --prompt-json`，以 ACP 图片内容块（base64 载荷）发送，而不是纯文本 `-p`。脚本化运行时 King AI 还会传入 `--no-auto-update` 和 `--always-approve`。可通过 `KING_AI_GROK_ARGS` 追加可选参数。
 
+GUI 的 agent runtime 设置里包含可选的 **推理强度** 字段。留空时使用所选引擎的默认值。对 Grok 智能体，可填写 `low`、`medium` 或 `high`，King AI 会把它作为 `--reasoning-effort <value>` 传给本地 `grok` CLI。Claude 和 Codex adapter 不使用这个设置；如果非 Grok 有效引擎配置了该值，daemon 会报告 warning 并忽略它。
+
 ## IELTS 教练语音
 
 当 GUI Worker 配置了 Cloudflare Workers AI 的 `AI` binding 时，IELTS 教练消息会显示播放按钮。按钮会调用 `/gui/tts`，运行 `xai/grok-tts`，并把生成的音频流式返回浏览器。部署所在的 Cloudflare 账号需要具备 Workers AI 访问权限，并且有足够余额或 BYOK 配置。
