@@ -22,7 +22,7 @@ function chainFmUrl(chain: string, address: string): string {
 export function createRuleE(minUsd = 1500): AlertRule {
   return {
     name: "meme_large_buys",
-    ruleKey: "e",
+    ruleKey: "meme_large",
     defaultCooldown: 600,
     async check(state: AlertState): Promise<Alert[]> {
       const alerts: Alert[] = [];
@@ -75,7 +75,7 @@ export function createRuleE(minUsd = 1500): AlertRule {
             const severity: Alert["severity"] = amount >= 5000 ? "critical" : "warning";
             alerts.push(
               createAlert({
-                rule: "Meme 大额",
+                ruleId: "meme_large",
                 severity,
                 title: `链上大额交易 $${amount.toLocaleString()}`,
                 detail: detailParts.join("\n"),

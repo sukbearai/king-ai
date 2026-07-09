@@ -36,7 +36,7 @@ describe("directionLabel", () => {
     assert.equal(
       directionLabel(
         createAlert({
-          rule: "x",
+          ruleId: "stocks",
           severity: "info",
           title: "t",
           detail: "d",
@@ -48,7 +48,7 @@ describe("directionLabel", () => {
     assert.equal(
       directionLabel(
         createAlert({
-          rule: "x",
+          ruleId: "stocks",
           severity: "info",
           title: "t",
           detail: "d",

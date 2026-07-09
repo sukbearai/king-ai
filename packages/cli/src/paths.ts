@@ -41,6 +41,8 @@ export const TRADE_SCRATCHPAD_PATH = join(TRADE_DIR, "scratchpad.json");
 /** PANews skill CLI bundled with trade runtime. */
 export const TRADE_PANEWS_CLI_PATH = join(TRADE_DIR, "skills", "panews", "cli.mjs");
 export const TRADE_RULE_STATE_PATH = join(TRADE_STATE_DIR, "rule_state.json");
+/** Single-instance lock for `king-ai trade daemon`. */
+export const TRADE_DAEMON_PID_PATH = join(TRADE_STATE_DIR, "daemon.pid");
 /** JSONL alert audit log written by trade rules. */
 export const TRADE_ALERT_LOG_PATH = process.env.KING_AI_ALERT_LOG || join(TRADE_ALERT_DIR, "alert_log.jsonl");
 export const TRADE_TWITTER_CACHE_PATH = join(TRADE_STATE_DIR, "twitter_cache.jsonl");

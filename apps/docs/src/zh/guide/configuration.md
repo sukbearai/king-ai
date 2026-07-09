@@ -29,6 +29,7 @@ KING_AI_CONFIG_DIR=/tmp/king-ai-dev king-ai agent computer --doctor
 ~/.king-ai/host-runs.ndjson
 ~/.king-ai/trade_config.json
 ~/.king-ai/trade/
+~/.king-ai/trade/state/daemon.pid
 ```
 
 - `computer.json` 保存已配对的 server URL、computer ID、tenant ID 和 device token。

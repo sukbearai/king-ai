@@ -1,8 +1,16 @@
 import { cronMatches } from "../cron.js";
-import { dotGet, enabledAlertRules, loadTradeConfig } from "./config.js";
+import {
+  dotGet,
+  enabledAlertRules,
+  loadTradeConfig,
+  TradeConfigError,
+  validateTradeConfigShape,
+  type TradeConfig,
+} from "./config.js";
 import { resolveBriefingPushTg, runMorningBrief } from "./morning-brief.js";
+import { acquireDaemonPidLock } from "./pid-lock.js";
 import { runUnifiedRuleScheduler } from "./rule-scheduler.js";
-import { getScratchpad } from "./scratchpad.js";
+import { getTradeStore } from "./store.js";
 import { runProcessWatchdog } from "./process-watchdog.js";
 import { runTwitterCollector } from "./twitter-collector.js";
 
@@ -23,10 +31,43 @@ function minuteKey(date = new Date()): string {
 }
 
 export async function runTradeDaemon(options: TradeDaemonOptions = {}): Promise<void> {
-  const config = await loadTradeConfig();
+  let config: TradeConfig;
+  try {
+    config = await loadTradeConfig(true);
+  } catch (err) {
+    if (err instanceof TradeConfigError) {
+      process.stderr.write(`[trade] config error: ${err.message}\n`);
+      process.exitCode = 1;
+      throw err;
+    }
+    throw err;
+  }
+
+  for (const warning of validateTradeConfigShape(config)) {
+    process.stderr.write(`[trade] config warning: ${warning}\n`);
+  }
+
+  const pidLock = await acquireDaemonPidLock();
+  const releaseLock = async () => {
+    await pidLock.release();
+  };
+  process.once("exit", () => {
+    void releaseLock();
+  });
+  process.once("SIGINT", () => {
+    void releaseLock().finally(() => process.exit(130));
+  });
+  process.once("SIGTERM", () => {
+    void releaseLock().finally(() => process.exit(143));
+  });
+
   const pushTg = resolveBriefingPushTg(config, options);
-  const enabled = new Set(enabledAlertRules(config));
-  const pad = getScratchpad();
+  const enabled = new Set(
+    enabledAlertRules(config, {
+      onUnknown: (id) => process.stderr.write(`[trade] skipping unknown rule id: ${id}\n`),
+    }),
+  );
+  const store = getTradeStore();
   const onStatus = (line: string) => process.stderr.write(`${line}\n`);
 
   const ruleSchedulerLoop = runUnifiedRuleScheduler({
@@ -74,7 +115,7 @@ export async function runTradeDaemon(options: TradeDaemonOptions = {}): Promise<
     const ts = Date.now() / 1000;
     if (ts - lastRegime >= 4 * 3600) {
       lastRegime = ts;
-      const regime = await pad.autoDetectRegime();
+      const regime = await store.scratchpad.autoDetectRegime();
       if (regime) process.stderr.write(`[regime] ${regime}\n`);
     }
 
@@ -102,7 +143,9 @@ export async function runTradeDaemon(options: TradeDaemonOptions = {}): Promise<
   setInterval(() => void tick(), 30_000);
   await tick();
 
-  process.stderr.write(`trade daemon started — rules=[${[...enabled].join(",")}] pushTg=${!!pushTg}\n`);
+  process.stderr.write(
+    `trade daemon started — rules=[${[...enabled].join(",")}] pushTg=${!!pushTg} pidLock=${pidLock.path}\n`,
+  );
 
   await ruleSchedulerLoop;
 }

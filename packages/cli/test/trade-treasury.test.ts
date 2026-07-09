@@ -58,7 +58,7 @@ describe("treasury helpers", () => {
 describe("treasury rule", () => {
   it("registers rule b", () => {
     const rule = createRuleB();
-    assert.equal(rule.ruleKey, "b");
+    assert.equal(rule.ruleKey, "treasury");
     assert.equal(rule.name, "treasury_stress");
   });
 });

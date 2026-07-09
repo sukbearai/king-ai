@@ -57,7 +57,7 @@ export function buildPanewsUnclassifiedAlert(art: Record<string, string>): Alert
   const title = (art.title ?? "").trim();
   const desc = (art.desc ?? "").trim();
   return createAlert({
-    rule: "PANews事件",
+    ruleId: "panews",
     severity: "info",
     title,
     detail: desc ? desc.slice(0, 300) : "（agent 分类暂不可用，仅推送标题）",
@@ -82,7 +82,7 @@ async function llmClassify(candidates: Array<Record<string, string>>): Promise<A
 export function createRuleQ(): AlertRule {
   return {
     name: "panews_event",
-    ruleKey: "q",
+    ruleKey: "panews",
     defaultCooldown: 86400,
     async check(state: AlertState): Promise<Alert[]> {
       const alerts: Alert[] = [];
@@ -154,7 +154,7 @@ export function createRuleQ(): AlertRule {
 
         alerts.push(
           createAlert({
-            rule: "PANews事件",
+            ruleId: "panews",
             severity,
             title,
             detail: detailParts.join("\n"),

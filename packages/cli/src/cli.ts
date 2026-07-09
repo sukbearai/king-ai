@@ -45,7 +45,7 @@ import type { EngineId } from "./types.js";
 
 import { runRuleLoop } from "./trade/alert-rule.js";
 import { runMorningBrief, type BriefSection } from "./trade/morning-brief.js";
-import { createRuleAsync, listRuleIds } from "./trade/rules/registry.js";
+import { createRuleAsync, listRuleIds, listRuleLabels } from "./trade/rules/registry.js";
 import { runTradeDaemon } from "./trade/scheduler.js";
 
 import { runProcessWatchdog } from "./trade/process-watchdog.js";
@@ -1905,7 +1905,7 @@ const tradeAlertListCommand = command(
     help: { description: "List registered trade alert rules" },
   },
   () => {
-    console.log(listRuleIds().join("\n"));
+    console.log(listRuleLabels().join("\n"));
   },
 );
 

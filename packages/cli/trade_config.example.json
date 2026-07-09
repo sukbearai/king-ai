@@ -1,10 +1,13 @@
 {
   "alerts": {
-    "enabled": ["b", "e", "f", "t", "tm", "discord_wba", "q"],
+    "enabled": ["treasury", "meme_large", "stocks", "celebrity", "ticker_velocity", "discord_wba", "panews"],
     "poll_seconds": 120,
     "rule_stagger_ms": 1000,
-    "confluence_enabled": true,
-    "confluence_window_seconds": 900,
+    "tick_timeout_ms": 60000,
+    "confluence": {
+      "enabled": true,
+      "window_seconds": 900
+    },
     "cooldowns": {},
     "celebrity_tweet": {
       "accounts": ["realDonaldTrump", "elonmusk", "cz_binance"],
@@ -73,5 +76,6 @@
     "agent_tasks": {
       "celebrity_extract": { "timeout_ms": 45000 }
     }
-  }
+  },
+  "_comment_legacy_rule_ids": "Legacy short ids still work in alerts.enabled: b=treasury, e=meme_large, f=stocks, t=celebrity, tm=ticker_velocity, q=panews"
 }

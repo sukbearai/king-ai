@@ -1,17 +1,35 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { appendJsonl } from "../jsonl.js";
 import { TRADE_ALERT_LOG_PATH } from "../paths.js";
-import { dotGet, loadTradeConfig, type TradeConfig } from "./config.js";
+import {
+  confluenceEnabled,
+  confluenceWindowSeconds,
+  dotGet,
+  globalTickTimeoutMs,
+  loadTradeConfig,
+  resolveCooldownConfig,
+  type TradeConfig,
+} from "./config.js";
 import { fetchMajorPrices, nowDisplay } from "./data-helpers.js";
-import { getRuleStateStore } from "./rule-state.js";
-import { getScratchpad } from "./scratchpad.js";
+import {
+  dailyPushCapFor,
+  defaultTickTimeoutMsFor,
+  getRuleMeta,
+  normalizeAsset,
+  normalizeRuleId,
+  type AlertSeverity,
+} from "./domain.js";
+import { getTradeStore } from "./store.js";
 import { chunkAlertMessages, sendTelegram } from "./telegram.js";
 import { formatDisplayTime } from "./time-utils.js";
+import { withTimeout } from "./timeout.js";
 
-export type AlertSeverity = "info" | "warning" | "critical";
+export type { AlertSeverity };
 
 export interface Alert {
+  /** Canonical rule id for caps, audit, and confluence. */
+  ruleId: string;
+  /** Display label (usually RuleMeta.displayName). */
   rule: string;
   severity: AlertSeverity;
   title: string;
@@ -24,9 +42,28 @@ export interface Alert {
   tokenChain: string;
   tokenMcap: number;
   tags: string[];
+  /** Set when confluence promoted info → warning. */
+  confluencePromoted?: boolean;
 }
 
-export function createAlert(partial: Partial<Alert> & Pick<Alert, "rule" | "severity" | "title" | "detail">): Alert {
+export function createAlert(
+  partial: Partial<Alert> &
+    Pick<Alert, "severity" | "title" | "detail"> &
+    ({ ruleId: string } | { rule: string; ruleId?: string }),
+): Alert {
+  let ruleId = partial.ruleId ? (normalizeRuleId(partial.ruleId) ?? partial.ruleId) : "";
+  let rule = partial.rule ?? "";
+
+  if (ruleId) {
+    rule = rule || getRuleMeta(ruleId)?.displayName || ruleId;
+  } else if (rule) {
+    ruleId = normalizeRuleId(rule) ?? rule;
+    rule = getRuleMeta(ruleId)?.displayName ?? rule;
+  } else {
+    ruleId = "unknown";
+    rule = "unknown";
+  }
+
   return {
     timestamp: "",
     direction: 0,
@@ -37,6 +74,8 @@ export function createAlert(partial: Partial<Alert> & Pick<Alert, "rule" | "seve
     tokenMcap: 0,
     tags: [],
     ...partial,
+    ruleId,
+    rule,
   };
 }
 
@@ -46,28 +85,26 @@ export function formatAlert(alert: Alert): string {
   return `${icon} [${alert.rule}] ${alert.title}\n${alert.detail}`;
 }
 
+/** @deprecated Prefer resolveCooldownConfig(config) / cooldownDefaults() from domain. */
 export const COOLDOWN_DEFAULTS: Record<string, number> = {
+  treasury: 3600,
+  meme_large: 600,
+  stocks: 3600,
+  celebrity: 600,
+  ticker_velocity: 86400,
+  panews: 86400,
+  discord_wba: 300,
+  // legacy aliases
   b: 3600,
   e: 600,
   f: 3600,
   t: 600,
   tm: 86400,
   q: 86400,
-  discord_wba: 300,
 };
 
 const TG_SEVERITY_ORDER: Record<AlertSeverity, number> = { info: 0, warning: 1, critical: 2 };
 const MIN_TG_SEVERITY: AlertSeverity = "warning";
-const DAILY_PUSH_CAP: Record<string, number> = {
-  PANews事件: 5,
-  "Meme 大额": 8,
-  股票异动: 3,
-  美债抛售: 4,
-  提及加速: 5,
-  王不爱喊单: 5,
-  t: 5,
-};
-const DEFAULT_DAILY_CAP = 10;
 
 let priceCache: { ts: number; prices: Record<string, number> } | null = null;
 
@@ -88,19 +125,30 @@ export class AlertState {
     this.cooldowns = sharedCooldowns ?? {};
   }
 
-  canAlert(key: string, cooldown?: number): boolean {
+  /**
+   * Claim-on-success cooldown gate: returns true once and records the timestamp.
+   * Prefer this name; `canAlert` is kept as an alias.
+   */
+  tryClaimCooldown(key: string, cooldown?: number): boolean {
     const rulePrefix = key.includes("_") ? key.split("_")[0]! : key;
-    const cd = cooldown ?? this.cooldownConfig[rulePrefix] ?? 300;
+    const cd =
+      cooldown ?? this.cooldownConfig[rulePrefix] ?? this.cooldownConfig[normalizeRuleId(rulePrefix) ?? ""] ?? 300;
     const now = Date.now() / 1000;
     const last = this.cooldowns[key] ?? 0;
     if (now - last < cd) return false;
     this.cooldowns[key] = now;
     return true;
   }
+
+  /** @deprecated Alias of tryClaimCooldown (claim-on-success). */
+  canAlert(key: string, cooldown?: number): boolean {
+    return this.tryClaimCooldown(key, cooldown);
+  }
 }
 
 export interface AlertRule {
   readonly name: string;
+  /** Canonical rule id. */
   readonly ruleKey: string;
   readonly defaultCooldown: number;
   check(state: AlertState): Promise<Alert[]> | Alert[];
@@ -112,14 +160,17 @@ export interface RunRuleLoopOptions {
   dryRun?: boolean;
   runOnce?: boolean;
   onStatus?: (line: string) => void;
+  tickTimeoutMs?: number;
 }
 
 async function writeAlertsJsonl(alerts: Alert[], ruleKey: string): Promise<void> {
+  const store = getTradeStore();
   const prices = await cachedPrices();
-  const regime = await getScratchpad().getRegime();
+  const regime = await store.getRegime();
   for (const alert of alerts) {
-    await appendJsonl(TRADE_ALERT_LOG_PATH, {
+    await store.appendAlertAudit({
       rule: alert.rule,
+      rule_id: alert.ruleId,
       rule_key: ruleKey,
       severity: alert.severity,
       title: alert.title,
@@ -133,12 +184,13 @@ async function writeAlertsJsonl(alerts: Alert[], ruleKey: string): Promise<void>
       token_chain: alert.tokenChain,
       token_mcap: alert.tokenMcap,
       regime,
+      confluence_promoted: alert.confluencePromoted === true,
     });
   }
 }
 
 async function filterTgWorthy(alerts: Alert[]): Promise<Alert[]> {
-  const store = getRuleStateStore();
+  const store = getTradeStore();
   const minLevel = TG_SEVERITY_ORDER[MIN_TG_SEVERITY];
   const result: Alert[] = [];
   for (const a of alerts) {
@@ -147,17 +199,18 @@ async function filterTgWorthy(alerts: Alert[]): Promise<Alert[]> {
       result.push(a);
       continue;
     }
-    const cap = DAILY_PUSH_CAP[a.rule] ?? DEFAULT_DAILY_CAP;
-    const count = await store.getDailyPushCount(a.rule);
+    const ruleId = a.ruleId || normalizeRuleId(a.rule) || a.rule;
+    const cap = dailyPushCapFor(ruleId);
+    const count = await store.getDailyPushCount(ruleId);
     if (count >= cap) continue;
-    await store.incrementDailyPushCount(a.rule);
+    await store.bumpDailyPush(ruleId);
     result.push(a);
   }
   return result;
 }
 
 async function applyRegimeCap(alerts: Alert[]): Promise<void> {
-  const regime = await getScratchpad().getRegime();
+  const regime = await getTradeStore().getRegime();
   if (regime !== "risk_on") return;
   for (const alert of alerts) {
     if (
@@ -177,15 +230,21 @@ export function directionLabel(alert: Alert): string {
   return "突破";
 }
 
+/**
+ * Promote info alerts when another rule fired on the same normalized asset
+ * in the same direction within the window. Empty assets are ignored.
+ */
 export async function promoteConfluenceAlerts(
   alerts: Alert[],
   ruleKey: string,
   options: { windowSeconds: number; enabled: boolean },
 ): Promise<void> {
   if (!options.enabled) return;
-  const store = getRuleStateStore();
+  const store = getTradeStore();
   for (const alert of alerts) {
-    const sym = alert.asset || alert.title.split(/\s+/)[0] || "";
+    const sym = normalizeAsset(alert.asset);
+    if (!sym) continue;
+
     await store.recordSignal(ruleKey, sym, directionLabel(alert), alert.severity);
     if (alert.severity !== "info") continue;
 
@@ -198,6 +257,7 @@ export async function promoteConfluenceAlerts(
     if (other.every((c) => c.volState === "shrink")) continue;
 
     alert.severity = "warning";
+    alert.confluencePromoted = true;
     alert.detail += `\n🔗 多指标共振: ${other.map((c) => c.ruleKey).join(", ")}`;
   }
 }
@@ -208,26 +268,35 @@ export interface RunRuleTickOptions {
   onStatus?: (line: string) => void;
   confluenceEnabled?: boolean;
   confluenceWindowSeconds?: number;
+  tickTimeoutMs?: number;
+  /** When true, rethrow after recording heartbeat (used by scheduler isolation tests). */
+  rethrow?: boolean;
+}
+
+function resolveTickTimeoutMs(rule: AlertRule, config: TradeConfig, override?: number): number {
+  if (override != null && Number.isFinite(override) && override > 0) return override;
+  const global = globalTickTimeoutMs(config);
+  if (global != null) return global;
+  return defaultTickTimeoutMsFor(rule.ruleKey);
 }
 
 export async function runRuleTick(rule: AlertRule, state: AlertState, options: RunRuleTickOptions = {}): Promise<void> {
   const config = await loadTradeConfig();
-  const store = getRuleStateStore();
+  const store = getTradeStore();
   const alertDir = dirname(TRADE_ALERT_LOG_PATH);
   await mkdir(alertDir, { recursive: true });
+  const timeoutMs = resolveTickTimeoutMs(rule, config, options.tickTimeoutMs);
 
   try {
     const t0 = Date.now();
-    const alerts = await rule.check(state);
+    const alerts = await withTimeout(`rule:${rule.ruleKey}`, timeoutMs, async () => rule.check(state));
     const elapsedMs = Date.now() - t0;
 
-    await store.update((s) => {
-      s.heartbeats[rule.ruleKey] = {
-        ruleName: rule.name,
-        lastCheck: Date.now() / 1000,
-        status: "ok",
-        durationMs: elapsedMs,
-      };
+    await store.setHeartbeat(rule.ruleKey, {
+      ruleName: rule.name,
+      lastCheck: Date.now() / 1000,
+      status: "ok",
+      durationMs: elapsedMs,
     });
 
     if (!alerts.length) {
@@ -244,11 +313,10 @@ export async function runRuleTick(rule: AlertRule, state: AlertState, options: R
     await writeFile(join(alertDir, "latest_alert.txt"), message, "utf8");
     await writeAlertsJsonl(alerts, rule.ruleKey);
 
-    const confluenceWindow =
-      options.confluenceWindowSeconds ?? (Number(dotGet(config, "alerts.confluence_window_seconds", 900)) || 900);
+    const confluenceWindow = options.confluenceWindowSeconds ?? confluenceWindowSeconds(config);
     await promoteConfluenceAlerts(alerts, rule.ruleKey, {
       windowSeconds: confluenceWindow,
-      enabled: options.confluenceEnabled !== false,
+      enabled: options.confluenceEnabled !== false && confluenceEnabled(config),
     });
 
     if (options.pushTg) {
@@ -266,27 +334,25 @@ export async function runRuleTick(rule: AlertRule, state: AlertState, options: R
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    options.onStatus?.(`规则 ${rule.ruleKey} 异常: ${msg}`);
-    await store.update((s) => {
-      s.heartbeats[rule.ruleKey] = {
-        ruleName: rule.name,
-        lastCheck: Date.now() / 1000,
-        status: "error",
-        durationMs: 0,
-      };
+    const isTimeout = /timed out/i.test(msg);
+    options.onStatus?.(`规则 ${rule.ruleKey} ${isTimeout ? "超时" : "异常"}: ${msg}`);
+    await store.setHeartbeat(rule.ruleKey, {
+      ruleName: rule.name,
+      lastCheck: Date.now() / 1000,
+      status: isTimeout ? "timeout" : "error",
+      durationMs: 0,
     });
+    if (options.rethrow) throw err;
   }
 }
 
 export async function runRuleLoop(rule: AlertRule, options: RunRuleLoopOptions = {}): Promise<void> {
   const config = await loadTradeConfig();
-  const store = getRuleStateStore();
-  const sharedCooldowns = await store.loadAlertCooldowns();
-  const cdOverrides = (dotGet(config, "alerts.cooldowns", {}) ?? {}) as Record<string, number>;
-  const cooldownConfig = { ...COOLDOWN_DEFAULTS, ...cdOverrides };
+  const store = getTradeStore();
+  const sharedCooldowns = await store.loadCooldowns();
+  const cooldownConfig = resolveCooldownConfig(config);
   const state = new AlertState(cooldownConfig, sharedCooldowns);
   const pollSeconds = options.pollSeconds ?? (Number(dotGet(config, "alerts.poll_seconds", 120)) || 120);
-  const pad = getScratchpad();
   let lastRegimeCheck = 0;
   const REGIME_INTERVAL = 4 * 3600;
 
@@ -294,7 +360,7 @@ export async function runRuleLoop(rule: AlertRule, options: RunRuleLoopOptions =
     const now = Date.now() / 1000;
     if (now - lastRegimeCheck < REGIME_INTERVAL) return;
     lastRegimeCheck = now;
-    await pad.autoDetectRegime();
+    await store.scratchpad.autoDetectRegime();
   };
 
   await maybeUpdateRegime();
@@ -305,9 +371,11 @@ export async function runRuleLoop(rule: AlertRule, options: RunRuleLoopOptions =
       pushTg: options.pushTg,
       dryRun: options.dryRun,
       onStatus: options.onStatus,
-      confluenceEnabled: dotGet(config, "alerts.confluence_enabled", true) !== false,
+      confluenceEnabled: confluenceEnabled(config),
+      confluenceWindowSeconds: confluenceWindowSeconds(config),
+      tickTimeoutMs: options.tickTimeoutMs,
     });
-    if (!options.dryRun) await store.saveAlertCooldowns(sharedCooldowns);
+    if (!options.dryRun) await store.saveCooldowns(sharedCooldowns);
     if (options.runOnce) break;
     await new Promise((r) => setTimeout(r, pollSeconds * 1000));
   }

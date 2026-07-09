@@ -14,7 +14,7 @@ export function createRuleTTicker(): AlertRule {
 
   return {
     name: "ticker_mention_velocity",
-    ruleKey: "tm",
+    ruleKey: "ticker_velocity",
     defaultCooldown: 86400,
     async check(state: AlertState): Promise<Alert[]> {
       const config = await loadTradeConfig();
@@ -90,7 +90,7 @@ export function createRuleTTicker(): AlertRule {
         if (state.canAlert(alertKey, 86400)) {
           alerts.push(
             createAlert({
-              rule: "提及加速",
+              ruleId: "ticker_velocity",
               severity,
               title: `$${ticker} ${tag} (${cnt24h}条/${authors24h}作者/${views24h.toLocaleString()}👁)`,
               detail: `24h: ${cnt24h} 条 | ${authors24h} 独立作者 | ${views24h.toLocaleString()} views | baseline: ${baselinePerDay.toFixed(1)}/天${sampleText}`,

@@ -96,7 +96,7 @@ export function createRuleDiscordWba(): AlertRule {
 
         alerts.push(
           createAlert({
-            rule: "王不爱喊单",
+            ruleId: "discord_wba",
             severity: "warning",
             title: `王不爱: ${content.slice(0, 60)}`,
             detail: `频道: 尊享財富密碼\n时间: ${ts}\n\n${content}`,

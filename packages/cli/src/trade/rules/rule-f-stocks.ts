@@ -206,7 +206,7 @@ export function createRuleF(threshold = 5): AlertRule {
 
   return {
     name: "stock_moves",
-    ruleKey: "f",
+    ruleKey: "stocks",
     defaultCooldown: 3600,
     async check(state: AlertState): Promise<Alert[]> {
       const alerts: Alert[] = [];
@@ -235,7 +235,7 @@ export function createRuleF(threshold = 5): AlertRule {
               const direction = change > 0 ? "暴涨" : "暴跌";
               alerts.push(
                 createAlert({
-                  rule: "股票异动",
+                  ruleId: "stocks",
                   severity: Math.abs(change) >= 8 ? "critical" : "info",
                   title: `${name} (${symbol}) ${direction} ${change >= 0 ? "+" : ""}${change.toFixed(1)}%`,
                   detail: `当前价格: ${currency}${priceStr}`,
@@ -260,7 +260,7 @@ export function createRuleF(threshold = 5): AlertRule {
               const direction = extChange > 0 ? "暴涨" : "暴跌";
               alerts.push(
                 createAlert({
-                  rule: "股票异动",
+                  ruleId: "stocks",
                   severity: Math.abs(extChange) >= 8 ? "warning" : "info",
                   title: `${name} (${symbol}) ${sessionLabel}${direction} ${extChange >= 0 ? "+" : ""}${extChange.toFixed(1)}%`,
                   detail: `${sessionLabel}价: $${extPrice} (收盘 $${price}, 日内 ${change >= 0 ? "+" : ""}${change.toFixed(1)}%)`,

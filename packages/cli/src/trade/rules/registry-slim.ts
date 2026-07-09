@@ -7,13 +7,13 @@ import { createRuleQ } from "./rule-q-panews.js";
 import { createRuleTCelebrity } from "./rule-t-celebrity.js";
 import { createRuleTTicker } from "./rule-t-ticker.js";
 
-/** Default slim stack — eagerly loaded at daemon startup. */
+/** Default slim stack — keyed by canonical rule ids. */
 export const SLIM_RULE_REGISTRY: Record<string, () => AlertRule> = {
-  b: createRuleB,
-  e: createRuleE,
-  f: createRuleF,
-  t: createRuleTCelebrity,
-  tm: createRuleTTicker,
+  treasury: createRuleB,
+  meme_large: createRuleE,
+  stocks: createRuleF,
+  celebrity: createRuleTCelebrity,
+  ticker_velocity: createRuleTTicker,
   discord_wba: createRuleDiscordWba,
-  q: createRuleQ,
+  panews: createRuleQ,
 };

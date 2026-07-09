@@ -257,7 +257,7 @@ export function createRuleTCelebrity(): AlertRule {
 
   return {
     name: "celebrity_tweet",
-    ruleKey: "t",
+    ruleKey: "celebrity",
     defaultCooldown: 600,
     async check(state: AlertState): Promise<Alert[]> {
       const config = await loadTradeConfig();
@@ -319,7 +319,7 @@ export function createRuleTCelebrity(): AlertRule {
           const primaryRef = chainRefs[0];
           alerts.push(
             createAlert({
-              rule: "t",
+              ruleId: "celebrity",
               severity: celebrityAlertSeverity(alphaType, entities.length),
               title,
               detail: lines.join("\n"),

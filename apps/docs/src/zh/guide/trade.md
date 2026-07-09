@@ -1,6 +1,8 @@
 # 交易信号（Trade）
 
-`king-ai trade` 在单一 supervisor daemon 中运行告警规则、晨报、Twitter 采集和看门狗。栈为 **OpenCLI + tg + 本地 agent + Yahoo**，七条规则：`b`、`e`、`f`、`t`、`tm`、`discord_wba`、`q`。
+`king-ai trade` 是**本地市场情报 sensor/daemon**（不是 multi-agent 协作工作流）。它在单一 supervisor 中运行告警规则、晨报、Twitter 采集和看门狗。栈为 **OpenCLI + tg + 本地 agent + Yahoo**，七条规则使用稳定 id：`treasury`、`meme_large`、`stocks`、`celebrity`、`ticker_velocity`、`discord_wba`、`panews`。
+
+Trade 与多 agent 协作共享 `~/.king-ai` 与本地 agent CLI，但**不共享** task/card/host 工作流状态机。
 
 ## 快速开始
 
@@ -23,9 +25,11 @@ king-ai trade status
 king-ai trade daemon --push-tg
 ```
 
+同一时间只应有**一个** trade daemon。进程会写入 `~/.king-ai/trade/state/daemon.pid`，拒绝第二个仍存活的实例。
+
 ## 配置
 
-主配置文件：`~/.king-ai/trade_config.json`（可用 `KING_AI_TRADE_CONFIG` 覆盖）。
+主配置文件：`~/.king-ai/trade_config.json`（可用 `KING_AI_TRADE_CONFIG` 覆盖）。JSON 非法时 daemon **启动失败**；文件缺失则使用内置默认值。
 
 常用路径：
 
@@ -34,6 +38,7 @@ king-ai trade daemon --push-tg
 ~/.king-ai/trade/logs/daemon.log
 ~/.king-ai/trade/scratchpad.json
 ~/.king-ai/trade/rule_state.json
+~/.king-ai/trade/state/daemon.pid
 ~/.king-ai/trade/skills/panews/cli.mjs
 ```
 
@@ -48,59 +53,71 @@ king-ai trade daemon --push-tg
 
 | 配置段 | 作用 |
 |--------|------|
-| `alerts.enabled` | 启用的规则 ID；默认 `b`、`e`、`f`、`t`、`tm`、`discord_wba`、`q` |
+| `alerts.enabled` | 稳定规则 id（默认完整 slim 栈）；旧字母 id 仍可用 |
 | `alerts.poll_seconds` | 统一规则轮询间隔（默认 `120`） |
-| `alerts.confluence_enabled` | 单规则 tick 内同标的共振升 severity（默认 `true`） |
-| `alerts.rule_stagger_ms` | 一轮轮询中规则之间的间隔毫秒（默认 `1000`） |
-| `briefing.enabled` | 晨报板块，例如 `market`、`stocks`、`telegram`、`twitter`、`leaderboard`、`pumpfun` |
-| `briefing.schedule_hour` | 晨报 cron 小时（本地时间，默认 `5`） |
-| `verify.step_timeout_ms` | `verify-tg` 每个告警规则和晨报板块的单源超时时间（默认 `60000`；名人推验证默认 `240000`，显式配置后按配置值） |
-| `data_sources.pumpfun` | Pump.fun 板块：`stage`（默认 `MIGRATED`）、`limit`、市值/持有人/成交量/Top10 过滤；可读摘要 + LLM 归纳 |
-| `data_sources.leaderboard` | 聪明钱榜单：`chains`、`limit`、`time_frame`、`sort_by`；可读摘要 + LLM 归纳 |
-| `treasury` | 美债抛售 / 收益率：`^TYX`（30Y）、`^TNX`（10Y）、`TLT` 价格；阶段新高与 bp 飙升告警 |
-| `llm.agent_tasks.<task>.timeout_ms` | 可选的本地 agent 单任务超时，例如 `celebrity_extract` |
-| `telegram` | `bot_token` 与 `push_chat_id`，用于推送告警 |
+| `alerts.tick_timeout_ms` | daemon 全局单规则 tick 超时（设置后覆盖各规则默认） |
+| `alerts.confluence.enabled` | 多规则对同一**非空** asset 共振时将 info 升为 warning（默认 `true`）。旧键：`alerts.confluence_enabled` |
+| `alerts.confluence.window_seconds` | 共振窗口秒数（默认 `900`）。旧键：`alerts.confluence_window_seconds` |
+| `alerts.rule_stagger_ms` | 一轮中规则间隔毫秒（默认 `1000`） |
+| `briefing.enabled` | 晨报板块 |
+| `briefing.schedule_hour` | 晨报 cron 小时（本地，默认 `5`） |
+| `verify.step_timeout_ms` | `verify-tg` 单源超时（设置后覆盖规则默认） |
+| `data_sources.pumpfun` / `leaderboard` | 链上晨报板块 |
+| `treasury` | 美债抛售 / 收益率阈值 |
+| `telegram` | `bot_token` 与 `push_chat_id` |
 
 仓库内模板见 `packages/cli/trade_config.example.json`。
 
 ## 告警规则
 
-列出已注册规则：
+列出已注册规则（稳定 id + legacy + 展示名）：
 
 ```sh
 king-ai trade alert list
 ```
 
-单次运行某条规则：
+单次运行（可用稳定 id 或 legacy id）：
 
 ```sh
+king-ai trade alert run panews --once
 king-ai trade alert run q --once
-king-ai trade alert run tm --once --push-tg
+king-ai trade alert run ticker_velocity --once --push-tg
 ```
 
-| ID | 监控内容 |
-|----|----------|
-| `b` | 美债抛售 / 收益率（`^TYX` 30Y、`TLT` 价格，Yahoo） |
-| `e` | Meme 大单（`tg` meme链上监控） |
-| `f` | 自选股涨跌（OpenCLI/Yahoo） |
-| `t` | 名人推文 alpha（默认 Trump/Musk/CZ） |
-| `tm` | Twitter ticker 提及加速 |
-| `q` | PANews 事件（本地 agent 分类） |
-| `discord_wba` | Discord WBA 频道（OpenCLI browser） |
+| 稳定 ID | Legacy | 监控内容 |
+|---------|--------|----------|
+| `treasury` | `b` | 美债抛售 / 收益率（`^TYX` 30Y、`TLT` 价格，Yahoo） |
+| `meme_large` | `e` | Meme 大单（`tg` meme链上监控） |
+| `stocks` | `f` | 自选股涨跌（OpenCLI/Yahoo） |
+| `celebrity` | `t` | 名人推文 alpha（默认 Trump/Musk/CZ） |
+| `ticker_velocity` | `tm` | Twitter ticker 提及加速 |
+| `panews` | `q` | PANews 事件（本地 agent 分类） |
+| `discord_wba` | — | Discord WBA 频道（OpenCLI browser） |
 
-`info` 级告警写入 JSONL；Telegram 默认只推 `warning` 及以上。告警 cooldown 持久化在 `~/.king-ai/trade/rule_state.json`。
-名人推文解析在本地 agent 未返回有效分类时会保留重试机会；判定为非 alpha 的推文只短期静默，之后会重新检查。X 搜索页会先做页面状态分类，已加载的无结果页会作为空结果返回，不再耗满 selector 等待时间。
+### 告警流水线
+
+```text
+rule.check → regime 降级 → JSONL 审计 → 共振（仅 asset）→ TG 严重度门槛 → 日 cap（按 ruleId）→ 推送
+```
+
+- `info` 级始终写 JSONL；Telegram 默认只推 `warning` 及以上。
+- 日推 cap 与 cooldown 按**稳定 `ruleId`** 计数，不再使用中文展示名当 key。
+- 共振只看非空 `asset`（大写规范化），不再用 title 首词猜测。
+- daemon 每条规则有 tick 超时（如 celebrity `240s`、panews `120s`）；超时记 heartbeat `timeout` 并继续下一规则。
+- cooldown 持久化在 `~/.king-ai/trade/rule_state.json`。
+
+名人推文解析在本地 agent 未返回有效分类时会保留重试；非 alpha 短期静默后重检。X 搜索页先做状态分类，已加载无结果页直接返回空结果。
 
 ## Daemon Supervisor
 
-daemon 使用统一规则调度器，并运行定时任务：
+daemon 使用统一规则调度器，并运行：
 
 - 晨报（`briefing.schedule_hour`）
 - regime 检测
 - Twitter 采集与看门狗
 
 晨报 Telegram 投递会在 `~/.king-ai/trade/logs/daemon.log` 写入
-`[morning-brief] telegram push ok|failed chunks=N`，最近一次投递元数据也会写到
+`[morning-brief] telegram push ok|failed chunks=N`，最近一次投递元数据在
 `~/.king-ai/trade/scratchpad.json` 的 `last_brief_push`。
 
 ```sh
@@ -119,33 +136,32 @@ king-ai trade verify-celebrity --dry-run
 king-ai trade watchdog --kill
 ```
 
-`verify-tg` 会各跑一遍当前启用的告警规则和当前配置的晨报板块，每个源推一条 Telegram。每个源都会受 `verify.step_timeout_ms` 独立保护，一个慢采集器或 LLM 摘要只会被报告为该源失败，不会拖住整体验证。名人推验证默认预算更长，因为它可能打开多个 X 搜索页并调用本地 agent；设置 `verify.step_timeout_ms` 后会覆盖该默认值。晨报摘要与 PANews 分类走本地 agent CLI 链（`grok` → `claude` → `codex`），由 `llm.default_backend` 控制首选后端。如果所有本地 agent 后端都不可用，晨报摘要会降级为压缩后的本地文本，而不是直接发送完整原始 feed。
-`verify-celebrity --dry-run` 会检查每个已配置名人账号的 X 搜索页，报告可读、无结果、需要登录、验证码/挑战或错误状态；不会调用 LLM，也不会发送 Telegram。
+`verify-tg` 会各跑一遍当前启用的告警规则和晨报板块；超时工具与 daemon 共用。未设置 `verify.step_timeout_ms` 时按规则默认预算（名人推更长）。摘要与 PANews 分类走本地 agent 链（`grok` → `claude` → `codex`）。
 
-Twitter 晨报默认开启相关性过滤，只保留市场、宏观、加密、AI/芯片、上市公司和监管相关内容，并过滤体育、信用卡、账号池、VPN、促销等低价值噪声。需要检查原始时间线时，可将 `data_sources.twitter.relevance_filter` 设为 `false`。
+`verify-celebrity --dry-run` 只检查 X 搜索页状态，不调 LLM、不推 Telegram。
+
+Twitter 晨报默认相关性过滤；需要原始时间线时设 `data_sources.twitter.relevance_filter` 为 `false`。
 
 ## OpenCLI Browser Bridge
-
-Twitter 时间线、雪球 A 股、Discord 浏览器抓取通过 **OpenCLI** 复用已登录的浏览器会话，不需要用 remote debugging port 启动 Chrome。
 
 ```sh
 opencli doctor
 opencli browser trade-twitter --window background open https://x.com/home
 opencli browser trade-twitter --window background wait selector article --timeout 30000
-king-ai trade alert run f --once --dry-run
+king-ai trade alert run stocks --once --dry-run
 ```
 
-保持 OpenCLI 浏览器扩展/daemon 可用，并在对应站点完成登录。daemon 使用稳定的 `trade-twitter`、`trade-twitter-search`、`trade-discord` 会话。雪球优先走 OpenCLI background/persistent，适配器不可用时快速回退 Yahoo Finance。
+会话名：`trade-twitter`、`trade-twitter-search`、`trade-discord`。雪球不可用时回退 Yahoo Finance。
 
 ## 外部依赖
 
-- `opencli` — Twitter/X、雪球、Discord 浏览器读取
-- `tg` — Telegram 频道读取
-- `onchainos` — 可选的聪明钱 Leaderboard 与 Pump.fun 晨报板块
+- `opencli` — Twitter/X、雪球、Discord
+- `tg` — Telegram 频道
+- `onchainos` — 可选聪明钱 / Pump.fun 晨报
 - Yahoo Finance HTTP — 股票报价
-- 本地 agent CLI（`grok`、`claude`、`codex`）— 摘要、PANews 分类、名人推文解析
+- 本地 agent CLI（`grok`、`claude`、`codex`）— 摘要 / 分类 / 名人推解析
 
-PANews 文章拉取使用 `~/.king-ai/trade/skills/panews/cli.mjs`。
+PANews：`~/.king-ai/trade/skills/panews/cli.mjs`。
 
 ## 开发
 

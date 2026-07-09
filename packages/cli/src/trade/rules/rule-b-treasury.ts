@@ -52,7 +52,7 @@ function yieldSpikeDetail(
 export function createRuleB(): AlertRule {
   return {
     name: "treasury_stress",
-    ruleKey: "b",
+    ruleKey: "treasury",
     defaultCooldown: 3600,
     async check(state: AlertState): Promise<Alert[]> {
       const config = await loadTradeConfig();
@@ -68,7 +68,7 @@ export function createRuleB(): AlertRule {
         if (!state.canAlert(key, 7200)) continue;
         alerts.push(
           createAlert({
-            rule: "美债抛售",
+            ruleId: "treasury",
             severity,
             title: `${name} ${quote.change_pct.toFixed(2)}%（抛售压力）`,
             detail: sellingPressureDetail(name, symbol, quote.change_pct, quote.price),
@@ -114,7 +114,7 @@ export function createRuleB(): AlertRule {
 
         alerts.push(
           createAlert({
-            rule: "美债抛售",
+            ruleId: "treasury",
             severity,
             title,
             detail: yieldSpikeDetail(name, symbol, quote.yield_pct, quote.change_bps, highCtx ?? undefined),

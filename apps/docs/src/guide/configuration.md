@@ -29,6 +29,7 @@ Use `~/.king-ai` for user-facing setup and documentation.
 ~/.king-ai/host-runs.ndjson
 ~/.king-ai/trade_config.json
 ~/.king-ai/trade/
+~/.king-ai/trade/state/daemon.pid
 ```
 
 - `computer.json` stores the paired server URL, computer ID, tenant ID, and device token.

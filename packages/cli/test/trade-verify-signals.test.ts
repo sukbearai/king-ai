@@ -36,7 +36,9 @@ describe("verifyStepTimeoutMs", () => {
 describe("verifyRuleTimeoutMs", () => {
   it("uses a longer default budget for celebrity tweet verification", () => {
     assert.equal(verifyRuleTimeoutMs({}, "t"), 240_000);
-    assert.equal(verifyRuleTimeoutMs({}, "q"), 60_000);
+    assert.equal(verifyRuleTimeoutMs({}, "celebrity"), 240_000);
+    assert.equal(verifyRuleTimeoutMs({}, "q"), 120_000);
+    assert.equal(verifyRuleTimeoutMs({}, "panews"), 120_000);
   });
 
   it("lets explicit verify timeout override rule defaults", () => {
