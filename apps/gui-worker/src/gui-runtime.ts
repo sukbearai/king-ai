@@ -1746,18 +1746,38 @@ function autoDelegateMessage(
 function settleTaskParticipantInboxes(state: State, task: Task): void {
   if (!task.conversationId) return;
   const coordinatorId = task.coordinatorAgentId ?? defaultAgentFor(state).id;
-  const routedFromSteers = state.messages
-    .filter(
-      (row) =>
-        row.conversation_id === task.conversationId &&
-        row.priority === "steer" &&
-        row.body.includes(task.id) &&
-        row.body.startsWith("Task assigned"),
-    )
-    .map((row) => row.to_agent_id)
+  const assignmentSteers = state.messages.filter(
+    (row) =>
+      row.conversation_id === task.conversationId &&
+      row.priority === "steer" &&
+      row.body.includes(task.id) &&
+      row.body.startsWith("Task assigned"),
+  );
+  const routedFromSteers = assignmentSteers.map((row) => row.to_agent_id).filter((id): id is string => Boolean(id));
+  // Fallback when to_agent_id is missing after normalize/persist: "Task assigned to <id>: ..."
+  const routedFromBodies = assignmentSteers
+    .map((row) => {
+      const match = /^Task assigned to\s+(\S+):/u.exec(row.body);
+      return match?.[1];
+    })
+    .filter((id): id is string => Boolean(id));
+  const routedFromEvents = (state.taskEvents ?? [])
+    .filter((event) => event.taskId === task.id)
+    .flatMap((event) => [event.targetAgentId, event.actorAgentId])
     .filter((id): id is string => Boolean(id));
   const agentIds = [
-    ...new Set([...routedFromSteers, task.reviewerAgentId, coordinatorId].filter((id): id is string => Boolean(id))),
+    ...new Set(
+      [
+        ...routedFromSteers,
+        ...routedFromBodies,
+        ...routedFromEvents,
+        // Current assignee may already be the coordinator after review approval; still include it.
+        task.assignee,
+        task.reviewerAgentId,
+        task.reviewedByAgentId,
+        coordinatorId,
+      ].filter((id): id is string => Boolean(id)),
+    ),
   ];
   settleTaskInboxForAgents(state.messages, { conversationId: task.conversationId, agentIds });
 }

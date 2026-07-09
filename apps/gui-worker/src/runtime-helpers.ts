@@ -320,10 +320,18 @@ export function applyAgentReadUpTo(
   spec: { conversationId: string; messageId: string; agentId: string },
 ): void {
   if (!spec.conversationId) return;
-  const conversationMessages = ctx.messages.filter((row) => row.conversation_id === spec.conversationId);
+  // Sort chronologically so cutoff is independent of array insertion order.
+  const conversationMessages = ctx.messages
+    .filter((row) => row.conversation_id === spec.conversationId)
+    .sort((a, b) => {
+      const byTime = (a.created_at ?? 0) - (b.created_at ?? 0);
+      if (byTime !== 0) return byTime;
+      return (a.id ?? "").localeCompare(b.id ?? "");
+    });
   const cutoffIndex = conversationMessages.findIndex((row) => row.id === spec.messageId);
   const readable = cutoffIndex >= 0 ? conversationMessages.slice(0, cutoffIndex + 1) : conversationMessages;
   for (const message of readable) {
+    if (!Array.isArray(message.readBy)) message.readBy = [];
     if (!message.readBy.includes(spec.agentId)) message.readBy.push(spec.agentId);
   }
 }
@@ -337,13 +345,16 @@ export function settleTaskInboxForAgents(
   if (!conversationId) return;
   const agentIds = [...new Set(spec.agentIds.map((id) => id.trim()).filter(Boolean))];
   if (!agentIds.length) return;
-  const conversationMessages = messages
-    .filter((row) => row.conversation_id === conversationId)
-    .sort((a, b) => a.created_at - b.created_at);
-  if (!conversationMessages.length) return;
-  const upToMessageId = conversationMessages[conversationMessages.length - 1].id;
-  const ctx: WakeDedupContext = { messages, tasks: [], conversations: [] };
-  for (const agentId of agentIds) {
-    applyAgentReadUpTo(ctx, { conversationId, messageId: upToMessageId, agentId });
+  // Mark every message currently in the conversation. Callers that need a later
+  // completion steer to stay unread must enqueue it after this settles (see advanceTaskDone).
+  // Avoid "last message id + unsorted slice" cutoffs: array order can diverge from
+  // created_at (missing timestamps, stable-sort ties), which previously skipped early
+  // assignment steers and left builders with stale unread wakes.
+  for (const message of messages) {
+    if (message.conversation_id !== conversationId) continue;
+    if (!Array.isArray(message.readBy)) message.readBy = [];
+    for (const agentId of agentIds) {
+      if (!message.readBy.includes(agentId)) message.readBy.push(agentId);
+    }
   }
 }

@@ -8359,6 +8359,29 @@ test("settleTaskInboxForAgents marks conversation steers read for routed agents"
   assert.deepEqual(messages[1].readBy, ["dev", "reviewer"]);
 });
 
+test("settleTaskInboxForAgents marks every conversation message even when timestamps are unordered", () => {
+  // Reproduces the CI flake class: last-by-created_at id is not last in array order, so a
+  // cutoff slice on unsorted messages skipped the early assignment steer.
+  const messages = [
+    { id: "late", conversation_id: "c1", author_kind: "system", created_at: 30, readBy: [] as string[] },
+    {
+      id: "assign-dev",
+      conversation_id: "c1",
+      author_kind: "system",
+      created_at: 10,
+      readBy: [] as string[],
+      body: 'Task assigned to dev: task-1 "x"',
+    },
+    { id: "mid", conversation_id: "c1", author_kind: "system", created_at: 20, readBy: [] as string[] },
+    { id: "other", conversation_id: "c2", author_kind: "system", created_at: 40, readBy: [] as string[] },
+  ];
+  settleTaskInboxForAgents(messages, { conversationId: "c1", agentIds: ["dev", "reviewer", "king-ai-ceo"] });
+  assert.deepEqual(messages[0].readBy, ["dev", "reviewer", "king-ai-ceo"]);
+  assert.deepEqual(messages[1].readBy, ["dev", "reviewer", "king-ai-ceo"]);
+  assert.deepEqual(messages[2].readBy, ["dev", "reviewer", "king-ai-ceo"]);
+  assert.deepEqual(messages[3].readBy, []);
+});
+
 test("sequential count games in #all do not spawn reviewer tasks", async () => {
   const bindings = env();
   await pairComputer(bindings, { engines: ["grok"] });
