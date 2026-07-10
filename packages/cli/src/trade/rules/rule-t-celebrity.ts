@@ -150,10 +150,7 @@ export function extractChainFmRefs(text: string): ChainFmRef[] {
 async function loadSeenState(): Promise<{ active: Set<string>; parseFails: Map<string, number> }> {
   try {
     const raw = await readFile(SEEN_TWEETS_DB, "utf8");
-    return parseSeenStateLines(
-      raw.split(/\r?\n/).filter(Boolean),
-      Date.now() / 1000,
-    );
+    return parseSeenStateLines(raw.split(/\r?\n/).filter(Boolean), Date.now() / 1000);
   } catch {
     return { active: new Set(), parseFails: new Map() };
   }
@@ -350,12 +347,7 @@ async function extractEntities(
   const parsed = extractJsonFromText(result) as Record<string, unknown> | null;
   const decision = resolveCelebrityAlphaDecision(parsed, text, { minConfidenceAlert });
   if (decision.meta.parse_failed) {
-    const raw = result
-      ? result
-          .replace(/\s+/g, " ")
-          .trim()
-          .slice(0, 200)
-      : "<empty>";
+    const raw = result ? result.replace(/\s+/g, " ").trim().slice(0, 200) : "<empty>";
     process.stderr.write(`[celebrity] parse_failed @${author} raw=${raw}\n`);
   }
   return decision;
