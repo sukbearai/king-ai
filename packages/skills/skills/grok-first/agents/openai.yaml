@@ -1,3 +1,3 @@
 display_name: Grok First
 short_description: Route scoped work to Grok CLI headless mode.
-default_prompt: Use $grok-first in Claude Code to delegate scoped implementation, exploration, or second-opinion work to Grok CLI while retaining Claude-side design, review, and verification.
+default_prompt: Use $grok-first in Claude Code to freeze a scoped spec, delegate implementation or second-opinion work to Grok CLI, and retain Claude-side review and verification; skip this skill outside Claude Code.

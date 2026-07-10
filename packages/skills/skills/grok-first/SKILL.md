@@ -1,13 +1,18 @@
 ---
 name: grok-first
-description: "Route implementation work to Grok CLI headless mode; Claude specs, reviews, verifies."
+description: "Claude Code-only workflow for delegating scoped implementation, exploration, debugging, or alternate-model review to Grok CLI while Claude owns specification, judgment, and verification. Skip in Grok and other harnesses; never self-delegate."
 ---
 
 # Grok First
 
-Claude Code sessions only. Grok/other harnesses: skip; never self-delegate.
+## Session Gate
 
-Rationale: Grok CLI has a headless mode suitable for scripted prompts, repo-local work, implementation, exploration, and alternate-model review. Claude keeps ergonomics, judgment, design, spec-writing, review, and orchestration. So Grok types, Claude thinks and verifies.
+Apply this gate before running any CLI command:
+
+- Claude Code session: continue.
+- Grok, Codex, or any other harness: stop applying this skill. Never invoke Grok from a Grok session.
+
+Explicitly naming `$grok-first` does not override the gate. This skill moves scoped execution or alternate-model analysis to Grok CLI while Claude keeps design, specification, review, and verification.
 
 ## Route
 
@@ -31,6 +36,8 @@ Keep in Claude:
 Mixed task: Claude designs first, freezes spec, delegates build-out.
 Heuristic: prompt reads as a work order -> delegate; writing it forces decisions -> design, Claude.
 Portfolio/multi-repo work: `$maintainer-orchestrator` instead.
+
+Do not call Grok merely to restate a plan that Claude can write in the current session. Freeze the spec in Claude first, then delegate execution.
 
 ## Invoke
 
@@ -79,7 +86,7 @@ command grok -p "$(cat "$P2")" \
 
 ## Prompt Contract
 
-Grok starts with zero Claude session context. Every prompt: goal, exact repo/paths, constraints ("don't touch X"), non-goals, proof expected (exact test command), output shape ("report files changed + test output"). Spec quality decides success.
+The external Grok process starts with zero Claude session context. Every prompt must include the goal, exact repo and paths, constraints, non-goals, expected proof, and output shape. Spec quality decides success.
 
 Include the relevant source facts in the prompt. Do not assume Grok can see the screenshot, chat history, secrets, MCP state, or Claude-only reasoning.
 

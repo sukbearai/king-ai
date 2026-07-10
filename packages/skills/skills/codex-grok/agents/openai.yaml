@@ -1,3 +1,3 @@
 display_name: Codex Grok
-short_description: Plan with Codex, execute with Grok CLI.
-default_prompt: Use $codex-grok to have Codex produce a frozen implementation plan and Grok execute it, with host-side verification.
+short_description: Plan in Codex, then execute with Grok CLI.
+default_prompt: Use $codex-grok in a Codex session to freeze the plan in-session, delegate only execution to Grok CLI, then review and verify the result.

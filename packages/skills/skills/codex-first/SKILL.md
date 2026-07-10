@@ -1,13 +1,18 @@
 ---
 name: codex-first
-description: "Route implementation work to Codex CLI; Claude specs, reviews, verifies."
+description: "Claude Code-only workflow for delegating scoped implementation, bug fixes, tests, CI, or bulk exploration to Codex CLI while Claude owns specification, review, and verification. Skip in Codex and other harnesses; never self-delegate."
 ---
 
 # Codex First
 
-Claude Code sessions only. Codex/other harnesses: skip; never self-delegate.
+## Session Gate
 
-Rationale: Claude (Fable/Opus) tokens metered + expensive; Codex flat-rate. GPT-5.5+ is usually the better and faster model at writing/implementing code; Claude wins at ergonomics - judgment, design, spec-writing, review, orchestration. So Codex types, Claude thinks and verifies.
+Apply this gate before running any CLI command:
+
+- Claude Code session: continue.
+- Codex or any other harness: stop applying this skill. Never invoke `codex exec` from a Codex session.
+
+Explicitly naming `$codex-first` does not override the gate. This skill moves hands-on work to Codex CLI while Claude keeps design, specification, review, and verification.
 
 ## Route
 
@@ -30,6 +35,8 @@ Keep in Claude:
 Mixed task: Claude designs first, freezes spec, delegates build-out.
 Heuristic: prompt reads as a work order -> delegate; writing it forces decisions -> design, Claude.
 Portfolio/multi-repo work: `$maintainer-orchestrator` instead.
+
+Do not call Codex merely to produce a plan that Claude can write in the current session. Freeze the spec in Claude first, then delegate implementation.
 
 ## Invoke
 
@@ -60,9 +67,9 @@ Follow-up fixes - cheaper than fresh runs, keeps context. `resume` has no `-C`/`
   -o /tmp/codex-last.md - <"$P2" 2>/dev/null)
 ```
 
-## Prompt contract
+## Prompt Contract
 
-Codex starts with zero session context. Every prompt: goal, exact repo/paths, constraints ("don't touch X"), non-goals, proof expected (exact test command), output shape ("report files changed + test output"). Spec quality decides success.
+The external Codex process starts with zero Claude session context. Every prompt must include the goal, exact repo and paths, constraints, non-goals, expected proof, and output shape. Include relevant source facts; do not assume Codex can see chat history, screenshots, secrets, or Claude-only tools.
 
 ## Verify (Claude, always)
 

@@ -1,74 +1,56 @@
 ---
 name: codex-grok
-description: "Route non-trivial implementation work through a two-step CLI workflow: Codex produces a frozen plan/spec, then Grok CLI executes it in headless mode while the coordinator reviews and verifies. Use when a task is too ambiguous to hand straight to Grok, but the implementation should still be delegated to Grok after Codex planning."
+description: "Codex-only workflow for non-trivial implementation: the current Codex session freezes the plan, delegates execution to Grok CLI, then reviews and verifies the result. Use when Grok should implement a resolved plan without inventing the architecture. Skip in every non-Codex harness; never launch a nested Codex planner."
 ---
 
 # Codex Grok
 
-Coordinator sessions only. Grok sessions: skip; never self-delegate. Codex sessions: use this only if a separate Grok execution pass is valuable; do not spawn a redundant Codex planner for your own planning.
+## Session Gate
 
-Rationale: this is a `grok-first` derivative for tasks where the missing piece is not raw implementation capacity, but a frozen implementation plan. Codex does the read-only planning/spec pass; Grok types from that spec; the coordinator verifies the diff and tests.
+Apply this gate before running any CLI command:
+
+- Codex session: continue. The current session owns planning, scope decisions, review, and verification.
+- Any non-Codex harness: stop applying this skill.
+
+Explicitly naming `$codex-grok` does not override the gate. Never run `command codex`, `codex exec`, or any equivalent nested Codex invocation from this skill.
 
 ## Route
 
-Use Codex -> Grok when:
+Use this workflow when:
 
 - implementation is non-trivial and needs an explicit plan before edits
-- the request has known boundaries, but the exact file-level execution path is not frozen
-- a refactor, bug fix, test-fill, CI fix, or migration would benefit from a separate design/spec pass
-- Grok should execute, but should not invent architecture or broaden scope
-- you want Codex's repo analysis before using Grok as the implementer
+- the desired outcome is known, but the exact file-level execution path is not frozen
+- Grok should implement a refactor, bug fix, test fill, CI fix, or migration without redesigning it
+- a separate Grok execution pass is worth the delegation overhead
 
-Use plain `$grok-first` instead when the spec is already frozen and Grok can start coding immediately.
+Do not use it for tiny edits, design-only work, or ordinary one-pass investigation. For a read-only investigation or review, use this workflow only when the user explicitly asks for a Codex-plus-Grok cross-check; keep every external pass read-only.
+
+If the spec is already frozen, hand it directly to Grok.
 
 Keep in the coordinator:
 
-- deciding whether the Codex plan is acceptable
-- final design/API/UX judgment when Codex surfaces tradeoffs
-- anything needing session-only tools: MCP, browser/computer-use, 1Password, secrets
-- destructive/irreversible operations, releases, pushes, GitHub mutations
-- review of Grok output; never delegated, never skipped
+- architecture, API, naming, UX, and final scope decisions
+- session-only tools, secrets, and authenticated state
+- destructive operations, releases, pushes, and GitHub mutations
+- plan acceptance, diff review, verification, and final reporting
 
-Tiny edits (~<20 lines, single obvious change) should usually be done directly. Portfolio/multi-repo work still belongs to `$maintainer-orchestrator`.
+## Freeze The Plan
 
-## Invoke Codex Planner
+The accepted plan must resolve assumptions and contain:
 
-Prompt via a temp file. Codex planning is read-only: it may inspect the repo and run safe read-only commands, but it must not edit files.
+1. problem framing and non-goals
+2. exact files or modules to inspect and change
+3. ordered implementation steps
+4. exact tests and verification commands
+5. risks and out-of-scope items
 
-```bash
-P=$(mktemp); PLAN=/tmp/codex-plan.md; cat >"$P" <<'EOF'
-You are the planning pass only. Do not edit files.
+Do not hand Grok unresolved alternatives unless choosing among them is explicitly part of the task.
 
-Goal:
-<user goal>
-
-Repo:
-<absolute repo path>
-
-Known constraints:
-<paths to avoid, compatibility rules, non-goals, docs/test expectations>
-
-Produce a frozen execution spec for Grok with:
-1. Problem framing and assumptions
-2. Files/modules to inspect or change
-3. Exact implementation steps
-4. Tests/verification commands Grok should run
-5. Risks and out-of-scope items
-EOF
-command codex exec -C <repo> \
-  --sandbox read-only \
-  -c model_reasoning_effort="high" \
-  -o "$PLAN" - <"$P" 2>/dev/null
-```
-
-- Read `$PLAN` before continuing.
-- Reject or edit the plan if it broadens scope, depends on hidden context, or leaves key choices unresolved.
-- If the plan is still a design discussion rather than an execution spec, run one focused Codex follow-up or take over planning directly.
-- Do not hand Grok unresolved alternatives unless choosing among them is explicitly part of the task.
+Produce and review the frozen plan in the current Codex session. Do not run `command codex`, `codex exec`, or any equivalent nested Codex invocation.
 
 ## Invoke Grok Executor
 
-Use Grok headless mode from the accepted Codex plan. Prefer `--prompt-file` so the prompt can embed the plan without shell quoting risk.
+Pass the accepted plan to Grok without asking Grok to redesign it:
 
 ```bash
 GP=$(mktemp); cat >"$GP" <<'EOF'
@@ -81,12 +63,12 @@ Coordinator constraints:
 <paths to avoid, non-goals, exact verification expected>
 
 Frozen Codex plan:
-<paste /tmp/codex-plan.md>
+<paste the accepted plan>
 
 Output shape:
 - files changed
 - commands run and their results
-- any deviations from the plan, with reason
+- deviations from the plan, with reason
 EOF
 command grok --prompt-file "$GP" \
   --cwd <repo> \
@@ -97,29 +79,25 @@ command grok --prompt-file "$GP" \
   > /tmp/grok-last.md
 ```
 
-- `--cwd <PATH>` sets the working directory; keep prompts scoped to the target repo.
-- `--model <MODEL>` chooses the model. Omit it if the default model is intentional.
-- `--output-format plain` is easiest for human review; use `json` or `streaming-json` only for machine parsing.
-- `--always-approve` auto-approves tool executions. Use it only for scoped, non-destructive repo work.
-- Read `/tmp/grok-last.md` for the result.
-- For long runs, use a background shell job and read the output file on exit. Do not kill quiet runs under 30 minutes.
+- Keep the prompt scoped to the target repo.
+- Use `--always-approve` only for scoped, non-destructive repo work.
+- Read `/tmp/grok-last.md`; Grok's claims are advisory until verified.
+- Do not kill a quiet run under 30 minutes.
+- Use separate prompt and output files for independent parallel tasks.
 
-## Follow-up Fixes
+## Follow-Up Fixes
 
-Use the same split:
-
-- If the failure is a bad or incomplete plan, resume Codex or patch the plan yourself before asking Grok to continue.
-- If the plan is sound but execution is wrong, continue Grok with the failing proof and the narrow correction.
+- Bad or incomplete plan: correct it in the current Codex session before asking Grok to continue.
+- Sound plan but faulty execution: continue Grok with the exact failing proof and narrow correction.
+- After two failed Grok execution rounds, stop delegating and take over in the coordinator.
 
 ```bash
 P2=$(mktemp); cat >"$P2" <<'EOF'
-The previous implementation diverged from the frozen plan or failed verification.
-
 Fix only:
 <specific correction>
 
 Failure proof:
-<test output, diff concern, or exact reviewer finding>
+<test output, diff concern, or reviewer finding>
 
 Expected verification:
 <commands>
@@ -133,26 +111,22 @@ command grok --prompt-file "$P2" \
   > /tmp/grok-last.md
 ```
 
-After two failed execution rounds, stop delegating and take over directly.
-
 ## Prompt Contract
 
-Both external agents start with zero coordinator session context.
+Every external CLI process starts with zero coordinator context.
 
-Codex planner prompt must include: goal, repo, relevant paths, constraints, non-goals, required output shape, and proof expected.
+- Grok is the only external agent in this workflow.
+- Include the goal, repo, relevant paths, constraints, non-goals, expected proof, and output shape in every external prompt.
+- Do not assume external agents can see chat history, screenshots, secrets, MCP state, or coordinator-only reasoning.
 
-Grok executor prompt must include: accepted Codex plan, repo, explicit "do not redesign" instruction, constraints, exact verification commands, and output shape.
+## Verify In The Coordinator
 
-Do not assume either agent can see screenshots, chat history, secrets, MCP state, or coordinator-only reasoning. Paste the relevant facts.
-
-## Verify (Coordinator, Always)
-
-- `git status -sb` + read the full diff; judge like a contributor PR
-- compare Grok's changes against the accepted Codex plan
-- run focused tests yourself or demand proof output; Grok claims are advisory
-- verify docs updates if behavior, commands, configuration, or runtime architecture changed
-- normal closeout still applies: `$autoreview` before ship
+- run `git status -sb` and read the full diff
+- compare Grok's changes with the accepted plan
+- run focused tests or inspect their real output
+- verify documentation when behavior, commands, configuration, or runtime architecture changed
+- keep pushes, releases, and other irreversible operations in the coordinator
 
 ## Economics
 
-Win = Codex spends cheap planning/exploration tokens, Grok spends implementation tokens, and the coordinator spends attention only on plan acceptance and diff verification. If the task is already clear enough for Grok, use `$grok-first`; if the task is mostly design, keep it in the coordinator.
+The only valid path is current Codex planning -> Grok execution -> current Codex verification. Never pay for a nested Codex planning pass.
