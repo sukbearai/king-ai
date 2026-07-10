@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { extractJsonFromText, resetAgentBackendBlocks, runAgent, summarizeAgentError } from "../src/trade/llm-utils.js";
+import {
+  extractJsonFromText,
+  resetAgentBackendBlocks,
+  runAgent,
+  salvageAgentErrorStdout,
+  summarizeAgentError,
+} from "../src/trade/llm-utils.js";
 
 test("extractJsonFromText parses fenced JSON array", () => {
   const parsed = extractJsonFromText('prefix\n```json\n[{"a":1}]\n```\nsuffix');
@@ -10,6 +16,54 @@ test("extractJsonFromText parses fenced JSON array", () => {
 test("extractJsonFromText parses bare object", () => {
   const parsed = extractJsonFromText('answer {"ok":true} done');
   assert.deepEqual(parsed, { ok: true });
+});
+
+test("extractJsonFromText keeps enclosing object when it contains arrays", () => {
+  const celebrity = extractJsonFromText(
+    '{"is_alpha":false,"alpha_type":"none","confidence":0.05,"reason":"无标的","entities":[]}',
+  );
+  assert.deepEqual(celebrity, {
+    is_alpha: false,
+    alpha_type: "none",
+    confidence: 0.05,
+    reason: "无标的",
+    entities: [],
+  });
+
+  const withProse = extractJsonFromText('结论: {"is_alpha":true,"entities":["DOGE"]} 完');
+  assert.deepEqual(withProse, { is_alpha: true, entities: ["DOGE"] });
+});
+
+test("extractJsonFromText still returns top-level arrays", () => {
+  const parsed = extractJsonFromText('[{"idx":0,"impact":"medium"},{"idx":1,"impact":"low"}]');
+  assert.deepEqual(parsed, [
+    { idx: 0, impact: "medium" },
+    { idx: 1, impact: "low" },
+  ]);
+
+  const prefixed = extractJsonFromText('classified:\n[{"idx":2}]');
+  assert.deepEqual(prefixed, [{ idx: 2 }]);
+});
+
+test("salvageAgentErrorStdout recovers JSON stdout from exec errors", () => {
+  const withJson = new Error("Command failed: grok");
+  (withJson as Error & { stdout: string }).stdout = 'noise {"is_alpha":false,"entities":[]} trailing';
+  assert.equal(salvageAgentErrorStdout(withJson), 'noise {"is_alpha":false,"entities":[]} trailing');
+
+  const bufJson = new Error("Command failed: grok");
+  (bufJson as Error & { stdout: Buffer }).stdout = Buffer.from('{"ok":true}');
+  assert.equal(salvageAgentErrorStdout(bufJson), '{"ok":true}');
+
+  const noJson = new Error("Command failed: grok");
+  (noJson as Error & { stdout: string }).stdout = "plain text answer without braces";
+  assert.equal(salvageAgentErrorStdout(noJson), "");
+
+  const empty = new Error("Command failed: grok");
+  (empty as Error & { stdout: string }).stdout = "   ";
+  assert.equal(salvageAgentErrorStdout(empty), "");
+
+  assert.equal(salvageAgentErrorStdout(new Error("no stdout")), "");
+  assert.equal(salvageAgentErrorStdout("string err"), "");
 });
 
 test("summarizeAgentError redacts long prompts and classifies quota/auth failures", () => {

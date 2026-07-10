@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { TRADE_SCRATCHPAD_PATH } from "../paths.js";
+import { okxGet } from "./data-helpers.js";
 import { calcRsi, fetchOkxCandles } from "./market-indicators.js";
 
 export type MarketRegime = "risk_on" | "risk_off" | "neutral" | "volatile";
@@ -125,12 +126,9 @@ export class Scratchpad {
 
   async autoDetectRegime(): Promise<MarketRegime | null> {
     try {
-      const tickerRes = await fetch("https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT", {
-        headers: { "User-Agent": "king-ai/1.0" },
-        signal: AbortSignal.timeout(5000),
-      });
-      if (!tickerRes.ok) return null;
-      const tickerBody = (await tickerRes.json()) as { data?: Array<{ last?: string }> };
+      const tickerBody = (await okxGet("/api/v5/market/ticker", { instId: "BTC-USDT" }, 5_000)) as {
+        data?: Array<{ last?: string }>;
+      };
       const price = Number.parseFloat(tickerBody.data?.[0]?.last ?? "0");
       if (!Number.isFinite(price) || price <= 0) return null;
 

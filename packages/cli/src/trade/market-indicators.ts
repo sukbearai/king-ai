@@ -1,18 +1,11 @@
+import { okxGet } from "./data-helpers.js";
+
 type OkxCandle = [string, string, string, string, string, ...string[]];
 
 export async function fetchOkxCandles(instId: string, bar = "1H", limit = 30): Promise<OkxCandle[]> {
-  const url = `https://www.okx.com/api/v5/market/candles?instId=${encodeURIComponent(instId)}&bar=${encodeURIComponent(bar)}&limit=${limit}`;
-  try {
-    const res = await fetch(url, {
-      headers: { "User-Agent": "king-ai/1.0" },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return [];
-    const body = (await res.json()) as { data?: OkxCandle[] };
-    return body.data ?? [];
-  } catch {
-    return [];
-  }
+  const body = await okxGet("/api/v5/market/candles", { instId, bar, limit: String(limit) }, 5_000);
+  const data = body.data;
+  return Array.isArray(data) ? (data as OkxCandle[]) : [];
 }
 
 export function calcRsi(closes: number[], period = 14): number {

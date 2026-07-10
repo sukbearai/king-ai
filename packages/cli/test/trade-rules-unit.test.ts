@@ -8,6 +8,8 @@ import {
   groundEntitiesInText,
   isCelebritySeenRecordActive,
   isLikelyTweetUiFragment,
+  parseFailMarkTtl,
+  parseSeenStateLines,
   resolveCelebrityAlphaDecision,
 } from "../src/trade/rules/rule-t-celebrity.js";
 import { buildPanewsUnclassifiedAlert } from "../src/trade/rules/rule-q-panews.js";
@@ -148,6 +150,34 @@ May 23
     assert.equal(isCelebritySeenRecordActive({ id: "tweet-1", ts: now - 7201, ttl_seconds: 7200 }, now), false);
     assert.equal(isCelebritySeenRecordActive({ id: "tweet-2", ts: now - 2 * 86400 }, now), true);
     assert.equal(isCelebritySeenRecordActive({ id: "tweet-2", ts: now - 4 * 86400 }, now), false);
+  });
+
+  it("parseFailMarkTtl uses short retry then full seen TTL", () => {
+    assert.equal(parseFailMarkTtl(1), 900);
+    assert.equal(parseFailMarkTtl(2), 900);
+    assert.equal(parseFailMarkTtl(3), 259200);
+    assert.equal(parseFailMarkTtl(4), 259200);
+  });
+
+  it("parseSeenStateLines builds active set and parse-fail counts", () => {
+    const now = 1_000_000;
+    const lines = [
+      JSON.stringify({ id: "active-1", ts: now - 60, ttl_seconds: 86400 * 3 }),
+      JSON.stringify({ id: "expired-1", ts: now - 10_000, ttl_seconds: 900 }),
+      JSON.stringify({ id: "pf-1", ts: now - 100, ttl_seconds: 900 }),
+      JSON.stringify({ id: "pf-1", ts: now - 50, ttl_seconds: 900 }),
+      "not-json{{{",
+      JSON.stringify({ id: "other", ts: now - 10, ttl_seconds: 300 }),
+    ];
+    const { active, parseFails } = parseSeenStateLines(lines, now);
+    assert.equal(active.has("active-1"), true);
+    assert.equal(active.has("expired-1"), false);
+    assert.equal(active.has("pf-1"), true);
+    assert.equal(active.has("other"), true);
+    assert.equal(parseFails.get("pf-1"), 2);
+    assert.equal(parseFails.get("expired-1"), 1);
+    assert.equal(parseFails.has("active-1"), false);
+    assert.equal(parseFails.has("other"), false);
   });
 });
 

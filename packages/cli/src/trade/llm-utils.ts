@@ -2,10 +2,7 @@ import { execFile } from "node:child_process";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { promisify } from "node:util";
 import { dotGet, loadTradeConfig } from "./config.js";
-
-const execFileP = promisify(execFile);
 
 const AGENT_BACKENDS = ["grok", "claude", "codex"] as const;
 type AgentBackend = (typeof AGENT_BACKENDS)[number];
@@ -64,25 +61,36 @@ async function writePromptTempFile(prompt: string): Promise<string> {
 export function extractJsonFromText(text: string): unknown {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   const body = (fenced ? fenced[1] : text) ?? "";
-  const arrStart = body.indexOf("[");
-  const arrEnd = body.lastIndexOf("]");
-  if (arrStart >= 0 && arrEnd > arrStart) {
-    try {
-      return JSON.parse(body.slice(arrStart, arrEnd + 1));
-    } catch {
-      // fall through
-    }
-  }
   const objStart = body.indexOf("{");
   const objEnd = body.lastIndexOf("}");
-  if (objStart >= 0 && objEnd > objStart) {
+  const arrStart = body.indexOf("[");
+  const arrEnd = body.lastIndexOf("]");
+  const tryParse = (start: number, end: number): unknown => {
+    if (start < 0 || end <= start) return undefined;
     try {
-      return JSON.parse(body.slice(objStart, objEnd + 1));
+      return JSON.parse(body.slice(start, end + 1));
     } catch {
-      return null;
+      return undefined;
     }
-  }
+  };
+  // Parse whichever structure opens first: an object body may legitimately
+  // contain arrays (e.g. {"entities":[]}), so slicing [..] first would
+  // return the inner array and drop the enclosing object.
+  const objectFirst = objStart >= 0 && (arrStart < 0 || objStart < arrStart);
+  const first = objectFirst ? tryParse(objStart, objEnd) : tryParse(arrStart, arrEnd);
+  if (first !== undefined) return first;
+  const second = objectFirst ? tryParse(arrStart, arrEnd) : tryParse(objStart, objEnd);
+  if (second !== undefined) return second;
   return null;
+}
+
+export function salvageAgentErrorStdout(err: unknown): string {
+  const e = err as ExecFileError;
+  if (e.stdout == null) return "";
+  const stdout = String(e.stdout).trim();
+  if (!stdout) return "";
+  if (extractJsonFromText(stdout) === null) return "";
+  return stdout;
 }
 
 function normalizeBackend(raw: string): AgentBackend | null {
@@ -179,7 +187,7 @@ async function runAgentBackend(
     };
     const { stdout } = useStdin
       ? await execFileWithStdin("claude", args, prompt, execOpts)
-      : await execFileP("claude", args, execOpts);
+      : await execFileClosedStdin("claude", args, execOpts);
     return stdout.trim();
   }
 
@@ -222,7 +230,7 @@ async function runAgentBackend(
       "plain",
     ];
     if (model) args.unshift("-m", model);
-    const { stdout } = await execFileP("grok", args, {
+    const { stdout } = await execFileClosedStdin("grok", args, {
       timeout: timeoutMs,
       maxBuffer: 5 * 1024 * 1024,
       env: process.env,
@@ -250,6 +258,12 @@ export async function runAgent(prompt: string, options: { timeoutMs?: number; ta
       const text = await runAgentBackend(name, prompt, llmCfg, timeoutMs);
       if (text) return text;
     } catch (err) {
+      const salvaged = salvageAgentErrorStdout(err);
+      if (salvaged) {
+        const msg = summarizeAgentError(err);
+        process.stderr.write(`[llm-agent] ${name} error but stdout salvaged: ${msg.slice(0, 120)}\n`);
+        return salvaged;
+      }
       const msg = summarizeAgentError(err);
       if (shouldBlockBackend(msg)) blockBackend(name);
       process.stderr.write(`[llm-agent] ${name} failed: ${msg}\n`);

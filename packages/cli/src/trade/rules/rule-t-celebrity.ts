@@ -11,6 +11,7 @@ const SEEN_TWEETS_DB = `${TRADE_STATE_DIR}/celebrity_seen.jsonl`;
 const TWITTER_SEARCH_SESSION = "trade-twitter-search";
 const SEEN_TWEET_TTL_SECONDS = 86400 * 3;
 const NON_ALPHA_RETRY_SECONDS = 5 * 60;
+const MAX_PARSE_FAIL_ATTEMPTS = 3;
 
 const ENTITY_BLACKLIST = new Set([
   "USD",
@@ -95,6 +96,31 @@ export function isCelebritySeenRecordActive(record: SeenTweetRecord, nowSeconds 
   return nowSeconds - record.ts < ttl;
 }
 
+export function parseFailMarkTtl(attempts: number): number {
+  return attempts >= MAX_PARSE_FAIL_ATTEMPTS ? SEEN_TWEET_TTL_SECONDS : PARSE_FAIL_RETRY_SECONDS;
+}
+
+export function parseSeenStateLines(
+  lines: string[],
+  nowSeconds: number,
+): { active: Set<string>; parseFails: Map<string, number> } {
+  const active = new Set<string>();
+  const parseFails = new Map<string, number>();
+  for (const line of lines) {
+    if (!line) continue;
+    try {
+      const rec = JSON.parse(line) as SeenTweetRecord;
+      if (isCelebritySeenRecordActive(rec, nowSeconds) && rec.id) active.add(rec.id);
+      if (rec.id && rec.ttl_seconds === PARSE_FAIL_RETRY_SECONDS) {
+        parseFails.set(rec.id, (parseFails.get(rec.id) ?? 0) + 1);
+      }
+    } catch {
+      // skip malformed lines
+    }
+  }
+  return { active, parseFails };
+}
+
 export function extractChainFmRefs(text: string): ChainFmRef[] {
   const chainMap: Record<string, string> = {
     solana: "solana",
@@ -121,21 +147,16 @@ export function extractChainFmRefs(text: string): ChainFmRef[] {
   return refs;
 }
 
-async function loadSeenIds(): Promise<Set<string>> {
-  const ids = new Set<string>();
-  const now = Date.now() / 1000;
+async function loadSeenState(): Promise<{ active: Set<string>; parseFails: Map<string, number> }> {
   try {
     const raw = await readFile(SEEN_TWEETS_DB, "utf8");
-    for (const line of raw.split(/\r?\n/).filter(Boolean)) {
-      try {
-        const rec = JSON.parse(line) as SeenTweetRecord;
-        if (isCelebritySeenRecordActive(rec, now) && rec.id) ids.add(rec.id);
-      } catch {}
-    }
+    return parseSeenStateLines(
+      raw.split(/\r?\n/).filter(Boolean),
+      Date.now() / 1000,
+    );
   } catch {
-    // file may not exist
+    return { active: new Set(), parseFails: new Map() };
   }
-  return ids;
 }
 
 async function persistSeen(tid: string, ttlSeconds = SEEN_TWEET_TTL_SECONDS): Promise<void> {
@@ -327,7 +348,17 @@ async function extractEntities(
   const prompt = ENTITY_PROMPT_TPL.replace("{text}", text.slice(0, 500)).replace("{author}", author);
   const result = await runAgent(prompt, { timeoutMs: 45_000, task: "celebrity_extract" });
   const parsed = extractJsonFromText(result) as Record<string, unknown> | null;
-  return resolveCelebrityAlphaDecision(parsed, text, { minConfidenceAlert });
+  const decision = resolveCelebrityAlphaDecision(parsed, text, { minConfidenceAlert });
+  if (decision.meta.parse_failed) {
+    const raw = result
+      ? result
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 200)
+      : "<empty>";
+    process.stderr.write(`[celebrity] parse_failed @${author} raw=${raw}\n`);
+  }
+  return decision;
 }
 
 export function isLikelyTweetUiFragment(text: string, author: string): boolean {
@@ -362,6 +393,7 @@ export function celebrityAlertSeverity(
 
 export function createRuleTCelebrity(): AlertRule {
   let seen = new Set<string>();
+  let parseFails = new Map<string, number>();
   let accounts: string[] = [];
   let fetchLimit = 10;
 
@@ -382,7 +414,9 @@ export function createRuleTCelebrity(): AlertRule {
         cfg.min_confidence_warning ?? DEFAULT_MIN_CONFIDENCE_WARNING,
         DEFAULT_MIN_CONFIDENCE_WARNING,
       );
-      seen = await loadSeenIds();
+      const seenState = await loadSeenState();
+      seen = seenState.active;
+      parseFails = seenState.parseFails;
 
       const alerts: Alert[] = [];
       for (const user of accounts) {
@@ -406,7 +440,13 @@ export function createRuleTCelebrity(): AlertRule {
           // LLM autonomous decision; no human approval gate.
           const { entities, meta } = await extractEntities(text, user, minConfidenceAlert);
           if (meta.parse_failed) {
-            await markSeen(PARSE_FAIL_RETRY_SECONDS);
+            const attempts = (parseFails.get(tid) ?? 0) + 1;
+            parseFails.set(tid, attempts);
+            const ttl = parseFailMarkTtl(attempts);
+            if (attempts >= MAX_PARSE_FAIL_ATTEMPTS) {
+              process.stderr.write(`[celebrity] parse_failed giving up id=${tid} attempts=${attempts}\n`);
+            }
+            await markSeen(ttl);
             continue;
           }
           if (!meta.is_alpha) {
