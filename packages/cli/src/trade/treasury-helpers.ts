@@ -1,9 +1,11 @@
 import { yahooFinanceQuote } from "./data-helpers.js";
+import { formatDisplayShortTime } from "./time-utils.js";
 
 export interface TreasuryPriceQuote {
   symbol: string;
   price: number;
   change_pct: number;
+  market_time?: number;
 }
 
 export interface TreasuryYieldQuote {
@@ -11,6 +13,7 @@ export interface TreasuryYieldQuote {
   yield_pct: number;
   change_bps: number;
   prev_yield_pct: number;
+  market_time?: number;
 }
 
 export interface TreasuryYieldHighContext {
@@ -119,7 +122,7 @@ export function buildYieldHighContext(
 export async function fetchTreasuryPriceQuote(symbol: string): Promise<TreasuryPriceQuote | null> {
   const q = await yahooFinanceQuote(symbol);
   if (!(q.price > 0) || q.change_pct == null || !Number.isFinite(q.change_pct)) return null;
-  return { symbol, price: q.price, change_pct: q.change_pct };
+  return { symbol, price: q.price, change_pct: q.change_pct, market_time: q.market_time };
 }
 
 export async function fetchTreasuryYieldQuote(symbol: string): Promise<TreasuryYieldQuote | null> {
@@ -131,6 +134,7 @@ export async function fetchTreasuryYieldQuote(symbol: string): Promise<TreasuryY
     yield_pct: q.price,
     change_bps: yieldChangeBps(q.price, prev),
     prev_yield_pct: prev,
+    market_time: q.market_time,
   };
 }
 
@@ -178,7 +182,8 @@ export function formatTreasuryBriefLine(
   if (priceQuote) {
     const flag = classifyPriceDropSeverity(priceQuote.change_pct, cfg) !== "none" ? " ⚠️" : "";
     const chg = `${priceQuote.change_pct >= 0 ? "+" : ""}${priceQuote.change_pct.toFixed(2)}%`;
-    return `  ${label}(${symbol}): $${priceQuote.price.toFixed(2)} (${chg})${flag}`;
+    const asOf = formatMarketTime(priceQuote.market_time);
+    return `  ${label}(${symbol}): $${priceQuote.price.toFixed(2)} (${chg})${flag}${asOf}`;
   }
   if (yieldQuote) {
     const rise = classifyYieldRiseSeverity(yieldQuote.change_bps, cfg);
@@ -191,9 +196,14 @@ export function formatTreasuryBriefLine(
         ? `，刷新${highCtx.lookback_years}年新高`
         : `，距${highCtx.lookback_years}年高点 ${Math.abs(highCtx.bps_below_high).toFixed(1)}bp`;
     }
-    return `  ${label}(${symbol}): ${formatYieldPct(yieldQuote.yield_pct)} (${chg})${riseFlag}${highFlag}${extra}`;
+    const asOf = formatMarketTime(yieldQuote.market_time);
+    return `  ${label}(${symbol}): ${formatYieldPct(yieldQuote.yield_pct)} (${chg})${riseFlag}${highFlag}${extra}${asOf}`;
   }
   return `  ${label}(${symbol}): N/A`;
+}
+
+function formatMarketTime(timestamp?: number): string {
+  return timestamp ? ` @${formatDisplayShortTime(new Date(timestamp * 1000))}` : "";
 }
 
 function recordOrDefault(value: unknown, fallback: Record<string, string>): Record<string, string> {

@@ -13,6 +13,15 @@ export function formatDisplayTime(date = new Date(), fmt: "full" | "hm" = "full"
   return `${y}-${m}-${d} ${h}:${min} UTC+8`;
 }
 
+export function formatDisplayShortTime(date: Date): string {
+  const utc8 = new Date(date.getTime() + DISPLAY_OFFSET_MS);
+  const m = String(utc8.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(utc8.getUTCDate()).padStart(2, "0");
+  const h = String(utc8.getUTCHours()).padStart(2, "0");
+  const min = String(utc8.getUTCMinutes()).padStart(2, "0");
+  return `${m}-${d} ${h}:${min} UTC+8`;
+}
+
 export function todayDisplayDate(): string {
   const utc8 = new Date(Date.now() + DISPLAY_OFFSET_MS);
   const y = utc8.getUTCFullYear();

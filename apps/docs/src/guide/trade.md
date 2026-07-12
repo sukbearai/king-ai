@@ -144,7 +144,11 @@ king-ai trade watchdog --kill
 
 The market brief queries OKX spot/perp endpoints concurrently with short per-request budgets. Tune `data_sources.market.request_timeout_ms` and `data_sources.market.fallback_timeout_ms` if your local network needs a different balance between freshness and brief latency.
 
-The Twitter brief applies a relevance filter by default. Its section title shows the number of high-relevance tweets included after filtering and display caps. Set `data_sources.twitter.relevance_filter` to `false` to inspect the raw timeline.
+Market, stock, and Treasury rows include the source quote time when the upstream API provides one. Yahoo-backed stock and Treasury quotes retry once after a transient failure; missing Treasury instruments are marked as degraded, and the rate-cut conclusion is derived from configured move thresholds instead of a fixed narrative.
+
+The Twitter collector samples the authenticated `x.com/home` virtual timeline across multiple scroll rounds and merges tweets before X unmounts older DOM nodes. Tune `data_sources.twitter.collect_limit`, `scroll_rounds`, `scroll_wait_ms`, and `stagnant_rounds` to balance coverage and collection latency. Collector logs distinguish rounds, scanned DOM rows, unique rows, duplicates, new cache entries, recent-24h entries, and recent authors. This remains the visible authenticated home feed, not a complete X archive.
+
+The Twitter brief applies a relevance filter by default. Its section title reports the cache/filter/candidate funnel, and `data_sources.twitter.summary_candidate_limit` controls the final candidate set (default `30`, range `5..60`). Candidates rank by available likes, retweets, replies, and views, with newer tweets winning ties. The summary emits at most five items and keeps a source index with author, UTC+8 time, and original URL. Set `data_sources.twitter.relevance_filter` to `false` to inspect the raw timeline. Telegram meme summaries prioritize priced buys/sells, liquidity, market cap, and concentration; transfer or airdrop lists are compressed and hard-capped. Dry-run briefs do not replace the persisted metadata for the latest scheduled or manually delivered brief.
 
 ## OpenCLI Browser Bridge
 

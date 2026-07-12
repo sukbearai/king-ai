@@ -182,27 +182,40 @@ export async function runSurf(args: string[], timeoutMs = 30_000): Promise<unkno
   }
 }
 
-export async function yahooFinanceQuote(symbol: string): Promise<{ price: number; change_pct?: number }> {
-  try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1d`;
-    const res = await fetch(url, {
-      headers: { "User-Agent": OKX_UA },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) return { price: 0 };
-    const body = (await res.json()) as {
-      chart?: {
-        result?: Array<{ meta?: { regularMarketPrice?: number; previousClose?: number; chartPreviousClose?: number } }>;
+export async function yahooFinanceQuote(
+  symbol: string,
+): Promise<{ price: number; change_pct?: number; market_time?: number }> {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1d`;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(url, {
+        headers: { "User-Agent": OKX_UA },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) throw new Error(`Yahoo HTTP ${res.status}`);
+      const body = (await res.json()) as {
+        chart?: {
+          result?: Array<{
+            meta?: {
+              regularMarketPrice?: number;
+              previousClose?: number;
+              chartPreviousClose?: number;
+              regularMarketTime?: number;
+            };
+          }>;
+        };
       };
-    };
-    const meta = body.chart?.result?.[0]?.meta;
-    const price = meta?.regularMarketPrice ?? 0;
-    const prev = meta?.previousClose ?? meta?.chartPreviousClose ?? 0;
-    const change_pct = prev > 0 ? ((price - prev) / prev) * 100 : undefined;
-    return { price, change_pct };
-  } catch {
-    return { price: 0 };
+      const meta = body.chart?.result?.[0]?.meta;
+      const price = meta?.regularMarketPrice ?? 0;
+      if (!(price > 0)) throw new Error("Yahoo quote missing price");
+      const prev = meta?.chartPreviousClose ?? meta?.previousClose ?? 0;
+      const change_pct = prev > 0 ? ((price - prev) / prev) * 100 : undefined;
+      return { price, change_pct, market_time: meta?.regularMarketTime };
+    } catch {
+      if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 250));
+    }
   }
+  return { price: 0 };
 }
 
 function yahooQuoteSymbol(symbol: string): string {
@@ -217,7 +230,9 @@ function yahooQuoteSymbol(symbol: string): string {
   return symbol;
 }
 
-export async function stockQuote(symbol: string): Promise<{ price: number; change_pct?: number; source?: string }> {
+export async function stockQuote(
+  symbol: string,
+): Promise<{ price: number; change_pct?: number; source?: string; market_time?: number }> {
   const yf = await yahooFinanceQuote(yahooQuoteSymbol(symbol));
   if (yf.price > 0) return { ...yf, source: "yahoo" };
   return { price: 0 };

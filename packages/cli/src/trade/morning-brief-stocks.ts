@@ -1,5 +1,6 @@
 import { dotGet, loadTradeConfig } from "./config.js";
 import { stockQuote } from "./data-helpers.js";
+import { formatDisplayShortTime } from "./time-utils.js";
 
 const DEFAULT_WATCHLIST: Record<string, string> = {
   CRCL: "Circle",
@@ -26,12 +27,13 @@ export async function fetchStocksSection(): Promise<string> {
     }
     const threshold = ETF_SYMBOLS.has(symbol) ? 3 : 5;
     const chg = q.change_pct;
+    const asOf = q.market_time ? ` @${formatDisplayShortTime(new Date(q.market_time * 1000))}` : "";
     if (chg == null) {
-      lines.push(`  ${name}(${symbol}): $${q.price.toFixed(2)} (涨跌幅 N/A)`);
+      lines.push(`  ${name}(${symbol}): $${q.price.toFixed(2)} (涨跌幅 N/A)${asOf}`);
       continue;
     }
     const flag = Math.abs(chg) >= threshold ? " ⚠️" : "";
-    lines.push(`  ${name}(${symbol}): $${q.price.toFixed(2)} (${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%)${flag}`);
+    lines.push(`  ${name}(${symbol}): $${q.price.toFixed(2)} (${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%)${flag}${asOf}`);
   }
   return lines.join("\n");
 }

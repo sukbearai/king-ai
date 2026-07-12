@@ -36,6 +36,33 @@ describe("stripAnsi", () => {
     }
   });
 
+  it("prefers chartPreviousClose when Yahoo previousClose is stale", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          chart: {
+            result: [
+              {
+                meta: {
+                  regularMarketPrice: 3996.16,
+                  previousClose: 3970.75,
+                  chartPreviousClose: 4036.59,
+                },
+              },
+            ],
+          },
+        }),
+      )) as typeof fetch;
+    try {
+      const quote = await yahooFinanceQuote("000001.SS");
+      assert.ok(quote.change_pct != null);
+      assert.ok(Math.abs(quote.change_pct - -1.0011) < 0.01);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("leaves change_pct undefined when Yahoo has no previous close", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async () =>
@@ -56,6 +83,38 @@ describe("stripAnsi", () => {
       const quote = await yahooFinanceQuote("AAPL");
       assert.equal(quote.price, 110);
       assert.equal(quote.change_pct, undefined);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("retries a transient Yahoo response failure", async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      if (calls === 1) return new Response("busy", { status: 503 });
+      return new Response(
+        JSON.stringify({
+          chart: {
+            result: [
+              {
+                meta: {
+                  regularMarketPrice: 4.569,
+                  chartPreviousClose: 4.529,
+                  regularMarketTime: 1783709994,
+                },
+              },
+            ],
+          },
+        }),
+      );
+    }) as typeof fetch;
+    try {
+      const quote = await yahooFinanceQuote("^TNX");
+      assert.equal(calls, 2);
+      assert.equal(quote.price, 4.569);
+      assert.equal(quote.market_time, 1783709994);
     } finally {
       globalThis.fetch = originalFetch;
     }

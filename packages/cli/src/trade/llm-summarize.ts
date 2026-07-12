@@ -43,11 +43,12 @@ export function stripMarkdown(text: string): string {
   return out.trim();
 }
 
-export async function llmSummarize(text: string, label: string): Promise<string> {
+export async function llmSummarize(text: string, label: string, instruction?: string): Promise<string> {
   const prompt = [
     `请用中文简洁摘要以下「${label}」内容，保留关键数字和标的名称，不超过 500 字。`,
     "输出要求：纯文本，不要使用任何 Markdown 格式（禁止 # 标题、**加粗**、- 列表、代码块、反引号等）。",
     "可用换行分段，条目用「1.」「2.」编号或「·」开头。",
+    ...(instruction ? [instruction] : []),
     "",
     text.slice(0, 12000),
   ].join("\n");
@@ -61,11 +62,13 @@ export async function llmSummarize(text: string, label: string): Promise<string>
   return localFallback(text, "local agent unavailable");
 }
 
-export async function batchSummarize(blocks: Array<{ label: string; text: string }>): Promise<string[]> {
+export async function batchSummarize(
+  blocks: Array<{ label: string; text: string; instruction?: string }>,
+): Promise<string[]> {
   return Promise.all(
     blocks.map(async (block) => {
       if (!block.text.trim()) return "";
-      return llmSummarize(block.text, block.label);
+      return llmSummarize(block.text, block.label, block.instruction);
     }),
   );
 }

@@ -3,7 +3,7 @@ import { okxGet, runOnchainos, runTg, surfFundingRate, surfMarketTicker } from "
 import { batchSummarize, stripMarkdown } from "./llm-summarize.js";
 import { getScratchpad } from "./scratchpad.js";
 import { chunkTelegramMessage, sendTelegram } from "./telegram.js";
-import { formatDisplayTime } from "./time-utils.js";
+import { formatDisplayShortTime, formatDisplayTime } from "./time-utils.js";
 import { fetchStocksSection } from "./morning-brief-stocks.js";
 import { fetchTreasurySection } from "./morning-brief-treasury.js";
 import { runTwitterCollector } from "./twitter-collector.js";
@@ -14,6 +14,7 @@ import {
   entryTimestamp,
   formatTweetLine,
   iterCacheRecords,
+  type TwitterCacheEntry,
 } from "./twitter-cache.js";
 import { llmSummarize } from "./llm-summarize.js";
 import {
@@ -52,7 +53,7 @@ async function fetchMarketOverview(): Promise<string> {
   const rows = await Promise.all(
     instruments.map((inst) => fetchMarketInstrument(inst, { showFr, showOi, requestTimeoutMs, fallbackTimeoutMs })),
   );
-  lines.push(...rows);
+  lines.push(...rows.map((row) => row.line));
   return lines.join("\n");
 }
 
@@ -64,7 +65,7 @@ function positiveInt(value: unknown, fallback: number): number {
 async function fetchMarketInstrument(
   inst: string,
   options: { showFr: boolean; showOi: boolean; requestTimeoutMs: number; fallbackTimeoutMs: number },
-): Promise<string> {
+): Promise<{ line: string }> {
   const symbol = inst.split("-")[0]!;
   const swapId = `${symbol}-USDT-SWAP`;
   const emptyRecord: Record<string, unknown> = {};
@@ -114,7 +115,10 @@ async function fetchMarketInstrument(
   const oiN = Number.parseFloat(oi.oiCcy ?? "");
   if (options.showOi && Number.isFinite(oiN)) oiStr = `  OI: ${oiN.toLocaleString()}`;
 
-  return `  ${symbol}: ${priceStr}${changeStr}${frStr}${oiStr}`;
+  const tickerTime = Number.parseInt(ticker.ts ?? "", 10);
+  const asOf = Number.isFinite(tickerTime) && tickerTime > 0 ? new Date(tickerTime) : undefined;
+  const timeStr = asOf ? ` @${formatDisplayShortTime(asOf)}` : "";
+  return { line: `  ${symbol}: ${priceStr}${changeStr}${frStr}${oiStr}${timeStr}` };
 }
 
 export function parseTelegramChannels(raw: Record<string, string>): Array<{ label: string; chat: string }> {
@@ -174,9 +178,56 @@ export function resolveBriefingPushTg(config: Record<string, unknown>, options: 
   return dotGet(config, "briefing.push_telegram", false) === true;
 }
 
-export function formatTwitterSummaryHeading(hours: number, tweetCount?: number): string {
-  const countSuffix = typeof tweetCount === "number" ? `，共 ${tweetCount} 条推文` : "";
-  return `🐦 Twitter 时间线（最近 ${hours}h${countSuffix}）\n`;
+export interface TwitterSummaryFunnel {
+  cached: number;
+  filtered: number;
+  candidates: number;
+}
+
+export interface TwitterSummaryCandidate {
+  entry: TwitterCacheEntry;
+  formatted: string;
+}
+
+export function resolveTwitterSummaryCandidateLimit(raw: Record<string, unknown>): number {
+  const value = Number(raw.summary_candidate_limit);
+  if (!Number.isFinite(value)) return 30;
+  return Math.min(60, Math.max(5, Math.trunc(value)));
+}
+
+export function rankTwitterCandidates(candidates: TwitterSummaryCandidate[]): TwitterSummaryCandidate[] {
+  return [...candidates].sort((a, b) => {
+    const scoreDiff = engagementScore(b.formatted) - engagementScore(a.formatted);
+    if (scoreDiff) return scoreDiff;
+    const timeDiff = (entryTimestamp(b.entry)?.getTime() ?? 0) - (entryTimestamp(a.entry)?.getTime() ?? 0);
+    if (timeDiff) return timeDiff;
+    return String(b.entry.id ?? "").localeCompare(String(a.entry.id ?? ""));
+  });
+}
+
+export function formatTwitterSummaryHeading(hours: number, funnel?: TwitterSummaryFunnel, summarized = true): string {
+  if (!funnel) return `🐦 Twitter 时间线（最近 ${hours}h）\n`;
+  const detail = summarized
+    ? `缓存 ${funnel.cached} 条，筛后 ${funnel.filtered} 条，从 ${funnel.candidates} 条候选中提炼`
+    : `缓存 ${funnel.cached} 条，筛后 ${funnel.filtered} 条，展示 ${funnel.candidates} 条高相关推文`;
+  return `🐦 Twitter 时间线（最近 ${hours}h，${detail}）\n`;
+}
+
+export function formatTwitterSourceNotes(summary: string, candidates: TwitterCacheEntry[]): string[] {
+  const ids = [...summary.matchAll(/\[T(\d+)\]/g)]
+    .map((match) => Number.parseInt(match[1] ?? "", 10))
+    .filter((id, index, all) => id >= 1 && id <= candidates.length && all.indexOf(id) === index);
+  return ids.map((id) => {
+    const entry = candidates[id - 1]!;
+    const author = String(entry.author ?? "unknown").replace(/^@/, "");
+    const timestamp = entryTimestamp(entry);
+    const time = timestamp ? formatDisplayShortTime(timestamp) : "时间未知";
+    const tweetId = String(entry.id ?? "");
+    const url =
+      String(entry.url ?? "") ||
+      (author !== "unknown" && tweetId ? `https://x.com/${author}/status/${tweetId}` : "链接缺失");
+    return `[T${id}] @${author} · ${time} · ${url}`;
+  });
 }
 
 type TgChannelFetch = {
@@ -240,6 +291,7 @@ async function fetchTwitterSummary(hours: number): Promise<string> {
   );
   const maxDisplay = Number(ds.max_display) || 500;
   const perAuthorCap = Number(ds.per_author_cap) || 2;
+  const summaryCandidateLimit = resolveTwitterSummaryCandidateLimit(ds);
   const relevanceFilter = ds.relevance_filter !== false;
   const useLlm = dotGet(config, "briefing.llm_summarize", true) !== false;
   const cutoff = Date.now() - hours * 3600 * 1000;
@@ -257,7 +309,7 @@ async function fetchTwitterSummary(hours: number): Promise<string> {
     }
   }
 
-  const tweets: string[] = [];
+  const tweets: Array<{ entry: TwitterCacheEntry; formatted: string }> = [];
   let totalRecords = 0;
   let staleRecords = 0;
   let invalidTimeRecords = 0;
@@ -281,11 +333,11 @@ async function fetchTwitterSummary(hours: number): Promise<string> {
       continue;
     }
     const formatted = formatTweetLine(entry);
-    if (formatted) tweets.push(formatted);
+    if (formatted) tweets.push({ entry, formatted });
   }
 
   if (!tweets.length) {
-    lines[0] = formatTwitterSummaryHeading(hours, 0);
+    lines[0] = formatTwitterSummaryHeading(hours, { cached: cacheStats.recent, filtered: 0, candidates: 0 }, useLlm);
     const diagnostics = totalRecords
       ? `缓存 ${totalRecords} 条，过期 ${staleRecords} 条，时间异常 ${invalidTimeRecords} 条`
       : `缓存为空或不存在：${cachePath}`;
@@ -294,12 +346,12 @@ async function fetchTwitterSummary(hours: number): Promise<string> {
     return lines.join("\n");
   }
 
-  const sorted = [...tweets].sort((a, b) => engagementScore(b) - engagementScore(a));
+  const sorted = rankTwitterCandidates(tweets);
   const authorCount = new Map<string, number>();
-  const picked: string[] = [];
+  const picked: Array<{ entry: TwitterCacheEntry; formatted: string }> = [];
   for (const tweet of sorted) {
     if (picked.length >= maxDisplay) break;
-    const author = tweet.match(/^@(\S+?):/)?.[1] ?? "";
+    const author = tweet.formatted.match(/^@(\S+?):/)?.[1] ?? "";
     if (author) {
       const count = authorCount.get(author) ?? 0;
       if (count >= perAuthorCap) continue;
@@ -308,21 +360,37 @@ async function fetchTwitterSummary(hours: number): Promise<string> {
     picked.push(tweet);
   }
 
-  const displayedTweets = picked.slice(0, 30);
-  lines[0] = formatTwitterSummaryHeading(hours, displayedTweets.length);
+  const displayedTweets = picked.slice(0, summaryCandidateLimit);
+  const displayedEntries = displayedTweets.map((tweet) => tweet.entry);
+  lines[0] = formatTwitterSummaryHeading(
+    hours,
+    { cached: cacheStats.recent, filtered: tweets.length, candidates: displayedTweets.length },
+    useLlm,
+  );
 
   if (useLlm) {
-    const summaryInput = [
-      "只摘要高置信交易相关内容；不要输出体育赛事、竞猜活动、账号服务、免费试用、交易信号广告、VPN/机场、信用卡或泛促销内容。",
-      ...displayedTweets,
-    ].join("\n");
+    const summaryInput = displayedTweets.map((tweet, index) => `[T${index + 1}] ${tweet.formatted}`).join("\n");
     const summary = await llmSummarize(
       summaryInput,
       "Twitter 时间线（只保留交易、宏观、加密、AI芯片、上市公司与监管相关信息）",
+      "最多输出 5 条，按市场影响排序。每条末尾必须原样保留对应的 [Tn] 引用；区分官方消息与二手转述，不得把二手转述写成已证实事实。不要输出体育、促销、账号服务、VPN、信用卡或交易信号广告。",
     );
-    lines.push(summary);
+    const sourceNotes = formatTwitterSourceNotes(summary, displayedEntries);
+    if (sourceNotes.length) {
+      lines.push(summary, `\n来源索引：\n${sourceNotes.join("\n")}`);
+    } else {
+      const fallback = displayedTweets.slice(0, 5).map((tweet, index) => {
+        const text = tweet.formatted.length > 240 ? `${tweet.formatted.slice(0, 239)}…` : tweet.formatted;
+        return `${index + 1}. ${text} [T${index + 1}]`;
+      });
+      const fallbackSummary = fallback.join("\n");
+      lines.push(
+        fallbackSummary,
+        `\n来源索引：\n${formatTwitterSourceNotes(fallbackSummary, displayedEntries).join("\n")}`,
+      );
+    }
   } else {
-    lines.push(...displayedTweets);
+    lines.push(...displayedTweets.map((tweet) => tweet.formatted));
   }
   return lines.join("\n");
 }
@@ -362,7 +430,7 @@ async function fetchTelegramSummary(hours: number): Promise<string> {
     fetched.push({ label, ...result });
   }
 
-  const blocks: Array<{ label: string; text: string }> = [];
+  const blocks: Array<{ label: string; text: string; instruction?: string }> = [];
   for (const { label, messages, rawBytes, usedHours, stale, error } of fetched) {
     if (error) {
       lines.push(`【${label}】采集失败: ${error}`);
@@ -376,7 +444,10 @@ async function fetchTelegramSummary(hours: number): Promise<string> {
     const staleNote = stale
       ? `（最近 ${hours}h 无新消息${usedHours ? `，展示最近 ${usedHours}h 内消息` : "，展示最近缓存消息"}）\n`
       : "";
-    blocks.push({ label, text: body });
+    const instruction = label.toLowerCase().includes("meme")
+      ? "最多 5 条、350 字。优先保留真实买入/卖出、美元价值、流动性、市值和地址集中度；普通转账/空投合并为一条，不要逐个罗列代币。若只有转账而无买盘或估值依据，明确写「不构成交易信号」。"
+      : undefined;
+    blocks.push({ label, text: body, instruction });
     if (!useLlm) lines.push(`【${label}】${staleNote}${body.slice(0, 1500)}`);
   }
 
@@ -387,10 +458,22 @@ async function fetchTelegramSummary(hours: number): Promise<string> {
       const staleNote = fetchedRow?.stale
         ? `（最近 ${hours}h 无新消息${fetchedRow.usedHours ? `，展示最近 ${fetchedRow.usedHours}h 内消息` : "，展示最近缓存消息"}）\n`
         : "";
-      lines.push(`【${b.label}】${staleNote}${summaries[i]}`);
+      lines.push(`【${b.label}】${staleNote}${compactTelegramSummary(b.label, summaries[i] ?? "")}`);
     });
   }
   return lines.join("\n\n");
+}
+
+export function compactTelegramSummary(label: string, summary: string): string {
+  if (!label.toLowerCase().includes("meme")) return summary;
+  const lines = summary
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 6);
+  const compact = lines.join("\n");
+  if (compact.length <= 500) return compact;
+  return `${compact.slice(0, 499).trimEnd()}…`;
 }
 
 async function fetchLeaderboard(): Promise<string> {
@@ -481,11 +564,13 @@ export async function runMorningBrief(
   const output = parts.join("\n");
   process.stdout.write(`${output}\n`);
 
-  await getScratchpad().write(
-    "last_brief",
-    { at: new Date().toISOString(), sections },
-    { source: "morning_brief", ttlHours: 24 },
-  );
+  if (!options.dryRun) {
+    await getScratchpad().write(
+      "last_brief",
+      { at: new Date().toISOString(), sections },
+      { source: "morning_brief", ttlHours: 24 },
+    );
+  }
 
   const pushTg = resolveBriefingPushTg(config, options);
   if (pushTg && !options.dryRun) {

@@ -2,12 +2,16 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { compactSummaryFallback } from "../src/trade/llm-summarize.js";
 import {
+  compactTelegramSummary,
+  formatTwitterSourceNotes,
   parseTelegramChannels,
   parseTgRecentMessages,
   preprocessTelegramBody,
   formatTwitterSummaryHeading,
   isTradeRelevantTweet,
+  rankTwitterCandidates,
   resolveBriefingPushTg,
+  resolveTwitterSummaryCandidateLimit,
 } from "../src/trade/morning-brief.js";
 import { chunkTelegramMessage } from "../src/trade/telegram.js";
 import { countRecentCacheRecords } from "../src/trade/twitter-cache.js";
@@ -76,13 +80,90 @@ describe("resolveBriefingPushTg", () => {
 });
 
 describe("formatTwitterSummaryHeading", () => {
-  it("includes the displayed tweet count when available", () => {
-    assert.equal(formatTwitterSummaryHeading(24, 17), "🐦 Twitter 时间线（最近 24h，共 17 条推文）\n");
-    assert.equal(formatTwitterSummaryHeading(24, 0), "🐦 Twitter 时间线（最近 24h，共 0 条推文）\n");
+  it("reports the cache, filtered, and candidate funnel", () => {
+    assert.equal(
+      formatTwitterSummaryHeading(24, { cached: 60, filtered: 42, candidates: 30 }),
+      "🐦 Twitter 时间线（最近 24h，缓存 60 条，筛后 42 条，从 30 条候选中提炼）\n",
+    );
+    assert.equal(
+      formatTwitterSummaryHeading(24, { cached: 0, filtered: 0, candidates: 0 }),
+      "🐦 Twitter 时间线（最近 24h，缓存 0 条，筛后 0 条，从 0 条候选中提炼）\n",
+    );
   });
 
   it("keeps the legacy heading shape when count is unknown", () => {
     assert.equal(formatTwitterSummaryHeading(24), "🐦 Twitter 时间线（最近 24h）\n");
+  });
+
+  it("reports displayed tweets when LLM summarization is disabled", () => {
+    assert.equal(
+      formatTwitterSummaryHeading(24, { cached: 60, filtered: 17, candidates: 12 }, false),
+      "🐦 Twitter 时间线（最近 24h，缓存 60 条，筛后 17 条，展示 12 条高相关推文）\n",
+    );
+  });
+});
+
+describe("Twitter candidate selection", () => {
+  it("clamps the configured summary candidate limit", () => {
+    assert.equal(resolveTwitterSummaryCandidateLimit({}), 30);
+    assert.equal(resolveTwitterSummaryCandidateLimit({ summary_candidate_limit: 2 }), 5);
+    assert.equal(resolveTwitterSummaryCandidateLimit({ summary_candidate_limit: 45 }), 45);
+    assert.equal(resolveTwitterSummaryCandidateLimit({ summary_candidate_limit: 100 }), 60);
+  });
+
+  it("ranks engagement first and recency second", () => {
+    const ranked = rankTwitterCandidates([
+      { entry: { id: "old", created_at: "2026-07-10T01:00:00Z" }, formatted: "@a: old" },
+      { entry: { id: "new", created_at: "2026-07-10T03:00:00Z" }, formatted: "@b: new" },
+      { entry: { id: "popular", created_at: "2026-07-10T00:00:00Z" }, formatted: "@c: popular [5❤️]" },
+    ]);
+    assert.deepEqual(
+      ranked.map((candidate) => candidate.entry.id),
+      ["popular", "new", "old"],
+    );
+  });
+});
+
+describe("formatTwitterSourceNotes", () => {
+  const candidates = [
+    {
+      author: "alice",
+      text: "BTC update",
+      created_at: "2026-07-10T05:00:00Z",
+      url: "https://x.com/alice/status/1",
+    },
+    {
+      author: "bob",
+      text: "Fed update",
+      created_at: "2026-07-10T06:30:00Z",
+      url: "https://x.com/bob/status/2",
+    },
+  ];
+
+  it("keeps cited author, time, and source URL", () => {
+    const notes = formatTwitterSourceNotes("1. 联储信号 [T2]\n2. BTC 信号 [T1]", candidates);
+    assert.deepEqual(notes, [
+      "[T2] @bob · 07-10 14:30 UTC+8 · https://x.com/bob/status/2",
+      "[T1] @alice · 07-10 13:00 UTC+8 · https://x.com/alice/status/1",
+    ]);
+  });
+
+  it("returns no notes for invalid citations", () => {
+    assert.deepEqual(formatTwitterSourceNotes("无引用", candidates), []);
+  });
+});
+
+describe("compactTelegramSummary", () => {
+  it("hard-caps verbose meme summaries", () => {
+    const summary = Array.from({ length: 20 }, (_, i) => `${i + 1}. meme transfer ${"x".repeat(80)}`).join("\n");
+    const compact = compactTelegramSummary("meme 链上监控", summary);
+    assert.ok(compact.split("\n").length <= 6);
+    assert.ok(compact.length <= 500);
+  });
+
+  it("does not truncate other Telegram summaries", () => {
+    const summary = "1. macro update\n2. earnings update";
+    assert.equal(compactTelegramSummary("传统金融/宏观", summary), summary);
   });
 });
 

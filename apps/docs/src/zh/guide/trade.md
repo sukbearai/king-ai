@@ -142,7 +142,11 @@ king-ai trade watchdog --kill
 
 市场晨报会并发请求 OKX 现货/合约接口，并使用较短的单请求预算。网络环境特殊时可用 `data_sources.market.request_timeout_ms` 和 `data_sources.market.fallback_timeout_ms` 调整新鲜度与晨报耗时之间的取舍。
 
-Twitter 晨报默认相关性过滤；板块标题会显示过滤和展示上限后实际纳入的高相关推文数。需要原始时间线时设 `data_sources.twitter.relevance_filter` 为 `false`。
+市场、股票和美债行情在上游接口提供时会显示源行情时间。Yahoo 股票/美债行情遇到瞬时失败会重试一次；美债标的缺失时会显示降级提示，降息预期结论按配置的波动阈值生成，不再固定套用方向。
+
+Twitter 采集器会对已登录的 `x.com/home` 虚拟时间线执行多轮下拉采样，并在 X 卸载旧 DOM 节点前跨轮合并推文。可用 `data_sources.twitter.collect_limit`、`scroll_rounds`、`scroll_wait_ms` 和 `stagnant_rounds` 调整覆盖量与采集耗时。采集日志会分别记录轮数、DOM 扫描量、唯一量、重复量、新增缓存、近 24 小时数量与作者数。这仍然是当前登录账号可见的主页流，不是 X 全量归档。
+
+Twitter 晨报默认相关性过滤；板块标题显示「缓存→筛后→候选」漏斗，`data_sources.twitter.summary_candidate_limit` 控制最终候选量（默认 `30`，范围 `5..60`）。候选按可用的点赞、转发、回复和浏览量排序，同分时优先较新推文。摘要最多输出 5 条，并保留作者、UTC+8 时间和原始链接的来源索引。需要原始时间线时设 `data_sources.twitter.relevance_filter` 为 `false`。Telegram meme 摘要优先保留有价格依据的买卖、流动性、市值和集中度，并压缩、限制普通转账与空投列表。干跑预览不会覆盖最近一次定时或手动投递晨报的持久化元数据。
 
 ## OpenCLI Browser Bridge
 

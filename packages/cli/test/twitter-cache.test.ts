@@ -30,10 +30,17 @@ test("formatTweetLine and engagementScore include metrics", () => {
     text: "test",
     likes: 5,
     views: 200,
+    created_at: "2026-07-10T06:30:00Z",
   });
   assert.match(line, /@cz: test/);
   assert.match(line, /5❤️/);
+  assert.match(line, /07-10 14:30 UTC\+8/);
   assert.ok(engagementScore(line) >= 5);
+});
+
+test("engagementScore weights replies, retweets, likes, and views", () => {
+  assert.equal(engagementScore("@a: signal [5❤️/3🔁/2💬/2500👁]"), 15);
+  assert.equal(engagementScore("@a: no metrics"), 0);
 });
 
 test("entryTimestamp accepts ISO dates", () => {

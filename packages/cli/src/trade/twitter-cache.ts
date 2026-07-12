@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { TRADE_TWITTER_CACHE_PATH } from "../paths.js";
+import { formatDisplayShortTime } from "./time-utils.js";
 
 const ID_HEAD_RE = /^\s*\{\s*"id"\s*:/;
 
@@ -115,11 +116,15 @@ export function formatTweetLine(entry: TwitterCacheEntry): string {
   if (views > 0) eng.push(`${views}👁`);
   const engagement = eng.length ? ` [${eng.join("/")}]` : "";
   const urlSuffix = url ? ` ${url}` : "";
-  return `@${author}: ${text}${engagement}${urlSuffix}`;
+  const timestamp = entryTimestamp(entry);
+  const timeSuffix = timestamp ? ` [${formatDisplayShortTime(timestamp)}]` : "";
+  return `@${author}: ${text}${engagement}${timeSuffix}${urlSuffix}`;
 }
 
 export function engagementScore(line: string): number {
   const likes = Number.parseInt(line.match(/(\d+)❤️/)?.[1] ?? "0", 10) || 0;
+  const retweets = Number.parseInt(line.match(/(\d+)🔁/)?.[1] ?? "0", 10) || 0;
+  const replies = Number.parseInt(line.match(/(\d+)💬/)?.[1] ?? "0", 10) || 0;
   const views = Number.parseInt(line.match(/(\d+)👁/)?.[1] ?? "0", 10) || 0;
-  return likes + Math.floor(views / 100);
+  return likes + retweets * 2 + replies + Math.floor(views / 1000);
 }

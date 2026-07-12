@@ -8,11 +8,40 @@ import {
   parseTreasuryConfig,
   yieldChangeBps,
 } from "../src/trade/treasury-helpers.js";
+import { buildTreasuryBriefConclusion } from "../src/trade/morning-brief-treasury.js";
 import { createRuleB } from "../src/trade/rules/rule-b-treasury.js";
 
 describe("treasury helpers", () => {
   it("converts yield percent move to basis points", () => {
     assert.ok(Math.abs(yieldChangeBps(5.177, 5.1) - 7.7) < 0.01);
+  });
+
+  it("keeps the conclusion neutral for small moves", () => {
+    const cfg = parseTreasuryConfig({});
+    const conclusion = buildTreasuryBriefConclusion(
+      [{ symbol: "TLT", price: 84.47, change_pct: -0.02, market_time: 1 }],
+      [{ symbol: "^TYX", yield_pct: 5.071, change_bps: 1.8, prev_yield_pct: 5.053, market_time: 1 }],
+      cfg,
+    );
+    assert.match(conclusion, /波动有限/);
+    assert.doesNotMatch(conclusion, /降息预期降温/);
+  });
+
+  it("marks missing yields as degraded and avoids a firm direction", () => {
+    const cfg = parseTreasuryConfig({});
+    const conclusion = buildTreasuryBriefConclusion([], [], cfg, ["10年期收益率(^TNX)"]);
+    assert.match(conclusion, /数据不完整/);
+    assert.match(conclusion, /10年期收益率/);
+  });
+
+  it("reports tightening only when configured thresholds are crossed", () => {
+    const cfg = parseTreasuryConfig({});
+    const conclusion = buildTreasuryBriefConclusion(
+      [{ symbol: "TLT", price: 82, change_pct: -1.2, market_time: 1 }],
+      [{ symbol: "^TYX", yield_pct: 5.2, change_bps: 8, prev_yield_pct: 5.12, market_time: 1 }],
+      cfg,
+    );
+    assert.match(conclusion, /降息预期边际降温/);
   });
 
   it("classifies TLT selling pressure thresholds", () => {
