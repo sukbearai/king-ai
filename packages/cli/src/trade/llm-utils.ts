@@ -25,7 +25,7 @@ async function execFileClosedStdin(
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = execFile(file, args, options, (err, stdout, stderr) => {
-      if (err) reject(err);
+      if (err) reject(attachExecFileOutput(err, stdout, stderr));
       else resolve({ stdout, stderr });
     });
     child.stdin?.end();
@@ -40,12 +40,19 @@ async function execFileWithStdin(
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = execFile(file, args, options, (err, stdout, stderr) => {
-      if (err) reject(err);
+      if (err) reject(attachExecFileOutput(err, stdout, stderr));
       else resolve({ stdout, stderr });
     });
     child.stdin?.write(stdinText);
     child.stdin?.end();
   });
+}
+
+export function attachExecFileOutput(err: unknown, stdout: string | Buffer, stderr: string | Buffer): Error {
+  const target = (err instanceof Error ? err : new Error(String(err))) as ExecFileError;
+  target.stdout = stdout;
+  target.stderr = stderr;
+  return target;
 }
 
 function promptNeedsFileDelivery(prompt: string): boolean {
@@ -100,8 +107,14 @@ function normalizeBackend(raw: string): AgentBackend | null {
   return null;
 }
 
-function agentBackendOrder(llmCfg: Record<string, unknown>, taskBackend?: string): AgentBackend[] {
-  const preferred = normalizeBackend(String(taskBackend ?? llmCfg.default_backend ?? llmCfg.provider ?? "grok"));
+export function resolveAgentBackendOrder(llmCfg: Record<string, unknown>, taskBackend?: string): AgentBackend[] {
+  const configured = [taskBackend, llmCfg.default_backend, llmCfg.provider, "grok"];
+  let preferred: AgentBackend | null = null;
+  for (const raw of configured) {
+    if (raw == null || !String(raw).trim()) continue;
+    preferred = normalizeBackend(String(raw));
+    if (preferred) break;
+  }
   const order: AgentBackend[] = preferred ? [preferred] : [];
   for (const name of AGENT_BACKENDS) {
     if (!order.includes(name)) order.push(name);
@@ -109,44 +122,44 @@ function agentBackendOrder(llmCfg: Record<string, unknown>, taskBackend?: string
   return order;
 }
 
+function sanitizeFailureText(text: string): string {
+  const stripped = text.replace(/\x1b\[[0-9;]*m/g, "");
+  if (/^Command failed:/i.test(stripped.trim())) return "agent command failed";
+  return stripped
+    .replace(/\b(?:sk|xai)-[A-Za-z0-9_-]{12,}\b/g, "<redacted>")
+    .replace(/\b\d{6,}:[A-Za-z0-9_-]{20,}\b/g, "<redacted>")
+    .replace(/(api[_-]?key|token|secret|password|authorization|bearer)\s*[:=]\s*\S+/gi, "$1=<redacted>")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function summarizeAgentError(err: unknown): string {
   const e = err as ExecFileError;
   const stdout = e.stdout ? String(e.stdout) : "";
   const stderr = e.stderr ? String(e.stderr) : "";
   const raw = [err instanceof Error ? err.message : String(err), stdout, stderr].filter(Boolean).join("\n");
-  const compact = raw
+  const rawCompact = raw
     .replace(/\x1b\[[0-9;]*m/g, "")
     .replace(/\s+/g, " ")
     .trim();
-  if (/personal-team-blocked:spending-limit|run out of credits|need a Grok subscription/i.test(compact)) {
+  const compact = sanitizeFailureText(raw);
+  if (/personal-team-blocked:spending-limit|run out of credits|need a Grok subscription/i.test(rawCompact)) {
     return "quota blocked: Grok credits or subscription required";
   }
-  if (/401 Invalid authentication credentials|Failed to authenticate/i.test(compact)) {
+  if (/401 Invalid authentication credentials|Failed to authenticate/i.test(rawCompact)) {
     return "auth failed: invalid or expired credentials";
   }
-  if (/no stdin data received/i.test(compact)) {
+  if (/no stdin data received/i.test(rawCompact)) {
     return "stdin warning while running non-interactive agent";
   }
-  if (/No such file or directory/i.test(compact)) {
+  if (/No such file or directory/i.test(rawCompact)) {
     return "agent output file was not created";
   }
   const parts: string[] = [];
   if (e.code !== undefined) parts.push(`exit=${e.code}`);
   if (e.signal) parts.push(`signal=${e.signal}`);
-  if (stderr.trim())
-    parts.push(
-      `stderr=${stderr
-        .replace(/\x1b\[[0-9;]*m/g, "")
-        .replace(/\s+/g, " ")
-        .trim()}`,
-    );
-  if (stdout.trim())
-    parts.push(
-      `stdout=${stdout
-        .replace(/\x1b\[[0-9;]*m/g, "")
-        .replace(/\s+/g, " ")
-        .trim()}`,
-    );
+  if (stderr.trim()) parts.push(`stderr=${sanitizeFailureText(stderr)}`);
+  if (stdout.trim()) parts.push(`stdout=${sanitizeFailureText(stdout)}`);
   if (!parts.length) parts.push(compact);
   const detailed = parts.join(" ");
   return detailed.length > 1000 ? `${detailed.slice(0, 997)}...` : detailed;
@@ -198,9 +211,7 @@ async function runAgentBackend(
       `king-ai-llm-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`,
     );
     const useStdin = promptNeedsFileDelivery(prompt);
-    const args = ["exec", "--sandbox", "read-only", "--output-last-message", outputFile, "--ephemeral"];
-    if (model) args.push("-m", model);
-    args.push(useStdin ? "-" : prompt);
+    const args = buildCodexArgs(prompt, outputFile, model);
     const execOpts = {
       timeout: timeoutMs,
       maxBuffer: 5 * 1024 * 1024,
@@ -241,8 +252,39 @@ async function runAgentBackend(
   }
 }
 
-export async function runAgent(prompt: string, options: { timeoutMs?: number; task?: string } = {}): Promise<string> {
-  const config = await loadTradeConfig();
+export function buildCodexArgs(prompt: string, outputFile: string, model = ""): string[] {
+  const args = [
+    "exec",
+    "--sandbox",
+    "read-only",
+    "--skip-git-repo-check",
+    "--output-last-message",
+    outputFile,
+    "--ephemeral",
+  ];
+  if (model) args.push("-m", model);
+  args.push(promptNeedsFileDelivery(prompt) ? "-" : prompt);
+  return args;
+}
+
+export type AgentBackendRunner = (
+  name: AgentBackend,
+  prompt: string,
+  llmCfg: Record<string, unknown>,
+  timeoutMs: number,
+) => Promise<string>;
+
+export interface RunAgentOptions {
+  timeoutMs?: number;
+  task?: string;
+  required?: boolean;
+  /** Narrow seam for tests; normal callers use the loaded trade config and local CLIs. */
+  config?: Record<string, unknown>;
+  backendRunner?: AgentBackendRunner;
+}
+
+export async function runAgent(prompt: string, options: RunAgentOptions = {}): Promise<string> {
+  const config = options.config ?? (await loadTradeConfig());
   const llmCfg = (dotGet(config, "llm", {}) ?? {}) as Record<string, unknown>;
   const task = options.task ?? "summarize";
   const tasks = (dotGet(config, "llm.agent_tasks", {}) ?? {}) as Record<string, unknown>;
@@ -250,13 +292,20 @@ export async function runAgent(prompt: string, options: { timeoutMs?: number; ta
   const configuredTimeout = Number(taskCfg.timeout_ms);
   const timeoutMs =
     Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : (options.timeoutMs ?? 60_000);
-  const backends = agentBackendOrder(llmCfg, String(taskCfg.backend ?? ""));
+  const taskBackend = typeof taskCfg.backend === "string" ? taskCfg.backend : undefined;
+  const backends = resolveAgentBackendOrder(llmCfg, taskBackend);
+  const outcomes: string[] = [];
+  const backendRunner = options.backendRunner ?? runAgentBackend;
 
   for (const name of backends) {
-    if (isBackendBlocked(name)) continue;
+    if (isBackendBlocked(name)) {
+      outcomes.push(`${name}=blocked`);
+      continue;
+    }
     try {
-      const text = await runAgentBackend(name, prompt, llmCfg, timeoutMs);
+      const text = (await backendRunner(name, prompt, llmCfg, timeoutMs)).trim();
       if (text) return text;
+      outcomes.push(`${name}=empty output`);
     } catch (err) {
       const salvaged = salvageAgentErrorStdout(err);
       if (salvaged) {
@@ -266,8 +315,12 @@ export async function runAgent(prompt: string, options: { timeoutMs?: number; ta
       }
       const msg = summarizeAgentError(err);
       if (shouldBlockBackend(msg)) blockBackend(name);
+      outcomes.push(`${name}=${msg.slice(0, 180)}`);
       process.stderr.write(`[llm-agent] ${name} failed: ${msg}\n`);
     }
+  }
+  if (options.required) {
+    throw new Error(`required agent task ${task} unavailable: ${outcomes.join("; ")}`);
   }
   return "";
 }

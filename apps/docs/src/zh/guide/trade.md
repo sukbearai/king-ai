@@ -64,6 +64,9 @@ king-ai trade daemon --push-tg
 | `verify.step_timeout_ms` | `verify-tg` 单源超时（设置后覆盖规则默认） |
 | `data_sources.pumpfun` / `leaderboard` | 链上晨报板块 |
 | `treasury` | 美债抛售 / 收益率阈值 |
+| `alerts.celebrity_tweet.max_classifications_per_tick` | 每轮名人推文最多 LLM 分类数（默认 `8`，范围 `1..50`） |
+| `llm.agent_tasks.<task>.backend` | 可选任务后端；空值或缺失时依次继承 `llm.default_backend`、`llm.provider`、Grok |
+| `llm.agent_tasks.<task>.timeout_ms` | 可选的单任务本地 agent 超时 |
 | `telegram` | `bot_token` 与 `push_chat_id` |
 
 仓库内模板见 `packages/cli/trade_config.example.json`。
@@ -106,7 +109,7 @@ rule.check → regime 降级 → JSONL 审计 → 共振（仅 asset）→ TG �
 - daemon 每条规则有 tick 超时（如 celebrity `240s`、panews `120s`）；超时记 heartbeat `timeout` 并继续下一规则。
 - cooldown 持久化在 `~/.king-ai/trade/rule_state.json`。
 
-名人 alpha 为 **LLM 全自动判定**（无人工审批）：本地 agent 决定 `is_alpha` / `alpha_type` / `confidence` / `entities`。代码只做账本约束——entity 须出现在推文正文、confidence 门槛（`alerts.celebrity_tweet.min_confidence_alert` / `min_confidence_warning`）、冷却与 JSONL 审计。解析失败短重试；非 alpha 短期静默后重检。X 搜索页先做状态分类，已加载无结果页直接返回空结果。
+名人 alpha 为 **LLM 全自动判定**（无人工审批）：本地 agent 决定 `is_alpha` / `alpha_type` / `confidence` / `entities`。任务后端为空或缺失时依次继承 `llm.default_backend`、`llm.provider`、Grok；选择 Codex 时使用只读且不依赖 daemon 当前目录的调用。每轮默认最多分类 8 条候选，成功判定为非 alpha 后静默 6 小时。JSON 解析失败按 15、30、60 分钟退避并继续重试。X 采集的登录、挑战、采集失败和本地 agent 后端全部耗尽会记录为 heartbeat 错误，不再伪装成健康的无告警；Telegram 投递失败会在告警审计写入后记录日志。
 
 ## Daemon Supervisor
 

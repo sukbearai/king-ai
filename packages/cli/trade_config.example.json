@@ -12,6 +12,7 @@
     "celebrity_tweet": {
       "accounts": ["realDonaldTrump", "elonmusk", "cz_binance"],
       "fetch_limit": 10,
+      "max_classifications_per_tick": 8,
       "min_confidence_alert": 0.55,
       "min_confidence_warning": 0.72
     }

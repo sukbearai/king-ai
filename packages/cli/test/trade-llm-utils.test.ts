@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  attachExecFileOutput,
+  buildCodexArgs,
   extractJsonFromText,
   resetAgentBackendBlocks,
+  resolveAgentBackendOrder,
   runAgent,
   salvageAgentErrorStdout,
   summarizeAgentError,
@@ -43,6 +46,24 @@ test("extractJsonFromText still returns top-level arrays", () => {
 
   const prefixed = extractJsonFromText('classified:\n[{"idx":2}]');
   assert.deepEqual(prefixed, [{ idx: 2 }]);
+});
+
+test("resolveAgentBackendOrder inherits defaults and keeps fallback order unique", () => {
+  assert.deepEqual(resolveAgentBackendOrder({ default_backend: "codex" }, "   "), ["codex", "grok", "claude"]);
+  assert.deepEqual(resolveAgentBackendOrder({ default_backend: "codex" }, undefined), ["codex", "grok", "claude"]);
+  assert.deepEqual(resolveAgentBackendOrder({ default_backend: "codex" }, "claude"), ["claude", "grok", "codex"]);
+  assert.deepEqual(resolveAgentBackendOrder({ provider: "claude" }, ""), ["claude", "grok", "codex"]);
+  const order = resolveAgentBackendOrder({ default_backend: "codex" }, "codex");
+  assert.equal(new Set(order).size, order.length);
+});
+
+test("buildCodexArgs includes the read-only repository-check bypass", () => {
+  const args = buildCodexArgs("classify this", "/tmp/last-message.txt");
+  assert.ok(args.includes("--skip-git-repo-check"));
+  assert.ok(args.includes("--sandbox"));
+  assert.ok(args.includes("read-only"));
+  assert.ok(args.includes("--output-last-message"));
+  assert.ok(args.includes("--ephemeral"));
 });
 
 test("salvageAgentErrorStdout recovers JSON stdout from exec errors", () => {
@@ -99,32 +120,81 @@ personal-team-blocked:spending-limit: You have run out of credits or need a Grok
   assert.match(detailSummary, /stdout=partial answer/);
 });
 
+test("exec failure output is attached and summaries do not retain command prompts", () => {
+  const attached = attachExecFileOutput(
+    new Error("Command failed: codex -p TOP_SECRET_PROMPT"),
+    "partial answer",
+    "stderr detail",
+  );
+  assert.equal((attached as Error & { stdout: string }).stdout, "partial answer");
+  assert.equal((attached as Error & { stderr: string }).stderr, "stderr detail");
+  const summary = summarizeAgentError(attached);
+  assert.match(summary, /stderr=stderr detail/);
+  assert.match(summary, /stdout=partial answer/);
+  assert.doesNotMatch(summary, /TOP_SECRET_PROMPT/);
+});
+
+test("runAgent required mode reports backend exhaustion while default mode falls back", async () => {
+  resetAgentBackendBlocks();
+  const config = { llm: { default_backend: "codex" } };
+  const fakeRunner = async (name: string): Promise<string> => {
+    if (name === "grok") {
+      const err = new Error("backend failed");
+      (err as Error & { stderr: string }).stderr = "Failed to authenticate";
+      throw err;
+    }
+    return "";
+  };
+  await assert.rejects(
+    () =>
+      runAgent("classify", {
+        config,
+        task: "celebrity_extract",
+        required: true,
+        backendRunner: fakeRunner,
+      }),
+    /required agent task celebrity_extract unavailable: .*codex=.*grok=.*claude=/,
+  );
+
+  resetAgentBackendBlocks();
+  const emptyDefault = await runAgent("classify", {
+    config,
+    task: "celebrity_extract",
+    backendRunner: fakeRunner,
+  });
+  assert.equal(emptyDefault, "");
+
+  resetAgentBackendBlocks();
+  const fallback = await runAgent("classify", {
+    config,
+    task: "celebrity_extract",
+    backendRunner: async (name: string) => (name === "grok" ? "fallback" : ""),
+  });
+  assert.equal(fallback, "fallback");
+  resetAgentBackendBlocks();
+});
+
 test("runAgent skips temporarily blocked auth/quota backends", async () => {
   resetAgentBackendBlocks();
-  const oldPath = process.env.PATH;
-  const oldHome = process.env.HOME;
-  const { mkdtemp, writeFile, chmod } = await import("node:fs/promises");
-  const { join } = await import("node:path");
-  const { tmpdir } = await import("node:os");
-
-  const dir = await mkdtemp(join(tmpdir(), "king-ai-llm-utils-"));
-  const bin = join(dir, "bin");
-  await import("node:fs/promises").then(({ mkdir }) => mkdir(bin));
-  await writeFile(join(bin, "grok"), "#!/bin/sh\necho 'personal-team-blocked:spending-limit' >&2\nexit 1\n");
-  await writeFile(join(bin, "claude"), "#!/bin/sh\necho ok\n");
-  await chmod(join(bin, "grok"), 0o755);
-  await chmod(join(bin, "claude"), 0o755);
-
-  process.env.PATH = `${bin}:${oldPath ?? ""}`;
-  process.env.HOME = dir;
-  try {
-    const first = await runAgent("hello", { timeoutMs: 5000 });
-    const second = await runAgent("hello", { timeoutMs: 5000 });
-    assert.equal(first, "ok");
-    assert.equal(second, "ok");
-  } finally {
-    process.env.PATH = oldPath;
-    process.env.HOME = oldHome;
-    resetAgentBackendBlocks();
-  }
+  const calls: string[] = [];
+  const fakeRunner = async (name: string): Promise<string> => {
+    calls.push(name);
+    if (name === "grok") {
+      const err = new Error("quota");
+      (err as Error & { stderr: string }).stderr = "personal-team-blocked:spending-limit";
+      throw err;
+    }
+    return "ok";
+  };
+  const options = {
+    config: { llm: { default_backend: "grok" } },
+    timeoutMs: 5000,
+    backendRunner: fakeRunner,
+  };
+  const first = await runAgent("hello", options);
+  const second = await runAgent("hello", options);
+  assert.equal(first, "ok");
+  assert.equal(second, "ok");
+  assert.deepEqual(calls, ["grok", "claude", "claude"]);
+  resetAgentBackendBlocks();
 });

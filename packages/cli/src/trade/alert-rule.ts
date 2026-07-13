@@ -328,7 +328,8 @@ export async function runRuleTick(rule: AlertRule, state: AlertState, options: R
           header,
         );
         for (const chunk of chunks) {
-          await sendTelegram(chunk, config);
+          const delivered = await sendTelegram(chunk, config);
+          if (!delivered) options.onStatus?.(`规则 ${rule.ruleKey} Telegram 投递失败`);
         }
       }
     }

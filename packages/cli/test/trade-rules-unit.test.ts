@@ -1,16 +1,23 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { cliFailure, cliSuccess } from "../src/trade/cli-result.js";
 import { directionLabel, createAlert } from "../src/trade/alert-rule.js";
 import { parseMemeTradeAmount } from "../src/trade/rules/rule-e-meme.js";
 import {
+  fetchTweets,
   celebrityAlertSeverity,
+  celebrityClassificationLimit,
   extractChainFmRefs,
   groundEntitiesInText,
   isCelebritySeenRecordActive,
   isLikelyTweetUiFragment,
+  NON_ALPHA_SEEN_SECONDS,
   parseFailMarkTtl,
   parseSeenStateLines,
   resolveCelebrityAlphaDecision,
+  selectCelebrityCandidates,
+  type CelebrityFetchRunner,
+  type CelebrityTweetCandidate,
 } from "../src/trade/rules/rule-t-celebrity.js";
 import { buildPanewsUnclassifiedAlert } from "../src/trade/rules/rule-q-panews.js";
 import { createRule, listRuleIds } from "../src/trade/rules/registry.js";
@@ -146,20 +153,21 @@ May 23
 
   it("expires non-alpha seen records sooner than terminal records", () => {
     const now = 10_000;
+    assert.equal(NON_ALPHA_SEEN_SECONDS, 6 * 3600);
     assert.equal(isCelebritySeenRecordActive({ id: "tweet-1", ts: now - 3600, ttl_seconds: 7200 }, now), true);
     assert.equal(isCelebritySeenRecordActive({ id: "tweet-1", ts: now - 7201, ttl_seconds: 7200 }, now), false);
     assert.equal(isCelebritySeenRecordActive({ id: "tweet-2", ts: now - 2 * 86400 }, now), true);
     assert.equal(isCelebritySeenRecordActive({ id: "tweet-2", ts: now - 4 * 86400 }, now), false);
   });
 
-  it("parseFailMarkTtl uses short retry then full seen TTL", () => {
+  it("parseFailMarkTtl uses bounded exponential retry backoff", () => {
     assert.equal(parseFailMarkTtl(1), 900);
-    assert.equal(parseFailMarkTtl(2), 900);
-    assert.equal(parseFailMarkTtl(3), 259200);
-    assert.equal(parseFailMarkTtl(4), 259200);
+    assert.equal(parseFailMarkTtl(2), 1800);
+    assert.equal(parseFailMarkTtl(3), 3600);
+    assert.equal(parseFailMarkTtl(4), 3600);
   });
 
-  it("parseSeenStateLines builds active set and parse-fail counts", () => {
+  it("parseSeenStateLines uses latest records and bounded retry history", () => {
     const now = 1_000_000;
     const lines = [
       JSON.stringify({ id: "active-1", ts: now - 60, ttl_seconds: 86400 * 3 }),
@@ -178,6 +186,170 @@ May 23
     assert.equal(parseFails.get("expired-1"), 1);
     assert.equal(parseFails.has("active-1"), false);
     assert.equal(parseFails.has("other"), false);
+
+    const latestWins = parseSeenStateLines(
+      [
+        JSON.stringify({ id: "latest-1", ts: now - 2_000, ttl_seconds: 86400 * 3 }),
+        JSON.stringify({ id: "latest-1", ts: now - 1_000, ttl_seconds: 900 }),
+      ],
+      now,
+    );
+    assert.equal(latestWins.active.has("latest-1"), false);
+
+    const expiredHistory = parseSeenStateLines(
+      [JSON.stringify({ id: "old-parse", ts: now - 7 * 3600, ttl_seconds: 900 })],
+      now,
+    );
+    assert.equal(expiredHistory.parseFails.has("old-parse"), false);
+
+    const explicitAttempts = parseSeenStateLines(
+      [
+        JSON.stringify({
+          id: "explicit-parse",
+          ts: now - 1800,
+          ttl_seconds: 1800,
+          outcome: "parse_failed",
+          attempts: 2,
+        }),
+      ],
+      now,
+    );
+    assert.equal(explicitAttempts.parseFails.get("explicit-parse"), 2);
+
+    const legacyRecoveryLines = [
+      JSON.stringify({ id: "legacy-recovery", ts: now - 1800, ttl_seconds: 900 }),
+      JSON.stringify({ id: "legacy-recovery", ts: now - 600, ttl_seconds: 86400 * 3 }),
+    ];
+    const legacyRecovery = parseSeenStateLines(legacyRecoveryLines, now);
+    assert.equal(legacyRecovery.active.has("legacy-recovery"), true);
+    const afterLegacyCap = parseSeenStateLines(legacyRecoveryLines, now + 3601);
+    assert.equal(afterLegacyCap.active.has("legacy-recovery"), false);
+    const afterLegacyWindow = parseSeenStateLines(legacyRecoveryLines, now + 7 * 3600);
+    assert.equal(afterLegacyWindow.active.has("legacy-recovery"), false);
+    const muchLater = parseSeenStateLines(legacyRecoveryLines, now + 30 * 86400);
+    assert.equal(muchLater.active.has("legacy-recovery"), false);
+
+    const ordinaryTerminal = parseSeenStateLines(
+      [JSON.stringify({ id: "ordinary-terminal", ts: now - 2 * 3600, ttl_seconds: 86400 * 3 })],
+      now,
+    );
+    assert.equal(ordinaryTerminal.active.has("ordinary-terminal"), true);
+  });
+
+  it("clamps the per-tick celebrity classification limit", () => {
+    assert.equal(celebrityClassificationLimit(undefined), 8);
+    assert.equal(celebrityClassificationLimit(0), 1);
+    assert.equal(celebrityClassificationLimit(99.9), 50);
+  });
+
+  it("selects newest candidates and leaves overflow unselected", () => {
+    const candidates: CelebrityTweetCandidate[] = [
+      {
+        account: "one",
+        id: "old",
+        text: "old candidate",
+        tweet: { id: "old", created_at: "2026-07-12T00:00:00.000Z" },
+        discoveryIndex: 0,
+      },
+      {
+        account: "two",
+        id: "invalid-time",
+        text: "invalid timestamp",
+        tweet: { id: "invalid-time", created_at: "not-a-date" },
+        discoveryIndex: 1,
+      },
+      {
+        account: "three",
+        id: "new",
+        text: "new candidate",
+        tweet: { id: "new", created_at: "2026-07-13T00:00:00.000Z" },
+        discoveryIndex: 2,
+      },
+    ];
+    const { selected, overflow } = selectCelebrityCandidates(candidates, 2);
+    assert.deepEqual(
+      selected.map((candidate) => candidate.id),
+      ["new", "old"],
+    );
+    assert.deepEqual(
+      overflow.map((candidate) => candidate.id),
+      ["invalid-time"],
+    );
+  });
+
+  it("fetchTweets returns no-results but raises degraded collection states", async () => {
+    const noResultsRunner = async (args: string[]) =>
+      args.includes("eval")
+        ? cliSuccess([
+            { title: "Search", url: "https://x.com/search", text: 'No results for "from:alice"', articles: 0 },
+          ])
+        : cliSuccess([]);
+    assert.deepEqual(await fetchTweets("alice", 10, noResultsRunner), []);
+
+    for (const status of ["auth-required", "challenge"] as const) {
+      const runner = async (args: string[]) =>
+        args.includes("eval")
+          ? cliSuccess([
+              {
+                title: status === "challenge" ? "Challenge" : "Log in",
+                url: "https://x.com/search",
+                text: status === "challenge" ? "verify you are human" : "sign in to X",
+                articles: 0,
+              },
+            ])
+          : cliSuccess([]);
+      await assert.rejects(() => fetchTweets("alice", 10, runner), new RegExp(`@alice ${status}`));
+    }
+  });
+
+  it("fetchTweets retries open, eval, unknown, and empty-ok failures", async () => {
+    const scenarios: Array<{ name: string; runner: CelebrityFetchRunner }> = [
+      {
+        name: "open",
+        runner: async (args) => (args.includes("open") ? cliFailure([], "open failed") : cliSuccess([])),
+      },
+      {
+        name: "eval",
+        runner: async (args) => (args.includes("eval") ? cliFailure([], "eval failed") : cliSuccess([])),
+      },
+      {
+        name: "unknown",
+        runner: async (args) =>
+          args.includes("eval")
+            ? cliSuccess([{ title: "Search", url: "https://x.com/search", text: "loaded", articles: 0 }])
+            : cliSuccess([]),
+      },
+      {
+        name: "empty-ok",
+        runner: async (args) =>
+          args.includes("eval")
+            ? cliSuccess([{ title: "Search", url: "https://x.com/search", text: "loaded", articles: 1, tweets: [] }])
+            : cliSuccess([]),
+      },
+    ];
+    for (const scenario of scenarios) {
+      await assert.rejects(
+        () => fetchTweets("alice", 10, scenario.runner),
+        new RegExp(`@alice.*${scenario.name === "empty-ok" ? "no usable tweet rows" : scenario.name}`),
+      );
+    }
+  });
+
+  it("fetchTweets returns usable rows after the retry structure succeeds", async () => {
+    const runner = async (args: string[]) =>
+      args.includes("eval")
+        ? cliSuccess([
+            {
+              title: "Search",
+              url: "https://x.com/search",
+              text: "loaded",
+              articles: 1,
+              tweets: [{ id: "tweet-1", text: "A usable tweet" }],
+            },
+          ])
+        : cliSuccess([]);
+    const rows = await fetchTweets("alice", 10, runner);
+    assert.deepEqual(rows, [{ id: "tweet-1", text: "A usable tweet" }]);
   });
 });
 

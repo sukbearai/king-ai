@@ -2,6 +2,7 @@ import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { createAlert, type Alert, type AlertRule, type AlertState } from "../alert-rule.js";
 import { dotGet, loadTradeConfig } from "../config.js";
+import type { CliRunResult } from "../cli-result.js";
 import { nowDisplay, runOpencli } from "../data-helpers.js";
 import { extractJsonFromText, runAgent } from "../llm-utils.js";
 import { TRADE_STATE_DIR } from "../../paths.js";
@@ -9,9 +10,9 @@ import { classifyCelebritySearchSnapshot } from "../celebrity-search.js";
 
 const SEEN_TWEETS_DB = `${TRADE_STATE_DIR}/celebrity_seen.jsonl`;
 const TWITTER_SEARCH_SESSION = "trade-twitter-search";
-const SEEN_TWEET_TTL_SECONDS = 86400 * 3;
-const NON_ALPHA_RETRY_SECONDS = 5 * 60;
-const MAX_PARSE_FAIL_ATTEMPTS = 3;
+export const SEEN_TWEET_TTL_SECONDS = 86400 * 3;
+export const NON_ALPHA_SEEN_SECONDS = 6 * 3600;
+const PARSE_FAIL_WINDOW_SECONDS = 6 * 3600;
 
 const ENTITY_BLACKLIST = new Set([
   "USD",
@@ -35,7 +36,7 @@ const WARNING_ALPHA_TYPES = new Set(["endorsement", "partnership", "ipo", "polic
 const DEFAULT_MIN_CONFIDENCE_WARNING = 0.72;
 /** Below this, treat as non-actionable even if model set is_alpha=true. */
 const DEFAULT_MIN_CONFIDENCE_ALERT = 0.55;
-const PARSE_FAIL_RETRY_SECONDS = 15 * 60;
+export const PARSE_FAIL_RETRY_SECONDS = 15 * 60;
 
 const ENTITY_PROMPT_TPL = `你是全自动加密 alpha 判定引擎（无人工复核）。对下面推文自主做最终判定:
 是否会出现「资金/注意力向可交易标的集中」的催化剂。只输出 JSON,系统会原样执行你的判断。
@@ -79,10 +80,12 @@ interface ChainFmRef {
   url: string;
 }
 
-interface SeenTweetRecord {
+export interface SeenTweetRecord {
   id?: string;
   ts?: number;
   ttl_seconds?: number;
+  outcome?: string;
+  attempts?: number;
 }
 
 function chainFmUrl(chain: string, address: string): string {
@@ -90,14 +93,24 @@ function chainFmUrl(chain: string, address: string): string {
 }
 
 export function isCelebritySeenRecordActive(record: SeenTweetRecord, nowSeconds = Date.now() / 1000): boolean {
-  if (!record.id || !record.ts) return false;
+  if (!record.id || typeof record.ts !== "number" || !Number.isFinite(record.ts)) return false;
   const ttl = Number(record.ttl_seconds ?? SEEN_TWEET_TTL_SECONDS);
   if (!Number.isFinite(ttl) || ttl <= 0) return false;
   return nowSeconds - record.ts < ttl;
 }
 
 export function parseFailMarkTtl(attempts: number): number {
-  return attempts >= MAX_PARSE_FAIL_ATTEMPTS ? SEEN_TWEET_TTL_SECONDS : PARSE_FAIL_RETRY_SECONDS;
+  const normalized = Math.max(1, Math.floor(Number(attempts) || 1));
+  return Math.min(60 * 60, PARSE_FAIL_RETRY_SECONDS * 2 ** (normalized - 1));
+}
+
+function isLegacyParseFailure(record: SeenTweetRecord): boolean {
+  return record.outcome == null && record.attempts == null && Number(record.ttl_seconds) === PARSE_FAIL_RETRY_SECONDS;
+}
+
+function recordTimestamp(record: SeenTweetRecord): number | null {
+  const ts = Number(record.ts);
+  return Number.isFinite(ts) ? ts : null;
 }
 
 export function parseSeenStateLines(
@@ -106,16 +119,48 @@ export function parseSeenStateLines(
 ): { active: Set<string>; parseFails: Map<string, number> } {
   const active = new Set<string>();
   const parseFails = new Map<string, number>();
+  const latest = new Map<string, SeenTweetRecord>();
+  const history = new Map<string, SeenTweetRecord[]>();
   for (const line of lines) {
     if (!line) continue;
     try {
       const rec = JSON.parse(line) as SeenTweetRecord;
-      if (isCelebritySeenRecordActive(rec, nowSeconds) && rec.id) active.add(rec.id);
-      if (rec.id && rec.ttl_seconds === PARSE_FAIL_RETRY_SECONDS) {
-        parseFails.set(rec.id, (parseFails.get(rec.id) ?? 0) + 1);
-      }
+      if (!rec || typeof rec !== "object" || !rec.id || recordTimestamp(rec) == null) continue;
+      const records = history.get(rec.id) ?? [];
+      records.push(rec);
+      history.set(rec.id, records);
+      const current = latest.get(rec.id);
+      if (!current || (recordTimestamp(rec) ?? 0) >= (recordTimestamp(current) ?? 0)) latest.set(rec.id, rec);
     } catch {
       // skip malformed lines
+    }
+  }
+  for (const [id, latestRecord] of latest) {
+    const latestTs = recordTimestamp(latestRecord);
+    if (latestTs == null) continue;
+    const records = history.get(id) ?? [];
+    const legacyParseFailuresBeforeLatest = records.filter((record) => {
+      const ts = recordTimestamp(record);
+      return ts != null && ts <= latestTs && latestTs - ts < PARSE_FAIL_WINDOW_SECONDS && isLegacyParseFailure(record);
+    });
+    const recentLegacyParseFailures = legacyParseFailuresBeforeLatest.filter(
+      (record) => nowSeconds - (recordTimestamp(record) ?? nowSeconds) < PARSE_FAIL_WINDOW_SECONDS,
+    );
+    const latestAge = nowSeconds - latestTs;
+    const latestTtl = Number(latestRecord.ttl_seconds ?? SEEN_TWEET_TTL_SECONDS);
+    const legacyParseTerminal =
+      latestRecord.outcome == null &&
+      latestRecord.attempts == null &&
+      latestRecord.ttl_seconds === SEEN_TWEET_TTL_SECONDS &&
+      legacyParseFailuresBeforeLatest.length > 0;
+    const effectiveTtl = legacyParseTerminal ? Math.min(latestTtl, 60 * 60) : latestTtl;
+    if (isCelebritySeenRecordActive({ ...latestRecord, ttl_seconds: effectiveTtl }, nowSeconds)) active.add(id);
+
+    if (latestRecord.outcome === "parse_failed" && latestAge < PARSE_FAIL_WINDOW_SECONDS) {
+      const attempts = Math.max(1, Math.floor(Number(latestRecord.attempts) || 1));
+      parseFails.set(id, attempts);
+    } else if (recentLegacyParseFailures.length > 0) {
+      parseFails.set(id, recentLegacyParseFailures.length);
     }
   }
   return { active, parseFails };
@@ -156,19 +201,40 @@ async function loadSeenState(): Promise<{ active: Set<string>; parseFails: Map<s
   }
 }
 
-async function persistSeen(tid: string, ttlSeconds = SEEN_TWEET_TTL_SECONDS): Promise<void> {
-  await mkdir(dirname(SEEN_TWEETS_DB), { recursive: true });
-  await appendFile(
-    SEEN_TWEETS_DB,
-    `${JSON.stringify({ id: tid, ts: Date.now() / 1000, ttl_seconds: ttlSeconds })}\n`,
-    "utf8",
-  );
+interface SeenMarkOptions {
+  ttlSeconds?: number;
+  outcome?: string;
+  attempts?: number;
 }
 
-async function fetchTweets(username: string, fetchLimit: number): Promise<Array<Record<string, unknown>>> {
-  try {
-    const url = `https://x.com/search?q=${encodeURIComponent(`from:${username}`)}&f=live`;
-    const js = `(function() {
+async function persistSeen(tid: string, options: SeenMarkOptions = {}): Promise<void> {
+  await mkdir(dirname(SEEN_TWEETS_DB), { recursive: true });
+  const record: SeenTweetRecord = {
+    id: tid,
+    ts: Date.now() / 1000,
+    ttl_seconds: options.ttlSeconds ?? SEEN_TWEET_TTL_SECONDS,
+  };
+  if (options.outcome) record.outcome = options.outcome;
+  if (options.attempts != null) record.attempts = options.attempts;
+  await appendFile(SEEN_TWEETS_DB, `${JSON.stringify(record)}\n`, "utf8");
+}
+
+export type CelebrityFetchRunner = (args: string[], timeoutMs?: number) => Promise<CliRunResult<unknown[]>>;
+
+function safeCollectionReason(reason: unknown): string {
+  const compact = String(reason ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return compact ? compact.slice(0, 180) : "unknown collection failure";
+}
+
+export async function fetchTweets(
+  username: string,
+  fetchLimit: number,
+  runner: CelebrityFetchRunner = runOpencli,
+): Promise<Array<Record<string, unknown>>> {
+  const url = `https://x.com/search?q=${encodeURIComponent(`from:${username}`)}&f=live`;
+  const js = `(function() {
   const out = [];
   const seen = new Set();
   for (const article of document.querySelectorAll('article')) {
@@ -202,34 +268,56 @@ async function fetchTweets(username: string, fetchLimit: number): Promise<Array<
     tweets: out
   };
 })()`;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      await runOpencli(["browser", TWITTER_SEARCH_SESSION, "close"], 10_000);
-      const opened = await runOpencli(
-        ["browser", TWITTER_SEARCH_SESSION, "--window", "background", "open", url],
-        30_000,
+  let lastReason = "no usable tweet rows";
+  for (let attempt = 0; attempt < 3; attempt++) {
+    let opened: CliRunResult<unknown[]>;
+    let evalResult: CliRunResult<unknown[]>;
+    try {
+      await runner(["browser", TWITTER_SEARCH_SESSION, "close"], 10_000);
+      opened = await runner(["browser", TWITTER_SEARCH_SESSION, "--window", "background", "open", url], 30_000);
+      if (!opened.ok) {
+        lastReason = safeCollectionReason(opened.error ?? "open failed");
+        continue;
+      }
+      const waited = await runner(
+        ["browser", TWITTER_SEARCH_SESSION, "--window", "background", "wait", "time", "5"],
+        10_000,
       );
-      if (!opened.ok) continue;
-      await runOpencli(["browser", TWITTER_SEARCH_SESSION, "--window", "background", "wait", "time", "5"], 10_000);
-      const evalResult = await runOpencli(
-        ["browser", TWITTER_SEARCH_SESSION, "--window", "background", "eval", js],
-        30_000,
-      );
-      if (!evalResult.ok) continue;
-      const page = evalResult.data.find(
-        (row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row),
-      );
-      const status = classifyCelebritySearchSnapshot(username, page ?? { url }).status;
-      if (status === "no-results" || status === "auth-required" || status === "challenge") return [];
-      const tweets = Array.isArray(page?.tweets) ? page.tweets : [];
-      const rows = tweets.filter(
-        (row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row),
-      );
-      if (rows.length) return rows;
+      if (!waited.ok) {
+        lastReason = safeCollectionReason(waited.error ?? "wait failed");
+        continue;
+      }
+      evalResult = await runner(["browser", TWITTER_SEARCH_SESSION, "--window", "background", "eval", js], 30_000);
+      if (!evalResult.ok) {
+        lastReason = safeCollectionReason(evalResult.error ?? "eval failed");
+        continue;
+      }
+    } catch (err) {
+      lastReason = safeCollectionReason(err instanceof Error ? err.message : err);
+      continue;
     }
-    return [];
-  } catch {
-    return [];
+
+    const page = evalResult.data.find(
+      (row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row),
+    );
+    const classified = classifyCelebritySearchSnapshot(username, page ?? { url });
+    if (classified.status === "no-results") return [];
+    if (classified.status === "auth-required" || classified.status === "challenge") {
+      throw new Error(`celebrity collection @${username} ${classified.status}: ${classified.detail}`);
+    }
+    if (classified.status !== "ok") {
+      lastReason = `${classified.status}: ${safeCollectionReason(classified.detail)}`;
+      continue;
+    }
+    const tweets = Array.isArray(page?.tweets) ? page.tweets : [];
+    const rows = tweets.filter(
+      (row): row is Record<string, unknown> =>
+        Boolean(row) && typeof row === "object" && !Array.isArray(row) && Boolean(String(row.id ?? "").trim()),
+    );
+    if (rows.length) return rows;
+    lastReason = `${classified.status}: no usable tweet rows`;
   }
+  throw new Error(`celebrity collection @${username} failed after 3 attempts: ${lastReason}`);
 }
 
 export interface CelebrityAlphaMeta {
@@ -343,14 +431,9 @@ async function extractEntities(
   minConfidenceAlert: number,
 ): Promise<CelebrityAlphaDecision> {
   const prompt = ENTITY_PROMPT_TPL.replace("{text}", text.slice(0, 500)).replace("{author}", author);
-  const result = await runAgent(prompt, { timeoutMs: 45_000, task: "celebrity_extract" });
+  const result = await runAgent(prompt, { timeoutMs: 45_000, task: "celebrity_extract", required: true });
   const parsed = extractJsonFromText(result) as Record<string, unknown> | null;
-  const decision = resolveCelebrityAlphaDecision(parsed, text, { minConfidenceAlert });
-  if (decision.meta.parse_failed) {
-    const raw = result ? result.replace(/\s+/g, " ").trim().slice(0, 200) : "<empty>";
-    process.stderr.write(`[celebrity] parse_failed @${author} raw=${raw}\n`);
-  }
-  return decision;
+  return resolveCelebrityAlphaDecision(parsed, text, { minConfidenceAlert });
 }
 
 export function isLikelyTweetUiFragment(text: string, author: string): boolean {
@@ -383,6 +466,45 @@ export function celebrityAlertSeverity(
   return "info";
 }
 
+export interface CelebrityTweetCandidate {
+  account: string;
+  tweet: Record<string, unknown>;
+  id: string;
+  text: string;
+  discoveryIndex: number;
+}
+
+export function celebrityClassificationLimit(raw: unknown): number {
+  const parsed = typeof raw === "string" && !raw.trim() ? Number.NaN : Number(raw);
+  if (!Number.isFinite(parsed)) return 8;
+  return Math.min(50, Math.max(1, Math.trunc(parsed)));
+}
+
+function tweetCreatedAtMs(candidate: CelebrityTweetCandidate): number | null {
+  const raw = String(candidate.tweet.created_at ?? "").trim();
+  if (!raw) return null;
+  const numeric = Number(raw);
+  if (Number.isFinite(numeric) && numeric > 0) return numeric < 1e12 ? numeric * 1000 : numeric;
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function selectCelebrityCandidates(
+  candidates: CelebrityTweetCandidate[],
+  maxClassifications: number,
+): { selected: CelebrityTweetCandidate[]; overflow: CelebrityTweetCandidate[] } {
+  const ordered = [...candidates].sort((left, right) => {
+    const leftTs = tweetCreatedAtMs(left);
+    const rightTs = tweetCreatedAtMs(right);
+    if (leftTs != null && rightTs != null && leftTs !== rightTs) return rightTs - leftTs;
+    if (leftTs != null && rightTs == null) return -1;
+    if (leftTs == null && rightTs != null) return 1;
+    return left.discoveryIndex - right.discoveryIndex;
+  });
+  const limit = celebrityClassificationLimit(maxClassifications);
+  return { selected: ordered.slice(0, limit), overflow: ordered.slice(limit) };
+}
+
 export function createRuleTCelebrity(): AlertRule {
   let seen = new Set<string>();
   let parseFails = new Map<string, number>();
@@ -398,6 +520,7 @@ export function createRuleTCelebrity(): AlertRule {
       const cfg = (dotGet(config, "alerts.celebrity_tweet", {}) ?? {}) as Record<string, unknown>;
       accounts = Array.isArray(cfg.accounts) ? cfg.accounts.map(String) : [];
       fetchLimit = Number(cfg.fetch_limit ?? 10);
+      const maxClassifications = celebrityClassificationLimit(cfg.max_classifications_per_tick ?? 8);
       const minConfidenceAlert = clampConfidence(
         cfg.min_confidence_alert ?? DEFAULT_MIN_CONFIDENCE_ALERT,
         DEFAULT_MIN_CONFIDENCE_ALERT,
@@ -411,88 +534,100 @@ export function createRuleTCelebrity(): AlertRule {
       parseFails = seenState.parseFails;
 
       const alerts: Alert[] = [];
+      const candidates: CelebrityTweetCandidate[] = [];
+      const candidateIds = new Set<string>();
+      let discoveryIndex = 0;
+      const markSeen = async (tid: string, options: SeenMarkOptions = {}) => {
+        seen.add(tid);
+        await persistSeen(tid, options);
+      };
+
       for (const user of accounts) {
         for (const tw of await fetchTweets(user, fetchLimit)) {
           const tid = String(tw.id ?? "");
-          if (!tid || seen.has(tid)) continue;
-          const markSeen = async (ttlSeconds = SEEN_TWEET_TTL_SECONDS) => {
-            seen.add(tid);
-            await persistSeen(tid, ttlSeconds);
-          };
+          if (!tid || seen.has(tid) || candidateIds.has(tid)) continue;
           const text = String(tw.text ?? "").trim();
           if (text.length < 10) {
-            await markSeen();
+            await markSeen(tid);
             continue;
           }
           if (isLikelyTweetUiFragment(text, user)) {
-            await markSeen();
+            await markSeen(tid);
             continue;
           }
 
-          // LLM autonomous decision; no human approval gate.
-          const { entities, meta } = await extractEntities(text, user, minConfidenceAlert);
-          if (meta.parse_failed) {
-            const attempts = (parseFails.get(tid) ?? 0) + 1;
-            parseFails.set(tid, attempts);
-            const ttl = parseFailMarkTtl(attempts);
-            if (attempts >= MAX_PARSE_FAIL_ATTEMPTS) {
-              process.stderr.write(`[celebrity] parse_failed giving up id=${tid} attempts=${attempts}\n`);
-            }
-            await markSeen(ttl);
-            continue;
-          }
-          if (!meta.is_alpha) {
-            await markSeen(NON_ALPHA_RETRY_SECONDS);
-            continue;
-          }
-          if (!entities.length) {
-            await markSeen(NON_ALPHA_RETRY_SECONDS);
-            continue;
-          }
-          if (!state.canAlert(`t_${tid}`, 600)) {
-            await markSeen();
-            continue;
-          }
-
-          const alphaType = String(meta.alpha_type ?? "none");
-          const reason = String(meta.reason ?? "");
-          const confidence = meta.confidence;
-          const chainRefs = extractChainFmRefs(text);
-          const entityLabel = entities.slice(0, 3).join(", ");
-          const title = `@${user} [${alphaType} ${confidence.toFixed(2)}] → ${entityLabel}`;
-          const lines = [
-            `⚡ alpha=${alphaType} conf=${confidence.toFixed(2)} — ${reason}`,
-            `💬 ${text.slice(0, 200)}`,
-            `🔗 ${String(tw.url ?? "")}`,
-            `🎯 entities: ${entities.join(", ")}`,
-          ];
-          if (meta.grounded_out?.length) {
-            lines.push(`🧹 dropped(ungrounded): ${meta.grounded_out.join(", ")}`);
-          }
-          if (chainRefs.length) {
-            lines.push("", "📋 推文内 chain.fm 链接:");
-            for (const ref of chainRefs) {
-              lines.push(`  ${ref.chain} ${ref.address}`);
-              lines.push(`  ${ref.url}`);
-            }
-          }
-
-          const primaryRef = chainRefs[0];
-          alerts.push(
-            createAlert({
-              ruleId: "celebrity",
-              severity: celebrityAlertSeverity(alphaType, entities.length, confidence, minConfidenceWarning),
-              title,
-              detail: lines.join("\n"),
-              timestamp: nowDisplay(),
-              asset: entities[0] ?? "",
-              tokenContract: primaryRef?.address ?? "",
-              tokenChain: primaryRef?.chain ?? "",
-              tags: ["celebrity", "llm_autonomous", `conf_${confidence.toFixed(2)}`],
-            }),
-          );
-          await markSeen();
+          candidateIds.add(tid);
+          candidates.push({ account: user, tweet: tw, id: tid, text, discoveryIndex });
+          discoveryIndex += 1;
         }
+      }
+
+      const { selected } = selectCelebrityCandidates(candidates, maxClassifications);
+      const classified: Array<{ candidate: CelebrityTweetCandidate; decision: CelebrityAlphaDecision }> = [];
+      for (const candidate of selected) {
+        // Do not persist partial outcomes if a later required classification fails.
+        const decision = await extractEntities(candidate.text, candidate.account, minConfidenceAlert);
+        classified.push({ candidate, decision });
+      }
+
+      for (const { candidate, decision } of classified) {
+        const { account: user, tweet: tw, id: tid, text } = candidate;
+        const { entities, meta } = decision;
+        if (meta.parse_failed) {
+          const attempts = (parseFails.get(tid) ?? 0) + 1;
+          parseFails.set(tid, attempts);
+          const ttl = parseFailMarkTtl(attempts);
+          process.stderr.write(`[celebrity] parse_failed id=${tid} attempt=${attempts} retry_in=${ttl}s\n`);
+          await markSeen(tid, { ttlSeconds: ttl, outcome: "parse_failed", attempts });
+          continue;
+        }
+        if (!meta.is_alpha || !entities.length) {
+          await markSeen(tid, { ttlSeconds: NON_ALPHA_SEEN_SECONDS, outcome: "non_alpha" });
+          continue;
+        }
+        if (!state.canAlert(`t_${tid}`, 600)) {
+          await markSeen(tid);
+          continue;
+        }
+
+        const alphaType = String(meta.alpha_type ?? "none");
+        const reason = String(meta.reason ?? "");
+        const confidence = meta.confidence;
+        const chainRefs = extractChainFmRefs(text);
+        const entityLabel = entities.slice(0, 3).join(", ");
+        const title = `@${user} [${alphaType} ${confidence.toFixed(2)}] → ${entityLabel}`;
+        const lines = [
+          `⚡ alpha=${alphaType} conf=${confidence.toFixed(2)} — ${reason}`,
+          `💬 ${text.slice(0, 200)}`,
+          `🔗 ${String(tw.url ?? "")}`,
+          `🎯 entities: ${entities.join(", ")}`,
+        ];
+        if (meta.grounded_out?.length) {
+          lines.push(`🧹 dropped(ungrounded): ${meta.grounded_out.join(", ")}`);
+        }
+        if (chainRefs.length) {
+          lines.push("", "📋 推文内 chain.fm 链接:");
+          for (const ref of chainRefs) {
+            lines.push(`  ${ref.chain} ${ref.address}`);
+            lines.push(`  ${ref.url}`);
+          }
+        }
+
+        const primaryRef = chainRefs[0];
+        alerts.push(
+          createAlert({
+            ruleId: "celebrity",
+            severity: celebrityAlertSeverity(alphaType, entities.length, confidence, minConfidenceWarning),
+            title,
+            detail: lines.join("\n"),
+            timestamp: nowDisplay(),
+            asset: entities[0] ?? "",
+            tokenContract: primaryRef?.address ?? "",
+            tokenChain: primaryRef?.chain ?? "",
+            tags: ["celebrity", "llm_autonomous", `conf_${confidence.toFixed(2)}`],
+          }),
+        );
+        await markSeen(tid);
       }
       return alerts;
     },

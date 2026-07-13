@@ -65,6 +65,8 @@ Key config sections:
 | `data_sources.pumpfun` | Pump.fun section filters and limits |
 | `data_sources.leaderboard` | Smart-money leaderboard options |
 | `treasury` | Treasury stress: `^TYX` / `^TNX` / `TLT` thresholds |
+| `alerts.celebrity_tweet.max_classifications_per_tick` | Maximum celebrity LLM classifications per tick (default `8`, range `1..50`) |
+| `llm.agent_tasks.<task>.backend` | Optional task backend; blank or missing inherits `llm.default_backend`, then `llm.provider`, then Grok |
 | `llm.agent_tasks.<task>.timeout_ms` | Optional per-task local agent timeout |
 | `telegram` | `bot_token` and `push_chat_id` for alert pushes |
 
@@ -108,7 +110,7 @@ rule.check → regime cap → JSONL audit → confluence (asset only) → TG sev
 - Daemon rule ticks use per-rule timeouts (e.g. celebrity `240s`, panews `120s`); a timeout sets heartbeat `status: timeout` and continues the round.
 - Cooldowns persist in `~/.king-ai/trade/rule_state.json`.
 
-Celebrity alpha is **LLM-autonomous** (no human approval): the local agent decides `is_alpha` / `alpha_type` / `confidence` / `entities`. Code only enforces ledger rails — entity must appear in the tweet text, confidence floors (`alerts.celebrity_tweet.min_confidence_alert` / `min_confidence_warning`), cooldowns, and JSONL audit. Parse failures short-retry; non-alpha is suppressed briefly and rechecked later. X search pages are classified before waiting for tweet articles, so a loaded no-results page returns empty instead of burning the full selector timeout.
+Celebrity alpha is **LLM-autonomous** (no human approval): the local agent decides `is_alpha` / `alpha_type` / `confidence` / `entities`. A blank task backend inherits `llm.default_backend`, then `llm.provider`, then Grok. Celebrity classification uses Codex in read-only, cwd-independent mode when selected. Code only enforces ledger rails — entity must appear in the tweet text, confidence floors (`alerts.celebrity_tweet.min_confidence_alert` / `min_confidence_warning`), cooldowns, and JSONL audit. Each tick classifies at most eight candidates by default; successful non-alpha results are held for six hours. Malformed JSON retries after 15, 30, then 60 minutes and remains retryable. X collection auth/challenge failures, collection errors, and exhausted agent backends become heartbeat errors rather than healthy no-alert results. Telegram delivery failures are logged after alert audit persistence.
 
 ## Daemon Supervisor
 
