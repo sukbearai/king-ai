@@ -1,6 +1,6 @@
 ---
 name: codex-luna
-description: "Codex-only workflow for non-trivial implementation: the current Codex session freezes the plan, delegates scoped execution to a separate Codex CLI process using gpt-5.6-luna at xhigh reasoning, then reviews and verifies the result. Use when Luna should implement a resolved plan without redesigning it. Skip in every non-Codex harness and never let the executor recursively delegate."
+description: "Codex-only workflow for non-trivial implementation: the current Codex session freezes the plan, delegates scoped execution to a separate Codex CLI process using gpt-5.6-luna at max reasoning, then reviews and verifies the result. Use when Luna should implement a resolved plan without redesigning it. Skip in every non-Codex harness and never let the executor recursively delegate."
 ---
 
 # Codex Luna
@@ -20,7 +20,7 @@ Use this workflow when:
 
 - implementation is non-trivial and needs an explicit plan before edits
 - the desired outcome is known and the exact file-level execution path can be frozen
-- a separate `gpt-5.6-luna` execution pass at `xhigh` reasoning is worth the delegation overhead
+- a separate `gpt-5.6-luna` execution pass at `max` reasoning is worth the delegation overhead
 - the coordinator can independently inspect the diff and run verification
 
 Do not use it for tiny edits, design-only work, or ordinary one-pass investigation. For a read-only investigation or review, use this workflow only when the user explicitly asks for a separate Luna pass.
@@ -71,7 +71,7 @@ EOF
 
 command codex exec --yolo -C <repo> \
   --model gpt-5.6-luna \
-  -c model_reasoning_effort="xhigh" \
+  -c model_reasoning_effort="max" \
   -o /tmp/codex-luna-last.md \
   - <"$LP" 2>/dev/null
 ```
@@ -110,7 +110,7 @@ EOF
 
 (cd <repo> && command codex exec resume --last \
   --model gpt-5.6-luna \
-  -c model_reasoning_effort="xhigh" \
+  -c model_reasoning_effort="max" \
   --dangerously-bypass-approvals-and-sandbox \
   -o /tmp/codex-luna-last.md \
   - <"$P2" 2>/dev/null)
