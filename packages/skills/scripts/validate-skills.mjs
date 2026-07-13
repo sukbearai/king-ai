@@ -8,6 +8,28 @@ const skillsRoot = path.join(packageRoot, "skills");
 
 const requiredBodyMarkers = new Map([
   [
+    "sub2api-fork-deploy",
+    [
+      "com.docker.compose.project.working_dir",
+      "If the user explicitly requests `$codex-luna`",
+      "Never persist SSH passwords",
+      "pg_restore --list",
+      "Do not run `/app/sub2api --version` inside the live `sub2api` container",
+      "config --format json",
+      "--no-deps",
+      "--pull never",
+      "PostgreSQL and Redis container IDs and start times",
+      "`docker compose pull` will fail",
+      "Treat official catch-up as image convergence, not rollback",
+      "Do not invoke Luna or rebuild an image for same-commit convergence",
+      "git merge-base --is-ancestor",
+      "Use `latest` for discovery only",
+      'docker pull "$OFFICIAL_IMAGE"',
+      "Keep the custom image until the official image passes the agreed soak period",
+      "Do not restore PostgreSQL automatically",
+    ],
+  ],
+  [
     "bytevirt-hysteria2-node",
     [
       "Prefer a no-panel Hysteria2 deployment unless the user explicitly asks for a management panel",

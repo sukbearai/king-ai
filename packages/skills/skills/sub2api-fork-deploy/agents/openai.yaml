@@ -1,0 +1,4 @@
+interface:
+  display_name: "Sub2API Fork Deploy"
+  short_description: "Deploy fork commits and converge back to official images."
+  default_prompt: "Use $sub2api-fork-deploy to deploy a pinned Sub2API fork commit or safely converge the running app back to an official tagged image without restarting PostgreSQL or Redis."
