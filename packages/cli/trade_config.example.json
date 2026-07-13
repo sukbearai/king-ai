@@ -77,7 +77,8 @@
     "push_chat_id": ""
   },
   "llm": {
-    "default_backend": "grok",
+    "default_backend": "codex",
+    "disabled_backends": [],
     "grok_model": "",
     "claude_model": "",
     "codex_model": "",

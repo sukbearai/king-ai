@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { dotGet, loadTradeConfig } from "./config.js";
 
-const AGENT_BACKENDS = ["grok", "claude", "codex"] as const;
+const AGENT_BACKENDS = ["codex", "grok", "claude"] as const;
 type AgentBackend = (typeof AGENT_BACKENDS)[number];
 
 const PROMPT_ARG_MAX = 4000;
@@ -108,7 +108,7 @@ function normalizeBackend(raw: string): AgentBackend | null {
 }
 
 export function resolveAgentBackendOrder(llmCfg: Record<string, unknown>, taskBackend?: string): AgentBackend[] {
-  const configured = [taskBackend, llmCfg.default_backend, llmCfg.provider, "grok"];
+  const configured = [taskBackend, llmCfg.default_backend, llmCfg.provider, "codex"];
   let preferred: AgentBackend | null = null;
   for (const raw of configured) {
     if (raw == null || !String(raw).trim()) continue;
@@ -119,7 +119,12 @@ export function resolveAgentBackendOrder(llmCfg: Record<string, unknown>, taskBa
   for (const name of AGENT_BACKENDS) {
     if (!order.includes(name)) order.push(name);
   }
-  return order;
+  const disabled = new Set(
+    (Array.isArray(llmCfg.disabled_backends) ? llmCfg.disabled_backends : [])
+      .map((value) => normalizeBackend(String(value)))
+      .filter((name): name is AgentBackend => name !== null),
+  );
+  return order.filter((name) => !disabled.has(name));
 }
 
 function sanitizeFailureText(text: string): string {

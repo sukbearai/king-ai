@@ -65,7 +65,8 @@ king-ai trade daemon --push-tg
 | `data_sources.pumpfun` / `leaderboard` | 链上晨报板块 |
 | `treasury` | 美债抛售 / 收益率阈值 |
 | `alerts.celebrity_tweet.max_classifications_per_tick` | 每轮名人推文最多 LLM 分类数（默认 `8`，范围 `1..50`） |
-| `llm.agent_tasks.<task>.backend` | 可选任务后端；空值或缺失时依次继承 `llm.default_backend`、`llm.provider`、Grok |
+| `llm.disabled_backends` | 从回退链排除的本地 agent 后端，例如 `["claude"]` |
+| `llm.agent_tasks.<task>.backend` | 可选任务后端；空值或缺失时依次继承 `llm.default_backend`、`llm.provider`、Codex |
 | `llm.agent_tasks.<task>.timeout_ms` | 可选的单任务本地 agent 超时 |
 | `telegram` | `bot_token` 与 `push_chat_id` |
 
@@ -109,7 +110,7 @@ rule.check → regime 降级 → JSONL 审计 → 共振（仅 asset）→ TG �
 - daemon 每条规则有 tick 超时（如 celebrity `240s`、panews `120s`）；超时记 heartbeat `timeout` 并继续下一规则。
 - cooldown 持久化在 `~/.king-ai/trade/rule_state.json`。
 
-名人 alpha 为 **LLM 全自动判定**（无人工审批）：本地 agent 决定 `is_alpha` / `alpha_type` / `confidence` / `entities`。任务后端为空或缺失时依次继承 `llm.default_backend`、`llm.provider`、Grok；选择 Codex 时使用只读且不依赖 daemon 当前目录的调用。每轮默认最多分类 8 条候选，成功判定为非 alpha 后静默 6 小时。JSON 解析失败按 15、30、60 分钟退避并继续重试。X 采集的登录、挑战、采集失败和本地 agent 后端全部耗尽会记录为 heartbeat 错误，不再伪装成健康的无告警；Telegram 投递失败会在告警审计写入后记录日志。
+名人 alpha 为 **LLM 全自动判定**（无人工审批）：本地 agent 决定 `is_alpha` / `alpha_type` / `confidence` / `entities`。任务后端为空或缺失时依次继承 `llm.default_backend`、`llm.provider`、Codex，并跳过 `llm.disabled_backends` 中的后端；选择 Codex 时使用只读且不依赖 daemon 当前目录的调用。每轮默认最多分类 8 条候选，成功判定为非 alpha 后静默 6 小时。JSON 解析失败按 15、30、60 分钟退避并继续重试。X 采集的登录、挑战、采集失败和本地 agent 后端全部耗尽会记录为 heartbeat 错误，不再伪装成健康的无告警；Telegram 投递失败会在告警审计写入后记录日志。
 
 ## Daemon Supervisor
 
@@ -139,7 +140,7 @@ king-ai trade verify-celebrity --dry-run
 king-ai trade watchdog --kill
 ```
 
-`verify-tg` 会各跑一遍当前启用的告警规则和晨报板块；超时工具与 daemon 共用。未设置 `verify.step_timeout_ms` 时按规则默认预算（名人推更长）。摘要与 PANews 分类走本地 agent 链（`grok` → `claude` → `codex`）。
+`verify-tg` 会各跑一遍当前启用的告警规则和晨报板块；超时工具与 daemon 共用。未设置 `verify.step_timeout_ms` 时按规则默认预算（名人推更长）。摘要与 PANews 分类走配置的本地 agent 链，默认优先 Codex，并跳过 `llm.disabled_backends` 中的后端。
 
 `verify-celebrity --dry-run` 只检查 X 搜索页状态，不调 LLM、不推 Telegram；`unknown` 表示搜索页已加载但没有识别到推文或无结果标记，会作为 warning 展示，登录、挑战和真正错误仍会让健康检查失败。
 

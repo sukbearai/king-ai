@@ -51,8 +51,17 @@ test("extractJsonFromText still returns top-level arrays", () => {
 test("resolveAgentBackendOrder inherits defaults and keeps fallback order unique", () => {
   assert.deepEqual(resolveAgentBackendOrder({ default_backend: "codex" }, "   "), ["codex", "grok", "claude"]);
   assert.deepEqual(resolveAgentBackendOrder({ default_backend: "codex" }, undefined), ["codex", "grok", "claude"]);
-  assert.deepEqual(resolveAgentBackendOrder({ default_backend: "codex" }, "claude"), ["claude", "grok", "codex"]);
-  assert.deepEqual(resolveAgentBackendOrder({ provider: "claude" }, ""), ["claude", "grok", "codex"]);
+  assert.deepEqual(resolveAgentBackendOrder({}, undefined), ["codex", "grok", "claude"]);
+  assert.deepEqual(resolveAgentBackendOrder({ default_backend: "codex" }, "claude"), ["claude", "codex", "grok"]);
+  assert.deepEqual(resolveAgentBackendOrder({ provider: "claude" }, ""), ["claude", "codex", "grok"]);
+  assert.deepEqual(resolveAgentBackendOrder({ default_backend: "codex", disabled_backends: ["claude"] }), [
+    "codex",
+    "grok",
+  ]);
+  assert.deepEqual(resolveAgentBackendOrder({ default_backend: "codex", disabled_backends: ["claude"] }, "claude"), [
+    "codex",
+    "grok",
+  ]);
   const order = resolveAgentBackendOrder({ default_backend: "codex" }, "codex");
   assert.equal(new Set(order).size, order.length);
 });
@@ -187,7 +196,7 @@ test("runAgent skips temporarily blocked auth/quota backends", async () => {
     return "ok";
   };
   const options = {
-    config: { llm: { default_backend: "grok" } },
+    config: { llm: { default_backend: "grok", disabled_backends: ["claude"] } },
     timeoutMs: 5000,
     backendRunner: fakeRunner,
   };
@@ -195,6 +204,6 @@ test("runAgent skips temporarily blocked auth/quota backends", async () => {
   const second = await runAgent("hello", options);
   assert.equal(first, "ok");
   assert.equal(second, "ok");
-  assert.deepEqual(calls, ["grok", "claude", "claude"]);
+  assert.deepEqual(calls, ["grok", "codex", "codex"]);
   resetAgentBackendBlocks();
 });
