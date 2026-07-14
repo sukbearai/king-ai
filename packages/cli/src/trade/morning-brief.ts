@@ -172,6 +172,73 @@ export function preprocessTelegramBody(text: string, maxLines = 40): string {
   return picked.join("\n");
 }
 
+export interface ChainFmReference {
+  kind: "token" | "account";
+  label: string;
+  chain: string;
+  address: string;
+}
+
+const CHAIN_FM_MARKDOWN_LINK_RE = /\[([^\]]+)\]\((https:\/\/chain\.fm\/(?:token|account)\/[^)\s]+)\)/g;
+
+function parseChainFmReference(label: string, rawUrl: string): ChainFmReference | undefined {
+  try {
+    const url = new URL(rawUrl);
+    const [kind, chain, address] = url.pathname.split("/").filter(Boolean);
+    if ((kind !== "token" && kind !== "account") || !chain || !address) return undefined;
+    return { kind, label: label.trim(), chain, address: decodeURIComponent(address) };
+  } catch {
+    return undefined;
+  }
+}
+
+export function extractChainFmReferences(text: string): ChainFmReference[] {
+  const references: ChainFmReference[] = [];
+  for (const match of text.matchAll(CHAIN_FM_MARKDOWN_LINK_RE)) {
+    const reference = parseChainFmReference(match[1] ?? "", match[2] ?? "");
+    if (reference) references.push(reference);
+  }
+  return references;
+}
+
+export function expandChainFmReferences(text: string): string {
+  return text.replace(CHAIN_FM_MARKDOWN_LINK_RE, (markdown, label: string, rawUrl: string) => {
+    const reference = parseChainFmReference(label, rawUrl);
+    if (!reference) return markdown;
+    const chain = reference.chain.toUpperCase();
+    if (reference.kind === "token") return `${label}（${chain} 合约 ${reference.address}）`;
+    if (label.includes("...")) return `${label}（${chain} 完整地址 ${reference.address}）`;
+    return label;
+  });
+}
+
+export function formatMemeAddressIndex(summary: string, references: ChainFmReference[]): string {
+  const selected = references.filter((reference) => {
+    if (!summaryMentionsReference(summary, reference.label)) return false;
+    return reference.kind === "token" || reference.label.includes("...");
+  });
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  for (const reference of selected) {
+    const key = `${reference.kind}:${reference.chain}:${reference.address}`.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const descriptor = reference.kind === "token" ? "合约" : "完整地址";
+    lines.push(`${reference.label} · ${reference.chain.toUpperCase()} ${descriptor} · ${reference.address}`);
+  }
+  return lines.length ? `合约/地址索引：\n${lines.join("\n")}` : "";
+}
+
+function summaryMentionsReference(summary: string, label: string): boolean {
+  const normalizedLabel = label.trim();
+  if (!normalizedLabel) return false;
+  if (/^[A-Za-z0-9_$]+$/.test(normalizedLabel)) {
+    const escaped = normalizedLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(?<![A-Za-z0-9_$])${escaped}(?![A-Za-z0-9_$])`, "i").test(summary);
+  }
+  return summary.toLowerCase().includes(normalizedLabel.toLowerCase());
+}
+
 export function resolveBriefingPushTg(config: Record<string, unknown>, options: { pushTg?: boolean } = {}): boolean {
   if (options.pushTg === true) return true;
   if (options.pushTg === false) return false;
@@ -181,18 +248,12 @@ export function resolveBriefingPushTg(config: Record<string, unknown>, options: 
 export interface TwitterSummaryFunnel {
   cached: number;
   filtered: number;
-  candidates: number;
+  analyzed: number;
 }
 
 export interface TwitterSummaryCandidate {
   entry: TwitterCacheEntry;
   formatted: string;
-}
-
-export function resolveTwitterSummaryCandidateLimit(raw: Record<string, unknown>): number {
-  const value = Number(raw.summary_candidate_limit);
-  if (!Number.isFinite(value)) return 30;
-  return Math.min(60, Math.max(5, Math.trunc(value)));
 }
 
 export function rankTwitterCandidates(candidates: TwitterSummaryCandidate[]): TwitterSummaryCandidate[] {
@@ -208,8 +269,8 @@ export function rankTwitterCandidates(candidates: TwitterSummaryCandidate[]): Tw
 export function formatTwitterSummaryHeading(hours: number, funnel?: TwitterSummaryFunnel, summarized = true): string {
   if (!funnel) return `🐦 Twitter 时间线（最近 ${hours}h）\n`;
   const detail = summarized
-    ? `缓存 ${funnel.cached} 条，筛后 ${funnel.filtered} 条，从 ${funnel.candidates} 条候选中提炼`
-    : `缓存 ${funnel.cached} 条，筛后 ${funnel.filtered} 条，展示 ${funnel.candidates} 条高相关推文`;
+    ? `缓存 ${funnel.cached} 条，筛后 ${funnel.filtered} 条，已分析 ${funnel.analyzed} 条`
+    : `缓存 ${funnel.cached} 条，筛后 ${funnel.filtered} 条，展示 ${funnel.analyzed} 条高相关推文`;
   return `🐦 Twitter 时间线（最近 ${hours}h，${detail}）\n`;
 }
 
@@ -291,7 +352,6 @@ async function fetchTwitterSummary(hours: number): Promise<string> {
   );
   const maxDisplay = Number(ds.max_display) || 500;
   const perAuthorCap = Number(ds.per_author_cap) || 2;
-  const summaryCandidateLimit = resolveTwitterSummaryCandidateLimit(ds);
   const relevanceFilter = ds.relevance_filter !== false;
   const useLlm = dotGet(config, "briefing.llm_summarize", true) !== false;
   const cutoff = Date.now() - hours * 3600 * 1000;
@@ -337,7 +397,7 @@ async function fetchTwitterSummary(hours: number): Promise<string> {
   }
 
   if (!tweets.length) {
-    lines[0] = formatTwitterSummaryHeading(hours, { cached: cacheStats.recent, filtered: 0, candidates: 0 }, useLlm);
+    lines[0] = formatTwitterSummaryHeading(hours, { cached: cacheStats.recent, filtered: 0, analyzed: 0 }, useLlm);
     const diagnostics = totalRecords
       ? `缓存 ${totalRecords} 条，过期 ${staleRecords} 条，时间异常 ${invalidTimeRecords} 条`
       : `缓存为空或不存在：${cachePath}`;
@@ -347,24 +407,13 @@ async function fetchTwitterSummary(hours: number): Promise<string> {
   }
 
   const sorted = rankTwitterCandidates(tweets);
-  const authorCount = new Map<string, number>();
-  const picked: Array<{ entry: TwitterCacheEntry; formatted: string }> = [];
-  for (const tweet of sorted) {
-    if (picked.length >= maxDisplay) break;
-    const author = tweet.formatted.match(/^@(\S+?):/)?.[1] ?? "";
-    if (author) {
-      const count = authorCount.get(author) ?? 0;
-      if (count >= perAuthorCap) continue;
-      authorCount.set(author, count + 1);
-    }
-    picked.push(tweet);
-  }
-
-  const displayedTweets = picked.slice(0, summaryCandidateLimit);
+  const displayedTweets = useLlm
+    ? sorted.slice(0, maxDisplay)
+    : pickTwitterDisplayTweets(sorted, maxDisplay, perAuthorCap);
   const displayedEntries = displayedTweets.map((tweet) => tweet.entry);
   lines[0] = formatTwitterSummaryHeading(
     hours,
-    { cached: cacheStats.recent, filtered: tweets.length, candidates: displayedTweets.length },
+    { cached: cacheStats.recent, filtered: tweets.length, analyzed: displayedTweets.length },
     useLlm,
   );
 
@@ -374,6 +423,7 @@ async function fetchTwitterSummary(hours: number): Promise<string> {
       summaryInput,
       "Twitter 时间线（只保留交易、宏观、加密、AI芯片、上市公司与监管相关信息）",
       "最多输出 5 条，按市场影响排序。每条末尾必须原样保留对应的 [Tn] 引用；区分官方消息与二手转述，不得把二手转述写成已证实事实。不要输出体育、促销、账号服务、VPN、信用卡或交易信号广告。",
+      { maxInputChars: null, timeoutMs: 120_000 },
     );
     const sourceNotes = formatTwitterSourceNotes(summary, displayedEntries);
     if (sourceNotes.length) {
@@ -393,6 +443,26 @@ async function fetchTwitterSummary(hours: number): Promise<string> {
     lines.push(...displayedTweets.map((tweet) => tweet.formatted));
   }
   return lines.join("\n");
+}
+
+export function pickTwitterDisplayTweets(
+  tweets: TwitterSummaryCandidate[],
+  maxDisplay: number,
+  perAuthorCap: number,
+): TwitterSummaryCandidate[] {
+  const authorCount = new Map<string, number>();
+  const picked: TwitterSummaryCandidate[] = [];
+  for (const tweet of tweets) {
+    if (picked.length >= maxDisplay) break;
+    const author = tweet.formatted.match(/^@(\S+?):/)?.[1] ?? "";
+    if (author) {
+      const count = authorCount.get(author) ?? 0;
+      if (count >= perAuthorCap) continue;
+      authorCount.set(author, count + 1);
+    }
+    picked.push(tweet);
+  }
+  return picked;
 }
 
 const TWITTER_RELEVANT_RE =
@@ -430,7 +500,12 @@ async function fetchTelegramSummary(hours: number): Promise<string> {
     fetched.push({ label, ...result });
   }
 
-  const blocks: Array<{ label: string; text: string; instruction?: string }> = [];
+  const blocks: Array<{
+    label: string;
+    text: string;
+    instruction?: string;
+    addressReferences?: ChainFmReference[];
+  }> = [];
   for (const { label, messages, rawBytes, usedHours, stale, error } of fetched) {
     if (error) {
       lines.push(`【${label}】采集失败: ${error}`);
@@ -440,14 +515,17 @@ async function fetchTelegramSummary(hours: number): Promise<string> {
       lines.push(`【${label}】暂无消息（tg 返回 ${rawBytes} 字节，最近 ${hours}h 与 ${fallbackHours}h 均无内容）`);
       continue;
     }
-    const body = preprocessTelegramBody(messages.join("\n"));
+    const rawBody = messages.join("\n");
+    const isMeme = label.toLowerCase().includes("meme");
+    const addressReferences = isMeme ? extractChainFmReferences(rawBody) : undefined;
+    const body = preprocessTelegramBody(isMeme ? expandChainFmReferences(rawBody) : rawBody);
     const staleNote = stale
       ? `（最近 ${hours}h 无新消息${usedHours ? `，展示最近 ${usedHours}h 内消息` : "，展示最近缓存消息"}）\n`
       : "";
-    const instruction = label.toLowerCase().includes("meme")
-      ? "最多 5 条、350 字。优先保留真实买入/卖出、美元价值、流动性、市值和地址集中度；普通转账/空投合并为一条，不要逐个罗列代币。若只有转账而无买盘或估值依据，明确写「不构成交易信号」。"
+    const instruction = isMeme
+      ? "最多 5 条、350 字。优先保留真实买入/卖出、美元价值、流动性、市值和地址集中度；普通转账/空投合并为一条，不要逐个罗列代币。若只有转账而无买盘或估值依据，明确写「不构成交易信号」。涉及代币或转账方时禁止缩写链名、合约地址和钱包地址。"
       : undefined;
-    blocks.push({ label, text: body, instruction });
+    blocks.push({ label, text: body, instruction, addressReferences });
     if (!useLlm) lines.push(`【${label}】${staleNote}${body.slice(0, 1500)}`);
   }
 
@@ -458,7 +536,9 @@ async function fetchTelegramSummary(hours: number): Promise<string> {
       const staleNote = fetchedRow?.stale
         ? `（最近 ${hours}h 无新消息${fetchedRow.usedHours ? `，展示最近 ${fetchedRow.usedHours}h 内消息` : "，展示最近缓存消息"}）\n`
         : "";
-      lines.push(`【${b.label}】${staleNote}${compactTelegramSummary(b.label, summaries[i] ?? "")}`);
+      const compact = compactTelegramSummary(b.label, summaries[i] ?? "");
+      const addressIndex = formatMemeAddressIndex(compact, b.addressReferences ?? []);
+      lines.push(`【${b.label}】${staleNote}${compact}${addressIndex ? `\n${addressIndex}` : ""}`);
     });
   }
   return lines.join("\n\n");

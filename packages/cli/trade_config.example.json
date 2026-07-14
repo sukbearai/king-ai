@@ -34,8 +34,7 @@
       "scroll_wait_ms": 800,
       "stagnant_rounds": 2,
       "max_display": 500,
-      "per_author_cap": 2,
-      "summary_candidate_limit": 30
+      "per_author_cap": 2
     },
     "leaderboard": { "chains": ["solana"], "limit": 5, "time_frame": "1", "sort_by": "1" },
     "pumpfun": {

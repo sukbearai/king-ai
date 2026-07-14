@@ -43,17 +43,32 @@ export function stripMarkdown(text: string): string {
   return out.trim();
 }
 
-export async function llmSummarize(text: string, label: string, instruction?: string): Promise<string> {
-  const prompt = [
+export function buildSummaryPrompt(
+  text: string,
+  label: string,
+  instruction?: string,
+  maxInputChars: number | null = 12_000,
+): string {
+  const input = maxInputChars === null ? text : text.slice(0, maxInputChars);
+  return [
     `请用中文简洁摘要以下「${label}」内容，保留关键数字和标的名称，不超过 500 字。`,
     "输出要求：纯文本，不要使用任何 Markdown 格式（禁止 # 标题、**加粗**、- 列表、代码块、反引号等）。",
     "可用换行分段，条目用「1.」「2.」编号或「·」开头。",
     ...(instruction ? [instruction] : []),
     "",
-    text.slice(0, 12000),
+    input,
   ].join("\n");
+}
+
+export async function llmSummarize(
+  text: string,
+  label: string,
+  instruction?: string,
+  options: { maxInputChars?: number | null; timeoutMs?: number } = {},
+): Promise<string> {
+  const prompt = buildSummaryPrompt(text, label, instruction, options.maxInputChars);
   try {
-    const summary = await runAgent(prompt, { timeoutMs: 60_000, task: "summarize" });
+    const summary = await runAgent(prompt, { timeoutMs: options.timeoutMs ?? 60_000, task: "summarize" });
     if (summary.trim()) return stripMarkdown(summary.trim());
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

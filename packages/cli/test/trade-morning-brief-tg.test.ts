@@ -1,17 +1,20 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { compactSummaryFallback } from "../src/trade/llm-summarize.js";
+import { buildSummaryPrompt, compactSummaryFallback } from "../src/trade/llm-summarize.js";
 import {
   compactTelegramSummary,
+  expandChainFmReferences,
+  extractChainFmReferences,
+  formatMemeAddressIndex,
   formatTwitterSourceNotes,
   parseTelegramChannels,
   parseTgRecentMessages,
   preprocessTelegramBody,
   formatTwitterSummaryHeading,
   isTradeRelevantTweet,
+  pickTwitterDisplayTweets,
   rankTwitterCandidates,
   resolveBriefingPushTg,
-  resolveTwitterSummaryCandidateLimit,
 } from "../src/trade/morning-brief.js";
 import { chunkTelegramMessage } from "../src/trade/telegram.js";
 import { countRecentCacheRecords } from "../src/trade/twitter-cache.js";
@@ -63,6 +66,15 @@ describe("preprocessTelegramBody", () => {
     assert.match(out, /CZ.*received 200k Fomo3D/);
     assert.equal(out.includes("https://"), false);
   });
+
+  it("preserves complete chain.fm contracts and abbreviated wallet targets when expanded", () => {
+    const raw =
+      "[盘古斧](https://chain.fm/token/bsc/0xee668b7b056bd3bcf5d6fbb2d83fd5fea0247777) from " +
+      "[0xb2...0d05](https://chain.fm/account/bsc/0xb2cec332ac326a8e900fa34c1f14bc2faa120d05)";
+    const out = preprocessTelegramBody(expandChainFmReferences(raw));
+    assert.match(out, /盘古斧（BSC 合约 0xee668b7b056bd3bcf5d6fbb2d83fd5fea0247777）/);
+    assert.match(out, /0xb2\.\.\.0d05（BSC 完整地址 0xb2cec332ac326a8e900fa34c1f14bc2faa120d05）/);
+  });
 });
 
 describe("resolveBriefingPushTg", () => {
@@ -80,14 +92,14 @@ describe("resolveBriefingPushTg", () => {
 });
 
 describe("formatTwitterSummaryHeading", () => {
-  it("reports the cache, filtered, and candidate funnel", () => {
+  it("reports how many filtered tweets were actually analyzed", () => {
     assert.equal(
-      formatTwitterSummaryHeading(24, { cached: 60, filtered: 42, candidates: 30 }),
-      "🐦 Twitter 时间线（最近 24h，缓存 60 条，筛后 42 条，从 30 条候选中提炼）\n",
+      formatTwitterSummaryHeading(24, { cached: 60, filtered: 42, analyzed: 42 }),
+      "🐦 Twitter 时间线（最近 24h，缓存 60 条，筛后 42 条，已分析 42 条）\n",
     );
     assert.equal(
-      formatTwitterSummaryHeading(24, { cached: 0, filtered: 0, candidates: 0 }),
-      "🐦 Twitter 时间线（最近 24h，缓存 0 条，筛后 0 条，从 0 条候选中提炼）\n",
+      formatTwitterSummaryHeading(24, { cached: 0, filtered: 0, analyzed: 0 }),
+      "🐦 Twitter 时间线（最近 24h，缓存 0 条，筛后 0 条，已分析 0 条）\n",
     );
   });
 
@@ -97,20 +109,13 @@ describe("formatTwitterSummaryHeading", () => {
 
   it("reports displayed tweets when LLM summarization is disabled", () => {
     assert.equal(
-      formatTwitterSummaryHeading(24, { cached: 60, filtered: 17, candidates: 12 }, false),
+      formatTwitterSummaryHeading(24, { cached: 60, filtered: 17, analyzed: 12 }, false),
       "🐦 Twitter 时间线（最近 24h，缓存 60 条，筛后 17 条，展示 12 条高相关推文）\n",
     );
   });
 });
 
 describe("Twitter candidate selection", () => {
-  it("clamps the configured summary candidate limit", () => {
-    assert.equal(resolveTwitterSummaryCandidateLimit({}), 30);
-    assert.equal(resolveTwitterSummaryCandidateLimit({ summary_candidate_limit: 2 }), 5);
-    assert.equal(resolveTwitterSummaryCandidateLimit({ summary_candidate_limit: 45 }), 45);
-    assert.equal(resolveTwitterSummaryCandidateLimit({ summary_candidate_limit: 100 }), 60);
-  });
-
   it("ranks engagement first and recency second", () => {
     const ranked = rankTwitterCandidates([
       { entry: { id: "old", created_at: "2026-07-10T01:00:00Z" }, formatted: "@a: old" },
@@ -121,6 +126,27 @@ describe("Twitter candidate selection", () => {
       ranked.map((candidate) => candidate.entry.id),
       ["popular", "new", "old"],
     );
+  });
+
+  it("only applies the per-author cap to direct display mode", () => {
+    const tweets = [
+      { entry: { id: "1" }, formatted: "@alice: first" },
+      { entry: { id: "2" }, formatted: "@alice: second" },
+      { entry: { id: "3" }, formatted: "@bob: third" },
+    ];
+    assert.deepEqual(
+      pickTwitterDisplayTweets(tweets, 10, 1).map((candidate) => candidate.entry.id),
+      ["1", "3"],
+    );
+  });
+});
+
+describe("Twitter summary input", () => {
+  it("can pass the complete filtered timeline without the generic 12000-character cap", () => {
+    const marker = "LAST_FILTERED_TWEET";
+    const input = `${"x".repeat(13_000)}${marker}`;
+    assert.equal(buildSummaryPrompt(input, "Twitter", undefined).includes(marker), false);
+    assert.equal(buildSummaryPrompt(input, "Twitter", undefined, null).includes(marker), true);
   });
 });
 
@@ -164,6 +190,31 @@ describe("compactTelegramSummary", () => {
   it("does not truncate other Telegram summaries", () => {
     const summary = "1. macro update\n2. earnings update";
     assert.equal(compactTelegramSummary("传统金融/宏观", summary), summary);
+  });
+});
+
+describe("formatMemeAddressIndex", () => {
+  it("adds complete contracts and cited abbreviated wallets from chain.fm links", () => {
+    const raw =
+      "[盘古斧](https://chain.fm/token/bsc/0xee668b7b056bd3bcf5d6fbb2d83fd5fea0247777) from " +
+      "[0xb2...0d05](https://chain.fm/account/bsc/0xb2cec332ac326a8e900fa34c1f14bc2faa120d05)";
+    const references = extractChainFmReferences(raw);
+    assert.equal(references.length, 2);
+    assert.equal(
+      formatMemeAddressIndex("1. 盘古斧由 0xb2...0d05 转入", references),
+      [
+        "合约/地址索引：",
+        "盘古斧 · BSC 合约 · 0xee668b7b056bd3bcf5d6fbb2d83fd5fea0247777",
+        "0xb2...0d05 · BSC 完整地址 · 0xb2cec332ac326a8e900fa34c1f14bc2faa120d05",
+      ].join("\n"),
+    );
+  });
+
+  it("does not confuse a numeric token label with digits inside an amount", () => {
+    const references = extractChainFmReferences(
+      "[9](https://chain.fm/token/bsc/0x990c71fdfa761bcf500ac8753f775ff7fb1b4444)",
+    );
+    assert.equal(formatMemeAddressIndex("收到 19.3144M BNBGUY", references), "");
   });
 });
 
