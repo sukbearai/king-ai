@@ -1,7 +1,7 @@
 import { dotGet, loadTradeConfig } from "./config.js";
 import { okxGet, runOnchainos, runTg, surfFundingRate, surfMarketTicker } from "./data-helpers.js";
 import { batchSummarize, stripMarkdown } from "./llm-summarize.js";
-import { getScratchpad } from "./scratchpad.js";
+import { getScratchpad, type MarketRegime } from "./scratchpad.js";
 import { chunkTelegramMessage, sendTelegram } from "./telegram.js";
 import { formatDisplayShortTime, formatDisplayTime } from "./time-utils.js";
 import { fetchStocksSection } from "./morning-brief-stocks.js";
@@ -62,6 +62,37 @@ function positiveInt(value: unknown, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? Math.trunc(n) : fallback;
 }
 
+function nonNegativeInt(value: unknown, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? Math.trunc(n) : fallback;
+}
+
+export function formatChangePct(pct: number, digits = 1): string {
+  return `${pct >= 0 ? "+" : ""}${pct.toFixed(digits)}%`;
+}
+
+export function marketRegimeLabel(regime: MarketRegime): string {
+  const labels: Record<MarketRegime, string> = {
+    risk_on: "风险偏好",
+    risk_off: "避险",
+    neutral: "中性",
+    volatile: "高波动",
+  };
+  return labels[regime];
+}
+
+function successfulBriefSectionParts(parts: string[]): string[] {
+  return parts.slice(1).filter((part) => part.length > 0 && !part.startsWith("["));
+}
+
+export function shouldGenerateDailySummary(config: Record<string, unknown>, parts: string[]): boolean {
+  return (
+    dotGet(config, "briefing.daily_summary", true) !== false &&
+    dotGet(config, "briefing.llm_summarize", true) !== false &&
+    successfulBriefSectionParts(parts).length >= 2
+  );
+}
+
 async function fetchMarketInstrument(
   inst: string,
   options: { showFr: boolean; showOi: boolean; requestTimeoutMs: number; fallbackTimeoutMs: number },
@@ -104,7 +135,7 @@ async function fetchMarketInstrument(
   const openN = Number.parseFloat(open24);
   if (Number.isFinite(lastN)) priceStr = `$${lastN.toLocaleString()}`;
   if (Number.isFinite(lastN) && Number.isFinite(openN) && openN > 0) {
-    changeStr = ` (${(((lastN - openN) / openN) * 100).toFixed(1)}%)`;
+    changeStr = ` (${formatChangePct(((lastN - openN) / openN) * 100)})`;
   }
 
   let frStr = "";
@@ -113,7 +144,7 @@ async function fetchMarketInstrument(
 
   let oiStr = "";
   const oiN = Number.parseFloat(oi.oiCcy ?? "");
-  if (options.showOi && Number.isFinite(oiN)) oiStr = `  OI: ${oiN.toLocaleString()}`;
+  if (options.showOi && Number.isFinite(oiN)) oiStr = `  OI: ${oiN.toLocaleString()} ${symbol}`;
 
   const tickerTime = Number.parseInt(ticker.ts ?? "", 10);
   const asOf = Number.isFinite(tickerTime) && tickerTime > 0 ? new Date(tickerTime) : undefined;
@@ -214,6 +245,8 @@ export function expandChainFmReferences(text: string): string {
 
 export function formatMemeAddressIndex(summary: string, references: ChainFmReference[]): string {
   const selected = references.filter((reference) => {
+    const label = reference.label.trim();
+    if (label.length < 2 || !/[A-Za-z一-鿿]/.test(label)) return false;
     if (!summaryMentionsReference(summary, reference.label)) return false;
     return reference.kind === "token" || reference.label.includes("...");
   });
@@ -264,6 +297,16 @@ export function rankTwitterCandidates(candidates: TwitterSummaryCandidate[]): Tw
     if (timeDiff) return timeDiff;
     return String(b.entry.id ?? "").localeCompare(String(a.entry.id ?? ""));
   });
+}
+
+export function buildTwitterQuickList(tweets: TwitterSummaryCandidate[], size: number): string[] {
+  if (!tweets.length || !Number.isFinite(size) || size <= 0) return [];
+  const shown = Math.min(Math.trunc(size), tweets.length);
+  if (shown <= 0) return [];
+  return [
+    `⚡ 高互动推文速览（Top ${shown}，按互动排序）`,
+    ...tweets.slice(0, shown).map((tweet) => `  ${formatTweetLine(tweet.entry, { maxTextChars: 140 })}`),
+  ];
 }
 
 export function formatTwitterSummaryHeading(hours: number, funnel?: TwitterSummaryFunnel, summarized = true): string {
@@ -351,6 +394,8 @@ async function fetchTwitterSummary(hours: number): Promise<string> {
     ((ds.author_blocklist as string[] | undefined) ?? []).map((s) => s.toLowerCase().replace(/^@/, "")),
   );
   const maxDisplay = Number(ds.max_display) || 500;
+  const llmMaxDisplay = positiveInt(ds.llm_max_display, 150);
+  const quickListSize = nonNegativeInt(ds.quick_list_size, 10);
   const perAuthorCap = Number(ds.per_author_cap) || 2;
   const relevanceFilter = ds.relevance_filter !== false;
   const useLlm = dotGet(config, "briefing.llm_summarize", true) !== false;
@@ -408,7 +453,7 @@ async function fetchTwitterSummary(hours: number): Promise<string> {
 
   const sorted = rankTwitterCandidates(tweets);
   const displayedTweets = useLlm
-    ? sorted.slice(0, maxDisplay)
+    ? pickTwitterDisplayTweets(sorted, Math.min(maxDisplay, llmMaxDisplay), perAuthorCap)
     : pickTwitterDisplayTweets(sorted, maxDisplay, perAuthorCap);
   const displayedEntries = displayedTweets.map((tweet) => tweet.entry);
   lines[0] = formatTwitterSummaryHeading(
@@ -439,6 +484,8 @@ async function fetchTwitterSummary(hours: number): Promise<string> {
         `\n来源索引：\n${formatTwitterSourceNotes(fallbackSummary, displayedEntries).join("\n")}`,
       );
     }
+    const quickList = buildTwitterQuickList(displayedTweets, quickListSize);
+    if (quickList.length) lines.push("", ...quickList);
   } else {
     lines.push(...displayedTweets.map((tweet) => tweet.formatted));
   }
@@ -638,6 +685,23 @@ export async function runMorningBrief(
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       parts.push(`[${section}] 获取失败: ${msg}\n`);
+    }
+  }
+
+  if (shouldGenerateDailySummary(config, parts)) {
+    try {
+      const regime = await getScratchpad().getRegime();
+      const regimeLabel = marketRegimeLabel(regime);
+      const summary = await llmSummarize(
+        successfulBriefSectionParts(parts).join("\n\n"),
+        "今日要点",
+        `已知当前市场状态: ${regimeLabel}(${regime})。综合各板块信息输出最多 3 条要点，每条一行、不超过60字，按市场影响排序；区分官方数据与传闻，不得将传闻写成事实。最后单独一行输出「风险倾向: 偏多/偏空/中性/观望」。`,
+        { maxInputChars: 8000, timeoutMs: 120_000 },
+      );
+      parts.splice(1, 0, `🧭 今日要点（市场状态: ${regimeLabel}(${regime})）\n\n${summary}`, "");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`[morning-brief] daily summary failed: ${msg}\n`);
     }
   }
 

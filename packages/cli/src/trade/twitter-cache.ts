@@ -99,10 +99,19 @@ export async function countRecentCacheRecords(
   return { total, recent, stale, invalid };
 }
 
-export function formatTweetLine(entry: TwitterCacheEntry): string {
+export function formatTweetLine(entry: TwitterCacheEntry, options: { maxTextChars?: number } = {}): string {
   const author = String(entry.author ?? "");
   const text = String(entry.text ?? "").trim();
   if (!text) return "";
+  const textChars = [...text];
+  const maxTextChars = options.maxTextChars;
+  const displayText =
+    maxTextChars !== undefined && maxTextChars > 0 && textChars.length > maxTextChars
+      ? `${textChars
+          .slice(0, maxTextChars - 1)
+          .join("")
+          .trimEnd()}…`
+      : text;
   const likes = Number.parseInt(String(entry.likes ?? 0), 10) || 0;
   const retweets = Number.parseInt(String(entry.retweets ?? 0), 10) || 0;
   const replies = Number.parseInt(String(entry.replies ?? 0), 10) || 0;
@@ -118,7 +127,7 @@ export function formatTweetLine(entry: TwitterCacheEntry): string {
   const urlSuffix = url ? ` ${url}` : "";
   const timestamp = entryTimestamp(entry);
   const timeSuffix = timestamp ? ` [${formatDisplayShortTime(timestamp)}]` : "";
-  return `@${author}: ${text}${engagement}${timeSuffix}${urlSuffix}`;
+  return `@${author}: ${displayText}${engagement}${timeSuffix}${urlSuffix}`;
 }
 
 export function engagementScore(line: string): number {

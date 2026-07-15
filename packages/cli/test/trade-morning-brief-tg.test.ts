@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { buildSummaryPrompt, compactSummaryFallback } from "../src/trade/llm-summarize.js";
 import {
+  buildTwitterQuickList,
   compactTelegramSummary,
   expandChainFmReferences,
   extractChainFmReferences,
+  formatChangePct,
   formatMemeAddressIndex,
   formatTwitterSourceNotes,
+  marketRegimeLabel,
   parseTelegramChannels,
   parseTgRecentMessages,
   preprocessTelegramBody,
@@ -15,6 +18,7 @@ import {
   pickTwitterDisplayTweets,
   rankTwitterCandidates,
   resolveBriefingPushTg,
+  shouldGenerateDailySummary,
 } from "../src/trade/morning-brief.js";
 import { chunkTelegramMessage } from "../src/trade/telegram.js";
 import { countRecentCacheRecords } from "../src/trade/twitter-cache.js";
@@ -29,6 +33,31 @@ describe("parseTelegramChannels", () => {
     assert.equal(rows.length, 3);
     assert.deepEqual(rows[0], { label: "方程式快讯", chat: "方程式新闻 BWEnews" });
     assert.deepEqual(rows[2], { label: "meme 链上监控", chat: "meme链上监控" });
+  });
+});
+
+describe("formatChangePct", () => {
+  it("adds an explicit sign for positive, negative, and zero changes", () => {
+    assert.equal(formatChangePct(0.74), "+0.7%");
+    assert.equal(formatChangePct(-0.74), "-0.7%");
+    assert.equal(formatChangePct(0), "+0.0%");
+  });
+});
+
+describe("daily summary helpers", () => {
+  it("maps market regimes to Chinese labels", () => {
+    assert.equal(marketRegimeLabel("risk_on"), "风险偏好");
+    assert.equal(marketRegimeLabel("risk_off"), "避险");
+    assert.equal(marketRegimeLabel("neutral"), "中性");
+    assert.equal(marketRegimeLabel("volatile"), "高波动");
+  });
+
+  it("requires both LLM gates and at least two successful sections", () => {
+    const parts = ["title", "section one", "", "[twitter] 获取失败", "section two", ""];
+    assert.equal(shouldGenerateDailySummary({}, parts), true);
+    assert.equal(shouldGenerateDailySummary({ briefing: { daily_summary: false } }, parts), false);
+    assert.equal(shouldGenerateDailySummary({ briefing: { llm_summarize: false } }, parts), false);
+    assert.equal(shouldGenerateDailySummary({}, ["title", "section one", "", "[twitter] 获取失败"]), false);
   });
 });
 
@@ -141,6 +170,41 @@ describe("Twitter candidate selection", () => {
   });
 });
 
+describe("buildTwitterQuickList", () => {
+  const longText = "x".repeat(180);
+  const tweets = [
+    {
+      entry: {
+        author: "alice",
+        text: longText,
+        likes: 100,
+        url: "https://x.com/alice/status/1",
+      },
+      formatted: `@alice: ${longText} [100❤️] https://x.com/alice/status/1`,
+    },
+    {
+      entry: { author: "bob", text: "second", likes: 50, url: "https://x.com/bob/status/2" },
+      formatted: "@bob: second [50❤️] https://x.com/bob/status/2",
+    },
+    {
+      entry: { author: "carol", text: "third", likes: 25, url: "https://x.com/carol/status/3" },
+      formatted: "@carol: third [25❤️] https://x.com/carol/status/3",
+    },
+  ];
+
+  it("returns no lines when disabled", () => {
+    assert.deepEqual(buildTwitterQuickList(tweets, 0), []);
+  });
+
+  it("preserves top-N order and truncates text without losing suffixes", () => {
+    const lines = buildTwitterQuickList(tweets, 2);
+    assert.equal(lines[0], "⚡ 高互动推文速览（Top 2，按互动排序）");
+    assert.match(lines[1] ?? "", /^ {2}@alice: x{139}… \[100❤️\]/);
+    assert.match(lines[1] ?? "", /https:\/\/x\.com\/alice\/status\/1$/);
+    assert.equal(lines[2], "  @bob: second [50❤️] https://x.com/bob/status/2");
+  });
+});
+
 describe("Twitter summary input", () => {
   it("can pass the complete filtered timeline without the generic 12000-character cap", () => {
     const marker = "LAST_FILTERED_TWEET";
@@ -210,11 +274,20 @@ describe("formatMemeAddressIndex", () => {
     );
   });
 
-  it("does not confuse a numeric token label with digits inside an amount", () => {
-    const references = extractChainFmReferences(
-      "[9](https://chain.fm/token/bsc/0x990c71fdfa761bcf500ac8753f775ff7fb1b4444)",
-    );
-    assert.equal(formatMemeAddressIndex("收到 19.3144M BNBGUY", references), "");
+  it("drops numeric labels while keeping meaningful Latin and CJK labels", () => {
+    const references = [
+      { kind: "token" as const, label: "1", chain: "bsc", address: "0x1" },
+      { kind: "token" as const, label: "9", chain: "bsc", address: "0x9" },
+      { kind: "token" as const, label: "CZ", chain: "bsc", address: "0xcz" },
+      { kind: "token" as const, label: "金钱自由", chain: "bsc", address: "0xfreedom" },
+      { kind: "token" as const, label: "$10 billion", chain: "bsc", address: "0xbillion" },
+    ];
+    const index = formatMemeAddressIndex("1. 9亿资金与1800万成交；CZ、金钱自由、$10 billion 均有异动", references);
+    assert.doesNotMatch(index, /^1 ·/m);
+    assert.doesNotMatch(index, /^9 ·/m);
+    assert.match(index, /^CZ · BSC 合约 · 0xcz$/m);
+    assert.match(index, /^金钱自由 · BSC 合约 · 0xfreedom$/m);
+    assert.match(index, /^\$10 billion · BSC 合约 · 0xbillion$/m);
   });
 });
 

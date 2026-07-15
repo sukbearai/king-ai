@@ -38,6 +38,17 @@ test("formatTweetLine and engagementScore include metrics", () => {
   assert.ok(engagementScore(line) >= 5);
 });
 
+test("formatTweetLine limits only tweet text when maxTextChars is set", () => {
+  const entry = {
+    author: "alice",
+    text: "abcdefghijk",
+    likes: 5,
+    url: "https://x.com/alice/status/1",
+  };
+  assert.equal(formatTweetLine(entry), "@alice: abcdefghijk [5❤️] https://x.com/alice/status/1");
+  assert.equal(formatTweetLine(entry, { maxTextChars: 6 }), "@alice: abcde… [5❤️] https://x.com/alice/status/1");
+});
+
 test("engagementScore weights replies, retweets, likes, and views", () => {
   assert.equal(engagementScore("@a: signal [5❤️/3🔁/2💬/2500👁]"), 15);
   assert.equal(engagementScore("@a: no metrics"), 0);
