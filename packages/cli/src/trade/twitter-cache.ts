@@ -135,5 +135,7 @@ export function engagementScore(line: string): number {
   const retweets = Number.parseInt(line.match(/(\d+)🔁/)?.[1] ?? "0", 10) || 0;
   const replies = Number.parseInt(line.match(/(\d+)💬/)?.[1] ?? "0", 10) || 0;
   const views = Number.parseInt(line.match(/(\d+)👁/)?.[1] ?? "0", 10) || 0;
-  return likes + retweets * 2 + replies + Math.floor(views / 1000);
+  // Views are capped: promoted posts carry 10M+ views that would otherwise
+  // drown out organic likes/retweets in the ranking.
+  return likes + retweets * 2 + replies + Math.min(Math.floor(views / 1000), 500);
 }

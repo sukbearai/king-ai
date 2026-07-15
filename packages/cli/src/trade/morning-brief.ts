@@ -512,19 +512,32 @@ export function pickTwitterDisplayTweets(
   return picked;
 }
 
+// Case-sensitive on purpose: uppercase-only ticker shapes ($BTC, NVDA). Folding this
+// into the /i regex below would make \b[A-Z]{2,6}\b match any short word.
+const TWITTER_TICKER_RE = /\$[A-Za-z]{1,8}\b|\b[A-Z]{2,6}\b/;
 const TWITTER_RELEVANT_RE =
-  /(\$[A-Za-z]{1,8}\b|\b[A-Z]{2,6}\b|btc|eth|sol|crypto|bitcoin|ethereum|binance|coinbase|okx|bybit|etf|fomc|fed|sec|cpi|pce|tariff|yield|treasury|bond|stock|nasdaq|s&p|dow|ipo|earnings|revenue|profit|guidance|chips?|semiconductor|nvidia|tesla|meta|apple|google|microsoft|openai|deepseek|字节|阿里|英伟达|特斯拉|美联储|降息|加息|通胀|收益率|美债|关税|制裁|监管|证监会|交易所|上新|暴跌|暴涨|爆仓|链上|巨鲸|钱包|代币|加密|比特币|以太坊|山寨|芯片|财报|营收|利润|上市|美股|港股|A股|纳指|标普|道指|股票)/i;
+  /(btc|eth|sol|crypto|bitcoin|ethereum|binance|coinbase|okx|bybit|etf|fomc|fed|sec|cpi|pce|tariff|yield|treasury|bond|stock|nasdaq|s&p|dow|ipo|earnings|revenue|profit|guidance|chips?|semiconductor|nvidia|tesla|meta|apple|google|microsoft|openai|deepseek|字节|阿里|英伟达|特斯拉|美联储|降息|加息|通胀|收益率|美债|关税|制裁|监管|证监会|交易所|上新|暴跌|暴涨|爆仓|链上|巨鲸|钱包|代币|加密|比特币|以太坊|山寨|芯片|财报|营收|利润|上市|美股|港股|A股|纳指|标普|道指|股票)/i;
 const TWITTER_HARD_NOISE_RE =
-  /(世界杯|football|soccer|the beautiful game|leaderboard|bitcoin rewards|outcomes campaign|足球|进球|比利时|信用卡|申卡|返现|hsbc|pulse卡|账号池|七折|relayrouter|vpn|机场|推广|广告|品牌套件|高考分数线|小语种|设备锁定|切换账号|account banned|quota|gopty|tmux|\bfable\b|mythos|竞猜活动|免费试用|free trial|trading signals?|交易信号)/i;
+  /(世界杯|world cup|\bfifa\b|football|soccer|the beautiful game|\besports?\b|prize pool|\bmlb\b|\bnba\b|\bnfl\b|leaderboard|bitcoin rewards|outcomes campaign|足球|进球|比利时|信用卡|申卡|返现|hsbc|pulse卡|账号池|七折|relayrouter|vpn|机场|推广|广告|品牌套件|高考分数线|小语种|设备锁定|切换账号|account banned|quota|gopty|tmux|\bfable\b|mythos|竞猜活动|免费试用|free trial|trading signals?|交易信号)/i;
 const TWITTER_NOISE_RE = /(活动|抽奖|促销|教程|攻略|开户|办卡)/i;
 const TWITTER_NOISE_WITH_MARKET_RE =
   /(证监会|股票|市场|交易|美股|港股|A股|财报|营收|利润|监管|sec|stock|earnings|revenue|crypto|bitcoin|ethereum|币|链上|交易所)/i;
+
+// All-caps shouty headlines ("BRAZIL WINS IN HOUSTON") would otherwise satisfy the
+// ticker shape; genuine ticker mentions come embedded in mixed-case prose.
+function tickerMatchIsCredible(cleaned: string): boolean {
+  if (!TWITTER_TICKER_RE.test(cleaned)) return false;
+  const letters = cleaned.match(/[A-Za-z]/g) ?? [];
+  if (!letters.length) return false;
+  const upper = letters.filter((ch) => ch >= "A" && ch <= "Z").length;
+  return upper / letters.length < 0.8;
+}
 
 export function isTradeRelevantTweet(text: string): boolean {
   const cleaned = stripMarkdown(text).trim();
   if (!cleaned) return false;
   if (TWITTER_HARD_NOISE_RE.test(cleaned)) return false;
-  if (!TWITTER_RELEVANT_RE.test(cleaned)) return false;
+  if (!tickerMatchIsCredible(cleaned) && !TWITTER_RELEVANT_RE.test(cleaned)) return false;
   if (TWITTER_NOISE_RE.test(cleaned) && !TWITTER_NOISE_WITH_MARKET_RE.test(cleaned)) return false;
   return true;
 }

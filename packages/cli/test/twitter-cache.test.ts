@@ -54,6 +54,10 @@ test("engagementScore weights replies, retweets, likes, and views", () => {
   assert.equal(engagementScore("@a: no metrics"), 0);
 });
 
+test("engagementScore caps the views contribution so promoted posts cannot dominate", () => {
+  assert.equal(engagementScore("@ad: promo [10❤️/165206813👁]"), 510);
+});
+
 test("entryTimestamp accepts ISO dates", () => {
   const ts = entryTimestamp({ created_at: "2026-06-11T11:00:00Z" });
   assert.ok(ts instanceof Date);
