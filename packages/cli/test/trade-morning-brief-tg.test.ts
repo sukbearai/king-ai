@@ -308,8 +308,14 @@ describe("isTradeRelevantTweet", () => {
 
   it("filters low-value social noise", () => {
     assert.equal(isTradeRelevantTweet("比利时 4 比 1 击败美国，球员攻入世界杯首球"), false);
-    assert.equal(isTradeRelevantTweet("Éderson and his story: from holidays to the World Cup. Behind his choice"), false);
-    assert.equal(isTradeRelevantTweet("PGL Major Singapore 2026 Tickets are on SALE! $1.25M prize pool, 32 teams"), false);
+    assert.equal(
+      isTradeRelevantTweet("Éderson and his story: from holidays to the World Cup. Behind his choice"),
+      false,
+    );
+    assert.equal(
+      isTradeRelevantTweet("PGL Major Singapore 2026 Tickets are on SALE! $1.25M prize pool, 32 teams"),
+      false,
+    );
     assert.equal(isTradeRelevantTweet("HSBC Pulse卡内地消费返现4.4%，申卡攻略"), false);
     assert.equal(isTradeRelevantTweet("relayrouter.io 提供 Fable 5 账号池七折优惠"), false);
     assert.equal(isTradeRelevantTweet("OKX 推出世界杯竞猜活动，可赢取比特币奖励"), false);
