@@ -7,7 +7,7 @@ import {
   resolveCooldownConfig,
   ruleStaggerMs,
 } from "./config.js";
-import { AlertState, runRuleTick, type AlertRule } from "./alert-rule.js";
+import { AlertState, runRuleTick, type AlertRule, type RunRuleTickOptions } from "./alert-rule.js";
 import { getTradeStore } from "./store.js";
 import { loadEnabledRules } from "./rules/registry.js";
 
@@ -19,6 +19,16 @@ export interface UnifiedRuleSchedulerOptions {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+export async function runScheduledRuleTick(
+  rule: AlertRule,
+  state: AlertState,
+  options: RunRuleTickOptions,
+  saveCooldowns: (cooldowns: Record<string, number>) => Promise<void>,
+): Promise<void> {
+  await runRuleTick(rule, state, options);
+  await saveCooldowns(state.cooldowns);
 }
 
 /** Single poll loop: run enabled rules sequentially with stagger + per-tick timeout, then wait poll_seconds. */
@@ -47,16 +57,20 @@ export async function runUnifiedRuleScheduler(options: UnifiedRuleSchedulerOptio
     for (const rule of rules) {
       const state = states.get(rule.ruleKey)!;
       // runRuleTick isolates timeout/errors into heartbeat; never abort the round
-      await runRuleTick(rule, state, {
-        pushTg: options.pushTg,
-        dryRun: options.dryRun,
-        onStatus: options.onStatus,
-        confluenceEnabled: useConfluence,
-        confluenceWindowSeconds: confluenceWindow,
-      });
+      await runScheduledRuleTick(
+        rule,
+        state,
+        {
+          pushTg: options.pushTg,
+          dryRun: options.dryRun,
+          onStatus: options.onStatus,
+          confluenceEnabled: useConfluence,
+          confluenceWindowSeconds: confluenceWindow,
+        },
+        (cooldowns) => store.saveCooldowns(cooldowns),
+      );
       if (staggerMs > 0) await sleep(staggerMs);
     }
-    await store.saveCooldowns(sharedCooldowns);
     await sleep(pollSeconds * 1000);
   }
 }

@@ -227,9 +227,12 @@ export function createRuleF(threshold = 5): AlertRule {
         if (Math.abs(change) >= symThreshold) {
           const priceStr = String(price);
           if (priceStr !== lastPushedPrice[symbol]) {
-            const sevBand = Math.abs(change) >= 8 ? "critical" : "warning";
-            const alertKey = `stock_${symbol}_${sevBand}`;
-            if (state.canAlert(alertKey, 7200)) {
+            const band = Math.floor(Math.abs(change) / 2);
+            const keyPrefix = `stock_${symbol}_b`;
+            if (state.canAlert(`${keyPrefix}${band}`, 72_000)) {
+              for (let lowerBand = 0; lowerBand < band; lowerBand++) {
+                state.claimCooldown(`${keyPrefix}${lowerBand}`);
+              }
               lastPushedPrice[symbol] = priceStr;
               const currency = isAshareSymbol(symbol) ? "¥" : "$";
               const direction = change > 0 ? "暴涨" : "暴跌";
@@ -252,9 +255,12 @@ export function createRuleF(threshold = 5): AlertRule {
         if (extPrice != null && Math.abs(extChange) >= EXTENDED_THRESHOLD) {
           const extStr = `${extPrice}_${session}`;
           if (extStr !== lastPushedExtended[symbol]) {
-            const sevBand = Math.abs(extChange) >= 8 ? "warning" : "info";
-            const alertKey = `stock_${symbol}_ext_${sevBand}`;
-            if (state.canAlert(alertKey, 7200)) {
+            const band = Math.floor(Math.abs(extChange) / 2);
+            const keyPrefix = `stock_${symbol}_ext_b`;
+            if (state.canAlert(`${keyPrefix}${band}`, 72_000)) {
+              for (let lowerBand = 0; lowerBand < band; lowerBand++) {
+                state.claimCooldown(`${keyPrefix}${lowerBand}`);
+              }
               lastPushedExtended[symbol] = extStr;
               const sessionLabel = session === "post" ? "盘后" : "盘前";
               const direction = extChange > 0 ? "暴涨" : "暴跌";

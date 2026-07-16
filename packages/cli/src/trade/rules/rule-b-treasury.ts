@@ -13,6 +13,9 @@ import {
   type TreasuryConfig,
 } from "../treasury-helpers.js";
 
+// 20h blocks same-session repeats without locking out the next day's session.
+const REALERT_COOLDOWN_SECONDS = 72_000;
+
 function sellingPressureDetail(name: string, symbol: string, changePct: number, price: number): string {
   return [
     `${name}（${symbol}）价格下跌 ${Math.abs(changePct).toFixed(2)}%，反映市场在抛售长期美债。`,
@@ -65,7 +68,7 @@ export function createRuleB(): AlertRule {
         const severity = classifyPriceDropSeverity(quote.change_pct, cfg);
         if (severity === "none") continue;
         const key = `treasury_price_${symbol}_${severity}`;
-        if (!state.canAlert(key, 7200)) continue;
+        if (!state.canAlert(key, REALERT_COOLDOWN_SECONDS)) continue;
         alerts.push(
           createAlert({
             ruleId: "treasury",
@@ -103,8 +106,8 @@ export function createRuleB(): AlertRule {
         const severity = maxSeverity(riseSeverity, highSeverity);
         if (severity === "none") continue;
 
-        const key = `treasury_yield_${symbol}_${severity}_${quote.yield_pct.toFixed(3)}`;
-        if (!state.canAlert(key, highCtx?.is_new_high ? 86_400 : 7200)) continue;
+        const key = `treasury_yield_${symbol}_${severity}`;
+        if (!state.canAlert(key, highCtx?.is_new_high ? 86_400 : REALERT_COOLDOWN_SECONDS)) continue;
 
         const title = highCtx?.is_new_high
           ? `${name} ${formatYieldPct(quote.yield_pct)} 刷新${highCtx.lookback_years}年新高`

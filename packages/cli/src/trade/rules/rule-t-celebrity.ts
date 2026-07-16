@@ -466,6 +466,33 @@ export function celebrityAlertSeverity(
   return "info";
 }
 
+export function createCelebrityAlert(input: {
+  alphaType: string;
+  confidence: number;
+  severity: Alert["severity"];
+  title: string;
+  detail: string;
+  timestamp?: string;
+  asset: string;
+  tokenContract: string;
+  tokenChain: string;
+  tags: string[];
+}): Alert {
+  return createAlert({
+    ruleId: "celebrity",
+    severity: input.severity,
+    title: input.title,
+    detail: input.detail,
+    timestamp: input.timestamp,
+    direction: input.alphaType === "policy" ? 0 : 1,
+    strength: input.confidence,
+    asset: input.asset,
+    tokenContract: input.tokenContract,
+    tokenChain: input.tokenChain,
+    tags: input.tags,
+  });
+}
+
 export interface CelebrityTweetCandidate {
   account: string;
   tweet: Record<string, unknown>;
@@ -615,8 +642,9 @@ export function createRuleTCelebrity(): AlertRule {
 
         const primaryRef = chainRefs[0];
         alerts.push(
-          createAlert({
-            ruleId: "celebrity",
+          createCelebrityAlert({
+            alphaType,
+            confidence,
             severity: celebrityAlertSeverity(alphaType, entities.length, confidence, minConfidenceWarning),
             title,
             detail: lines.join("\n"),

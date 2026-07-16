@@ -144,6 +144,11 @@ export class AlertState {
   canAlert(key: string, cooldown?: number): boolean {
     return this.tryClaimCooldown(key, cooldown);
   }
+
+  /** Refresh a cooldown timestamp without gating. */
+  claimCooldown(key: string): void {
+    this.cooldowns[key] = Date.now() / 1000;
+  }
 }
 
 export interface AlertRule {
@@ -189,17 +194,18 @@ async function writeAlertsJsonl(alerts: Alert[], ruleKey: string): Promise<void>
   }
 }
 
-async function filterTgWorthy(alerts: Alert[]): Promise<Alert[]> {
+export async function filterTgWorthy(alerts: Alert[]): Promise<Alert[]> {
   const store = getTradeStore();
   const minLevel = TG_SEVERITY_ORDER[MIN_TG_SEVERITY];
   const result: Alert[] = [];
   for (const a of alerts) {
     if (TG_SEVERITY_ORDER[a.severity] < minLevel) continue;
+    const ruleId = a.ruleId || normalizeRuleId(a.rule) || a.rule;
     if (a.severity === "critical") {
+      await store.bumpDailyPush(ruleId);
       result.push(a);
       continue;
     }
-    const ruleId = a.ruleId || normalizeRuleId(a.rule) || a.rule;
     const cap = dailyPushCapFor(ruleId);
     const count = await store.getDailyPushCount(ruleId);
     if (count >= cap) continue;
@@ -311,13 +317,13 @@ export async function runRuleTick(rule: AlertRule, state: AlertState, options: R
     if (options.dryRun) return;
 
     await writeFile(join(alertDir, "latest_alert.txt"), message, "utf8");
-    await writeAlertsJsonl(alerts, rule.ruleKey);
 
     const confluenceWindow = options.confluenceWindowSeconds ?? confluenceWindowSeconds(config);
     await promoteConfluenceAlerts(alerts, rule.ruleKey, {
       windowSeconds: confluenceWindow,
       enabled: options.confluenceEnabled !== false && confluenceEnabled(config),
     });
+    await writeAlertsJsonl(alerts, rule.ruleKey);
 
     if (options.pushTg) {
       const tgAlerts = await filterTgWorthy(alerts);
