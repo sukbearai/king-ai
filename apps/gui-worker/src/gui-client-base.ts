@@ -16,6 +16,7 @@ let optimisticMessages = [];
 let activeConversationId = localStorage.getItem('king-ai:activeConversationId') || 'king-ai-convo';
 let refreshPollCount = 0;
 let conversationSwitchToken = 0;
+let redirectingToLogin = false;
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, function(ch) {
@@ -40,6 +41,16 @@ function reasonLabel(reason) {
 }
 async function request(path, options) {
   const res = await fetch(path, options);
+  if (res.status === 401) {
+    const payload = await res.clone().json().catch(function() { return null; });
+    if (payload && payload.error === 'login_required') {
+      if (!redirectingToLogin) {
+        redirectingToLogin = true;
+        location.replace('/');
+      }
+      throw new Error('login_required');
+    }
+  }
   if (!res.ok) throw new Error(await res.text());
   return res.headers.get('Content-Type') && res.headers.get('Content-Type').includes('application/json') ? res.json() : res.text();
 }
@@ -184,7 +195,7 @@ async function clearMessages() {
 }
 async function saveAgentConfig() {
   const engine = document.getElementById('engine').value;
-  const savedEngine = ((window.__lastState && window.__lastState.agents) || []).find(function(agent) { return agent.id === 'king-ai-ceo'; });
+  const savedEngine = ((window.__lastState && window.__lastState.agents) || []).find(function(agent) { return agent.id === 'dev'; });
   if (savedEngine && savedEngine.engine && engine && engine !== savedEngine.engine) {
     const ok = confirm('Switching engine restarts all local agents and may take up to a minute. Continue?');
     if (!ok) return;
@@ -216,7 +227,7 @@ function renderMessages(state, options) {
   visibleMessageCount = Math.min(Math.max(visibleMessageCount, 20), Math.max(lastMessageTotal, 20));
   const rows = allRows.slice(-visibleMessageCount);
   const hasOlder = rows.length < allRows.length;
-  const unread = rows.filter(function(message) { return !(message.readBy || []).includes('king-ai-ceo') && message.author_kind === 'human'; }).length;
+  const unread = rows.filter(function(message) { return !(message.readBy || []).includes('dev') && message.author_kind === 'human'; }).length;
   const olderLine = hasOlder ? 'Pull down or scroll to top to load older messages...' : 'No older messages';
   const html = rows.length ? rows.map(function(message) {
     if (message.author_kind === 'system') {
@@ -224,7 +235,7 @@ function renderMessages(state, options) {
     }
     const initial = message.author_kind === 'agent' ? 'A' : '人';
     const name = message.author_kind === 'agent' ? (message.author_name || 'AI') : (message.author_name || 'you');
-    const unreadClass = message.author_kind === 'human' && !(message.readBy || []).includes('king-ai-ceo') ? ' highlight' : '';
+    const unreadClass = message.author_kind === 'human' && !(message.readBy || []).includes('dev') ? ' highlight' : '';
     return '<article class="post' + unreadClass + '"><div class="avatar">' + initial + '</div><div><div class="post-top"><span class="author">' + escapeHtml(name) + '</span><span class="time">' + formatTime(message.created_at) + '</span></div><div class="post-body">' + escapeHtml(message.body) + '</div></div></article>';
   }).join('') : '';
   document.getElementById('chatWindow').innerHTML = '<div class="system-line">' + olderLine + '</div>' + html;

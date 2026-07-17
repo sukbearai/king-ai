@@ -48,7 +48,7 @@ Runner 同时负责 runtime 账本，例如 token 刷新和稳定 wake 事件去
 
 King AI 把工作建模成一个小型团队。**角色模板**是一套小而**领域无关**的词表，描述一个 agent **如何**参与工作流——它的协作行为，以及随之而来的能力与权限。内置模板有 `planner`、`builder`、`reviewer`、`tester`、`ops`、`researcher`、`doc-writer` 和 `summarizer`。Workflow 用它们按能力路由任务、请求评审、创建交接，并发起人工决策。
 
-模板不是 agent。具体花名册把 agent 映射到模板，并且可以**把一个模板折叠进另一个**，而不是 1:1 配人——例如默认 GUI 软件开发团队是精简的 King AI CEO（`planner`）、Dev（`builder`）和 Reviewer（`reviewer`）三人组，收尾职责由 planner 承担，而不是另设 summarizer。领域 agent 也是同理：雅思 coach 是单 agent 工作流，在协作维度上复用通用的 `builder` 模板（它直接干活），而它的学科专长写在自由文本 role 里，不另造模板。这样模板集保持通用、可跨领域复用——**agent 懂什么**取决于它的 role 和所属的**工作流模板**，而不是协作词表。
+模板不是 agent。具体花名册把 agent 映射到模板，但不要求每个模板都配置一个实际 agent。默认 GUI 软件开发工作流只包含一个使用 `builder` 模板的 Dev：Dev 直接处理请求，把实质性工作记录到任务账本，完成验证并关闭任务，不经过内置 planner 或 reviewer 交接。通用的 planner、reviewer、handoff 和 decision 能力仍保留在共享工作流引擎与 CLI 场景中。领域 agent 也是同理：雅思 coach 同样是复用通用 `builder` 模板的单 agent 工作流，而它的学科专长写在自由文本 role 里，不另造模板。这样模板集保持通用、可跨领域复用——**agent 懂什么**取决于它的 role 和所属的**工作流模板**，而不是协作词表。
 
 在 IELTS Study 工作流中，能够唯一确定单个会话的 turn 会使用所选本地引擎的原生 JSON Schema 输出。引擎返回一个对象，把学习者可见文本放在 `replyMarkdown`，把标注放在 `wordCards`；runner 校验这些配置字段，通过现有 runtime 账本发布回复，关闭 pinned task，并在模型已经记录 reply action 时避免重复发布。落盘前，runner 会把 `wordCards` 重新序列化为现有的隐藏 `WordCards:` 块，因此历史消息和 GUI 解析器的线格式保持不变。横跨多个会话的 turn 继续使用原有文本输出路径，因为 runner 不能安全猜测回复目标。
 

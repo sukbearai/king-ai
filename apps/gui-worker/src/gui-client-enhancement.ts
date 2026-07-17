@@ -1631,7 +1631,7 @@ function derivedRequestTasks(state, existingTasks) {
         title: message.body || t('taskBoardTitle'),
         description: message.body || '',
         status: hasAgentReply ? 'done' : 'in_progress',
-        assignee: message.to_agent_id || 'king-ai-ceo',
+        assignee: message.to_agent_id || 'dev',
         ownerRole: 'request',
         priority: 5,
         conversationId: message.conversation_id,
@@ -1788,7 +1788,7 @@ saveAgentConfig = async function() {
   if (status) status.textContent = t('saving');
   try {
     const engine = document.getElementById('engine').value;
-    const savedEngine = ((window.__lastState && window.__lastState.agents) || []).find(function(agent) { return agent.id === 'king-ai-ceo'; });
+    const savedEngine = ((window.__lastState && window.__lastState.agents) || []).find(function(agent) { return agent.id === 'dev'; });
     if (savedEngine && savedEngine.engine && engine && engine !== savedEngine.engine) {
       const ok = confirm(t('engineSwitchConfirm') || 'Switching engine restarts all local agents and may take up to a minute. Continue?');
       if (!ok) return;
@@ -1951,7 +1951,7 @@ renderMessages = function(state, options) {
       return '<div class="system-line">' + escapeHtml(message.body) + '</div>';
     }
     const initial = message.author_kind === 'agent' ? displayInitial(message.author_name || 'AI', 'A') : currentHumanInitial();
-    const unreadClass = message.author_kind === 'human' && !(message.readBy || []).includes('king-ai-ceo') ? ' highlight' : '';
+    const unreadClass = message.author_kind === 'human' && !(message.readBy || []).includes('dev') ? ' highlight' : '';
     const pendingClass = message.status === 'pending' ? ' pending' : '';
     const renderedBody = message.body_html || '';
     const bodyHtml = message.status === 'pending' ? '<span class="typing-dots"><span></span><span></span><span></span></span><span>' + escapeHtml(t('agentThinking')) + '</span>' : (renderedBody || escapeHtml(message.body));
@@ -2008,7 +2008,7 @@ function agentCountLabel(count) {
 }
 function workflowCoordinatorId() {
   const workflow = selectedWorkflow();
-  return workflow && workflow.defaultCoordinatorAgentId ? workflow.defaultCoordinatorAgentId : (workflowAgents()[0] || {}).id || 'king-ai-ceo';
+  return workflow && workflow.defaultCoordinatorAgentId ? workflow.defaultCoordinatorAgentId : (workflowAgents()[0] || {}).id || 'dev';
 }
 function selectedWindowMode() {
   const checked = document.querySelector('input[name="newWindowMode"]:checked');

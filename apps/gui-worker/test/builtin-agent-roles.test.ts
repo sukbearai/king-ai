@@ -7,13 +7,7 @@ import { normalizeAgents, normalizeWorkflowAgentDefinitions } from "../src/gui-r
 const TEMPLATE_MARKER = /Role template:\s*[a-z-]+\./;
 
 test("every built-in software-dev agent declares an explicit role template", () => {
-  // Concrete roster maps to role templates by id; the summarizer template is intentionally
-  // folded into the planner (king-ai-ceo), so it has no standalone agent here.
-  const expected: Record<string, string> = {
-    "king-ai-ceo": "planner",
-    dev: "builder",
-    reviewer: "reviewer",
-  };
+  const expected: Record<string, string> = { dev: "builder" };
   assert.deepEqual(
     DEFAULT_TEAM_AGENTS.map((agent) => agent.id),
     Object.keys(expected),
@@ -56,7 +50,7 @@ test("the IELTS coach is a conversation partner, not a translator that echoes th
   );
 });
 
-test("normalizeAgents keeps only the four built-in system agents", () => {
+test("normalizeAgents keeps only the two workflow agents", () => {
   const tutorTemplate = IELTS_WORKFLOW_AGENTS.find((agent) => agent.id === "ielts-tutor");
   assert.ok(tutorTemplate, "ielts-tutor template should exist");
   const normalized = normalizeAgents([
@@ -73,10 +67,18 @@ test("normalizeAgents keeps only the four built-in system agents", () => {
         bodyField: "staleBody",
       },
     },
-    // The default operator agent with a role the user customized via agent-config.
+    // A retired default operator from the previous software-dev roster.
     {
       id: "king-ai-ceo",
       name: "King AI Helper",
+      role: "Answer in a concise operator voice.",
+      engine: "claude",
+      lifecycle: "disabled",
+    },
+    // The current default operator with a role the user customized via agent-config.
+    {
+      id: "dev",
+      name: "Dev",
       role: "Answer in a concise operator voice.",
       engine: "claude",
       lifecycle: "disabled",
@@ -91,8 +93,8 @@ test("normalizeAgents keeps only the four built-in system agents", () => {
     },
   ]);
   const tutor = normalized.find((agent) => agent.id === "ielts-tutor");
-  const ceo = normalized.find((agent) => agent.id === "king-ai-ceo");
-  assert.deepEqual([...normalized.map((agent) => agent.id)].sort(), ["dev", "ielts-tutor", "king-ai-ceo", "reviewer"]);
+  const dev = normalized.find((agent) => agent.id === "dev");
+  assert.deepEqual([...normalized.map((agent) => agent.id)].sort(), ["dev", "ielts-tutor"]);
   // The built-in coach role is refreshed from the source template, not frozen at the stale value.
   assert.equal(tutor?.role, tutorTemplate.role);
   assert.notEqual(tutor?.role, "STALE coach role");
@@ -101,7 +103,20 @@ test("normalizeAgents keeps only the four built-in system agents", () => {
   assert.deepEqual(tutor?.structuredReply, tutorTemplate.structuredReply);
   assert.notEqual(tutor?.structuredReply?.bodyField, "staleBody");
   // The default operator agent keeps its user-customized role.
-  assert.equal(ceo?.role, "Answer in a concise operator voice.");
+  assert.equal(dev?.role, "Answer in a concise operator voice.");
+});
+
+test("normalizeAgents refreshes the retired built-in Dev role", () => {
+  const normalized = normalizeAgents([
+    {
+      id: "dev",
+      name: "Dev",
+      role: "Implement only assigned tasks. Make concrete changes, run focused verification, report files changed and command results, then mark the task done so it can be reviewed or returned to King AI CEO. Role template: builder.",
+      engine: "grok",
+      lifecycle: "on-demand",
+    },
+  ]);
+  assert.match(normalized.find((agent) => agent.id === "dev")?.role ?? "", /do not delegate/);
 });
 
 test("normalizeWorkflowAgentDefinitions keeps non-empty reasoning effort only", () => {

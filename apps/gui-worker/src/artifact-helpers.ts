@@ -11,7 +11,7 @@ export const STANDARD_ARTIFACT_KINDS = new Set([
   "tech_spec",
 ]);
 
-export const DEFAULT_ARTIFACT_AGENT_IDS = ["king-ai-ceo"] as const;
+export const DEFAULT_ARTIFACT_AGENT_IDS = ["dev"] as const;
 
 export type ArtifactQualityCheck = {
   valid: boolean;

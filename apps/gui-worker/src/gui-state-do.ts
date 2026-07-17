@@ -231,6 +231,86 @@ function normalizeRuntimeRemediation(value: unknown): RuntimeRemediation | null 
   };
 }
 
+const RETIRED_SOFTWARE_DEV_AGENT_IDS = new Set(["king-ai-ceo", "reviewer"]);
+
+function migrateRetiredSoftwareDevAgents(state: State): void {
+  const activeAgentIds = new Set(state.agents.map((agent) => agent.id));
+  const replaceRetiredId = (agentId: string | undefined): string | undefined =>
+    agentId && RETIRED_SOFTWARE_DEV_AGENT_IDS.has(agentId) ? DEFAULT_AGENT.id : agentId;
+
+  state.runtimeTokens = Object.fromEntries(
+    Object.entries(state.runtimeTokens ?? {}).filter(([agentId]) => activeAgentIds.has(agentId)),
+  );
+  state.runtimeTokenMeta = Object.fromEntries(
+    Object.entries(state.runtimeTokenMeta ?? {}).filter(([agentId]) => activeAgentIds.has(agentId)),
+  );
+  state.agentBeats = Object.fromEntries(
+    Object.entries(state.agentBeats ?? {}).filter(([agentId]) => activeAgentIds.has(agentId)),
+  );
+  state.composing = state.composing.filter((claim) => activeAgentIds.has(claim.agentId));
+
+  for (const message of state.messages) {
+    message.to_agent_id = replaceRetiredId(message.to_agent_id);
+    message.readBy = [...new Set(message.readBy.map((agentId) => replaceRetiredId(agentId) ?? agentId))];
+    if (
+      message.status === "pending" &&
+      message.author_agent_id &&
+      RETIRED_SOFTWARE_DEV_AGENT_IDS.has(message.author_agent_id)
+    ) {
+      message.author_agent_id = DEFAULT_AGENT.id;
+      message.author_name = DEFAULT_AGENT.name;
+    }
+  }
+
+  for (const task of state.tasks) {
+    if (task.status === "done" || task.status === "failed") continue;
+    task.assignee = replaceRetiredId(task.assignee);
+    task.coordinatorAgentId = replaceRetiredId(task.coordinatorAgentId);
+    if (task.reviewerAgentId && RETIRED_SOFTWARE_DEV_AGENT_IDS.has(task.reviewerAgentId)) {
+      task.reviewerAgentId = undefined;
+      task.reviewerRole = undefined;
+    }
+    if (task.reviewerRole === "reviewer" && !findAgent(state, "reviewer")) task.reviewerRole = undefined;
+    if (task.status === "review" && !task.reviewerAgentId) {
+      task.status = task.result ? "done" : "in_progress";
+      task.assignee = DEFAULT_AGENT.id;
+    }
+  }
+
+  const routeKeys = new Set<string>();
+  state.eventRoutes = state.eventRoutes.flatMap((route) => {
+    const agentId = replaceRetiredId(route.agentId);
+    if (!agentId || !activeAgentIds.has(agentId)) return [];
+    const key = `${route.eventType}\0${agentId}`;
+    if (routeKeys.has(key)) return [];
+    routeKeys.add(key);
+    return [{ ...route, agentId }];
+  });
+
+  const retiredRunIds = new Set<string>();
+  for (const [runId, contract] of Object.entries(state.activeRunContracts ?? {})) {
+    if (contract.agentId && !activeAgentIds.has(contract.agentId)) retiredRunIds.add(runId);
+  }
+  for (const [runId, actions] of Object.entries(state.runActions ?? {})) {
+    if (actions.some((action) => !activeAgentIds.has(action.agentId))) retiredRunIds.add(runId);
+  }
+  for (const [runId, attempts] of Object.entries(state.runAttempts ?? {})) {
+    if (attempts.some((attempt) => !activeAgentIds.has(attempt.agentId))) retiredRunIds.add(runId);
+  }
+  state.activeRunContracts = Object.fromEntries(
+    Object.entries(state.activeRunContracts ?? {}).filter(([runId]) => !retiredRunIds.has(runId)),
+  );
+  state.runActions = Object.fromEntries(
+    Object.entries(state.runActions ?? {}).filter(([runId]) => !retiredRunIds.has(runId)),
+  );
+  state.runAttempts = Object.fromEntries(
+    Object.entries(state.runAttempts ?? {}).filter(([runId]) => !retiredRunIds.has(runId)),
+  );
+  state.runStreams = Object.fromEntries(
+    Object.entries(state.runStreams ?? {}).filter(([runId]) => !retiredRunIds.has(runId)),
+  );
+}
+
 const app = createGuiApp({
   requireGuiAuth,
   requireOwnerGuiAuth,
@@ -612,6 +692,7 @@ export class GuiState implements DurableObject {
     saved.runActions = pruneRunActions(saved.runActions ?? {});
     saved.runAttempts = pruneRunAttempts(saved.runAttempts ?? {});
     saved.agentBeats = normalizeAgentBeats(saved.agentBeats);
+    migrateRetiredSoftwareDevAgents(saved);
     saved.capabilities ??= { workspaces: [] };
     saved.availableEngines ??= [];
     return saved;
@@ -665,7 +746,8 @@ export class GuiState implements DurableObject {
   private async runtimeToken(agentIdRaw?: string): Promise<Response> {
     const state = await this.get();
     const agentId = normalizeAgentId(decodeURIComponent(agentIdRaw || "")) ?? "";
-    const agent = findAgent(state, agentId) ?? defaultAgentFor(state);
+    const agent = findAgent(state, agentId);
+    if (!agent) return json({ error: `agent not found: ${agentId}` }, { status: 404 });
     state.runtimeTokens ??= {};
     state.runtimeTokenMeta ??= {};
     const runtimeToken = crypto.randomUUID();

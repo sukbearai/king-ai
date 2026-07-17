@@ -1467,8 +1467,8 @@ function normalizeConversationTeam(
   previous?: Conversation,
 ): Required<Pick<Conversation, "workflowId" | "teamMode" | "coordinatorAgentId" | "teamAgentIds">> {
   const workflow = workflowTemplateById(payload.workflowId ?? previous?.workflowId);
-  const mode = normalizeTeamMode(payload.teamMode ?? previous?.teamMode);
   const workflowAgentIds = workflowAgentIdsFor(state, workflow);
+  const mode = workflowAgentIds.length === 1 ? "single" : normalizeTeamMode(payload.teamMode ?? previous?.teamMode);
   const workflowIds = new Set(workflowAgentIds);
   const requestedCoordinatorId = normalizeAgentId(payload.coordinatorAgentId ?? previous?.coordinatorAgentId);
   const coordinator =
@@ -1602,7 +1602,10 @@ function normalizeAgents(agents: Agent[] | undefined): Agent[] {
     // the template on load instead of freezing whatever was first persisted. Other persisted
     // fields (engine, lifecycle, model, fastModel, reasoningEffort, name) are kept. The default operator agent
     // stays user-editable via agent-config, so it keeps its persisted role.
-    const role = agent.id === DEFAULT_AGENT.id ? existing?.role || agent.role : agent.role;
+    const legacyDevRole =
+      "Implement only assigned tasks. Make concrete changes, run focused verification, report files changed and command results, then mark the task done so it can be reviewed or returned to King AI CEO. Role template: builder.";
+    const persistedRole = existing?.role === legacyDevRole ? undefined : existing?.role;
+    const role = agent.id === DEFAULT_AGENT.id ? persistedRole || agent.role : agent.role;
     byId.set(agent.id, { ...agent, ...existing, role, structuredReply: agent.structuredReply });
   }
   return [...byId.values()];
@@ -1683,7 +1686,7 @@ function agentIdForRuntimeToken(state: State, runtimeToken: string): string | nu
   if (!runtimeToken) return null;
   const now = Date.now();
   for (const [agentId, row] of Object.entries(state.runtimeTokenMeta ?? {})) {
-    if (row.token === runtimeToken && row.expiresAt > now) return agentId;
+    if (row.token === runtimeToken && row.expiresAt > now && findAgent(state, agentId)) return agentId;
   }
   return null;
 }
@@ -2019,7 +2022,7 @@ function queueTaskCompletionMessage(
 // A room's "unread" count means human messages its own responding agents have not read yet, i.e.
 // work still waiting for that room. Resolve the responders from the conversation's coordinator and
 // team rather than the global default agent: workflow rooms (e.g. IELTS) are handled by their own
-// agent, so checking only king-ai-ceo left unread permanently >=1 and pinned the run indicator on.
+// agent, so checking only the global default left unread permanently >=1 and pinned the run indicator on.
 function conversationResponderIds(state: State, conversation: Conversation): string[] {
   const ids = new Set<string>([coordinatorAgentFor(state, conversation).id]);
   for (const agent of teamAgentsFor(state, conversation)) ids.add(agent.id);

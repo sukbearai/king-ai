@@ -12,6 +12,10 @@ pnpm gui:dev
 
 Wrangler 会打印本地 URL。默认开发地址通常是 `http://127.0.0.1:8787`。
 
+## 鉴权
+
+配置 Better Auth 后，未登录访问 `/` 会收到登录页。如果 GUI 已打开时浏览器登录会话过期，`/gui/*` 请求明确返回 `401 {"error":"login_required"}` 后，页面会回到 `/` 重新登录；其他 `401` 和 `403` 仍保持原有错误处理。Agent runtime token 由本地 runner 独立续期，不会触发浏览器跳转。
+
 ## 清空本地 DO 状态
 
 Wrangler 会把每个租户的 `GuiState` Durable Object 持久化到 `apps/gui-worker/.wrangler/state/v3/do/`。如果要清掉本地 GUI 里的旧状态（例如内置 agent role 更新后），先停止 `pnpm gui:dev`，再执行：
@@ -51,7 +55,7 @@ GUI 提供：
 - 运行历史和 host command 输出。
 - 开发和测试环境使用的 reset 控制。
 
-在团队对话里，普通寒暄和面向全员的点名消息会留给协调者处理，不会自动创建 Dev 或 Reviewer 任务。明确的工作请求仍会按 workflow 任务和复核链路自动委派。
+当前每个内置 GUI 工作流都只有一个 agent。在 `software-dev` 中，所有请求都由 Dev 处理；实质性 turn 会记录为 Dev 自有任务，并在没有内置 Reviewer 或协调者二次总结的情况下关闭。共享的任务、评审、交接和决策原语仍供 CLI 工作流及未来花名册使用。
 
 ## 部署
 

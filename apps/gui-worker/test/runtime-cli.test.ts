@@ -22,7 +22,7 @@ type Deps = RuntimeCliDeps<TestState, Actor>;
 
 function makeDeps(overrides: Partial<Deps> = {}): Deps {
   const base: Deps = {
-    defaultAgentId: "king-ai-ceo",
+    defaultAgentId: "dev",
     findConversation: () => undefined,
     validateRunContractAction: () => undefined,
     unreadMessagesFor: () => [],
