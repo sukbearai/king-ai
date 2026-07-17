@@ -8,6 +8,21 @@ const skillsRoot = path.join(packageRoot, "skills");
 
 const requiredBodyMarkers = new Map([
   [
+    "grok-cpa-bootstrap",
+    [
+      "Never commit or print API keys",
+      "Require explicit user authorization and an exact count",
+      "https://github.com/sukbearai/king-ai.git",
+      "https://github.com/AaronL725/grok-register.git",
+      "https://github.com/dreamhunter2333/cloudflare_temp_email.git",
+      "https://github.com/router-for-me/CLIProxyAPI.git",
+      "configure_grok_cpa.py",
+      "audit_stack.py",
+      "retry_cpa_auth.py",
+      "personal-team-blocked:spending-limit",
+    ],
+  ],
+  [
     "sub2api-fork-deploy",
     [
       "com.docker.compose.project.working_dir",

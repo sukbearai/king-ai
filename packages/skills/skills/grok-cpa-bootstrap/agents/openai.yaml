@@ -1,0 +1,4 @@
+interface:
+  display_name: "Grok CPA Bootstrap"
+  short_description: "在新 Mac 上部署 Grok、CPA 与临时邮箱注册链路"
+  default_prompt: "Use $grok-cpa-bootstrap to reproduce the Grok CLI, CPA, Cloudflare temp-mail, and registration workflow on a new Mac without persisting secrets."
