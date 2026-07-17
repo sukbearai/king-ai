@@ -14,6 +14,7 @@ import type {
   EngineSession,
   RuntimeRun,
   RuntimeRunContract,
+  StructuredReplyConfig,
   TriageVerdict,
 } from "./types.js";
 import { authFailureHint, concise, hashText, isRateLimited } from "./text.js";
@@ -114,6 +115,11 @@ interface RunActionsPayload {
     requestId?: string;
     taskId?: string;
   }>;
+}
+
+interface RuntimeCliResult {
+  exitCode?: number;
+  text?: string;
 }
 
 interface TriagePayload {
@@ -334,9 +340,10 @@ export function buildChatDelta(
   rosterDigest: string,
   triage?: TriageVerdict | null,
   toolHint?: string,
+  suppressToolActions = false,
 ): string {
   const triageNote = formatTriageNote(triage);
-  const fastPath = simpleTurnFastPathInstruction(triage);
+  const fastPath = suppressToolActions ? "" : simpleTurnFastPathInstruction(triage);
   return `You've been woken because there's new runtime activity, and local triage already decided whether you should respond. If triage marked it relevant, your job is to act, not re-litigate whether to wake.
 
 ${triageNote ? `${triageNote}\n\n` : ""}${fastPath ? `${fastPath}\n\n` : ""}${toolHint ? `${toolHint}\n\n` : ""}Your unread messages (ALREADY FETCHED - no need to re-run king-ai inbox or messages just to reread these; use the preamble Conversation Glance snapshot for pinned single-conversation wakes, and run king-ai glance before posting in a group to catch anything posted while you compose):
@@ -460,6 +467,60 @@ export function turnSessionScope(
   if (contract?.conversationId) return conversationSessionScope(contract.conversationId);
   const ids = [...seenConversationIds].filter((id) => id.trim());
   return ids.length === 1 ? conversationSessionScope(ids[0]) : DEFAULT_SESSION_SCOPE;
+}
+
+export function selectStructuredReplyContract(
+  config: StructuredReplyConfig | undefined,
+  contract: RuntimeRunContract | null | undefined,
+  seen: Map<string, string>,
+): RuntimeRunContract | null {
+  if (!config) return null;
+  const pinnedConversationId = contract?.conversationId?.trim();
+  if (pinnedConversationId) {
+    const fallbackMessageId = seen.get(pinnedConversationId);
+    return {
+      conversationId: pinnedConversationId,
+      ...(contract?.requestId ? { requestId: contract.requestId } : {}),
+      ...(contract?.messageId
+        ? { messageId: contract.messageId }
+        : fallbackMessageId
+          ? { messageId: fallbackMessageId }
+          : {}),
+      ...(contract?.taskId ? { taskId: contract.taskId } : {}),
+    };
+  }
+  const conversations = [...seen].filter(([conversationId]) => conversationId.trim());
+  if (conversations.length !== 1) return null;
+  const [conversationId, messageId] = conversations[0];
+  return {
+    conversationId,
+    ...(messageId ? { messageId } : {}),
+    ...(contract?.requestId ? { requestId: contract.requestId } : {}),
+    ...(contract?.taskId ? { taskId: contract.taskId } : {}),
+  };
+}
+
+export function formatStructuredReplyBody(config: StructuredReplyConfig, output: unknown): string | null {
+  if (!output || typeof output !== "object" || Array.isArray(output)) return null;
+  const row = output as Record<string, unknown>;
+  const visible = row[config.bodyField];
+  if (typeof visible !== "string" || !visible.trim()) return null;
+  const body = visible.trim();
+  if (!config.trailingJsonField) return body;
+  if (!Object.hasOwn(row, config.trailingJsonField)) return null;
+  const serialized = JSON.stringify(row[config.trailingJsonField]);
+  if (!serialized) return null;
+  const label = config.trailingJsonLabel?.trim() || config.trailingJsonField;
+  return `${body}\n\n${label}: ${serialized}`;
+}
+
+export function structuredReplyDeliveryInstruction(config: StructuredReplyConfig): string {
+  const trailing = config.trailingJsonField ? ` Put machine-readable annotations in ${config.trailingJsonField}.` : "";
+  return [
+    "Structured reply delivery is active for this turn.",
+    `Return exactly one object matching the engine-supplied JSON Schema. Put only learner-visible reply text in ${config.bodyField}.${trailing}`,
+    "Do not call king-ai reply or king-ai task done. The runner will validate the object, post the reply, and close any pinned task under the current run contract.",
+  ].join("\n");
 }
 
 /** Live-steer only when the wake targets the conversation already bound to the active engine session. */
@@ -738,6 +799,7 @@ export class AgentRunner {
       this.agent.model === agent.model &&
       this.agent.fastModel === agent.fastModel &&
       this.agent.reasoningEffort === agent.reasoningEffort &&
+      JSON.stringify(this.agent.structuredReply ?? null) === JSON.stringify(agent.structuredReply ?? null) &&
       normalizeAgentLifecycle(this.agent.lifecycle) === normalizeAgentLifecycle(agent.lifecycle)
     );
   }
@@ -1426,12 +1488,7 @@ export class AgentRunner {
     fallbackSeen: Map<string, string>,
   ): Promise<boolean> {
     if (!runId) return false;
-    const payload = await runtimeGetStrict<RunActionsPayload>(
-      this.cfg.serverUrl,
-      `/runs/${runId}/actions`,
-      token,
-      this.cfg.tenantId,
-    );
+    const payload = await this.runActions(token, runId);
     const seen = new Map<string, string>();
     for (const action of payload.actions ?? []) {
       if (!action.conversationId) continue;
@@ -1441,6 +1498,74 @@ export class AgentRunner {
     if (!seen.size) return false;
     await this.ackSeen(token, seen);
     return true;
+  }
+
+  private async runActions(token: string, runId: string): Promise<RunActionsPayload> {
+    return runtimeGetStrict<RunActionsPayload>(this.cfg.serverUrl, `/runs/${runId}/actions`, token, this.cfg.tenantId);
+  }
+
+  private async runtimeCli(
+    token: string,
+    runId: string,
+    contract: RuntimeRunContract,
+    argv: string[],
+  ): Promise<string> {
+    const result = await runtimePostStrict<RuntimeCliResult>(
+      this.cfg.serverUrl,
+      "/cli",
+      token,
+      {
+        argv,
+        agentId: this.agent.id,
+        engine: this.adapter.id,
+        runId,
+        contract,
+      },
+      this.cfg.tenantId,
+    );
+    const text = typeof result?.text === "string" ? result.text : "";
+    if (
+      result?.exitCode !== 0 ||
+      /^(usage:|invalid |task not found:|task id required|ambiguous task id:)/i.test(text)
+    ) {
+      throw new Error(text || `runtime CLI exited with code ${result?.exitCode ?? "unknown"}`);
+    }
+    return text;
+  }
+
+  private async publishStructuredReply(
+    token: string,
+    runId: string | undefined,
+    contract: RuntimeRunContract,
+    config: StructuredReplyConfig,
+    output: unknown,
+  ): Promise<string | undefined> {
+    if (!runId) throw new Error("runtime did not create a run for structured reply delivery");
+    const body = formatStructuredReplyBody(config, output);
+    if (!body) throw new Error("engine structured output does not match the configured reply fields");
+
+    const actions = (await this.runActions(token, runId)).actions ?? [];
+    const replied = actions.some(
+      (action) => action.kind === "reply" && action.conversationId === contract.conversationId,
+    );
+    if (!replied) {
+      const argv = ["reply", contract.conversationId ?? "", body];
+      const quoteId = contract.messageId ?? contract.requestId;
+      if (quoteId) argv.push("--quote", quoteId);
+      await this.runtimeCli(token, runId, contract, argv);
+    }
+
+    if (!contract.taskId || actions.some((action) => action.kind === "task" && action.taskId === contract.taskId)) {
+      return undefined;
+    }
+    try {
+      await this.runtimeCli(token, runId, contract, ["task", "done", contract.taskId]);
+      return undefined;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (isRuntimeAuthError(message)) throw err;
+      return `reply posted, but task ${contract.taskId} could not be closed: ${message}`;
+    }
   }
 
   private async rosterDigest(token: string): Promise<string> {
@@ -1470,15 +1595,25 @@ export class AgentRunner {
     rosterDigest: string,
     preamble: string,
     triage?: TriageVerdict | null,
+    structuredReply?: StructuredReplyConfig,
   ): string {
     const delta = appendRuntimePreamble(
-      buildChatDelta(digest, memoryDigest, rosterDigest, triage, engineTurnToolHint(this.adapter.id, triage)),
+      buildChatDelta(
+        digest,
+        memoryDigest,
+        rosterDigest,
+        triage,
+        structuredReply ? "" : engineTurnToolHint(this.adapter.id, triage),
+        Boolean(structuredReply),
+      ),
       preamble,
     );
-    if (this.engineSession?.carriesStandingPrompt) return delta;
-    return `${this.standingPrompt()}
+    const prompt = this.engineSession?.carriesStandingPrompt
+      ? delta
+      : `${this.standingPrompt()}
 
 ${delta}`;
+    return structuredReply ? `${prompt}\n\n${structuredReplyDeliveryInstruction(structuredReply)}` : prompt;
   }
 
   private promptForAgenda(brief: string, memoryDigest: string, rosterDigest: string, preamble: string): string {
@@ -1505,6 +1640,9 @@ ${delta}`;
   }
 
   private ensureEngineSession(): EngineSession | null {
+    // Claude's schema flag is available only in one-shot print mode, so agents that may request a
+    // structured turn keep using resumable one-shot invocations instead of a persistent stream.
+    if (this.agent.structuredReply && this.adapter.id === "claude") return null;
     if (this.engineSession && this.engineSession.alive) return this.engineSession;
     const resumeSessionId = this.sessionId;
     this.engineSession =
@@ -1620,11 +1758,19 @@ ${delta}`;
           continue;
         }
 
-        await this.switchSessionScope(turnSessionScope(activeContract, seen.keys()));
+        const structuredContract = selectStructuredReplyContract(this.agent.structuredReply, activeContract, seen);
+        const structuredReply = structuredContract ? this.agent.structuredReply : undefined;
+        const turnContract: RuntimeRunContract | null = structuredContract
+          ? { ...activeContract, ...structuredContract, agentId: this.agent.id }
+          : activeContract
+            ? { ...activeContract, agentId: this.agent.id }
+            : null;
+
+        await this.switchSessionScope(turnSessionScope(turnContract, seen.keys()));
 
         await this.publishStatus(token, "thinking");
         let typingTimer: NodeJS.Timeout | null = null;
-        const typingConvo = activeConversationId;
+        const typingConvo = structuredContract?.conversationId ?? activeConversationId;
         if (typingConvo) {
           const ping = () => {
             void runtimePost(
@@ -1651,18 +1797,14 @@ ${delta}`;
           token,
           {
             trigger: { source: reason, engine: this.adapter.id },
-            contract: {
-              ...activeContract,
-              agentId: this.agent.id,
-            },
+            contract: turnContract ?? { agentId: this.agent.id },
           },
           this.cfg.tenantId,
         );
-        await this.setActiveRun(
-          run?.runId ?? null,
-          run?.contract ?? (activeContract ? { ...activeContract, agentId: this.agent.id } : null),
-        );
-        await this.publishEvent("turn.started", { reason, runId: run?.runId, conversationId: activeConversationId });
+        const effectiveRunContract =
+          turnContract || run?.contract ? { ...turnContract, ...run?.contract, agentId: this.agent.id } : null;
+        await this.setActiveRun(run?.runId ?? null, effectiveRunContract);
+        await this.publishEvent("turn.started", { reason, runId: run?.runId, conversationId: typingConvo });
         const stopBeat = this.beatRun(token, run?.runId);
         let error: string | undefined;
         let exitCode = 0;
@@ -1678,12 +1820,12 @@ ${delta}`;
             this.rosterDigest(token),
             this.runtimePreamble(token, reason, run?.runId),
           ]);
-          const prompt = this.promptForTurn(digest, memory, roster, preamble, triage);
+          const prompt = this.promptForTurn(digest, memory, roster, preamble, triage, structuredReply);
           const controller = new AbortController();
           const resumeSessionId = this.sessionId;
           const session = this.ensureEngineSession();
           const result = session
-            ? await session.send(prompt, { imagePaths })
+            ? await session.send(prompt, { imagePaths, outputSchema: structuredReply?.outputSchema })
             : await this.adapter.run({
                 home: this.home,
                 prompt,
@@ -1694,6 +1836,7 @@ ${delta}`;
                 resumeSessionId: this.sessionId,
                 standingPrompt: this.standingPrompt(),
                 imagePaths,
+                outputSchema: structuredReply?.outputSchema,
                 signal: controller.signal,
                 onLog: (line) => this.logEngineLine(line),
               });
@@ -1708,6 +1851,31 @@ ${delta}`;
           if (session && !session.alive) this.engineSession = null;
           if (error && mustResetSession(error, !!resumeSessionId))
             await this.resetEngineSession(sessionResetReason(error));
+          if (!error && structuredReply && structuredContract && effectiveRunContract) {
+            try {
+              const warning = await this.withRuntimeAuthRetry((freshToken) =>
+                this.publishStructuredReply(
+                  freshToken,
+                  run?.runId,
+                  effectiveRunContract,
+                  structuredReply,
+                  result.structuredOutput,
+                ),
+              );
+              if (warning) {
+                console.warn(`[${this.agent.id}/${this.adapter.id}] ${warning}`);
+                await this.publishEvent(
+                  "turn.structured_reply_task_close_failed",
+                  { reason, runId: run?.runId, conversationId: typingConvo, warning },
+                  "warn",
+                );
+              }
+            } catch (err) {
+              exitCode = 1;
+              const message = err instanceof Error ? err.message : String(err);
+              error = `structured reply delivery failed: ${message}`;
+            }
+          }
         } finally {
           bigBrainSem.release();
           stopBeat();

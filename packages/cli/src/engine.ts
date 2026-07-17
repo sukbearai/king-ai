@@ -12,6 +12,7 @@ import type {
   EngineSession,
   EngineTurnOptions,
   EngineUsage,
+  JsonSchema,
 } from "./types.js";
 import { cleanLine, stripLoneSurrogates } from "./text.js";
 
@@ -327,6 +328,7 @@ export interface CodexAppEventResult {
   turnCompletedError?: string;
   usage?: unknown;
   threadId?: string;
+  agentMessage?: string;
 }
 
 type CodexUserInput = { type: "text"; text: string; text_elements: [] } | { type: "localImage"; path: string };
@@ -344,6 +346,27 @@ function codexImageArgs(imagePaths: readonly string[] | undefined): string[] {
 
 function unknownRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
+function parseJsonText(text: string): { ok: true; value: unknown } | { ok: false } {
+  const cleaned = stripLoneSurrogates(text).trim();
+  if (!cleaned) return { ok: false };
+  try {
+    return { ok: true, value: JSON.parse(cleaned) };
+  } catch {
+    for (const line of cleaned.split("\n").reverse()) {
+      try {
+        return { ok: true, value: JSON.parse(line) };
+      } catch {
+        // Try the preceding line.
+      }
+    }
+    return { ok: false };
+  }
+}
+
+function missingStructuredOutputError(engine: EngineId): string {
+  return `${engine} engine completed without a valid structured output`;
 }
 
 function nestedRecord(value: unknown, key: string): Record<string, unknown> | null {
@@ -403,6 +426,7 @@ export function reduceCodexAppEvent(state: CodexAppEventState, msg: Record<strin
       item.text.trim()
     ) {
       logs.push(`[codex] ${item.text.replace(/\s+/g, " ").slice(0, 200)}`);
+      return { logs, activeTurnId, steerGate: true, agentMessage: item.text };
     }
     if (method === "item/completed") steerGate = true;
     return { logs, activeTurnId, steerGate };
@@ -483,7 +507,7 @@ function spawnCapture(
 function spawnEngine(
   bin: string,
   args: string[],
-  opts: EngineRunArgs & { shell?: boolean; stdinText?: string },
+  opts: EngineRunArgs & { engine: EngineId; shell?: boolean; stdinText?: string },
 ): Promise<EngineResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, {
@@ -502,6 +526,8 @@ function spawnEngine(
     let sessionId: string | null = null;
     let usage: EngineUsage | undefined;
     let model: string | null = null;
+    let structuredOutput: unknown;
+    let hasStructuredOutput = false;
     let timer: NodeJS.Timeout | null = null;
     const onAbort = () => child.kill("SIGTERM");
     opts.signal.addEventListener("abort", onAbort, { once: true });
@@ -519,6 +545,10 @@ function spawnEngine(
           const obj = JSON.parse(line) as Record<string, unknown>;
           if (typeof obj.session_id === "string") sessionId = obj.session_id;
           if (obj.type === "result" && typeof obj.usage === "object") usage = obj.usage as EngineUsage;
+          if (obj.type === "result" && Object.hasOwn(obj, "structured_output")) {
+            structuredOutput = obj.structured_output;
+            hasStructuredOutput = true;
+          }
           const message = obj.message as { model?: unknown } | undefined;
           if (typeof obj.model === "string") model = obj.model;
           if (typeof message?.model === "string") model = message.model;
@@ -540,12 +570,26 @@ function spawnEngine(
       if (timer) clearTimeout(timer);
       opts.signal.removeEventListener("abort", onAbort);
       const exitCode = code ?? (signalName ? 128 : 1);
+      if (exitCode === 0 && opts.engine === "codex" && opts.outputSchema && !hasStructuredOutput) {
+        const parsed = parseJsonText(stdout.join("\n"));
+        if (parsed.ok) {
+          structuredOutput = parsed.value;
+          hasStructuredOutput = true;
+        }
+      }
+      const structuredError =
+        exitCode === 0 && opts.outputSchema && !hasStructuredOutput
+          ? missingStructuredOutputError(opts.engine)
+          : undefined;
+      const finalExitCode = structuredError ? 1 : exitCode;
       resolve({
-        exitCode,
-        error: exitCode === 0 ? undefined : failurePreview(exitCode, signalName, stderr, stdout),
+        exitCode: finalExitCode,
+        error:
+          finalExitCode === 0 ? undefined : (structuredError ?? failurePreview(exitCode, signalName, stderr, stdout)),
         sessionId,
         usage,
         model,
+        structuredOutput: hasStructuredOutput ? structuredOutput : undefined,
       });
     });
   });
@@ -601,7 +645,14 @@ class ClaudeSession implements EngineSession {
     return this.sid;
   }
 
-  send(prompt: string): Promise<EngineResult> {
+  send(prompt: string, options?: EngineTurnOptions): Promise<EngineResult> {
+    if (options?.outputSchema) {
+      return Promise.resolve({
+        exitCode: 1,
+        error: "claude structured output requires a one-shot engine turn",
+        sessionId: this.sid,
+      });
+    }
     if (this.pending)
       return Promise.resolve({ exitCode: 1, error: "engine session is already running a turn", sessionId: this.sid });
     if (!this.alive) {
@@ -774,6 +825,8 @@ class CodexSession implements EngineSession {
     timer: NodeJS.Timeout | null;
     noOutputTimer: NodeJS.Timeout | null;
     sawOutput: boolean;
+    outputSchema?: JsonSchema;
+    agentMessage?: string;
   } | null = null;
   private queuedTurn: { prompt: string; options?: EngineTurnOptions } | null = null;
   private ready = false;
@@ -845,6 +898,8 @@ class CodexSession implements EngineSession {
         timer: null as NodeJS.Timeout | null,
         noOutputTimer: null as NodeJS.Timeout | null,
         sawOutput: false,
+        outputSchema: options?.outputSchema,
+        agentMessage: undefined as string | undefined,
       };
       const timeoutMs = sessionTimeoutMs();
       if (timeoutMs > 0) {
@@ -916,7 +971,11 @@ class CodexSession implements EngineSession {
 
   private startTurn(prompt: string, options?: EngineTurnOptions): void {
     if (!this.threadId) return;
-    this.req("turn/start", { threadId: this.threadId, input: codexUserInput(prompt, options?.imagePaths) });
+    this.req("turn/start", {
+      threadId: this.threadId,
+      input: codexUserInput(prompt, options?.imagePaths),
+      ...(options?.outputSchema ? { outputSchema: options.outputSchema } : {}),
+    });
   }
 
   private onStdout(buf: Buffer): void {
@@ -980,6 +1039,7 @@ class CodexSession implements EngineSession {
     }
     this.activeTurnId = reduced.activeTurnId;
     this.steerGate = reduced.steerGate;
+    if (reduced.agentMessage && this.pending) this.pending.agentMessage = reduced.agentMessage;
     if (reduced.usage) this.updateUsage(reduced.usage);
     if (reduced.threadId) {
       this.threadId = reduced.threadId;
@@ -1024,12 +1084,16 @@ class CodexSession implements EngineSession {
     if (!pending) return;
     if (pending.timer) clearTimeout(pending.timer);
     if (pending.noOutputTimer) clearTimeout(pending.noOutputTimer);
+    const parsed = pending.outputSchema ? parseJsonText(pending.agentMessage ?? "") : { ok: false as const };
+    const structuredError = pending.outputSchema && !parsed.ok ? missingStructuredOutputError("codex") : undefined;
+    const finalError = error ?? structuredError;
     pending.resolve({
-      exitCode,
-      error,
+      exitCode: finalError ? exitCode || 1 : exitCode,
+      error: finalError,
       sessionId: this.threadId,
       usage: this.turnUsage(),
       model: this.opts.model ?? null,
+      structuredOutput: parsed.ok ? parsed.value : undefined,
     });
   }
 
@@ -1124,10 +1188,13 @@ class ClaudeAdapter implements EngineAdapter {
     const extra = envExtraArgs("KING_AI_CLAUDE_ARGS");
     const model = args.model ? ["--model", args.model] : [];
     const resume = args.resumeSessionId ? ["--resume", args.resumeSessionId] : [];
+    const output = args.outputSchema
+      ? ["--output-format", "json", "--json-schema", JSON.stringify(args.outputSchema)]
+      : ["--output-format", "stream-json", "--verbose"];
     const { command, shell, wantsStdinPrompt } = resolveSpawn(this.bin);
     const base = extra.length
-      ? [...extra, ...resume, "-p"]
-      : ["-p", ...resume, ...model, "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions"];
+      ? [...extra, ...resume, ...(args.outputSchema ? output : []), "-p"]
+      : ["-p", ...resume, ...model, ...output, "--dangerously-skip-permissions"];
     const argv = wantsStdinPrompt
       ? base
       : extra.length
@@ -1137,6 +1204,7 @@ class ClaudeAdapter implements EngineAdapter {
     if (args.fastModel) env.ANTHROPIC_SMALL_FAST_MODEL = args.fastModel;
     return spawnEngine(command, argv, {
       ...args,
+      engine: this.id,
       env,
       shell,
       stdinText: wantsStdinPrompt ? args.prompt : undefined,
@@ -1213,15 +1281,26 @@ class CodexAdapter implements EngineAdapter {
     });
   }
 
-  run(args: EngineRunArgs): Promise<EngineResult> {
+  async run(args: EngineRunArgs): Promise<EngineResult> {
     const extra = envExtraArgs("KING_AI_CODEX_ARGS");
     const model = args.model ? ["--model", args.model] : [];
     const { command, shell } = resolveSpawn(this.bin);
     const base = extra.length ? extra : ["--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check"];
-    return spawnEngine(command, ["exec", ...model, ...codexImageArgs(args.imagePaths), ...base, args.prompt], {
-      ...args,
-      shell,
-    });
+    const output: string[] = [];
+    if (args.outputSchema) {
+      const schemaPath = join(args.home, ".king-ai-output-schema.json");
+      await writeFile(schemaPath, JSON.stringify(args.outputSchema), { mode: 0o600 });
+      output.push("--output-schema", schemaPath);
+    }
+    return spawnEngine(
+      command,
+      ["exec", ...model, ...codexImageArgs(args.imagePaths), ...output, ...base, args.prompt],
+      {
+        ...args,
+        engine: this.id,
+        shell,
+      },
+    );
   }
 
   startSession(args: Omit<EngineRunArgs, "prompt" | "signal">): EngineSession | null {
@@ -1253,6 +1332,18 @@ function grokUsageFromMeta(meta: Record<string, unknown> | undefined): EngineUsa
     cache_read_input_tokens: cached,
     output_tokens: output,
   };
+}
+
+function grokUsageFromResult(value: unknown): EngineUsage | undefined {
+  const usage = unknownRecord(value);
+  if (!usage) return undefined;
+  const num = (key: string) =>
+    typeof usage[key] === "number" && Number.isFinite(usage[key]) ? (usage[key] as number) : 0;
+  const input = num("input_tokens");
+  const cached = num("cache_read_input_tokens");
+  const output = num("output_tokens") + num("reasoning_tokens");
+  if (!input && !cached && !output) return undefined;
+  return { input_tokens: input, cache_read_input_tokens: cached, output_tokens: output };
 }
 
 type GrokPromptBlock = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
@@ -1287,6 +1378,7 @@ async function grokHeadlessArgv(args: {
   standingPrompt?: string;
   outputFormat: "json" | "streaming-json" | "plain";
   imagePaths?: readonly string[];
+  outputSchema?: JsonSchema;
 }): Promise<string[]> {
   const extra = envExtraArgs("KING_AI_GROK_ARGS");
   const model = args.model ? ["-m", args.model] : [];
@@ -1306,21 +1398,45 @@ async function grokHeadlessArgv(args: {
     ...resume,
   ];
   const imagePaths = (args.imagePaths ?? []).filter((path) => path.trim());
+  const structured = args.outputSchema ? ["--json-schema", JSON.stringify(args.outputSchema)] : [];
   if (imagePaths.length > 0) {
     const blocks: GrokPromptBlock[] = [
       ...(await grokImageBlocks(imagePaths)),
       { type: "text", text: stripLoneSurrogates(args.prompt) },
     ];
-    return [...base, "--prompt-json", JSON.stringify(blocks), "--output-format", args.outputFormat];
+    return [...base, ...structured, "--prompt-json", JSON.stringify(blocks), "--output-format", args.outputFormat];
   }
-  return [...base, "-p", args.prompt, "--output-format", args.outputFormat];
+  return [...base, ...structured, "-p", args.prompt, "--output-format", args.outputFormat];
 }
 
 function grokTurnFromStdout(stdout: string, model?: string | null): EngineResult {
+  try {
+    const obj = JSON.parse(stripLoneSurrogates(stdout).trim()) as Record<string, unknown>;
+    const modelUsage = unknownRecord(obj.modelUsage);
+    const resolvedModel =
+      typeof obj.modelId === "string" ? obj.modelId : (Object.keys(modelUsage ?? {})[0] ?? model ?? null);
+    const stopReason = typeof obj.stopReason === "string" ? obj.stopReason : "";
+    const error =
+      obj.type === "error" || stopReason.toLowerCase().includes("error")
+        ? String(obj.message ?? `grok turn failed: ${stopReason || "error"}`).slice(0, MAX_FAILURE_CHARS)
+        : undefined;
+    return {
+      exitCode: error ? 1 : 0,
+      error,
+      sessionId: typeof obj.sessionId === "string" ? obj.sessionId : null,
+      usage: grokUsageFromResult(obj.usage) ?? grokUsageFromMeta(unknownRecord(obj._meta) ?? undefined),
+      model: resolvedModel,
+      structuredOutput: Object.hasOwn(obj, "structuredOutput") ? obj.structuredOutput : undefined,
+    };
+  } catch {
+    // Streaming mode emits multiple JSON values, handled below.
+  }
   let sessionId: string | null = null;
   let usage: EngineUsage | undefined;
   let resolvedModel = model ?? null;
   let error: string | undefined;
+  let structuredOutput: unknown;
+  let hasStructuredOutput = false;
   for (const raw of stdout.split("\n")) {
     const line = cleanLine(raw);
     if (!line.startsWith("{")) continue;
@@ -1345,6 +1461,10 @@ function grokTurnFromStdout(stdout: string, model?: string | null): EngineResult
       }
       if (typeof obj.sessionId === "string") sessionId = obj.sessionId;
       if (typeof obj.modelId === "string") resolvedModel = obj.modelId;
+      if (Object.hasOwn(obj, "structuredOutput")) {
+        structuredOutput = obj.structuredOutput;
+        hasStructuredOutput = true;
+      }
     } catch {
       // Ignore malformed event JSON.
     }
@@ -1356,6 +1476,7 @@ function grokTurnFromStdout(stdout: string, model?: string | null): EngineResult
     sessionId,
     usage,
     model: resolvedModel,
+    structuredOutput: hasStructuredOutput ? structuredOutput : undefined,
   };
 }
 
@@ -1367,8 +1488,10 @@ function spawnGrokTurn(
     env: NodeJS.ProcessEnv;
     signal: AbortSignal;
     onLog: (line: string) => void;
+    onOutput?: () => void;
     shell?: boolean;
     model?: string | null;
+    outputSchema?: JsonSchema;
   },
 ): Promise<EngineResult> {
   return new Promise((resolve, reject) => {
@@ -1388,6 +1511,7 @@ function spawnGrokTurn(
 
     const grokLog = createGrokLogSink(opts.onLog);
     child.stdout?.on("data", (buf) => {
+      opts.onOutput?.();
       const text = buf.toString("utf8");
       stdout.push(text);
       for (const raw of text.split("\n")) {
@@ -1408,6 +1532,10 @@ function spawnGrokTurn(
       const exitCode = code ?? (signalName ? 128 : 1);
       const merged = stdout.join("");
       const parsed = grokTurnFromStdout(merged, opts.model);
+      if (exitCode === 0 && opts.outputSchema && parsed.structuredOutput === undefined) {
+        parsed.exitCode = 1;
+        parsed.error = missingStructuredOutputError("grok");
+      }
       if (exitCode !== 0 && !parsed.error) {
         parsed.exitCode = exitCode;
         parsed.error = failurePreview(exitCode, signalName, stderr, merged.split("\n").map(cleanLine).filter(Boolean));
@@ -1471,8 +1599,9 @@ class GrokSession implements EngineSession {
         reasoningEffort: this.opts.reasoningEffort,
         resumeSessionId,
         standingPrompt,
-        outputFormat: "streaming-json",
+        outputFormat: options?.outputSchema ? "json" : "streaming-json",
         imagePaths: options?.imagePaths,
+        outputSchema: options?.outputSchema,
       });
       return spawnGrokTurn(command, argv, {
         home: this.opts.home,
@@ -1480,14 +1609,15 @@ class GrokSession implements EngineSession {
         signal: controller.signal,
         shell,
         model: this.opts.model ?? null,
-        onLog: createGrokLogSink((line) => {
+        outputSchema: options?.outputSchema,
+        onOutput: () => {
           sawOutput = true;
           if (noOutputTimer) {
             clearTimeout(noOutputTimer);
             noOutputTimer = null;
           }
-          this.opts.onLog(line);
-        }),
+        },
+        onLog: this.opts.onLog,
       });
     };
 
@@ -1593,8 +1723,9 @@ class GrokAdapter implements EngineAdapter {
       reasoningEffort: args.reasoningEffort,
       resumeSessionId: args.resumeSessionId,
       standingPrompt: args.standingPrompt,
-      outputFormat: "streaming-json",
+      outputFormat: args.outputSchema ? "json" : "streaming-json",
       imagePaths: args.imagePaths,
+      outputSchema: args.outputSchema,
     });
     return spawnGrokTurn(command, argv, {
       home: args.home,
@@ -1602,6 +1733,7 @@ class GrokAdapter implements EngineAdapter {
       signal: args.signal,
       shell,
       model: args.model ?? null,
+      outputSchema: args.outputSchema,
       onLog: args.onLog,
     });
   }

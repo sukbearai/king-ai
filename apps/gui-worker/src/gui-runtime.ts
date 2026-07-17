@@ -1603,7 +1603,7 @@ function normalizeAgents(agents: Agent[] | undefined): Agent[] {
     // fields (engine, lifecycle, model, fastModel, reasoningEffort, name) are kept. The default operator agent
     // stays user-editable via agent-config, so it keeps its persisted role.
     const role = agent.id === DEFAULT_AGENT.id ? existing?.role || agent.role : agent.role;
-    byId.set(agent.id, { ...agent, ...existing, role });
+    byId.set(agent.id, { ...agent, ...existing, role, structuredReply: agent.structuredReply });
   }
   return [...byId.values()];
 }

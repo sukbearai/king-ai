@@ -1,6 +1,15 @@
 export type EngineId = "claude" | "codex" | "grok";
 export type AgentLifecycle = "on-demand" | "24/7" | "idle_cached" | "disabled";
 
+export type JsonSchema = Record<string, unknown>;
+
+export interface StructuredReplyConfig {
+  outputSchema: JsonSchema;
+  bodyField: string;
+  trailingJsonField?: string;
+  trailingJsonLabel?: string;
+}
+
 export interface ComputerConfig {
   serverUrl: string;
   computerId: string;
@@ -17,6 +26,7 @@ export interface AgentConfig {
   fastModel?: string;
   reasoningEffort?: string;
   lifecycle?: AgentLifecycle;
+  structuredReply?: StructuredReplyConfig;
 }
 
 export interface RuntimeRun {
@@ -54,10 +64,12 @@ export interface EngineResult {
   sessionId?: string | null;
   usage?: EngineUsage;
   model?: string | null;
+  structuredOutput?: unknown;
 }
 
 export interface EngineTurnOptions {
   imagePaths?: string[];
+  outputSchema?: JsonSchema;
 }
 
 export interface EngineSession {
@@ -79,6 +91,7 @@ export interface EngineRunArgs {
   resumeSessionId?: string | null;
   standingPrompt?: string;
   imagePaths?: string[];
+  outputSchema?: JsonSchema;
   signal: AbortSignal;
   onLog: (line: string) => void;
 }

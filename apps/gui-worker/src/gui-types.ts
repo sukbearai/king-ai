@@ -43,6 +43,13 @@ export type RequestContext = {
   };
 };
 
+export type StructuredReplyConfig = {
+  outputSchema: Record<string, unknown>;
+  bodyField: string;
+  trailingJsonField?: string;
+  trailingJsonLabel?: string;
+};
+
 export type Agent = {
   id: string;
   name: string;
@@ -53,6 +60,7 @@ export type Agent = {
   fastModel?: string;
   reasoningEffort?: string;
   events?: string[];
+  structuredReply?: StructuredReplyConfig;
 };
 
 export type AgentLifecycle = NonNullable<Agent["lifecycle"]>;
@@ -779,6 +787,64 @@ export type WorkflowTemplate = {
   agents: Agent[];
 };
 
+export const IELTS_REPLY_OUTPUT_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  properties: {
+    replyMarkdown: { type: "string" },
+    wordCards: {
+      type: "object",
+      properties: {
+        sentences: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              text: { type: "string" },
+              clauses: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    type: { type: "string" },
+                    text: { type: "string" },
+                    core: { type: "string" },
+                    phrases: { type: "array", items: { type: "string" } },
+                  },
+                  required: ["type", "text", "core", "phrases"],
+                  additionalProperties: false,
+                },
+              },
+            },
+            required: ["text", "clauses"],
+            additionalProperties: false,
+          },
+        },
+        cards: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              token: { type: "string" },
+              lemma: { type: "string" },
+              meaningZh: { type: "string" },
+              partOfSpeech: { type: "string" },
+              phonetic: { type: "string" },
+              syllables: { type: "array", items: { type: "string" } },
+              roots: { type: "string" },
+            },
+            required: ["token", "lemma", "meaningZh", "partOfSpeech", "phonetic", "syllables", "roots"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["sentences", "cards"],
+      additionalProperties: false,
+    },
+  },
+  required: ["replyMarkdown", "wordCards"],
+  additionalProperties: false,
+};
+
 export const IELTS_WORKFLOW_AGENTS: Agent[] = [
   {
     id: "ielts-tutor",
@@ -794,11 +860,17 @@ export const IELTS_WORKFLOW_AGENTS: Agent[] = [
       "- A clause core must be the shortest useful continuous substring that actually appears word-for-word in that clause: usually the subject head plus verb, and only a directly adjacent required object or complement when it is already next to the verb. Never rewrite, compress, reorder, or skip across words to create a new core. Example: for 'I have kept these feelings in my heart, and I hope you understand me.', use cores 'I have kept' and 'I hope'. For 'Your smile gives my days light, even when life feels heavy.', use cores 'Your smile gives' and 'life feels'. In 'I want to eat', the core is 'I want' and 'to eat' is a phrase.",
       "- Each phrase is the shortest meaningful chunk of about two to four words, and it must be a natural collocation that reads well on its own (a noun phrase, verb phrase, prepositional phrase, or fixed expression). Never mark a single word as a phrase, especially a lone pronoun, article, conjunction, or adverb such as 'quietly', 'myself', 'willing', or 'Whatever'. Never glue grammatically unrelated pieces together, such as an object plus an adverb ('it clearly') or an indirect object plus a direct object ('me courage'); choose the natural chunk instead, like 'say it clearly' or 'give me courage'. Keep noun compounds whole: in 'a short love confession letter' the phrase is 'love confession letter', never 'a short love'. Never wrap a whole clause, the sentence core, or most of a sentence in one phrase, and do not overlap a phrase with the core.",
       "- Explain the highlighted phrases in the same visible Tip line in concise Chinese, after any natural-English expression for what the learner wrote. Example: Tip: 用英文可以说: 'I am off work and my eyes are sore.' Useful phrases: 'off work' = 下班; 'eyes are sore' = 眼睛酸. Do not rely on phrase click cards.",
-      '- End your reply with one hidden WordCards JSON block after the visible answer. Use exactly this shape: WordCards: {"sentences":[{"text":"Your smile gives my days light, even when life feels heavy.","clauses":[{"type":"main","text":"Your smile gives my days light","core":"Your smile gives","phrases":["my days light"]},{"type":"subordinate","text":"even when life feels heavy","core":"life feels","phrases":["even when"]}]}],"cards":[{"token":"Your","lemma":"your","meaningZh":"你的","partOfSpeech":"代词(物主限定词)","phonetic":"/jɔːr/","syllables":["your"],"roots":""},{"token":"smile","lemma":"smile","meaningZh":"微笑","partOfSpeech":"名词/动词","phonetic":"/smaɪl/","syllables":["smile"],"roots":""}]}. Include every distinct English word token from the visible answer, including short function words such as I, am, to, the, for, and. Do not skip words because they are common. Use concise Chinese meanings, the Chinese part of speech in partOfSpeech (such as 名词, 动词, 形容词, 副词, 介词, 连词, 代词, or 限定词), IPA phonetics wrapped in slashes such as /driːmz/ (never respellings such as DREEMZ), syllable arrays, and a short Chinese root/affix breakdown in roots such as "un- 否定前缀 + happy 快乐" or "morn 词根 + -ing 名词后缀" (use an empty string for single-morpheme words like the or smile). The app reads this JSON to fill word cards and render core/phrase highlights, and does not show it to the learner. Do not put prose inside WordCards.',
-      "Keep replies compact: a short natural English reply or the requested passage, an optional one-line Tip, and the WordCards JSON block at the very end.",
+      '- Include every distinct English word token from the visible answer in WordCards, including short function words such as I, am, to, the, for, and. Do not skip words because they are common. Use concise Chinese meanings, the Chinese part of speech in partOfSpeech (such as 名词, 动词, 形容词, 副词, 介词, 连词, 代词, or 限定词), IPA phonetics wrapped in slashes such as /driːmz/ (never respellings such as DREEMZ), syllable arrays, and a short Chinese root/affix breakdown in roots such as "un- 否定前缀 + happy 快乐" or "morn 词根 + -ing 名词后缀" (use an empty string for single-morpheme words like the or smile). When the current turn says structured reply delivery is active, put only learner-visible text in replyMarkdown and put the annotations in wordCards; do not embed a WordCards marker in replyMarkdown. Otherwise end the visible answer with one hidden WordCards: JSON block in the documented shape. The app hides this data from the learner. Do not put prose inside WordCards.',
+      "Keep replies compact: a short natural English reply or the requested passage, an optional one-line Tip, and the structured WordCards data.",
     ].join(" "),
     engine: "grok",
     lifecycle: "on-demand",
+    structuredReply: {
+      outputSchema: IELTS_REPLY_OUTPUT_SCHEMA,
+      bodyField: "replyMarkdown",
+      trailingJsonField: "wordCards",
+      trailingJsonLabel: "WordCards",
+    },
   },
 ];
 

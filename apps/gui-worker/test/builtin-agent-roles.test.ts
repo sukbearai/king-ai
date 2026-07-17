@@ -35,6 +35,13 @@ test("the single-agent IELTS coach declares the builder template explicitly (no 
   assert.ok(tutor, "ielts-tutor should exist");
   assert.match(tutor.role, /Role template:\s*builder\./);
   assert.equal(roleTemplateForAgent(tutor), "builder");
+  assert.equal(tutor.structuredReply?.bodyField, "replyMarkdown");
+  assert.equal(tutor.structuredReply?.trailingJsonField, "wordCards");
+  assert.equal(tutor.structuredReply?.trailingJsonLabel, "WordCards");
+  const schema = tutor.structuredReply?.outputSchema as { required?: string[]; additionalProperties?: boolean };
+  assert.deepEqual(schema.required, ["replyMarkdown", "wordCards"]);
+  assert.equal(schema.additionalProperties, false);
+  assert.match(tutor.role, /structured reply delivery is active/);
 });
 
 test("the IELTS coach is a conversation partner, not a translator that echoes the learner", () => {
@@ -61,6 +68,10 @@ test("normalizeAgents keeps only the four built-in system agents", () => {
       engine: "codex",
       lifecycle: "on-demand",
       model: "custom-model",
+      structuredReply: {
+        outputSchema: { type: "string" },
+        bodyField: "staleBody",
+      },
     },
     // The default operator agent with a role the user customized via agent-config.
     {
@@ -87,6 +98,8 @@ test("normalizeAgents keeps only the four built-in system agents", () => {
   assert.notEqual(tutor?.role, "STALE coach role");
   // Other persisted fields on a built-in agent still survive the refresh.
   assert.equal(tutor?.model, "custom-model");
+  assert.deepEqual(tutor?.structuredReply, tutorTemplate.structuredReply);
+  assert.notEqual(tutor?.structuredReply?.bodyField, "staleBody");
   // The default operator agent keeps its user-customized role.
   assert.equal(ceo?.role, "Answer in a concise operator voice.");
 });

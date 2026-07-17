@@ -253,7 +253,7 @@ rl.on('line', (line) => {
   } else if (msg.method === 'turn/start') {
     send({ method: 'turn/started', params: { turn: { id: 'turn-1' } } });
     send({ method: 'thread/tokenUsage/updated', params: { tokenUsage: { total: { inputTokens: 12, cachedInputTokens: 2, outputTokens: 3, reasoningOutputTokens: 4 } } } });
-    send({ method: 'item/completed', params: { item: { type: 'agentMessage', text: 'ok' } } });
+    send({ method: 'item/completed', params: { item: { type: 'agentMessage', text: '{"replyMarkdown":"ok"}' } } });
     require('node:fs').writeFileSync(process.env.SEEN_FILE, JSON.stringify(seen, null, 2));
     send({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
   }
@@ -273,7 +273,13 @@ rl.on('line', (line) => {
     onLog: (line) => logs.push(line),
   });
   assert.ok(session);
-  const result = await session.send("hello", { imagePaths: [imagePath] });
+  const outputSchema = {
+    type: "object",
+    properties: { replyMarkdown: { type: "string" } },
+    required: ["replyMarkdown"],
+    additionalProperties: false,
+  };
+  const result = await session.send("hello", { imagePaths: [imagePath], outputSchema });
   session.stop();
 
   assert.equal(result.exitCode, 0);
@@ -283,17 +289,126 @@ rl.on('line', (line) => {
     cache_read_input_tokens: 2,
     output_tokens: 7,
   });
+  assert.deepEqual(result.structuredOutput, { replyMarkdown: "ok" });
   assert.match(logs.join("\n"), /thread\/resume failed \(missing thread\) - starting a fresh thread/);
-  assert.match(logs.join("\n"), /\[codex\] ok/);
+  assert.match(logs.join("\n"), /replyMarkdown/);
   const seen = JSON.parse(await readFile(seenFile, "utf8")) as Array<{
     method?: string;
-    params?: { input?: unknown[] };
+    params?: { input?: unknown[]; outputSchema?: unknown };
   }>;
   const turnStart = seen.find((msg) => msg.method === "turn/start");
   assert.deepEqual(turnStart?.params?.input, [
     { type: "text", text: "hello", text_elements: [] },
     { type: "localImage", path: imagePath },
   ]);
+  assert.deepEqual(turnStart?.params?.outputSchema, outputSchema);
+});
+
+test("Claude one-shot run passes --json-schema and reads structured_output", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-claude-structured-"));
+  const binDir = join(dir, "bin");
+  const seenFile = join(dir, "seen.json");
+  await mkdir(binDir);
+  const claude = join(binDir, "claude");
+  await writeFile(
+    claude,
+    `#!/usr/bin/env node
+require("node:fs").writeFileSync(process.env.SEEN_FILE, JSON.stringify(process.argv.slice(2)));
+const result = process.env.MISSING_OUTPUT
+  ? { type: "result", is_error: false, session_id: "claude-session" }
+  : { type: "result", is_error: false, session_id: "claude-session", structured_output: { replyMarkdown: "Hello." } };
+process.stdout.write(JSON.stringify(result) + "\\n");
+`,
+    "utf8",
+  );
+  await chmod(claude, 0o755);
+  const outputSchema = {
+    type: "object",
+    properties: { replyMarkdown: { type: "string" } },
+    required: ["replyMarkdown"],
+    additionalProperties: false,
+  };
+
+  try {
+    const result = await getAdapter("claude").run({
+      home: dir,
+      prompt: "reply",
+      env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}`, SEEN_FILE: seenFile },
+      outputSchema,
+      signal: AbortSignal.timeout(5000),
+      onLog: () => {},
+    });
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.sessionId, "claude-session");
+    assert.deepEqual(result.structuredOutput, { replyMarkdown: "Hello." });
+    const argv = JSON.parse(await readFile(seenFile, "utf8")) as string[];
+    assert.deepEqual(argv.slice(argv.indexOf("--output-format"), argv.indexOf("--output-format") + 2), [
+      "--output-format",
+      "json",
+    ]);
+    assert.deepEqual(JSON.parse(argv[argv.indexOf("--json-schema") + 1]), outputSchema);
+
+    const missing = await getAdapter("claude").run({
+      home: dir,
+      prompt: "reply",
+      env: {
+        ...process.env,
+        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+        SEEN_FILE: seenFile,
+        MISSING_OUTPUT: "1",
+      },
+      outputSchema,
+      signal: AbortSignal.timeout(5000),
+      onLog: () => {},
+    });
+    assert.equal(missing.exitCode, 1);
+    assert.match(missing.error ?? "", /without a valid structured output/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("Codex one-shot run writes --output-schema and parses the final JSON object", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-codex-structured-"));
+  const binDir = join(dir, "bin");
+  const seenFile = join(dir, "seen.json");
+  await mkdir(binDir);
+  const codex = join(binDir, "codex");
+  await writeFile(
+    codex,
+    `#!/usr/bin/env node
+require("node:fs").writeFileSync(process.env.SEEN_FILE, JSON.stringify(process.argv.slice(2)));
+process.stdout.write(JSON.stringify({ replyMarkdown: "Hello." }, null, 2) + "\\n");
+`,
+    "utf8",
+  );
+  await chmod(codex, 0o755);
+  const outputSchema = {
+    type: "object",
+    properties: { replyMarkdown: { type: "string" } },
+    required: ["replyMarkdown"],
+    additionalProperties: false,
+  };
+
+  try {
+    const result = await getAdapter("codex").run({
+      home: dir,
+      prompt: "reply",
+      env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}`, SEEN_FILE: seenFile },
+      outputSchema,
+      signal: AbortSignal.timeout(5000),
+      onLog: () => {},
+    });
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(result.structuredOutput, { replyMarkdown: "Hello." });
+    const argv = JSON.parse(await readFile(seenFile, "utf8")) as string[];
+    assert.equal(argv[0], "exec");
+    const schemaPath = argv[argv.indexOf("--output-schema") + 1];
+    assert.deepEqual(JSON.parse(await readFile(schemaPath, "utf8")), outputSchema);
+    assert.equal((await stat(schemaPath)).mode & 0o777, 0o600);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("Codex app-server session aborts when a turn produces no output", async () => {
@@ -551,6 +666,59 @@ process.stdout.write(JSON.stringify({ type: "end", stopReason: "EndTurn", sessio
     "low",
   ]);
   await rm(dir, { recursive: true, force: true });
+});
+
+test("Grok session passes --json-schema and reads structuredOutput", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-grok-structured-"));
+  const binDir = join(dir, "bin");
+  const seenFile = join(dir, "seen.json");
+  await mkdir(binDir);
+  const grok = join(binDir, "grok");
+  await writeFile(
+    grok,
+    `#!/usr/bin/env node
+require("node:fs").writeFileSync(process.env.SEEN_FILE, JSON.stringify(process.argv.slice(2)));
+process.stdout.write(JSON.stringify({
+  sessionId: "grok-structured-session",
+  modelId: "grok-test",
+  usage: { input_tokens: 4, output_tokens: 2 },
+  structuredOutput: { replyMarkdown: "Hello." }
+}) + "\\n");
+`,
+    "utf8",
+  );
+  await chmod(grok, 0o755);
+  const outputSchema = {
+    type: "object",
+    properties: { replyMarkdown: { type: "string" } },
+    required: ["replyMarkdown"],
+    additionalProperties: false,
+  };
+
+  try {
+    const session = getAdapter("grok").startSession?.({
+      home: dir,
+      env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}`, SEEN_FILE: seenFile },
+      standingPrompt: "standing",
+      onLog: () => {},
+    });
+    assert.ok(session);
+    const result = await session.send("reply", { outputSchema });
+    session.stop();
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.sessionId, "grok-structured-session");
+    assert.deepEqual(result.structuredOutput, { replyMarkdown: "Hello." });
+    assert.deepEqual(result.usage, { input_tokens: 4, cache_read_input_tokens: 0, output_tokens: 2 });
+    const argv = JSON.parse(await readFile(seenFile, "utf8")) as string[];
+    assert.deepEqual(argv.slice(argv.indexOf("--output-format"), argv.indexOf("--output-format") + 2), [
+      "--output-format",
+      "json",
+    ]);
+    assert.deepEqual(JSON.parse(argv[argv.indexOf("--json-schema") + 1]), outputSchema);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("Grok headless session resumes after a stale session id", async () => {

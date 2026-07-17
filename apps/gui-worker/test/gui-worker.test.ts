@@ -2307,7 +2307,17 @@ test("gui windows choose agents from the selected workflow", async () => {
       id: string;
       defaultCoordinatorAgentId: string;
       agentIds: string[];
-      agents: { id: string; name: string; role: string }[];
+      agents: {
+        id: string;
+        name: string;
+        role: string;
+        structuredReply?: {
+          bodyField: string;
+          trailingJsonField?: string;
+          trailingJsonLabel?: string;
+          outputSchema: Record<string, unknown>;
+        };
+      }[];
     }[];
   }>(await worker.fetch(new Request("https://gui/gui/summary"), bindings));
   const ieltsWorkflow = summary.workflows.find((workflow) => workflow.id === "ielts-study");
@@ -2359,17 +2369,38 @@ test("gui windows choose agents from the selected workflow", async () => {
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Explain the highlighted phrases in the same visible Tip line/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /after any natural-English expression for what the learner wrote/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not rely on phrase click cards/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /End your reply with one hidden WordCards JSON block/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /"sentences"/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /"core":"life feels"/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /"token":"Your"/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /"meaningZh":"微笑"/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /structured reply delivery is active/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Otherwise end the visible answer with one hidden WordCards/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Include every distinct English word token/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not skip words because they are common/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /IPA phonetics wrapped in slashes/);
-  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /fill word cards and render core\/phrase highlights/);
+  assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /The app hides this data from the learner/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Do not put prose inside WordCards/);
   assert.match(ieltsWorkflow?.agents[0]?.role ?? "", /Keep replies compact/);
+  const structuredReply = ieltsWorkflow?.agents[0]?.structuredReply;
+  assert.equal(structuredReply?.bodyField, "replyMarkdown");
+  assert.equal(structuredReply?.trailingJsonField, "wordCards");
+  assert.equal(structuredReply?.trailingJsonLabel, "WordCards");
+  const schema = structuredReply?.outputSchema as {
+    required?: string[];
+    properties?: {
+      wordCards?: {
+        required?: string[];
+        properties?: { cards?: { items?: { required?: string[] } } };
+      };
+    };
+  };
+  assert.deepEqual(schema.required, ["replyMarkdown", "wordCards"]);
+  assert.deepEqual(schema.properties?.wordCards?.required, ["sentences", "cards"]);
+  assert.deepEqual(schema.properties?.wordCards?.properties?.cards?.items?.required, [
+    "token",
+    "lemma",
+    "meaningZh",
+    "partOfSpeech",
+    "phonetic",
+    "syllables",
+    "roots",
+  ]);
 
   const single = await json<{
     conversation: {

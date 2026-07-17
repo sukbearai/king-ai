@@ -50,7 +50,9 @@ King AI 把工作建模成一个小型团队。**角色模板**是一套小而**
 
 模板不是 agent。具体花名册把 agent 映射到模板，并且可以**把一个模板折叠进另一个**，而不是 1:1 配人——例如默认 GUI 软件开发团队是精简的 King AI CEO（`planner`）、Dev（`builder`）和 Reviewer（`reviewer`）三人组，收尾职责由 planner 承担，而不是另设 summarizer。领域 agent 也是同理：雅思 coach 是单 agent 工作流，在协作维度上复用通用的 `builder` 模板（它直接干活），而它的学科专长写在自由文本 role 里，不另造模板。这样模板集保持通用、可跨领域复用——**agent 懂什么**取决于它的 role 和所属的**工作流模板**，而不是协作词表。
 
-在 IELTS Study 工作流中，coach 保持可见英文自然，把结构化标注放在隐藏的 `WordCards:` JSON 块里。JSON 里的 `sentences` 会把每个可见英文句子拆成 clauses：简单句也要有一个 clause；并列句、复合句、复杂句和并列复合句要覆盖每个有限动词主句、并列分句、从句或关系从句。每个 clause 都要提供一个逐字连续出现的简短 `core`，`phrases` 只标同一分句中的有用短词组。每个英文单词都可点击：`cards` 应为每个可见英文单词 token 提供结构化中文义、词性（`partOfSpeech`）、IPA 音标、音节拆分以及简短的中文词根词缀拆解（`roots`）。runtime 信任 coach，不再拦截或拒绝回复，而是尽力渲染这个合同：能匹配上的句子/分句高亮和词卡就渲染，coach 漏掉的词就回退到自动生成的词卡，并在学习者看到回复前把隐藏的 JSON 块剥掉。
+在 IELTS Study 工作流中，能够唯一确定单个会话的 turn 会使用所选本地引擎的原生 JSON Schema 输出。引擎返回一个对象，把学习者可见文本放在 `replyMarkdown`，把标注放在 `wordCards`；runner 校验这些配置字段，通过现有 runtime 账本发布回复，关闭 pinned task，并在模型已经记录 reply action 时避免重复发布。落盘前，runner 会把 `wordCards` 重新序列化为现有的隐藏 `WordCards:` 块，因此历史消息和 GUI 解析器的线格式保持不变。横跨多个会话的 turn 继续使用原有文本输出路径，因为 runner 不能安全猜测回复目标。
+
+`sentences` 会把每个可见英文句子拆成 clauses：简单句也要有一个 clause；并列句、复合句、复杂句和并列复合句要覆盖每个有限动词主句、并列分句、从句或关系从句。每个 clause 都要提供一个逐字连续出现的简短 `core`，`phrases` 只标同一分句中的有用短词组。每个英文单词都可点击：`cards` 应为每个可见英文单词 token 提供结构化中文义、词性（`partOfSpeech`）、IPA 音标、音节拆分以及简短的中文词根词缀拆解（`roots`）。JSON Schema 保证回复的结构形状，语义匹配仍采用 best-effort：GUI 会渲染能匹配上的句子、分句高亮和词卡，为漏掉的单词回退生成词卡，并在学习者看到回复前剥掉隐藏 JSON。
 
 模型仍然负责策略和内容；系统负责身份、归属、幂等、任务状态流转和持久审计记录。
 

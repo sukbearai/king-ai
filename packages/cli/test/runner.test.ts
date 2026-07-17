@@ -6,10 +6,12 @@ import {
   buildAgendaDelta,
   buildChatDelta,
   appendRuntimePreamble,
+  AgentRunner,
   buildRuntimePreambleSection,
   agentSessionFile,
   conversationSessionScope,
   failOpenStreakAfterDeferral,
+  formatStructuredReplyBody,
   formatTriageNote,
   formatSteerPrompt,
   isContextOverflow,
@@ -44,11 +46,20 @@ import {
   turnSessionScope,
   replaceWakeStreamController,
   sanitizeNestedEngineEnv,
+  selectStructuredReplyContract,
   swallowTurnRejection,
+  structuredReplyDeliveryInstruction,
   unreadBatchKey,
   visibleEngineError,
   wakeEventKey,
 } from "../src/runner.js";
+
+const STRUCTURED_REPLY = {
+  outputSchema: { type: "object" },
+  bodyField: "replyMarkdown",
+  trailingJsonField: "wordCards",
+  trailingJsonLabel: "WordCards",
+};
 
 test("agentSessionFile scopes session ids by engine", () => {
   assert.match(agentSessionFile("king-ai-ceo", "claude"), /king-ai-ceo\.claude\.session$/);
@@ -65,6 +76,63 @@ test("turnSessionScope isolates single-conversation turns", () => {
   assert.equal(turnSessionScope(null, ["IELTS"]), conversationSessionScope("IELTS"));
   assert.equal(turnSessionScope(null, ["IELTS", "雅思二"]), "default");
   assert.equal(turnSessionScope(null, []), "default");
+});
+
+test("selectStructuredReplyContract requires one unambiguous conversation", () => {
+  assert.equal(selectStructuredReplyContract(undefined, { conversationId: "IELTS" }, new Map()), null);
+  assert.deepEqual(
+    selectStructuredReplyContract(
+      STRUCTURED_REPLY,
+      { conversationId: " IELTS ", requestId: "request-1", taskId: "task-1" },
+      new Map([["IELTS", "message-1"]]),
+    ),
+    { conversationId: "IELTS", requestId: "request-1", messageId: "message-1", taskId: "task-1" },
+  );
+  assert.deepEqual(
+    selectStructuredReplyContract(STRUCTURED_REPLY, { taskId: "task-2" }, new Map([["IELTS", "message-2"]])),
+    { conversationId: "IELTS", messageId: "message-2", taskId: "task-2" },
+  );
+  assert.equal(
+    selectStructuredReplyContract(
+      STRUCTURED_REPLY,
+      null,
+      new Map([
+        ["IELTS", "message-1"],
+        ["IELTS-2", "message-2"],
+      ]),
+    ),
+    null,
+  );
+});
+
+test("formatStructuredReplyBody preserves the existing hidden WordCards contract", () => {
+  assert.equal(
+    formatStructuredReplyBody(STRUCTURED_REPLY, {
+      replyMarkdown: "Hello there.",
+      wordCards: { sentences: [], cards: [{ token: "Hello" }] },
+    }),
+    'Hello there.\n\nWordCards: {"sentences":[],"cards":[{"token":"Hello"}]}',
+  );
+  assert.equal(formatStructuredReplyBody(STRUCTURED_REPLY, { replyMarkdown: "Hello" }), null);
+  assert.equal(formatStructuredReplyBody(STRUCTURED_REPLY, { replyMarkdown: "  ", wordCards: {} }), null);
+});
+
+test("structured reply turns reserve delivery for the runner", () => {
+  const instruction = structuredReplyDeliveryInstruction(STRUCTURED_REPLY);
+  assert.match(instruction, /replyMarkdown/);
+  assert.match(instruction, /wordCards/);
+  assert.match(instruction, /Do not call king-ai reply or king-ai task done/);
+});
+
+test("AgentRunner notices structured reply contract changes", () => {
+  const config = { serverUrl: "https://example.test", computerId: "computer", deviceToken: "token" };
+  const agent = { id: "ielts-tutor", name: "IELTS Coach", engine: "grok" as const, structuredReply: STRUCTURED_REPLY };
+  const runner = new AgentRunner(config, agent, "grok");
+  assert.equal(runner.configMatches(agent, "grok"), true);
+  assert.equal(
+    runner.configMatches({ ...agent, structuredReply: { ...STRUCTURED_REPLY, bodyField: "visibleReply" } }, "grok"),
+    false,
+  );
 });
 
 test("shouldSteerLiveTurn suppresses cross-conversation live steering", () => {
