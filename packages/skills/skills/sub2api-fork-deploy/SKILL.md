@@ -1,6 +1,6 @@
 ---
 name: sub2api-fork-deploy
-description: "Build and safely deploy an exact commit from a Sub2API GitHub fork to an existing Docker Compose server, then converge back to an official tagged image when the release catches up. Use when official Sub2API images lag a fork or main branch, when a custom linux/amd64 or linux/arm64 image must be built and transferred, when an official release now contains the deployed fork commit, or when updating only the Sub2API application while preserving PostgreSQL, Redis, data, configuration, backups, health evidence, and a tested rollback path."
+description: "Build and safely deploy an exact commit from a Sub2API GitHub fork to an existing Docker Compose server, then converge back to an official tagged image when the release catches up. Use when official Sub2API images lag a fork or main branch, when a custom linux/amd64 or linux/arm64 image must be built and transferred, when an official release now contains the deployed fork commit, when updating only the Sub2API application while preserving PostgreSQL, Redis, data, configuration, backups, health evidence, and a tested rollback path, or when publishing the deployment through a Cloudflare Tunnel and debugging public 502 Bad Gateway errors from a containerized cloudflared."
 ---
 
 # Sub2API Fork Deploy
@@ -296,6 +296,44 @@ If health, migrations, or representative traffic fail:
 
 Do not restore PostgreSQL automatically. First determine whether the new migration is additive and backward compatible. A database restore is a separate destructive recovery requiring an explicit maintenance window, stopped writes, and user approval.
 
+## 10. Expose via Cloudflare Tunnel
+
+When publishing the deployment through a token-based Cloudflare Tunnel, run cloudflared as its own container, detached and restart-safe:
+
+```bash
+docker run -d --name cloudflared --network host --restart unless-stopped \
+  cloudflare/cloudflared:latest tunnel --no-autoupdate run --token <tunnel-token>
+```
+
+Treat the tunnel token as a credential: never persist it in this skill, source control, or logs beyond the run command the operator supplies.
+
+Two independent misconfigurations each produce an identical public `502 Bad Gateway`; distinguish them from `docker logs cloudflared`, not from the browser:
+
+- `dial tcp 127.0.0.1:<port>: connect: connection refused` — network-namespace mismatch. On the default bridge network, `127.0.0.1` inside the cloudflared container is the container itself, never the host, so a dashboard route pointing at `127.0.0.1:<port>` cannot work. Fix with `--network host` (route URL stays `127.0.0.1:<port>`), or attach cloudflared to the Compose network and set the route URL to `http://<app-service>:<port>`.
+- `tls: first record does not look like a TLS handshake` — protocol mismatch. Sub2API serves plain HTTP on its port; a route with Service Type `HTTPS` makes cloudflared attempt TLS against it. Set the route Service Type to `HTTP`. Browser-to-Cloudflare traffic remains HTTPS regardless; the type only governs the cloudflared-to-origin hop.
+
+Prove the origin protocol from the host before configuring or blaming the route:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}' -m 5 http://127.0.0.1:<port>/
+curl -sk -o /dev/null -w '%{http_code}' -m 5 https://127.0.0.1:<port>/
+```
+
+A token-run tunnel is remotely managed: hostname, path, Service Type, and URL are editable only in the Zero Trust dashboard. Nothing on the server can change ingress, so a protocol or hostname fix requires the operator to edit the published application route there.
+
+Success evidence, in order: the startup precheck table reports all `PASS`; the logs contain four `Registered tunnel connection` lines; a public `curl -s -o /dev/null -w '%{http_code}' https://<hostname>/` returns the application's expected status. Dashboard edits propagate within seconds; re-test rather than restarting cloudflared.
+
+For multi-user traffic, clear the QUIC warning `failed to sufficiently increase receive buffer size` by raising UDP buffer limits, persisting them, and restarting cloudflared:
+
+```bash
+sysctl -w net.core.rmem_max=7500000 net.core.wmem_max=7500000
+printf 'net.core.rmem_max=7500000\nnet.core.wmem_max=7500000\n' \
+  >/etc/sysctl.d/99-quic-buffer.conf
+docker restart cloudflared
+```
+
+Confirm the warning is absent from post-restart logs and the four connections re-register.
+
 ## Stop Conditions
 
 Stop before production mutation when any of these is true:
@@ -322,4 +360,5 @@ Report:
 - Rollback image tag and exact app-only rollback command shape.
 - Whether the image is registry-published or local-only, including the `docker compose pull` consequence.
 - For official convergence: release tag, release commit, manifest digest, commit relationship, and retained custom rollback tag.
+- For tunnel exposure: cloudflared network mode, route Service Type and origin URL shape, registered connection count, sysctl buffer state, and the public hostname status code — without the tunnel token.
 - Confirmation that unrelated local worktree changes were preserved.
