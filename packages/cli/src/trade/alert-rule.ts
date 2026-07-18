@@ -2,6 +2,12 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { TRADE_ALERT_LOG_PATH } from "../paths.js";
 import {
+  buildDeterministicTradeAlertAdvice,
+  generateTradeAlertAdvice,
+  tradeAlertAdviceEnabled,
+  type TradeAlertAdvice,
+} from "./alert-advice.js";
+import {
   confluenceEnabled,
   confluenceWindowSeconds,
   dotGet,
@@ -156,6 +162,8 @@ export interface AlertRule {
   /** Canonical rule id. */
   readonly ruleKey: string;
   readonly defaultCooldown: number;
+  /** Optional rule-owned source health reported after a successful check call. */
+  readonly heartbeatStatus?: () => "ok" | "degraded" | "error";
   check(state: AlertState): Promise<Alert[]> | Alert[];
 }
 
@@ -213,6 +221,27 @@ export async function filterTgWorthy(alerts: Alert[]): Promise<Alert[]> {
     result.push(a);
   }
   return result;
+}
+
+export async function buildTgAlertItems(
+  alerts: Alert[],
+  config: TradeConfig,
+  adviceGenerator: (alerts: Alert[]) => Promise<TradeAlertAdvice> = generateTradeAlertAdvice,
+): Promise<Array<{ format(): string }>> {
+  const formatted = alerts.map((alert) => ({ format: () => formatAlert(alert) }));
+  const adviceAlerts = alerts.filter((alert) => !alert.tags.includes("source-health"));
+  if (!adviceAlerts.length || !tradeAlertAdviceEnabled(config)) return formatted;
+
+  let advice: TradeAlertAdvice;
+  try {
+    advice = await adviceGenerator(adviceAlerts);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`[alert-advice] generator failed, using local fallback: ${message}\n`);
+    advice = buildDeterministicTradeAlertAdvice(adviceAlerts);
+  }
+  formatted.push({ format: () => advice.text });
+  return formatted;
 }
 
 async function applyRegimeCap(alerts: Alert[]): Promise<void> {
@@ -275,6 +304,8 @@ export interface RunRuleTickOptions {
   confluenceEnabled?: boolean;
   confluenceWindowSeconds?: number;
   tickTimeoutMs?: number;
+  /** Test seam; production uses the configured local-agent chain. */
+  adviceGenerator?: (alerts: Alert[]) => Promise<TradeAlertAdvice>;
   /** When true, rethrow after recording heartbeat (used by scheduler isolation tests). */
   rethrow?: boolean;
 }
@@ -301,7 +332,7 @@ export async function runRuleTick(rule: AlertRule, state: AlertState, options: R
     await store.setHeartbeat(rule.ruleKey, {
       ruleName: rule.name,
       lastCheck: Date.now() / 1000,
-      status: "ok",
+      status: rule.heartbeatStatus?.() ?? "ok",
       durationMs: elapsedMs,
     });
 
@@ -329,10 +360,8 @@ export async function runRuleTick(rule: AlertRule, state: AlertState, options: R
       const tgAlerts = await filterTgWorthy(alerts);
       if (tgAlerts.length) {
         const header = `🔔 交易告警 — ${formatDisplayTime(new Date(), "hm")}`;
-        const chunks = chunkAlertMessages(
-          tgAlerts.map((a) => ({ format: () => formatAlert(a) })),
-          header,
-        );
+        const formatted = await buildTgAlertItems(tgAlerts, config, options.adviceGenerator);
+        const chunks = chunkAlertMessages(formatted, header);
         for (const chunk of chunks) {
           const delivered = await sendTelegram(chunk, config);
           if (!delivered) options.onStatus?.(`规则 ${rule.ruleKey} Telegram 投递失败`);

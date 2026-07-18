@@ -7,6 +7,7 @@ test("trade rule registry exposes all registered rules", () => {
   const ids = listRuleIds();
   assert.ok(ids.includes("treasury"));
   assert.ok(ids.includes("panews"));
+  assert.ok(ids.includes("kimpremium"));
   for (const id of ids) {
     const rule = createRule(id);
     assert.ok(rule, `createRule(${id}) failed`);

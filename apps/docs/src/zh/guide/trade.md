@@ -1,6 +1,6 @@
 # 交易信号（Trade）
 
-`king-ai trade` 是**本地市场情报 sensor/daemon**（不是 multi-agent 协作工作流）。它在单一 supervisor 中运行告警规则、晨报、Twitter 采集和看门狗。栈为 **OpenCLI + tg + 本地 agent + Yahoo**，七条规则使用稳定 id：`treasury`、`meme_large`、`stocks`、`celebrity`、`ticker_velocity`、`discord_wba`、`panews`。
+`king-ai trade` 是**本地市场情报 sensor/daemon**（不是 multi-agent 协作工作流）。它在单一 supervisor 中运行告警规则、晨报、Twitter 采集和看门狗。栈为 **OpenCLI + tg + 本地 agent + Yahoo**，默认七条规则使用稳定 id：`treasury`、`meme_large`、`stocks`、`celebrity`、`ticker_velocity`、`discord_wba`、`panews`；`kimpremium` 韩国杠杆风险规则需要显式启用。
 
 Trade 与多 agent 协作共享 `~/.king-ai` 与本地 agent CLI，但**不共享** task/card/host 工作流状态机。
 
@@ -39,6 +39,8 @@ king-ai trade daemon --push-tg
 ~/.king-ai/trade/scratchpad.json
 ~/.king-ai/trade/rule_state.json
 ~/.king-ai/trade/state/daemon.pid
+~/.king-ai/trade/state/kimpremium_latest.json
+~/.king-ai/trade/state/kimpremium_snapshots.jsonl
 ~/.king-ai/trade/skills/panews/cli.mjs
 ```
 
@@ -56,6 +58,7 @@ king-ai trade daemon --push-tg
 | `alerts.enabled` | 稳定规则 id（默认完整 slim 栈）；旧字母 id 仍可用 |
 | `alerts.poll_seconds` | 统一规则轮询间隔（默认 `120`） |
 | `alerts.tick_timeout_ms` | daemon 全局单规则 tick 超时（设置后覆盖各规则默认） |
+| `alerts.llm_advice` | 为所有最终推送的 warning/critical Telegram 告警追加面向初学者的 LLM 风险建议（默认 `false`） |
 | `alerts.confluence.enabled` | 多规则对同一**非空** asset 共振时将 info 升为 warning（默认 `true`）。旧键：`alerts.confluence_enabled` |
 | `alerts.confluence.window_seconds` | 共振窗口秒数（默认 `900`）。旧键：`alerts.confluence_window_seconds` |
 | `alerts.rule_stagger_ms` | 一轮中规则间隔毫秒（默认 `1000`） |
@@ -64,6 +67,7 @@ king-ai trade daemon --push-tg
 | `verify.step_timeout_ms` | `verify-tg` 单源超时（设置后覆盖规则默认） |
 | `data_sources.pumpfun` / `leaderboard` | 链上晨报板块 |
 | `treasury` | 美债抛售 / 收益率阈值 |
+| `kimpremium` | 韩国杠杆 KPI、采集间隔和阈值（默认不启用） |
 | `alerts.celebrity_tweet.max_classifications_per_tick` | 每轮名人推文最多 LLM 分类数（默认 `8`，范围 `1..50`） |
 | `llm.disabled_backends` | 从回退链排除的本地 agent 后端，例如 `["claude"]` |
 | `llm.agent_tasks.<task>.backend` | 可选任务后端；空值或缺失时依次继承 `llm.default_backend`、`llm.provider`、Codex |
@@ -97,11 +101,12 @@ king-ai trade alert run ticker_velocity --once --push-tg
 | `ticker_velocity` | `tm` | Twitter ticker 提及加速 |
 | `panews` | `q` | PANews 事件（本地 agent 分类） |
 | `discord_wba` | — | Discord WBA 频道（OpenCLI browser） |
+| `kimpremium` | — | 韩国散户杠杆 KPI、日变化与历史波动分位（opt-in） |
 
 ### 告警流水线
 
 ```text
-rule.check → regime 降级 → JSONL 审计 → 共振（仅 asset）→ TG 严重度门槛 → 日 cap（按 ruleId）→ 推送
+rule.check → regime 降级 → 共振（仅 asset）→ JSONL 审计 → TG 严重度门槛 → 日 cap（按 ruleId）→ 可选 LLM 建议 → 推送
 ```
 
 - `info` 级始终写 JSONL；Telegram 默认只推 `warning` 及以上。
@@ -111,6 +116,24 @@ rule.check → regime 降级 → JSONL 审计 → 共振（仅 asset）→ TG �
 - cooldown 持久化在 `~/.king-ai/trade/rule_state.json`。
 
 名人 alpha 为 **LLM 全自动判定**（无人工审批）：本地 agent 决定 `is_alpha` / `alpha_type` / `confidence` / `entities`。任务后端为空或缺失时依次继承 `llm.default_backend`、`llm.provider`、Codex，并跳过 `llm.disabled_backends` 中的后端；选择 Codex 时使用只读且不依赖 daemon 当前目录的调用。每轮默认最多分类 8 条候选，成功判定为非 alpha 后静默 6 小时。JSON 解析失败按 15、30、60 分钟退避并继续重试。X 采集的登录、挑战、采集失败和本地 agent 后端全部耗尽会记录为 heartbeat 错误，不再伪装成健康的无告警；Telegram 投递失败会在告警审计写入后记录日志。
+
+### Kimpremium 杠杆风险
+
+首版只读取 `meta.json`、`series.json` 和 `etf.json`，不启动 Chrome。把 `kimpremium` 加入 `alerts.enabled` 后，规则按 `kimpremium.poll_seconds`（默认 `300`）采集；同一 `asof/generated` 不重复写快照或推送。水平阈值与前 252 个交易日的日变化分位共同判断风险，连续 2/3 次源站失败分别触发 warning/critical。
+
+### 所有 Telegram 告警的 LLM 建议
+
+`alerts.llm_advice=true` 时，每种规则最终通过 Telegram 严重度门槛和日 cap 的 warning/critical 告警，都会按本次发送批次调用一次 `llm.agent_tasks.alert_advice`。消息会附加面向初学者的风险解释，以及保守、中性、激进三种行动框架。源站健康故障不会调用建议，因为旧数据或缺失数据不能产生投资动作。
+
+代码拒绝保证收益、确定性涨跌、满仓/梭哈和具体证券的立即买卖指令；模型不可用、执行异常或输出不合规时改用确定性本地解释，事实告警本身不会丢失。这些内容不知道用户持仓与承受能力，不构成个性化投资建议。
+
+```json
+{
+  "alerts": { "enabled": ["treasury", "kimpremium"], "llm_advice": true },
+  "kimpremium": { "poll_seconds": 300 },
+  "llm": { "agent_tasks": { "alert_advice": { "timeout_ms": 45000 } } }
+}
+```
 
 ## Daemon Supervisor
 

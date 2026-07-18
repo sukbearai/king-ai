@@ -96,6 +96,15 @@ export const RULE_META: Record<string, RuleMeta> = {
     defaultTickTimeoutMs: 120_000,
     tags: ["news"],
   },
+  kimpremium: {
+    id: "kimpremium",
+    legacyIds: [],
+    displayName: "韩国杠杆风险",
+    defaultCooldownSec: 86_400,
+    dailyPushCap: 3,
+    defaultTickTimeoutMs: 90_000,
+    tags: ["macro", "korea", "leverage"],
+  },
 };
 
 const LEGACY_TO_CANONICAL: Record<string, string> = {};

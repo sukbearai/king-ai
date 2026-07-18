@@ -1,6 +1,6 @@
 # Trade Intelligence
 
-`king-ai trade` is a **local market-intelligence sensor/daemon** (not the multi-agent collaboration workflow). It runs alert rules, morning brief, Twitter collection, and a process watchdog inside one supervisor. The stack uses **OpenCLI + tg + local agent + Yahoo** with seven rules under stable ids: `treasury`, `meme_large`, `stocks`, `celebrity`, `ticker_velocity`, `discord_wba`, `panews`.
+`king-ai trade` is a **local market-intelligence sensor/daemon** (not the multi-agent collaboration workflow). It runs alert rules, morning brief, Twitter collection, and a process watchdog inside one supervisor. The stack uses **OpenCLI + tg + local agent + Yahoo** with seven default rules under stable ids: `treasury`, `meme_large`, `stocks`, `celebrity`, `ticker_velocity`, `discord_wba`, `panews`; the `kimpremium` Korea leverage-risk rule is opt-in.
 
 Trade and multi-agent collaboration share `~/.king-ai` and local agent CLIs, but **do not share** the task/card/host workflow state machine.
 
@@ -39,6 +39,8 @@ Important runtime paths:
 ~/.king-ai/trade/scratchpad.json
 ~/.king-ai/trade/rule_state.json
 ~/.king-ai/trade/state/daemon.pid
+~/.king-ai/trade/state/kimpremium_latest.json
+~/.king-ai/trade/state/kimpremium_snapshots.jsonl
 ~/.king-ai/trade/skills/panews/cli.mjs
 ```
 
@@ -56,6 +58,7 @@ Key config sections:
 | `alerts.enabled` | Canonical rule ids (default full slim stack below); legacy short ids still accepted |
 | `alerts.poll_seconds` | Unified rule poll interval (default `120`) |
 | `alerts.tick_timeout_ms` | Global per-rule tick timeout for the daemon (overrides per-rule defaults when set) |
+| `alerts.llm_advice` | Append beginner-readable LLM risk guidance to every outgoing warning/critical Telegram alert (default `false`) |
 | `alerts.confluence.enabled` | Promote info→warning when multiple rules share the same **non-empty** asset (default `true`). Legacy key: `alerts.confluence_enabled` |
 | `alerts.confluence.window_seconds` | Confluence lookback window (default `900`). Legacy: `alerts.confluence_window_seconds` |
 | `alerts.rule_stagger_ms` | Delay between rules in one poll round (default `1000`) |
@@ -65,6 +68,7 @@ Key config sections:
 | `data_sources.pumpfun` | Pump.fun section filters and limits |
 | `data_sources.leaderboard` | Smart-money leaderboard options |
 | `treasury` | Treasury stress: `^TYX` / `^TNX` / `TLT` thresholds |
+| `kimpremium` | Korea leverage KPIs, polling, and thresholds (disabled by default) |
 | `alerts.celebrity_tweet.max_classifications_per_tick` | Maximum celebrity LLM classifications per tick (default `8`, range `1..50`) |
 | `llm.disabled_backends` | Local agent backends to omit from the fallback chain, for example `["claude"]` |
 | `llm.agent_tasks.<task>.backend` | Optional task backend; blank or missing inherits `llm.default_backend`, then `llm.provider`, then Codex |
@@ -98,11 +102,12 @@ king-ai trade alert run ticker_velocity --once --push-tg
 | `ticker_velocity` | `tm` | Twitter ticker mention velocity |
 | `panews` | `q` | PANews events (local agent classification) |
 | `discord_wba` | — | Discord WBA channel (OpenCLI browser) |
+| `kimpremium` | — | Korea retail-leverage KPIs, daily moves, and historical volatility percentiles (opt-in) |
 
 ### Alert pipeline
 
 ```text
-rule.check → regime cap → JSONL audit → confluence (asset only) → TG severity gate → daily cap (by ruleId) → push
+rule.check → regime cap → confluence (asset only) → JSONL audit → TG severity gate → daily cap (by ruleId) → optional LLM guidance → push
 ```
 
 - Info-level alerts are always written to JSONL; Telegram defaults to `warning` and above.
@@ -112,6 +117,24 @@ rule.check → regime cap → JSONL audit → confluence (asset only) → TG sev
 - Cooldowns persist in `~/.king-ai/trade/rule_state.json`.
 
 Celebrity alpha is **LLM-autonomous** (no human approval): the local agent decides `is_alpha` / `alpha_type` / `confidence` / `entities`. A blank task backend inherits `llm.default_backend`, then `llm.provider`, then Codex, and entries in `llm.disabled_backends` are skipped. Celebrity classification uses Codex in read-only, cwd-independent mode when selected. Code only enforces ledger rails — entity must appear in the tweet text, confidence floors (`alerts.celebrity_tweet.min_confidence_alert` / `min_confidence_warning`), cooldowns, and JSONL audit. Each tick classifies at most eight candidates by default; successful non-alpha results are held for six hours. Malformed JSON retries after 15, 30, then 60 minutes and remains retryable. X collection auth/challenge failures, collection errors, and exhausted agent backends become heartbeat errors rather than healthy no-alert results. Telegram delivery failures are logged after alert audit persistence.
+
+### Kimpremium leverage risk
+
+The first version reads `meta.json`, `series.json`, and `etf.json` directly and does not start Chrome. Add `kimpremium` to `alerts.enabled` to activate it. The rule polls at `kimpremium.poll_seconds` (default `300`) and does not append or push the same `asof/generated` snapshot twice. Risk combines level thresholds with daily-change percentiles over the previous 252 trading days. Two/three consecutive source failures raise warning/critical alerts.
+
+### LLM guidance for Telegram alerts
+
+With `alerts.llm_advice=true`, every warning/critical rule that survives the Telegram severity gate and daily cap invokes `llm.agent_tasks.alert_advice` once for that outgoing batch. The message appends a beginner-readable explanation plus conservative, neutral, and aggressive action frameworks. Source-health failures are excluded because stale or missing market facts must not produce investment actions.
+
+Code rejects guaranteed-return language, deterministic price calls, all-in/full-position language, and immediate buy/sell instructions for a specific security. If the model is unavailable, throws, or returns non-compliant output, a deterministic local explanation is used and the factual alert is still delivered. The output does not know the user's holdings or loss capacity and is not personalized investment advice.
+
+```json
+{
+  "alerts": { "enabled": ["treasury", "kimpremium"], "llm_advice": true },
+  "kimpremium": { "poll_seconds": 300 },
+  "llm": { "agent_tasks": { "alert_advice": { "timeout_ms": 45000 } } }
+}
+```
 
 ## Daemon Supervisor
 

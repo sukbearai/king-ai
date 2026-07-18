@@ -4,6 +4,7 @@
     "poll_seconds": 120,
     "rule_stagger_ms": 1000,
     "tick_timeout_ms": 60000,
+    "llm_advice": false,
     "confluence": {
       "enabled": true,
       "window_seconds": 900
@@ -17,6 +18,7 @@
       "min_confidence_warning": 0.72
     }
   },
+  "_comment_opt_in_rules": "Add kimpremium to alerts.enabled to enable the Korea leverage monitor.",
   "briefing": {
     "enabled": ["market", "stocks", "treasury", "telegram", "twitter", "leaderboard", "pumpfun"],
     "schedule_hour": 5,
@@ -66,6 +68,28 @@
     "yield_high_lookback_years": 5,
     "yield_near_high_bps": 5
   },
+  "kimpremium": {
+    "base_url": "https://www.kimpremium.com",
+    "poll_seconds": 300,
+    "request_timeout_ms": 10000,
+    "generated_warning_hours": 48,
+    "generated_critical_hours": 72,
+    "thresholds": {
+      "liq_pct_warning": 95,
+      "liq_pct_critical": 99,
+      "liq_r_warning": 8,
+      "liq_r_critical": 10,
+      "r2_pct_warning": 90,
+      "r2_pct_critical": 97,
+      "util_warning": 80,
+      "util_critical": 90,
+      "mg_pct_warning": 95,
+      "thermo_delta_warning": 5,
+      "thermo_delta_critical": 10,
+      "volatility_warning_percentile": 95,
+      "volatility_critical_percentile": 99
+    }
+  },
   "telegram": {
     "channels": {
       "方程式快讯": "方程式新闻 BWEnews",
@@ -82,7 +106,8 @@
     "claude_model": "",
     "codex_model": "",
     "agent_tasks": {
-      "celebrity_extract": { "timeout_ms": 45000 }
+      "celebrity_extract": { "timeout_ms": 45000 },
+      "alert_advice": { "timeout_ms": 45000 }
     }
   },
   "_comment_legacy_rule_ids": "Legacy short ids still work in alerts.enabled: b=treasury, e=meme_large, f=stocks, t=celebrity, tm=ticker_velocity, q=panews"
