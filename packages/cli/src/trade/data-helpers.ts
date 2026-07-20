@@ -11,6 +11,14 @@ export function nowDisplay(): string {
   return formatDisplayTime(new Date(), "hm");
 }
 
+const OKX_FETCH_BLOCK_MS = 10 * 60 * 1000;
+let okxFetchBlockedUntil = 0;
+
+/** Test helper. */
+export function resetOkxFetchBreakerForTests(): void {
+  okxFetchBlockedUntil = 0;
+}
+
 export async function okxGet(
   path: string,
   params?: Record<string, string>,
@@ -19,6 +27,7 @@ export async function okxGet(
 ): Promise<Record<string, unknown>> {
   const qs = params ? `?${new URLSearchParams(params)}` : "";
   const url = `${OKX_BASE}${path}${qs}`;
+  if (Date.now() < okxFetchBlockedUntil) return okxGetWithCurl(url, timeoutMs);
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
       const res = await fetch(url, {
@@ -31,6 +40,11 @@ export async function okxGet(
       if (attempt < attempts - 1) await new Promise((r) => setTimeout(r, 3000 + Math.random() * 2000));
     }
   }
+  // Node fetch ignores HTTP(S)_PROXY; when OKX is only reachable through the
+  // proxy, every call burns the full retry round before the curl fallback
+  // (which does honor the proxy). Trip a breaker so subsequent calls curl
+  // directly instead of repeating the doomed fetch attempts.
+  okxFetchBlockedUntil = Date.now() + OKX_FETCH_BLOCK_MS;
   return okxGetWithCurl(url, timeoutMs);
 }
 
