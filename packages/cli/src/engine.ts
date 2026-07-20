@@ -161,8 +161,34 @@ export function formatEngineLogLine(engine: EngineId, line: string): string | nu
       if (obj.type === "system" && obj.subtype === "init") return "[claude] session initialized";
       if (obj.type === "assistant") {
         const message = obj.message as { content?: unknown } | undefined;
-        const text = textOfContent(message?.content).replace(/\s+/g, " ").trim();
-        return text ? `[claude] ${text.slice(0, 500)}` : null;
+        const content = message?.content;
+        const lines: string[] = [];
+        const text = textOfContent(content).replace(/\s+/g, " ").trim();
+        if (text) lines.push(`[claude] ${text.slice(0, 500)}`);
+        if (Array.isArray(content)) {
+          for (const part of content) {
+            if (!part || typeof part !== "object" || !("type" in part) || part.type !== "tool_use") continue;
+            const tool = part as { name?: unknown; input?: unknown };
+            const toolName = typeof tool.name === "string" && tool.name.trim() ? tool.name : "tool";
+            const input = tool.input;
+            const command =
+              input && typeof input === "object" && "command" in input && typeof input.command === "string"
+                ? input.command
+                : null;
+            if (command) {
+              lines.push(`[claude] $ ${command.replace(/\s+/g, " ").slice(0, 500)}`);
+              continue;
+            }
+            let compact = "";
+            try {
+              compact = JSON.stringify(input ?? {}).replace(/\s+/g, " ");
+            } catch {
+              compact = String(input ?? "");
+            }
+            lines.push(`[claude] -> ${toolName} ${compact.slice(0, 120)}`);
+          }
+        }
+        return lines.length ? lines.join("\n") : null;
       }
       if (obj.type === "user") {
         const message = obj.message as { content?: unknown } | undefined;

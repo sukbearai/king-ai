@@ -417,6 +417,38 @@ export const guiPageEnhancementStyles = `
       0%, 80%, 100% { transform: translateY(0); opacity: 0.45; }
       40% { transform: translateY(-4px); opacity: 1; }
     }
+    .activity-feed {
+      margin: 2px 0 6px;
+      padding: 8px 10px;
+      border: 1px solid var(--soft-line);
+      background: var(--panel);
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .activity-feed-line {
+      opacity: 0.92;
+    }
+    .activity-feed-more {
+      display: block;
+      width: 100%;
+      margin: 0 0 4px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+      opacity: 0.8;
+    }
+    .activity-feed-more:hover {
+      color: var(--line);
+      opacity: 1;
+    }
     .team-strip {
       display: flex;
       align-items: center;

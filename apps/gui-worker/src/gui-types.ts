@@ -595,6 +595,7 @@ export type State = {
   statusLog: { at: number; status: string; agentId?: string; remediation?: RuntimeRemediation | null }[];
   typingLog: { at: number; conversationId?: string; done?: boolean }[];
   thinkingLog: { at: number; action: "mark" | "unmark"; conversationIds: string[] }[];
+  activityLog?: { at: number; agentId: string; conversationId: string; line: string }[];
   eventLog: { at: number; body: unknown }[];
   wakeLog?: { at: number; event: string; data: unknown }[];
   eventRoutes: EventRoute[];
@@ -650,6 +651,7 @@ export type EntityStateKey =
   | "statusLog"
   | "typingLog"
   | "thinkingLog"
+  | "activityLog"
   | "eventLog"
   | "wakeLog"
   | "eventRoutes"
@@ -918,6 +920,7 @@ export const WAKE_LOG_CAPACITY = 50;
 export const STATUS_LOG_CAPACITY = 200;
 export const TYPING_LOG_CAPACITY = 200;
 export const THINKING_LOG_CAPACITY = 200;
+export const ACTIVITY_LOG_CAPACITY = 300;
 export const EVENT_LOG_CAPACITY = 500;
 export const RUN_LOG_CAPACITY = 500;
 export const RUN_STREAM_CAPACITY = 100;
@@ -943,6 +946,7 @@ export const GUI_ENTITY_STATE_KEYS: EntityStateKey[] = [
   "statusLog",
   "typingLog",
   "thinkingLog",
+  "activityLog",
   "eventLog",
   "wakeLog",
   "eventRoutes",

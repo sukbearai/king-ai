@@ -313,6 +313,32 @@ export const guiPageStyles = `    :root {
       text-align: center;
       padding: 4px 0;
     }
+    .activity-feed {
+      margin: 2px 0 6px;
+      padding: 8px 10px;
+      border: 1px solid var(--soft-line, #ddd);
+      background: var(--panel, #faf9f7);
+      color: var(--muted, #888);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .activity-feed-line { opacity: 0.92; }
+    .activity-feed-more {
+      display: block;
+      width: 100%;
+      margin: 0 0 4px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+      opacity: 0.8;
+    }
     .post {
       display: grid;
       grid-template-columns: 24px minmax(0, 1fr);

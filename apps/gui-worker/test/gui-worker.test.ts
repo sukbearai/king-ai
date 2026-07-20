@@ -4181,9 +4181,12 @@ test("gui page exposes channel chat shell with settings modal", async () => {
   assert.match(html, /loadOlder: '向上滚动加载更早消息\.\.\.'/);
   assert.match(html, /noOlderMessages: '没有更早消息'/);
   assert.match(html, /const olderLine = hasOlder \? t\('loadOlder'\) : t\('noOlderMessages'\)/);
-  assert.match(html, /chatWindow\.classList\.toggle\('empty-state', !visibleRows\.length\)/);
-  assert.match(html, /if \(!visibleRows\.length\) \{[\s\S]*workspace\.scrollTop = 0/);
-  assert.match(html, /shouldStickToBottom && visibleRows\.length/);
+  assert.match(html, /chatWindow\.classList\.toggle\('empty-state', !visibleRows\.length && !activityHtml\)/);
+  assert.match(html, /function activityFeedHtml/);
+  assert.match(html, /class="activity-feed/);
+  assert.match(html, /state\.activityLog/);
+  assert.match(html, /if \(!visibleRows\.length && !activityHtml\) \{[\s\S]*workspace\.scrollTop = 0/);
+  assert.match(html, /shouldStickToBottom && \(visibleRows\.length \|\| activityHtml\)/);
   assert.match(html, /applyLanguage\(\);\s*refresh\(\);/);
   assert.match(html, /class="engine-chip"/);
   assert.match(html, /message\.author_engine/);
@@ -5038,6 +5041,123 @@ test("gui runtime records status, typing, thinking, events, and runs", async () 
   const agent = summary.agents.find((row) => row.id === "dev");
   assert.equal(agent?.remediation?.category, "quota");
   assert.match(agent?.remediation?.actions[0] ?? "", /Open claude locally/);
+});
+
+test("gui runtime ingests activity log lines and exposes them in gui state", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const tokenRes = await json<{ token: string }>(
+    await worker.fetch(
+      new Request("https://gui/api/agents/dev/runtime-token", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${paired.deviceToken}` },
+      }),
+      bindings,
+    ),
+  );
+  const auth = { Authorization: `Bearer ${tokenRes.token}`, "Content-Type": "application/json" };
+
+  const created = await json<{ conversation: { id: string } }>(
+    await worker.fetch(
+      new Request("https://gui/gui/conversations", {
+        method: "POST",
+        body: JSON.stringify({ title: "activity-window" }),
+      }),
+      bindings,
+    ),
+  );
+  const otherId = created.conversation.id;
+
+  const ingest = await json<{ ok: true; appended: number }>(
+    await worker.fetch(
+      new Request("https://gui/runtime/activity", {
+        method: "POST",
+        headers: auth,
+        body: JSON.stringify({
+          conversationId: "king-ai-convo",
+          lines: ["[codex] $ ls", "[codex] done"],
+        }),
+      }),
+      bindings,
+    ),
+  );
+  assert.equal(ingest.appended, 2);
+  await worker.fetch(
+    new Request("https://gui/runtime/activity", {
+      method: "POST",
+      headers: auth,
+      body: JSON.stringify({ conversationId: otherId, lines: ["[codex] other window"] }),
+    }),
+    bindings,
+  );
+
+  // Fill past ACTIVITY_LOG_CAPACITY (300) on the primary conversation, then re-add the other
+  // conversation row so multi-conversation clearing can still be verified.
+  for (let offset = 0; offset < 320; offset += 40) {
+    const chunk = Array.from({ length: 40 }, (_, index) => `line-${offset + index}`);
+    await worker.fetch(
+      new Request("https://gui/runtime/activity", {
+        method: "POST",
+        headers: auth,
+        body: JSON.stringify({ conversationId: "king-ai-convo", lines: chunk }),
+      }),
+      bindings,
+    );
+  }
+  await worker.fetch(
+    new Request("https://gui/runtime/activity", {
+      method: "POST",
+      headers: auth,
+      body: JSON.stringify({ conversationId: otherId, lines: ["[codex] other window"] }),
+    }),
+    bindings,
+  );
+
+  const state = await json<{
+    activityLog: { agentId: string; conversationId: string; line: string }[];
+  }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
+  assert.ok(state.activityLog);
+  assert.equal(state.activityLog.length, 300);
+  // After 3 seed rows + 320 overflow + 1 other re-add = 324 rows, keep last 300.
+  // Index 24 of the full stream is line-21; last is the re-added other-window line.
+  assert.equal(state.activityLog[0]?.line, "line-21");
+  assert.equal(state.activityLog.at(-1)?.line, "[codex] other window");
+  assert.equal(
+    state.activityLog.every((row) => row.agentId === "dev"),
+    true,
+  );
+  assert.equal(
+    state.activityLog.some((row) => row.conversationId === otherId),
+    true,
+  );
+  assert.equal(state.activityLog.filter((row) => row.conversationId === "king-ai-convo").length, 299);
+
+  await json<{ ok: true; conversationId: string }>(
+    await worker.fetch(
+      new Request("https://gui/gui/clear-messages", {
+        method: "POST",
+        body: JSON.stringify({ conversationId: otherId }),
+      }),
+      bindings,
+    ),
+  );
+  const afterConvoClear = await json<{
+    activityLog: { conversationId: string; line: string }[];
+  }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
+  assert.equal(
+    afterConvoClear.activityLog.some((row) => row.conversationId === otherId),
+    false,
+  );
+  assert.ok(afterConvoClear.activityLog.some((row) => row.conversationId === "king-ai-convo"));
+  assert.equal(afterConvoClear.activityLog.length, 299);
+
+  await json<{ ok: true }>(
+    await worker.fetch(new Request("https://gui/gui/clear-messages", { method: "POST" }), bindings),
+  );
+  const afterFullClear = await json<{ activityLog: unknown[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings),
+  );
+  assert.deepEqual(afterFullClear.activityLog, []);
 });
 
 test("gui runtime bounds persisted run stream state", async () => {

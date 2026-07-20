@@ -298,6 +298,15 @@ export function createGuiApp(deps: GuiRouteDeps): Hono<GuiEnv> {
       }),
   );
   app.post(
+    "/runtime/activity",
+    async (c) =>
+      await (await deps.stateForRequest(c)).fetch("https://state/activity", {
+        method: "POST",
+        headers: await deps.forwardHeaders(c, { "Content-Type": "application/json" }),
+        body: JSON.stringify(await c.req.json().catch(() => ({}))),
+      }),
+  );
+  app.post(
     "/runtime/events",
     async (c) =>
       await (await deps.stateForRequest(c)).fetch("https://state/events", {

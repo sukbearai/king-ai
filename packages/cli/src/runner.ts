@@ -724,6 +724,10 @@ export class AgentRunner {
   private sessionScope = DEFAULT_SESSION_SCOPE;
   private triageVerdictCache: { key: string; verdict: TriageVerdict; at: number } | null = null;
   private readonly recentWakeEvents = new Map<string, number>();
+  private activityConversationId: string | null = null;
+  private activityToken: string | null = null;
+  private activityLines: string[] = [];
+  private activityTimer: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly cfg: ComputerConfig,
@@ -1626,7 +1630,55 @@ ${delta}`;
 
   private logEngineLine(line: string): void {
     const display = formatEngineLogLine(this.adapter.id, line);
-    if (display) console.log(`[${this.agent.id}/${this.adapter.id}] ${display.slice(0, 500)}`);
+    if (!display) return;
+    console.log(`[${this.agent.id}/${this.adapter.id}] ${display.slice(0, 500)}`);
+    for (const part of display.split("\n")) {
+      const trimmed = part.trim();
+      if (trimmed) this.bufferActivityLine(trimmed);
+    }
+  }
+
+  private startActivityReporter(conversationId: string | null, token: string): void {
+    this.stopActivityReporter(false);
+    this.activityConversationId = conversationId;
+    this.activityToken = token;
+    this.activityLines = [];
+    if (!conversationId) return;
+    this.activityTimer = setInterval(() => {
+      this.flushActivity();
+    }, 1000);
+  }
+
+  private stopActivityReporter(finalFlush = true): void {
+    if (this.activityTimer) {
+      clearInterval(this.activityTimer);
+      this.activityTimer = null;
+    }
+    if (finalFlush) this.flushActivity();
+    this.activityConversationId = null;
+    this.activityToken = null;
+    this.activityLines = [];
+  }
+
+  private bufferActivityLine(line: string): void {
+    if (!this.activityConversationId) return;
+    this.activityLines.push(line.slice(0, 200));
+    if (this.activityLines.length > 40) {
+      this.activityLines.splice(0, this.activityLines.length - 40);
+    }
+  }
+
+  private flushActivity(): void {
+    if (!this.activityConversationId || !this.activityToken || this.activityLines.length === 0) return;
+    const conversationId = this.activityConversationId;
+    const token = this.activityToken;
+    const lines = this.activityLines.splice(0, 40);
+    void runtimePost(this.cfg.serverUrl, "/activity", token, { conversationId, lines }, this.cfg.tenantId).catch(
+      (err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[${this.agent.id}/${this.adapter.id}] activity flush failed: ${message}`);
+      },
+    );
   }
 
   private preWarmEngineSession(): void {
@@ -1771,6 +1823,7 @@ ${delta}`;
         await this.publishStatus(token, "thinking");
         let typingTimer: NodeJS.Timeout | null = null;
         const typingConvo = structuredContract?.conversationId ?? activeConversationId;
+        this.startActivityReporter(typingConvo, token);
         if (typingConvo) {
           const ping = () => {
             void runtimePost(
@@ -1880,6 +1933,7 @@ ${delta}`;
           bigBrainSem.release();
           stopBeat();
           if (typingTimer) clearInterval(typingTimer);
+          this.stopActivityReporter(true);
           if (typingConvo) {
             await runtimePost(
               this.cfg.serverUrl,

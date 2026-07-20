@@ -1918,6 +1918,43 @@ clearMessages = async function() {
     }
   }
 };
+var activityFeedExpanded = false;
+function hasFreshThinkingMark(state, conversationId) {
+  if (!conversationId) return false;
+  // thinkingLog is append-only, so look at the latest mark/unmark row for this conversation
+  // instead of "any mark ever". Marks refresh every ~6s while the turn runs; one older than 20s
+  // means the runner died mid-turn, so let the feed clear instead of sticking forever.
+  const latest = (state.thinkingLog || []).slice().reverse().find(function(row) {
+    return (row.conversationIds || []).includes(conversationId);
+  });
+  return !!latest && latest.action === 'mark' && (Date.now() - (latest.at || 0)) < 20000;
+}
+function activityFeedHtml(state) {
+  if (!hasFreshThinkingMark(state, activeConversationId)) {
+    activityFeedExpanded = false;
+    return '';
+  }
+  const rows = (state.activityLog || []).filter(function(row) {
+    return row && row.conversationId === activeConversationId && row.line;
+  });
+  if (!rows.length) return '';
+  const visibleLimit = 8;
+  const hiddenCount = Math.max(0, rows.length - visibleLimit);
+  const shown = activityFeedExpanded ? rows : rows.slice(-visibleLimit);
+  const expandLine = hiddenCount > 0 && !activityFeedExpanded
+    ? '<button type="button" class="activity-feed-more" onclick="toggleActivityFeedExpand()">' + escapeHtml(currentLang === 'zh' ? '… 前 ' + hiddenCount + ' 行' : '… ' + hiddenCount + ' earlier lines') + '</button>'
+    : (activityFeedExpanded && hiddenCount > 0
+      ? '<button type="button" class="activity-feed-more" onclick="toggleActivityFeedExpand()">' + escapeHtml(currentLang === 'zh' ? '收起' : 'Collapse') + '</button>'
+      : '');
+  const lines = shown.map(function(row) {
+    return '<div class="activity-feed-line">' + escapeHtml(row.line) + '</div>';
+  }).join('');
+  return '<div class="activity-feed' + (activityFeedExpanded ? ' expanded' : '') + '" aria-live="polite">' + expandLine + lines + '</div>';
+}
+function toggleActivityFeedExpand() {
+  activityFeedExpanded = !activityFeedExpanded;
+  if (window.__lastState) renderMessages(window.__lastState, { preserveScroll: true });
+}
 renderMessages = function(state, options) {
   const serverRows = sortMessagesChronologically((state.messages || []).filter(function(message) { return message.conversation_id === activeConversationId; }));
   reconcileOptimistic(serverRows);
@@ -1959,10 +1996,11 @@ renderMessages = function(state, options) {
 	    return '<article class="post' + pendingClass + unreadClass + '"><div class="avatar">' + escapeHtml(initial) + '</div><div><div class="post-top"><span class="author">' + authorHtml(message) + '</span>' + ttsButtonHtml(message) + '<span class="time">' + formatTime(message.created_at) + '</span></div><div class="' + bodyClass + '">' + bodyHtml + '</div>' + attachmentListHtml(message.attachments) + '</div></article>';
   }).join('');
   const chatWindow = document.getElementById('chatWindow');
-  chatWindow.classList.toggle('empty-state', !visibleRows.length);
-  chatWindow.innerHTML = '<div class="system-line">' + olderLine + '</div>' + html;
+  const activityHtml = activityFeedHtml(state);
+  chatWindow.classList.toggle('empty-state', !visibleRows.length && !activityHtml);
+  chatWindow.innerHTML = '<div class="system-line">' + olderLine + '</div>' + html + activityHtml;
   syncComposerHeight();
-  if (!visibleRows.length) {
+  if (!visibleRows.length && !activityHtml) {
     const workspace = document.querySelector('.workspace');
     if (workspace) workspace.scrollTop = 0;
     shouldStickToBottom = true;
@@ -1970,7 +2008,7 @@ renderMessages = function(state, options) {
     return;
   }
   if (options && options.preserveScroll) updateBackToBottom();
-  else if (shouldStickToBottom && visibleRows.length) scrollToBottom();
+  else if (shouldStickToBottom && (visibleRows.length || activityHtml)) scrollToBottom();
   else updateBackToBottom();
 };
 function displayConversationTitle(row) {

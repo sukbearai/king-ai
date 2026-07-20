@@ -47,6 +47,7 @@ import {
   SAFETY_ACTIONS,
   SAFETY_AUTO_ALLOW,
   STATUS_LOG_CAPACITY,
+  ACTIVITY_LOG_CAPACITY,
   THINKING_LOG_CAPACITY,
   TRIAGE_LOG_CAPACITY,
   TYPING_LOG_CAPACITY,
@@ -405,6 +406,10 @@ export class GuiState implements DurableObject {
       return this.authRuntime(request, async (agentId) =>
         this.thinking("unmark", (await request.json()) as { conversationIds?: string[] }, agentId),
       );
+    if (path === "/activity")
+      return this.authRuntime(request, async (agentId) =>
+        this.activity((await request.json()) as { conversationId?: string; lines?: string[] }, agentId),
+      );
     if (path === "/events")
       return this.authRuntime(request, async () => this.events(await request.json().catch(() => null)));
     if (path === "/notices")
@@ -578,6 +583,7 @@ export class GuiState implements DurableObject {
       statusLog: [],
       typingLog: [],
       thinkingLog: [],
+      activityLog: [],
       eventLog: [],
       wakeLog: [],
       eventRoutes: [],
@@ -682,6 +688,7 @@ export class GuiState implements DurableObject {
     saved.statusLog = (saved.statusLog ?? []).slice(-STATUS_LOG_CAPACITY);
     saved.typingLog = (saved.typingLog ?? []).slice(-TYPING_LOG_CAPACITY);
     saved.thinkingLog = (saved.thinkingLog ?? []).slice(-THINKING_LOG_CAPACITY);
+    saved.activityLog = (saved.activityLog ?? []).slice(-ACTIVITY_LOG_CAPACITY);
     saved.eventLog = (saved.eventLog ?? []).slice(-EVENT_LOG_CAPACITY);
     saved.wakeLog = (saved.wakeLog ?? []).slice(-WAKE_LOG_CAPACITY);
     saved.noticeLog = (saved.noticeLog ?? []).slice(-NOTICE_LOG_CAPACITY);
@@ -889,6 +896,12 @@ export class GuiState implements DurableObject {
         type: `thinking.${row.action}`,
         at: row.at,
         summary: row.conversationIds.join(", ") || "conversation",
+        body: row,
+      })),
+      ...(state.activityLog ?? []).map((row) => ({
+        type: "runtime.activity",
+        at: row.at,
+        summary: `${row.agentId}: ${row.line}`,
         body: row,
       })),
       ...state.runLog.map((row) => ({
@@ -1715,6 +1728,58 @@ export class GuiState implements DurableObject {
     return json({ ok: true });
   }
 
+  private async activity(
+    payload: { conversationId?: string; lines?: string[] },
+    agentId = DEFAULT_AGENT.id,
+  ): Promise<Response> {
+    const conversationId = typeof payload.conversationId === "string" ? payload.conversationId.trim() : "";
+    if (!conversationId) return json({ ok: false, error: "conversationId required" }, { status: 400 });
+    const lines = Array.isArray(payload.lines)
+      ? payload.lines
+          .filter((line): line is string => typeof line === "string")
+          .map((line) => line.slice(0, 200))
+          .filter(Boolean)
+          .slice(0, 40)
+      : [];
+    if (!lines.length) return json({ ok: true, appended: 0 });
+    const state = await this.get();
+    const now = Date.now();
+    state.activityLog ??= [];
+    for (const line of lines) {
+      state.activityLog.push({ at: now, agentId, conversationId, line });
+    }
+    if (state.activityLog.length > ACTIVITY_LOG_CAPACITY) {
+      state.activityLog = state.activityLog.slice(-ACTIVITY_LOG_CAPACITY);
+    }
+    await this.put(state);
+    await this.nudgeGuiClients("runtime.activity");
+    return json({ ok: true, appended: lines.length });
+  }
+
+  // Activity batches land every ~1s while a turn runs; give browsers the usual collapsed "change"
+  // nudge without broadcast()'s wake bookkeeping, which would flood wakeLog and ping agent waiters.
+  private async nudgeGuiClients(eventName: string): Promise<void> {
+    const guiFrame = encode(`event: change\ndata: ${JSON.stringify({ event: eventName, at: Date.now() })}\n\n`);
+    await Promise.all(
+      [...this.waiters].map(async (waiter) => {
+        if (!waiter.gui) return;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            waiter.writer.write(guiFrame),
+            new Promise((_, reject) => {
+              timer = setTimeout(() => reject(new Error("sse write timeout")), 1000);
+            }),
+          ]);
+        } catch {
+          this.waiters.delete(waiter);
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
+      }),
+    );
+  }
+
   private async events(body: unknown): Promise<Response> {
     const state = await this.get();
     state.eventLog.push({ at: Date.now(), body });
@@ -2417,6 +2482,7 @@ export class GuiState implements DurableObject {
       state.cliLog = state.cliLog.filter((row) => !row.argv.includes(conversationId));
       state.typingLog = state.typingLog.filter((row) => row.conversationId !== conversationId);
       state.thinkingLog = state.thinkingLog.filter((row) => !row.conversationIds.includes(conversationId));
+      state.activityLog = (state.activityLog ?? []).filter((row) => row.conversationId !== conversationId);
       const conversation = state.conversations.find((row) => row.id === conversationId);
       if (conversation) conversation.updated_at = Date.now();
       clearRunStateForConversation(state, conversationId);
@@ -2429,6 +2495,7 @@ export class GuiState implements DurableObject {
     state.statusLog = [];
     state.typingLog = [];
     state.thinkingLog = [];
+    state.activityLog = [];
     state.eventLog = [];
     state.eventRoutes = [];
     state.loopRunId = "run-gui";

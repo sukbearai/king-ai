@@ -91,6 +91,58 @@ test("formatEngineLogLine summarizes Claude stream JSON", () => {
   assert.equal(formatEngineLogLine("claude", '{"type":"result","is_error":false}'), "[claude] turn completed");
 });
 
+test("formatEngineLogLine summarizes Claude tool_use blocks", () => {
+  assert.equal(
+    formatEngineLogLine(
+      "claude",
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [{ type: "tool_use", name: "Bash", input: { command: "ls -la" } }],
+        },
+      }),
+    ),
+    "[claude] $ ls -la",
+  );
+  assert.equal(
+    formatEngineLogLine(
+      "claude",
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [{ type: "tool_use", name: "Read", input: { path: "/tmp/notes.md" } }],
+        },
+      }),
+    ),
+    '[claude] -> Read {"path":"/tmp/notes.md"}',
+  );
+  assert.equal(
+    formatEngineLogLine(
+      "claude",
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [
+            { type: "text", text: "running a check" },
+            { type: "tool_use", name: "Bash", input: { command: "pnpm test" } },
+          ],
+        },
+      }),
+    ),
+    "[claude] running a check\n[claude] $ pnpm test",
+  );
+  const longInput = { query: "x".repeat(200) };
+  const longLine = formatEngineLogLine(
+    "claude",
+    JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "tool_use", name: "Search", input: longInput }] },
+    }),
+  );
+  assert.ok(longLine?.startsWith("[claude] -> Search "));
+  assert.ok((longLine?.length ?? 0) <= "[claude] -> Search ".length + 120);
+});
+
 test("claudeStreamUserMessage strips malformed surrogate characters", () => {
   const encoded = claudeStreamUserMessage("hello \uD800 world");
   assert.equal(encoded.endsWith("\n"), true);
