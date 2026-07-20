@@ -1996,7 +1996,10 @@ renderMessages = function(state, options) {
 	    return '<article class="post' + pendingClass + unreadClass + '"><div class="avatar">' + escapeHtml(initial) + '</div><div><div class="post-top"><span class="author">' + authorHtml(message) + '</span>' + ttsButtonHtml(message) + '<span class="time">' + formatTime(message.created_at) + '</span></div><div class="' + bodyClass + '">' + bodyHtml + '</div>' + attachmentListHtml(message.attachments) + '</div></article>';
   }).join('');
   const chatWindow = document.getElementById('chatWindow');
-  const activityHtml = activityFeedHtml(state);
+  // Activity feed display is temporarily hidden (backend ingestion/storage stays live).
+  // Restore by swapping the next two lines.
+  // const activityHtml = activityFeedHtml(state);
+  const activityHtml = '';
   chatWindow.classList.toggle('empty-state', !visibleRows.length && !activityHtml);
   chatWindow.innerHTML = '<div class="system-line">' + olderLine + '</div>' + html + activityHtml;
   syncComposerHeight();
