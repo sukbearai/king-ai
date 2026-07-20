@@ -408,7 +408,10 @@ export class GuiState implements DurableObject {
       );
     if (path === "/activity")
       return this.authRuntime(request, async (agentId) =>
-        this.activity((await request.json()) as { conversationId?: string; lines?: string[] }, agentId),
+        this.activity(
+          (await request.json()) as { conversationId?: string; lines?: string[]; reset?: boolean },
+          agentId,
+        ),
       );
     if (path === "/events")
       return this.authRuntime(request, async () => this.events(await request.json().catch(() => null)));
@@ -1729,7 +1732,7 @@ export class GuiState implements DurableObject {
   }
 
   private async activity(
-    payload: { conversationId?: string; lines?: string[] },
+    payload: { conversationId?: string; lines?: string[]; reset?: boolean },
     agentId = DEFAULT_AGENT.id,
   ): Promise<Response> {
     const conversationId = typeof payload.conversationId === "string" ? payload.conversationId.trim() : "";
@@ -1745,6 +1748,10 @@ export class GuiState implements DurableObject {
     const state = await this.get();
     const now = Date.now();
     state.activityLog ??= [];
+    // A turn's first batch carries reset so the feed shows only the current turn's lines.
+    if (payload.reset === true) {
+      state.activityLog = state.activityLog.filter((row) => row.conversationId !== conversationId);
+    }
     for (const line of lines) {
       state.activityLog.push({ at: now, agentId, conversationId, line });
     }

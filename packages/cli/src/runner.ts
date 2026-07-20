@@ -742,6 +742,7 @@ export class AgentRunner {
   private activityToken: string | null = null;
   private activityLines: string[] = [];
   private activityTimer: NodeJS.Timeout | null = null;
+  private activityFirstFlush = true;
 
   constructor(
     private readonly cfg: ComputerConfig,
@@ -1669,6 +1670,7 @@ ${delta}`;
     this.activityConversationId = conversationId;
     this.activityToken = token;
     this.activityLines = [];
+    this.activityFirstFlush = true;
     if (!conversationId) return;
     this.activityTimer = setInterval(() => {
       this.flushActivity();
@@ -1699,7 +1701,11 @@ ${delta}`;
     const conversationId = this.activityConversationId;
     const token = this.activityToken;
     const lines = this.activityLines.splice(0, 40);
-    void runtimePost(this.cfg.serverUrl, "/activity", token, { conversationId, lines }, this.cfg.tenantId).catch(
+    // The first batch of a turn resets the conversation's feed so stale lines from earlier turns
+    // never resurface under the new turn's thinking indicator.
+    const reset = this.activityFirstFlush;
+    this.activityFirstFlush = false;
+    void runtimePost(this.cfg.serverUrl, "/activity", token, { conversationId, lines, reset }, this.cfg.tenantId).catch(
       (err) => {
         const message = err instanceof Error ? err.message : String(err);
         console.warn(`[${this.agent.id}/${this.adapter.id}] activity flush failed: ${message}`);
@@ -1850,6 +1856,9 @@ ${delta}`;
         let typingTimer: NodeJS.Timeout | null = null;
         const typingConvo = structuredContract?.conversationId ?? activeConversationId;
         this.startActivityReporter(typingConvo, token);
+        // Structured grok turns run in one-shot json mode (no token stream), so give the feed at
+        // least a heartbeat line instead of staying blank for the whole turn.
+        if (structuredReply) this.bufferActivityLine(`[${this.adapter.id}] composing structured reply...`);
         if (typingConvo) {
           const ping = () => {
             void runtimePost(

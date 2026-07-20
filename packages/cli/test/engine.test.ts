@@ -754,7 +754,7 @@ process.stdout.write(JSON.stringify({ type: "end", stopReason: "EndTurn", sessio
   await rm(dir, { recursive: true, force: true });
 });
 
-test("Grok session passes --json-schema and streams structuredOutput", async () => {
+test("Grok session streams structuredOutput when KING_AI_GROK_STREAM_STRUCTURED=1", async () => {
   const dir = await mkdtemp(join(tmpdir(), "king-ai-grok-structured-"));
   const binDir = join(dir, "bin");
   const seenFile = join(dir, "seen.json");
@@ -766,10 +766,79 @@ test("Grok session passes --json-schema and streams structuredOutput", async () 
 require("node:fs").writeFileSync(process.env.SEEN_FILE, JSON.stringify(process.argv.slice(2)));
 process.stdout.write(JSON.stringify({ type: "thought", data: "draft" }) + "\\n");
 process.stdout.write(JSON.stringify({ type: "text", data: "Hello." }) + "\\n");
-process.stdout.write(JSON.stringify({
+const endEvent = JSON.stringify({
   type: "end",
   stopReason: "EndTurn",
   sessionId: "grok-structured-session",
+  modelId: "grok-test",
+  usage: { input_tokens: 4, output_tokens: 2 },
+  structuredOutput: { replyMarkdown: "Hello." }
+}) + "\\n";
+// Split the end event across two chunks to exercise the partial-line reassembly path.
+process.stdout.write(endEvent.slice(0, 25));
+setTimeout(() => process.stdout.write(endEvent.slice(25)), 30);
+`,
+    "utf8",
+  );
+  await chmod(grok, 0o755);
+  const outputSchema = {
+    type: "object",
+    properties: { replyMarkdown: { type: "string" } },
+    required: ["replyMarkdown"],
+    additionalProperties: false,
+  };
+
+  try {
+    const logs: string[] = [];
+    const session = getAdapter("grok").startSession?.({
+      home: dir,
+      env: {
+        ...process.env,
+        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+        SEEN_FILE: seenFile,
+        KING_AI_GROK_STREAM_STRUCTURED: "1",
+      },
+      standingPrompt: "standing",
+      onLog: (line) => logs.push(line),
+    });
+    assert.ok(session);
+    const result = await session.send("reply", { outputSchema });
+    session.stop();
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.sessionId, "grok-structured-session");
+    assert.deepEqual(result.structuredOutput, { replyMarkdown: "Hello." });
+    assert.deepEqual(result.usage, { input_tokens: 4, cache_read_input_tokens: 0, output_tokens: 2 });
+    assert.equal(result.model, "grok-test");
+    assert.ok(logs.some((line) => line.includes("(thinking) draft")));
+    assert.ok(logs.some((line) => line === "[grok] Hello."));
+    // The chunk-split end event must be reassembled, never logged as raw fragments.
+    assert.ok(logs.some((line) => line === "[grok] turn completed"));
+    assert.ok(!logs.some((line) => line.includes("stopReason")));
+    const argv = JSON.parse(await readFile(seenFile, "utf8")) as string[];
+    assert.deepEqual(argv.slice(argv.indexOf("--output-format"), argv.indexOf("--output-format") + 2), [
+      "--output-format",
+      "streaming-json",
+    ]);
+    assert.deepEqual(JSON.parse(argv[argv.indexOf("--json-schema") + 1]), outputSchema);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("Grok session defaults structured turns to one-shot json output", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-grok-structured-json-"));
+  const binDir = join(dir, "bin");
+  const seenFile = join(dir, "seen.json");
+  await mkdir(binDir);
+  const grok = join(binDir, "grok");
+  await writeFile(
+    grok,
+    `#!/usr/bin/env node
+require("node:fs").writeFileSync(process.env.SEEN_FILE, JSON.stringify(process.argv.slice(2)));
+process.stdout.write(JSON.stringify({
+  stopReason: "EndTurn",
+  sessionId: "grok-structured-oneshot",
   modelId: "grok-test",
   usage: { input_tokens: 4, output_tokens: 2 },
   structuredOutput: { replyMarkdown: "Hello." }
@@ -786,28 +855,28 @@ process.stdout.write(JSON.stringify({
   };
 
   try {
-    const logs: string[] = [];
     const session = getAdapter("grok").startSession?.({
       home: dir,
-      env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}`, SEEN_FILE: seenFile },
+      env: {
+        ...process.env,
+        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+        SEEN_FILE: seenFile,
+        KING_AI_GROK_STREAM_STRUCTURED: "",
+      },
       standingPrompt: "standing",
-      onLog: (line) => logs.push(line),
+      onLog: () => {},
     });
     assert.ok(session);
     const result = await session.send("reply", { outputSchema });
     session.stop();
 
     assert.equal(result.exitCode, 0);
-    assert.equal(result.sessionId, "grok-structured-session");
+    assert.equal(result.sessionId, "grok-structured-oneshot");
     assert.deepEqual(result.structuredOutput, { replyMarkdown: "Hello." });
-    assert.deepEqual(result.usage, { input_tokens: 4, cache_read_input_tokens: 0, output_tokens: 2 });
-    assert.equal(result.model, "grok-test");
-    assert.ok(logs.some((line) => line.includes("(thinking) draft")));
-    assert.ok(logs.some((line) => line === "[grok] Hello."));
     const argv = JSON.parse(await readFile(seenFile, "utf8")) as string[];
     assert.deepEqual(argv.slice(argv.indexOf("--output-format"), argv.indexOf("--output-format") + 2), [
       "--output-format",
-      "streaming-json",
+      "json",
     ]);
     assert.deepEqual(JSON.parse(argv[argv.indexOf("--json-schema") + 1]), outputSchema);
   } finally {

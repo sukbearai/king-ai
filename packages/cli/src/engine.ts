@@ -1534,6 +1534,13 @@ export function grokTurnFromStdout(stdout: string, model?: string | null): Engin
   };
 }
 
+// Streaming delivery of schema turns is ~3x slower wall-clock on the grok backend (same token
+// usage, throughput-bound), so default structured turns to one-shot json and let
+// KING_AI_GROK_STREAM_STRUCTURED=1 trade latency for a live thought/text feed.
+function grokStructuredOutputFormat(env: NodeJS.ProcessEnv): "json" | "streaming-json" {
+  return env.KING_AI_GROK_STREAM_STRUCTURED === "1" ? "streaming-json" : "json";
+}
+
 function spawnGrokTurn(
   bin: string,
   argv: string[],
@@ -1564,11 +1571,16 @@ function spawnGrokTurn(
     if (timeoutMs > 0) timer = setTimeout(onAbort, timeoutMs);
 
     const grokLog = createGrokLogSink(opts.onLog);
+    // Stdout chunks can split a JSON event mid-line (large end events span chunks), so hold the
+    // trailing partial line until its newline arrives instead of logging raw fragments.
+    let lineRemainder = "";
     child.stdout?.on("data", (buf) => {
       opts.onOutput?.();
       const text = buf.toString("utf8");
       stdout.push(text);
-      for (const raw of text.split("\n")) {
+      const segments = (lineRemainder + text).split("\n");
+      lineRemainder = segments.pop() ?? "";
+      for (const raw of segments) {
         const line = cleanLine(raw);
         if (line) grokLog(line);
       }
@@ -1583,6 +1595,8 @@ function spawnGrokTurn(
     child.on("close", (code, signalName) => {
       if (timer) clearTimeout(timer);
       opts.signal.removeEventListener("abort", onAbort);
+      const tail = cleanLine(lineRemainder);
+      if (tail) grokLog(tail);
       const exitCode = code ?? (signalName ? 128 : 1);
       const merged = stdout.join("");
       const parsed = grokTurnFromStdout(merged, opts.model);
@@ -1653,8 +1667,7 @@ class GrokSession implements EngineSession {
         reasoningEffort: this.opts.reasoningEffort,
         resumeSessionId,
         standingPrompt,
-        // Always stream so structured turns still emit thought/text deltas for the activity feed.
-        outputFormat: "streaming-json",
+        outputFormat: options?.outputSchema ? grokStructuredOutputFormat(this.opts.env) : "streaming-json",
         imagePaths: options?.imagePaths,
         outputSchema: options?.outputSchema,
       });
@@ -1778,8 +1791,7 @@ class GrokAdapter implements EngineAdapter {
       reasoningEffort: args.reasoningEffort,
       resumeSessionId: args.resumeSessionId,
       standingPrompt: args.standingPrompt,
-      // Always stream so structured turns still emit thought/text deltas for the activity feed.
-      outputFormat: "streaming-json",
+      outputFormat: args.outputSchema ? grokStructuredOutputFormat(args.env) : "streaming-json",
       imagePaths: args.imagePaths,
       outputSchema: args.outputSchema,
     });

@@ -5132,6 +5132,28 @@ test("gui runtime ingests activity log lines and exposes them in gui state", asy
   );
   assert.equal(state.activityLog.filter((row) => row.conversationId === "king-ai-convo").length, 299);
 
+  // A batch flagged reset drops the conversation's earlier rows (new turn starting) but leaves
+  // other conversations untouched.
+  const resetIngest = await json<{ ok: true; appended: number }>(
+    await worker.fetch(
+      new Request("https://gui/runtime/activity", {
+        method: "POST",
+        headers: auth,
+        body: JSON.stringify({ conversationId: "king-ai-convo", lines: ["[grok] fresh turn"], reset: true }),
+      }),
+      bindings,
+    ),
+  );
+  assert.equal(resetIngest.appended, 1);
+  const afterReset = await json<{
+    activityLog: { conversationId: string; line: string }[];
+  }>(await worker.fetch(new Request("https://gui/gui/state"), bindings));
+  assert.deepEqual(
+    afterReset.activityLog.filter((row) => row.conversationId === "king-ai-convo").map((row) => row.line),
+    ["[grok] fresh turn"],
+  );
+  assert.ok(afterReset.activityLog.some((row) => row.conversationId === otherId));
+
   await json<{ ok: true; conversationId: string }>(
     await worker.fetch(
       new Request("https://gui/gui/clear-messages", {
@@ -5149,7 +5171,7 @@ test("gui runtime ingests activity log lines and exposes them in gui state", asy
     false,
   );
   assert.ok(afterConvoClear.activityLog.some((row) => row.conversationId === "king-ai-convo"));
-  assert.equal(afterConvoClear.activityLog.length, 299);
+  assert.equal(afterConvoClear.activityLog.length, 1);
 
   await json<{ ok: true }>(
     await worker.fetch(new Request("https://gui/gui/clear-messages", { method: "POST" }), bindings),
