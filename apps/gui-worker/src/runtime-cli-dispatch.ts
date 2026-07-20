@@ -197,6 +197,9 @@ export async function dispatchRuntimeCli<S, A>(
       created_at: now,
       readBy: [actorId],
     };
+    // Prefer the pending placeholder's id so clients that already rendered it keep a stable key.
+    const postedMessageId =
+      pending && typeof pending.id === "string" && pending.id.trim() ? pending.id.trim() : reply.id;
     if (pending) {
       Object.assign(pending, {
         author_name: reply.author_name,
@@ -215,9 +218,11 @@ export async function dispatchRuntimeCli<S, A>(
     conversation.updated_at = now;
     deps.recordRunAction(state, payload.runId, runContract, actor, "reply", {
       conversationId: conversation.id,
+      replyMessageId: postedMessageId,
       summary: body.slice(0, 160),
     });
-    return success("reply posted");
+    // Additive machine-readable line so runners can annotate the posted message without a second lookup.
+    return success(`reply posted\nmessageId: ${postedMessageId}`);
   }
 
   if (argv[0] === "state") return success(await deps.stateCommand(state, argv.slice(1)));

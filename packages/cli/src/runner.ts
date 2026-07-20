@@ -12,6 +12,7 @@ import type {
   EngineAdapter,
   EngineId,
   EngineSession,
+  JsonSchema,
   RuntimeRun,
   RuntimeRunContract,
   StructuredReplyConfig,
@@ -51,6 +52,9 @@ const BIG_BRAIN_SPAWN_JITTER_MS = Number(process.env.KING_AI_BYOA_BIG_BRAIN_SPAW
 const TRIAGE_SPAWN_JITTER_MS = Number(process.env.KING_AI_BYOA_TRIAGE_SPAWN_JITTER_MS) || 0;
 const AGENDA_QUIET_MS = Number(process.env.KING_AI_AGENDA_QUIET_MS) || 180_000;
 const AGENDA_CHECK_MS = Number(process.env.KING_AI_AGENDA_CHECK_MS) || 120_000;
+const AGENDA_HUMAN_QUIET_MS = Number(process.env.KING_AI_AGENDA_HUMAN_QUIET_MS) || 600_000;
+const STRUCTURED_ANNOTATION_TIMEOUT_MS = 180_000;
+const STRUCTURED_TWO_PHASE_DISABLED = process.env.KING_AI_STRUCTURED_TWO_PHASE === "0";
 const RECENT_WAKE_EVENT_TTL_MS = 30_000;
 const TRIAGE_CACHE_TTL_MS = Number(process.env.KING_AI_TRIAGE_CACHE_TTL_MS) || 15_000;
 const RECENT_WAKE_EVENT_LIMIT = 100;
@@ -112,6 +116,7 @@ interface RunActionsPayload {
     kind?: string;
     conversationId?: string;
     messageId?: string;
+    replyMessageId?: string;
     requestId?: string;
     taskId?: string;
   }>;
@@ -132,6 +137,7 @@ interface AgendaPayload {
   actionable?: boolean;
   brief?: string;
   focus?: string;
+  lastHumanMessageAt?: number | null;
 }
 
 interface RuntimePreamblePayload {
@@ -514,8 +520,88 @@ export function formatStructuredReplyBody(config: StructuredReplyConfig, output:
   return `${body}\n\n${label}: ${serialized}`;
 }
 
+/** True when two-phase delivery is enabled (default) and the config carries a trailing annotation field. */
+export function structuredReplyTwoPhaseEnabled(config: StructuredReplyConfig | undefined): boolean {
+  return Boolean(config?.trailingJsonField) && !STRUCTURED_TWO_PHASE_DISABLED;
+}
+
+/**
+ * Deep-copy `outputSchema` with `trailingJsonField` removed from properties and required.
+ * Leaves the original config object untouched. Returns null when there is nothing to strip.
+ */
+export function reducedStructuredSchema(config: StructuredReplyConfig): StructuredReplyConfig | null {
+  if (!config.trailingJsonField) return null;
+  const trailing = config.trailingJsonField;
+  const schema = structuredClone(config.outputSchema) as Record<string, unknown>;
+  const properties =
+    schema.properties && typeof schema.properties === "object" && !Array.isArray(schema.properties)
+      ? ({ ...(schema.properties as Record<string, unknown>) } as Record<string, unknown>)
+      : null;
+  if (properties && Object.hasOwn(properties, trailing)) delete properties[trailing];
+  if (properties) schema.properties = properties;
+  if (Array.isArray(schema.required)) {
+    schema.required = schema.required.filter((item) => item !== trailing);
+  }
+  const { trailingJsonField: _dropField, trailingJsonLabel: _dropLabel, ...rest } = config;
+  return {
+    ...rest,
+    outputSchema: schema,
+  };
+}
+
+/** Schema for the background annotation-only engine call (trailing field only). */
+export function structuredAnnotationOutputSchema(config: StructuredReplyConfig): JsonSchema | null {
+  const field = config.trailingJsonField;
+  if (!field) return null;
+  const properties =
+    config.outputSchema.properties &&
+    typeof config.outputSchema.properties === "object" &&
+    !Array.isArray(config.outputSchema.properties)
+      ? (config.outputSchema.properties as Record<string, unknown>)
+      : null;
+  const propertySchema = properties && Object.hasOwn(properties, field) ? properties[field] : { type: "object" };
+  return {
+    type: "object",
+    properties: { [field]: propertySchema },
+    required: [field],
+    additionalProperties: false,
+  };
+}
+
+export function structuredAnnotationPrompt(standingPrompt: string, replyBody: string): string {
+  return [
+    standingPrompt.trim(),
+    "",
+    "The learner-visible reply below was already delivered. Produce ONLY the machine annotations object required by your rules for this exact text.",
+    "",
+    replyBody.trim(),
+  ]
+    .filter((line, idx, all) => !(line === "" && all[idx - 1] === ""))
+    .join("\n");
+}
+
+export function parseReplyMessageId(cliText: string | undefined): string | null {
+  if (!cliText) return null;
+  const match = cliText.match(/(?:^|\n)messageId:\s*(\S+)/);
+  return match?.[1]?.trim() || null;
+}
+
+export function shouldDeferAgendaForHumanActivity(
+  lastHumanMessageAt: number | null | undefined,
+  now: number,
+  quietMs: number,
+): boolean {
+  if (lastHumanMessageAt == null || !Number.isFinite(lastHumanMessageAt)) return false;
+  if (!Number.isFinite(quietMs) || quietMs <= 0) return false;
+  return now - lastHumanMessageAt < quietMs;
+}
+
 export function structuredReplyDeliveryInstruction(config: StructuredReplyConfig): string {
-  const trailing = config.trailingJsonField ? ` Put machine-readable annotations in ${config.trailingJsonField}.` : "";
+  // When phase-1 defers annotations, do not ask the model for the trailing field in this turn.
+  const trailing =
+    config.trailingJsonField && !structuredReplyTwoPhaseEnabled(config)
+      ? ` Put machine-readable annotations in ${config.trailingJsonField}.`
+      : "";
   return [
     "Structured reply delivery is active for this turn.",
     `Return exactly one object matching the engine-supplied JSON Schema. Put only learner-visible reply text in ${config.bodyField}.${trailing}`,
@@ -593,11 +679,15 @@ export function shouldHandleWakeEvent(info: WakeEventInfo, agentId: string): boo
 
 // Task-routing SSE wakes carry a taskId contract. When the inbox snapshot is momentarily empty,
 // do not fall through to the slow agenda quiet-path — act on the pinned task immediately.
+// That fast-path only covers snapshot lag on FRESH wakes: a contract requeued behind a busy turn
+// waited long enough for the snapshot to catch up, so an empty inbox there means the message was
+// already handled (e.g. the busy turn replied mid-run) and forcing would double-answer it.
 export function shouldForceActionableTurn(args: {
   hasRealUnread: boolean;
   contract?: RuntimeRunContract | null;
+  requeued?: boolean;
 }): boolean {
-  return !args.hasRealUnread && Boolean(args.contract?.taskId?.trim());
+  return !args.requeued && !args.hasRealUnread && Boolean(args.contract?.taskId?.trim());
 }
 
 /** Drop a queued wake contract once this turn already acked its message or closed its task. */
@@ -743,6 +833,8 @@ export class AgentRunner {
   private activityLines: string[] = [];
   private activityTimer: NodeJS.Timeout | null = null;
   private activityFirstFlush = true;
+  /** Single-flight gate for background structured-annotation passes. */
+  private annotationPassRunning = false;
 
   constructor(
     private readonly cfg: ComputerConfig,
@@ -1570,32 +1662,131 @@ export class AgentRunner {
     contract: RuntimeRunContract,
     config: StructuredReplyConfig,
     output: unknown,
-  ): Promise<string | undefined> {
+  ): Promise<{ warning?: string; messageId?: string; body?: string }> {
     if (!runId) throw new Error("runtime did not create a run for structured reply delivery");
     const body = formatStructuredReplyBody(config, output);
     if (!body) throw new Error("engine structured output does not match the configured reply fields");
 
     const actions = (await this.runActions(token, runId)).actions ?? [];
-    const replied = actions.some(
+    const existingReply = actions.find(
       (action) => action.kind === "reply" && action.conversationId === contract.conversationId,
     );
-    if (!replied) {
+    let messageId =
+      typeof existingReply?.replyMessageId === "string" && existingReply.replyMessageId.trim()
+        ? existingReply.replyMessageId.trim()
+        : null;
+    if (!existingReply) {
       const argv = ["reply", contract.conversationId ?? "", body];
       const quoteId = contract.messageId ?? contract.requestId;
       if (quoteId) argv.push("--quote", quoteId);
-      await this.runtimeCli(token, runId, contract, argv);
+      const cliText = await this.runtimeCli(token, runId, contract, argv);
+      messageId = parseReplyMessageId(cliText);
+      if (!messageId) {
+        // Fallback: re-read run actions for the additive replyMessageId field.
+        const after = (await this.runActions(token, runId)).actions ?? [];
+        const posted = [...after]
+          .reverse()
+          .find((action) => action.kind === "reply" && action.conversationId === contract.conversationId);
+        if (typeof posted?.replyMessageId === "string" && posted.replyMessageId.trim()) {
+          messageId = posted.replyMessageId.trim();
+        }
+      }
     }
 
     if (!contract.taskId || actions.some((action) => action.kind === "task" && action.taskId === contract.taskId)) {
-      return undefined;
+      return { messageId: messageId ?? undefined, body };
     }
     try {
       await this.runtimeCli(token, runId, contract, ["task", "done", contract.taskId]);
-      return undefined;
+      return { messageId: messageId ?? undefined, body };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (isRuntimeAuthError(message)) throw err;
-      return `reply posted, but task ${contract.taskId} could not be closed: ${message}`;
+      return {
+        warning: `reply posted, but task ${contract.taskId} could not be closed: ${message}`,
+        messageId: messageId ?? undefined,
+        body,
+      };
+    }
+  }
+
+  private scheduleStructuredAnnotationPass(args: {
+    token: string;
+    config: StructuredReplyConfig;
+    messageId: string;
+    replyBody: string;
+  }): void {
+    if (this.annotationPassRunning) {
+      console.log(`[${this.agent.id}/${this.adapter.id}] structured annotation pass skipped (already running)`);
+      return;
+    }
+    this.annotationPassRunning = true;
+    void this.runStructuredAnnotationPass(args)
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[${this.agent.id}/${this.adapter.id}] structured annotation failed: ${message}`);
+        void this.publishEvent("structured.annotation_failed", { messageId: args.messageId, error: message }, "warn");
+      })
+      .finally(() => {
+        this.annotationPassRunning = false;
+      });
+  }
+
+  private async runStructuredAnnotationPass(args: {
+    token: string;
+    config: StructuredReplyConfig;
+    messageId: string;
+    replyBody: string;
+  }): Promise<void> {
+    const field = args.config.trailingJsonField;
+    if (!field) return;
+    const outputSchema = structuredAnnotationOutputSchema(args.config);
+    if (!outputSchema) return;
+    const label = args.config.trailingJsonLabel?.trim() || field;
+    const prompt = structuredAnnotationPrompt(this.standingPrompt(), args.replyBody);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), STRUCTURED_ANNOTATION_TIMEOUT_MS);
+    try {
+      // One-shot via adapter.run — never the persistent session, so chat continuity stays clean.
+      const result = await this.adapter.run({
+        home: this.home,
+        prompt,
+        env: this.engineEnv(),
+        model: this.agent.model,
+        fastModel: this.agent.fastModel,
+        reasoningEffort: this.agent.reasoningEffort,
+        standingPrompt: this.standingPrompt(),
+        outputSchema,
+        signal: controller.signal,
+        onLog: (line) => this.logEngineLine(line),
+      });
+      if (result.error || result.exitCode !== 0) {
+        throw new Error(result.error || `annotation engine exit ${result.exitCode}`);
+      }
+      const output = result.structuredOutput;
+      if (!output || typeof output !== "object" || Array.isArray(output)) {
+        throw new Error("annotation engine returned no object");
+      }
+      const row = output as Record<string, unknown>;
+      if (!Object.hasOwn(row, field)) throw new Error(`annotation object missing ${field}`);
+      let token = args.token;
+      try {
+        token = await this.ensureToken();
+      } catch {
+        // Keep the turn token if refresh fails; annotate may still succeed.
+      }
+      const posted = await runtimePost<{ ok?: boolean; skipped?: boolean; error?: string }>(
+        this.cfg.serverUrl,
+        "/message/annotate",
+        token,
+        { messageId: args.messageId, label, json: row[field] },
+        this.cfg.tenantId,
+      );
+      if (!posted?.ok) {
+        throw new Error(posted?.error || "annotate endpoint rejected");
+      }
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -1759,9 +1950,12 @@ ${delta}`;
       return;
     }
     this.busy = true;
+    let turnIteration = 0;
     try {
       do {
         this.pendingRerun = false;
+        const requeued = turnIteration > 0;
+        turnIteration += 1;
         const now = Date.now();
         if (now < this.triageBackoffUntil) break;
         if (now < this.failOpenBackoffUntil) break;
@@ -1790,7 +1984,11 @@ ${delta}`;
           break;
         }
         const { seen, digest, hasReal, imagePaths } = snapshot;
-        const forceRoutedTask = shouldForceActionableTurn({ hasRealUnread: hasReal, contract: activeContract });
+        const forceRoutedTask = shouldForceActionableTurn({
+          hasRealUnread: hasReal,
+          contract: activeContract,
+          requeued,
+        });
         if (!hasReal && !forceRoutedTask) {
           await this.ackSeen(token, seen);
           await this.publishStatus(token, "avail");
@@ -1843,7 +2041,13 @@ ${delta}`;
         }
 
         const structuredContract = selectStructuredReplyContract(this.agent.structuredReply, activeContract, seen);
-        const structuredReply = structuredContract ? this.agent.structuredReply : undefined;
+        const structuredReplyFull = structuredContract ? this.agent.structuredReply : undefined;
+        const twoPhase = structuredReplyTwoPhaseEnabled(structuredReplyFull);
+        // Phase 1 uses a reduced schema (no trailing annotations) so the visible reply lands fast.
+        const structuredReply =
+          twoPhase && structuredReplyFull
+            ? (reducedStructuredSchema(structuredReplyFull) ?? structuredReplyFull)
+            : structuredReplyFull;
         const turnContract: RuntimeRunContract | null = structuredContract
           ? { ...activeContract, ...structuredContract, agentId: this.agent.id }
           : activeContract
@@ -1898,6 +2102,7 @@ ${delta}`;
         let exitCode = 0;
         let turnModel: string | null | undefined;
         let turnUsage: unknown;
+        let pendingAnnotation: { messageId: string; replyBody: string } | null = null;
         const runStartedAt = Date.now();
         const jitter = Math.floor(Math.random() * BIG_BRAIN_SPAWN_JITTER_MS);
         if (jitter > 0) await new Promise((resolve) => setTimeout(resolve, jitter));
@@ -1912,8 +2117,9 @@ ${delta}`;
           const controller = new AbortController();
           const resumeSessionId = this.sessionId;
           const session = this.ensureEngineSession();
+          const turnOutputSchema = structuredReply?.outputSchema;
           const result = session
-            ? await session.send(prompt, { imagePaths, outputSchema: structuredReply?.outputSchema })
+            ? await session.send(prompt, { imagePaths, outputSchema: turnOutputSchema })
             : await this.adapter.run({
                 home: this.home,
                 prompt,
@@ -1924,7 +2130,7 @@ ${delta}`;
                 resumeSessionId: this.sessionId,
                 standingPrompt: this.standingPrompt(),
                 imagePaths,
-                outputSchema: structuredReply?.outputSchema,
+                outputSchema: turnOutputSchema,
                 signal: controller.signal,
                 onLog: (line) => this.logEngineLine(line),
               });
@@ -1941,7 +2147,7 @@ ${delta}`;
             await this.resetEngineSession(sessionResetReason(error));
           if (!error && structuredReply && structuredContract && effectiveRunContract) {
             try {
-              const warning = await this.withRuntimeAuthRetry((freshToken) =>
+              const delivery = await this.withRuntimeAuthRetry((freshToken) =>
                 this.publishStructuredReply(
                   freshToken,
                   run?.runId,
@@ -1950,13 +2156,17 @@ ${delta}`;
                   result.structuredOutput,
                 ),
               );
-              if (warning) {
-                console.warn(`[${this.agent.id}/${this.adapter.id}] ${warning}`);
+              if (delivery.warning) {
+                console.warn(`[${this.agent.id}/${this.adapter.id}] ${delivery.warning}`);
                 await this.publishEvent(
                   "turn.structured_reply_task_close_failed",
-                  { reason, runId: run?.runId, conversationId: typingConvo, warning },
+                  { reason, runId: run?.runId, conversationId: typingConvo, warning: delivery.warning },
                   "warn",
                 );
+              }
+              // Capture for phase-2 only after a successful phase-1 post; schedule after finally.
+              if (twoPhase && structuredReplyFull && delivery.messageId && delivery.body) {
+                pendingAnnotation = { messageId: delivery.messageId, replyBody: delivery.body };
               }
             } catch (err) {
               exitCode = 1;
@@ -1985,6 +2195,16 @@ ${delta}`;
               this.cfg.tenantId,
             );
           }
+        }
+
+        // Phase 2 must not delay turn completion / thinking-unmark / status avail above.
+        if (!error && pendingAnnotation && structuredReplyFull) {
+          this.scheduleStructuredAnnotationPass({
+            token,
+            config: structuredReplyFull,
+            messageId: pendingAnnotation.messageId,
+            replyBody: pendingAnnotation.replyBody,
+          });
         }
 
         if (error) {
@@ -2161,6 +2381,13 @@ ${delta}`;
     if (Date.now() < this.engineBackoffUntil) return;
     const agenda = await runtimeGet<AgendaPayload>(this.cfg.serverUrl, "/agenda", token, this.cfg.tenantId);
     if (!agenda?.actionable || !agenda.brief) return;
+    // Yield agenda work while the human is actively chatting so chat turns are not blocked.
+    if (shouldDeferAgendaForHumanActivity(agenda.lastHumanMessageAt, Date.now(), AGENDA_HUMAN_QUIET_MS)) {
+      console.log(
+        `[${this.agent.id}/${this.adapter.id}] agenda deferred: human active within ${AGENDA_HUMAN_QUIET_MS}ms`,
+      );
+      return;
+    }
     console.log(`[${this.agent.id}/${this.adapter.id}] agenda turn START${agenda.focus ? ` ${agenda.focus}` : ""}`);
     await this.switchSessionScope(DEFAULT_SESSION_SCOPE);
     await this.publishEvent("agenda.started", { focus: agenda.focus ?? null });

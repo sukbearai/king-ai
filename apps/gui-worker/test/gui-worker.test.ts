@@ -5182,6 +5182,161 @@ test("gui runtime ingests activity log lines and exposes them in gui state", asy
   assert.deepEqual(afterFullClear.activityLog, []);
 });
 
+test("runtime message annotate appends trailing JSON idempotently", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const tokenRes = await json<{ token: string }>(
+    await worker.fetch(
+      new Request("https://gui/api/agents/dev/runtime-token", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${paired.deviceToken}` },
+      }),
+      bindings,
+    ),
+  );
+  const auth = { Authorization: `Bearer ${tokenRes.token}`, "Content-Type": "application/json" };
+
+  // Seed a plain agent reply body (phase-1 style: no trailing annotations yet).
+  const posted = await json<{ exitCode: number; text: string }>(
+    await worker.fetch(
+      new Request("https://gui/runtime/cli", {
+        method: "POST",
+        headers: auth,
+        body: JSON.stringify({ argv: ["reply", "king-ai-convo", "Hello learner."] }),
+      }),
+      bindings,
+    ),
+  );
+  assert.equal(posted.exitCode, 0);
+  const messageId = posted.text.match(/messageId:\s*(\S+)/)?.[1];
+  assert.equal(typeof messageId, "string");
+
+  const annotate = await json<{ ok: boolean; skipped?: boolean }>(
+    await worker.fetch(
+      new Request("https://gui/runtime/message/annotate", {
+        method: "POST",
+        headers: auth,
+        body: JSON.stringify({
+          messageId,
+          label: "WordCards",
+          json: { sentences: [], cards: [{ token: "Hello" }] },
+        }),
+      }),
+      bindings,
+    ),
+  );
+  assert.deepEqual(annotate, { ok: true, skipped: false });
+
+  const state = await json<{ messages: { id: string; body: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings),
+  );
+  const body = state.messages.find((row) => row.id === messageId)?.body ?? "";
+  assert.match(body, /^Hello learner\.\n\nWordCards: /);
+  assert.match(body, /"token":"Hello"/);
+
+  const again = await json<{ ok: boolean; skipped?: boolean }>(
+    await worker.fetch(
+      new Request("https://gui/runtime/message/annotate", {
+        method: "POST",
+        headers: auth,
+        body: JSON.stringify({
+          messageId,
+          label: "WordCards",
+          json: { sentences: [], cards: [{ token: "dup" }] },
+        }),
+      }),
+      bindings,
+    ),
+  );
+  assert.deepEqual(again, { ok: true, skipped: true });
+  const after = await json<{ messages: { id: string; body: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings),
+  );
+  assert.equal(after.messages.find((row) => row.id === messageId)?.body, body);
+
+  const missingRes = await worker.fetch(
+    new Request("https://gui/runtime/message/annotate", {
+      method: "POST",
+      headers: auth,
+      body: JSON.stringify({ messageId: "msg-does-not-exist", label: "WordCards", json: {} }),
+    }),
+    bindings,
+  );
+  assert.equal(missingRes.status, 404);
+  const missing = (await missingRes.json()) as { ok: boolean; error?: string };
+  assert.equal(missing.ok, false);
+  assert.match(missing.error ?? "", /not found/i);
+});
+
+test("runtime agenda reports lastHumanMessageAt for participating conversations", async () => {
+  const bindings = env();
+  const paired = await pairComputer(bindings, { engines: ["codex"] });
+  const tokenRes = await json<{ token: string }>(
+    await worker.fetch(
+      new Request("https://gui/api/agents/dev/runtime-token", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${paired.deviceToken}` },
+      }),
+      bindings,
+    ),
+  );
+  const auth = { Authorization: `Bearer ${tokenRes.token}`, "Content-Type": "application/json" };
+
+  // Ensure agenda is actionable so we exercise the full payload shape.
+  await worker.fetch(
+    new Request("https://gui/gui/card", {
+      method: "POST",
+      body: JSON.stringify({ title: "Agenda human activity card", assignee: "dev" }),
+    }),
+    bindings,
+  );
+
+  const before = await json<{ actionable: boolean; lastHumanMessageAt?: number | null }>(
+    await worker.fetch(
+      new Request("https://gui/runtime/agenda", {
+        headers: { Authorization: `Bearer ${tokenRes.token}` },
+      }),
+      bindings,
+    ),
+  );
+  assert.equal(before.actionable, true);
+  assert.equal("lastHumanMessageAt" in before, true);
+
+  await worker.fetch(
+    new Request("https://gui/gui/message", {
+      method: "POST",
+      body: JSON.stringify({ body: "human is chatting", conversationId: "king-ai-convo" }),
+    }),
+    bindings,
+  );
+  // An agent reply must not count as human activity.
+  await worker.fetch(
+    new Request("https://gui/runtime/cli", {
+      method: "POST",
+      headers: auth,
+      body: JSON.stringify({ argv: ["reply", "king-ai-convo", "agent reply after human"] }),
+    }),
+    bindings,
+  );
+
+  const state = await json<{ messages: { author_kind: string; created_at: number; body: string }[] }>(
+    await worker.fetch(new Request("https://gui/gui/state"), bindings),
+  );
+  const humanAt = Math.max(...state.messages.filter((row) => row.author_kind === "human").map((row) => row.created_at));
+  assert.ok(Number.isFinite(humanAt));
+
+  const after = await json<{ actionable: boolean; lastHumanMessageAt?: number | null }>(
+    await worker.fetch(
+      new Request("https://gui/runtime/agenda", {
+        headers: { Authorization: `Bearer ${tokenRes.token}` },
+      }),
+      bindings,
+    ),
+  );
+  assert.equal(after.actionable, true);
+  assert.equal(after.lastHumanMessageAt, humanAt);
+});
+
 test("gui runtime bounds persisted run stream state", async () => {
   const bindings = env();
   const paired = await pairComputer(bindings, { engines: ["codex"] });
@@ -5327,8 +5482,12 @@ test("gui runtime run contract rejects replies to the wrong conversation", async
   assert.equal(rejected.exitCode, 64);
   assert.match(rejected.text, /does not match wake conversation/);
   assert.equal(accepted.exitCode, 0);
-  assert.equal(accepted.text, "reply posted");
-  const actions = await json<{ actions: { kind: string; conversationId?: string; messageId?: string }[] }>(
+  assert.match(accepted.text, /^reply posted\nmessageId: \S+/);
+  const postedReplyId = accepted.text.match(/messageId:\s*(\S+)/)?.[1];
+  assert.equal(typeof postedReplyId, "string");
+  const actions = await json<{
+    actions: { kind: string; conversationId?: string; messageId?: string; replyMessageId?: string }[];
+  }>(
     await worker.fetch(
       new Request(`https://gui/runtime/runs/${run.runId}/actions`, {
         headers: auth,
@@ -5337,8 +5496,8 @@ test("gui runtime run contract rejects replies to the wrong conversation", async
     ),
   );
   assert.deepEqual(
-    actions.actions.map((action) => [action.kind, action.conversationId, action.messageId]),
-    [["reply", first.conversation.id, "msg-1"]],
+    actions.actions.map((action) => [action.kind, action.conversationId, action.messageId, action.replyMessageId]),
+    [["reply", first.conversation.id, "msg-1", postedReplyId]],
   );
 
   const state = await json<{ messages: { conversation_id: string; body: string }[]; cliLog: { result: string }[] }>(

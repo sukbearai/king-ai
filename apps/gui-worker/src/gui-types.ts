@@ -345,6 +345,8 @@ export type RunAction = {
   conversationId?: string;
   requestId?: string;
   messageId?: string;
+  /** Id of the agent reply message created by this action (distinct from the wake/request messageId). */
+  replyMessageId?: string;
   taskId?: string;
   summary?: string;
   at: number;
@@ -750,6 +752,8 @@ export type AgendaPayload = {
   actionable?: boolean;
   brief?: string;
   focus?: string;
+  /** Newest created_at among non-agent messages in conversations this agent participates in. */
+  lastHumanMessageAt?: number | null;
 };
 
 export const DEFAULT_AGENT: Agent = {

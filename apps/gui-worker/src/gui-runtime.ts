@@ -2244,9 +2244,13 @@ function recordRunAction(
   contract: RunContract | undefined,
   actor: Agent,
   kind: RunAction["kind"],
-  detail: { conversationId?: string; taskId?: string; summary?: string } = {},
+  detail: { conversationId?: string; taskId?: string; summary?: string; replyMessageId?: string } = {},
 ): void {
   if (!runId) return;
+  const replyMessageId =
+    typeof detail.replyMessageId === "string" && detail.replyMessageId.trim()
+      ? detail.replyMessageId.trim()
+      : undefined;
   const action: RunAction = {
     runId,
     agentId: actor.id,
@@ -2254,6 +2258,7 @@ function recordRunAction(
     conversationId: detail.conversationId ?? contract?.conversationId,
     requestId: contract?.requestId,
     messageId: contract?.messageId,
+    ...(replyMessageId ? { replyMessageId } : {}),
     taskId: detail.taskId ?? contract?.taskId,
     summary: detail.summary,
     at: Date.now(),

@@ -413,6 +413,10 @@ export class GuiState implements DurableObject {
           agentId,
         ),
       );
+    if (path === "/message/annotate")
+      return this.authRuntime(request, async (agentId) =>
+        this.annotateMessage((await request.json()) as { messageId?: string; label?: string; json?: unknown }, agentId),
+      );
     if (path === "/events")
       return this.authRuntime(request, async () => this.events(await request.json().catch(() => null)));
     if (path === "/notices")
@@ -1046,9 +1050,30 @@ export class GuiState implements DurableObject {
     });
   }
 
+  private lastHumanMessageAtForAgent(state: State, agentId: string): number | null {
+    const agentIds = new Set(state.agents.map((agent) => agent.id));
+    let latest: number | null = null;
+    for (const conversation of state.conversations) {
+      if (!teamAgentsFor(state, conversation).some((agent) => agent.id === agentId)) continue;
+      for (const message of state.messages) {
+        if (message.conversation_id !== conversation.id) continue;
+        // Human = not authored by a configured agent (covers GUI humans and any non-agent authors).
+        const agentAuthor =
+          message.author_kind === "agent" ||
+          (typeof message.author_agent_id === "string" && agentIds.has(message.author_agent_id));
+        if (agentAuthor) continue;
+        const at = typeof message.created_at === "number" ? message.created_at : null;
+        if (at == null) continue;
+        if (latest == null || at > latest) latest = at;
+      }
+    }
+    return latest;
+  }
+
   private async agenda(agentId: string): Promise<Response> {
     const state = await this.get();
     const now = new Date();
+    const lastHumanMessageAt = this.lastHumanMessageAtForAgent(state, agentId);
     const due = state.calendar.filter(
       (item) =>
         item.assignee === agentId &&
@@ -1061,7 +1086,9 @@ export class GuiState implements DurableObject {
         taskVisibleStatus(state, row) !== "blocked" &&
         (!row.assignee || row.assignee === agentId),
     );
-    if (!due.length && !card && !task) return json({ actionable: false });
+    if (!due.length && !card && !task) {
+      return json({ actionable: false, lastHumanMessageAt } satisfies AgendaPayload);
+    }
     const lines = [
       ...due.map(
         (item) =>
@@ -1074,6 +1101,7 @@ export class GuiState implements DurableObject {
       actionable: true,
       focus: task?.id ?? card?.id ?? due[0]?.id,
       brief: lines.join("\n"),
+      lastHumanMessageAt,
     } satisfies AgendaPayload);
   }
 
@@ -1761,6 +1789,41 @@ export class GuiState implements DurableObject {
     await this.put(state);
     await this.nudgeGuiClients("runtime.activity");
     return json({ ok: true, appended: lines.length });
+  }
+
+  private static readonly ANNOTATION_JSON_CAP = 64 * 1024;
+
+  private async annotateMessage(
+    payload: { messageId?: string; label?: string; json?: unknown },
+    _agentId = DEFAULT_AGENT.id,
+  ): Promise<Response> {
+    const messageId = typeof payload.messageId === "string" ? payload.messageId.trim() : "";
+    const label = typeof payload.label === "string" ? payload.label.trim() : "";
+    if (!messageId) return json({ ok: false, error: "messageId required" }, { status: 400 });
+    if (!label) return json({ ok: false, error: "label required" }, { status: 400 });
+    let serialized: string;
+    try {
+      serialized = JSON.stringify(payload.json ?? null);
+    } catch {
+      return json({ ok: false, error: "json not serializable" }, { status: 400 });
+    }
+    if (!serialized) return json({ ok: false, error: "json empty" }, { status: 400 });
+    if (serialized.length > GuiState.ANNOTATION_JSON_CAP) {
+      return json({ ok: false, error: "json exceeds 64KB cap" }, { status: 400 });
+    }
+    const state = await this.get();
+    const message = state.messages.find((row) => row.id === messageId);
+    if (!message) return json({ ok: false, error: "message not found" }, { status: 404 });
+    const marker = `\n\n${label}:`;
+    const body = typeof message.body === "string" ? message.body : "";
+    // Idempotent: a second annotation pass for the same label is a no-op.
+    if (body.includes(marker)) return json({ ok: true, skipped: true });
+    message.body = `${body}${marker} ${serialized}`;
+    const conversation = state.conversations.find((row) => row.id === message.conversation_id);
+    if (conversation) conversation.updated_at = Date.now();
+    await this.put(state);
+    await this.nudgeGuiClients("runtime.message.annotate");
+    return json({ ok: true, skipped: false });
   }
 
   // Activity batches land every ~1s while a turn runs; give browsers the usual collapsed "change"

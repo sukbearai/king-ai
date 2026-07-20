@@ -22,14 +22,17 @@ import {
   mustResetSession,
   nextFailOpenStreak,
   nextNoStateActionStreak,
+  parseReplyMessageId,
   parseWakeEventInfo,
   planEngineFailureAttempt,
+  reducedStructuredSchema,
   selectSteerMessage,
   Semaphore,
   sessionResetReason,
   simpleTurnFastPathInstruction,
   engineTurnToolHint,
   routedTaskTriageVerdict,
+  shouldDeferAgendaForHumanActivity,
   shouldDeferFailOpenTriage,
   shouldFallbackAckSeen,
   shouldFallbackAckAfterStreak,
@@ -48,6 +51,8 @@ import {
   replaceWakeStreamController,
   sanitizeNestedEngineEnv,
   selectStructuredReplyContract,
+  structuredAnnotationOutputSchema,
+  structuredAnnotationPrompt,
   swallowTurnRejection,
   structuredReplyDeliveryInstruction,
   unreadBatchKey,
@@ -56,7 +61,15 @@ import {
 } from "../src/runner.js";
 
 const STRUCTURED_REPLY = {
-  outputSchema: { type: "object" },
+  outputSchema: {
+    type: "object",
+    properties: {
+      replyMarkdown: { type: "string" },
+      wordCards: { type: "object" },
+    },
+    required: ["replyMarkdown", "wordCards"],
+    additionalProperties: false,
+  },
   bodyField: "replyMarkdown",
   trailingJsonField: "wordCards",
   trailingJsonLabel: "WordCards",
@@ -121,8 +134,58 @@ test("formatStructuredReplyBody preserves the existing hidden WordCards contract
 test("structured reply turns reserve delivery for the runner", () => {
   const instruction = structuredReplyDeliveryInstruction(STRUCTURED_REPLY);
   assert.match(instruction, /replyMarkdown/);
-  assert.match(instruction, /wordCards/);
+  // Two-phase is default ON: phase-1 instruction must not ask for the trailing field.
+  assert.doesNotMatch(instruction, /wordCards/);
   assert.match(instruction, /Do not call king-ai reply or king-ai task done/);
+  // Reduced delivery config (no trailing field) is also silent about annotations.
+  const reduced = reducedStructuredSchema(STRUCTURED_REPLY);
+  assert.ok(reduced);
+  assert.doesNotMatch(structuredReplyDeliveryInstruction(reduced), /wordCards/);
+});
+
+test("reducedStructuredSchema strips trailing field without mutating the original", () => {
+  const originalRequired = [...((STRUCTURED_REPLY.outputSchema.required as string[]) ?? [])];
+  const originalProps = { ...(STRUCTURED_REPLY.outputSchema.properties as Record<string, unknown>) };
+  const reduced = reducedStructuredSchema(STRUCTURED_REPLY);
+  assert.ok(reduced);
+  assert.equal(reduced.trailingJsonField, undefined);
+  assert.equal(reduced.bodyField, "replyMarkdown");
+  const props = reduced.outputSchema.properties as Record<string, unknown>;
+  assert.equal(Object.hasOwn(props, "wordCards"), false);
+  assert.equal(Object.hasOwn(props, "replyMarkdown"), true);
+  assert.deepEqual(reduced.outputSchema.required, ["replyMarkdown"]);
+  // Original config stays intact for phase-2 / kill-switch single-phase.
+  assert.equal(STRUCTURED_REPLY.trailingJsonField, "wordCards");
+  assert.deepEqual(STRUCTURED_REPLY.outputSchema.required, originalRequired);
+  assert.deepEqual(STRUCTURED_REPLY.outputSchema.properties, originalProps);
+  assert.equal(reducedStructuredSchema({ ...STRUCTURED_REPLY, trailingJsonField: undefined }), null);
+});
+
+test("structuredAnnotation helpers build phase-2 schema and prompt", () => {
+  const schema = structuredAnnotationOutputSchema(STRUCTURED_REPLY);
+  assert.deepEqual(schema, {
+    type: "object",
+    properties: { wordCards: { type: "object" } },
+    required: ["wordCards"],
+    additionalProperties: false,
+  });
+  const prompt = structuredAnnotationPrompt("You are a coach.", "Hello there.");
+  assert.match(prompt, /You are a coach/);
+  assert.match(prompt, /already delivered/);
+  assert.match(prompt, /Hello there/);
+  assert.equal(parseReplyMessageId("reply posted\nmessageId: msg-abc"), "msg-abc");
+  assert.equal(parseReplyMessageId("reply posted"), null);
+});
+
+test("shouldDeferAgendaForHumanActivity respects quiet window boundaries", () => {
+  const now = 1_000_000;
+  const quiet = 600_000;
+  assert.equal(shouldDeferAgendaForHumanActivity(null, now, quiet), false);
+  assert.equal(shouldDeferAgendaForHumanActivity(undefined, now, quiet), false);
+  assert.equal(shouldDeferAgendaForHumanActivity(now - quiet + 1, now, quiet), true);
+  assert.equal(shouldDeferAgendaForHumanActivity(now - quiet, now, quiet), false);
+  assert.equal(shouldDeferAgendaForHumanActivity(now - quiet - 1, now, quiet), false);
+  assert.equal(shouldDeferAgendaForHumanActivity(now, now, 0), false);
 });
 
 test("AgentRunner notices structured reply contract changes", () => {
@@ -198,6 +261,16 @@ test("shouldForceActionableTurn fast-paths SSE task wakes when inbox snapshot is
   assert.equal(shouldForceActionableTurn({ hasRealUnread: false, contract: { taskId: "task-1" } }), true);
   assert.equal(shouldForceActionableTurn({ hasRealUnread: true, contract: { taskId: "task-1" } }), false);
   assert.equal(shouldForceActionableTurn({ hasRealUnread: false, contract: { conversationId: "demo" } }), false);
+  // A contract requeued behind a busy turn saw the snapshot catch up: an empty inbox there means
+  // the message was already handled (e.g. the busy turn replied mid-run), so never force.
+  assert.equal(
+    shouldForceActionableTurn({ hasRealUnread: false, contract: { taskId: "task-1" }, requeued: true }),
+    false,
+  );
+  assert.equal(
+    shouldForceActionableTurn({ hasRealUnread: false, contract: { taskId: "task-1" }, requeued: false }),
+    true,
+  );
   assert.equal(routedTaskTriageVerdict("task-1").actionable, true);
   assert.match(routedTaskTriageVerdict("task-1").reason ?? "", /task-1/);
 });
