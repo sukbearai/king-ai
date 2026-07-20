@@ -36,6 +36,7 @@ import {
   engineStatusPayload,
   shouldHandleWakeEvent,
   shouldContinuePendingRerun,
+  shouldDropQueuedWakeContract,
   shouldForceActionableTurn,
   shouldPreWarmEngineForWake,
   shouldPublishEngineFailureNotice,
@@ -199,6 +200,27 @@ test("shouldForceActionableTurn fast-paths SSE task wakes when inbox snapshot is
   assert.equal(shouldForceActionableTurn({ hasRealUnread: false, contract: { conversationId: "demo" } }), false);
   assert.equal(routedTaskTriageVerdict("task-1").actionable, true);
   assert.match(routedTaskTriageVerdict("task-1").reason ?? "", /task-1/);
+});
+
+test("shouldDropQueuedWakeContract drops stale message or task contracts only", () => {
+  assert.equal(shouldDropQueuedWakeContract(null, new Set(["m1"]), new Set(["t1"])), false);
+  assert.equal(shouldDropQueuedWakeContract({ messageId: "m1", taskId: "t1" }, new Set(["m1"]), new Set()), true);
+  // messageId match wins; a different taskId does not keep a message already acked.
+  assert.equal(
+    shouldDropQueuedWakeContract({ messageId: "m1", taskId: "t-other" }, new Set(["m1"]), new Set(["t1"])),
+    true,
+  );
+  // taskId is consulted only when the contract has no messageId.
+  assert.equal(
+    shouldDropQueuedWakeContract({ taskId: "t1", conversationId: "demo" }, new Set(["m1"]), new Set(["t1"])),
+    true,
+  );
+  assert.equal(shouldDropQueuedWakeContract({ taskId: "t1" }, new Set(["m1"]), new Set(["t-other"])), false);
+  // A queued contract for a newer message must be kept.
+  assert.equal(
+    shouldDropQueuedWakeContract({ messageId: "m-new", taskId: "t1" }, new Set(["m-old"]), new Set(["t1"])),
+    false,
+  );
 });
 
 test("shouldPreWarmEngineForWake only prewarms on SSE and reconnect wakes", () => {

@@ -600,6 +600,20 @@ export function shouldForceActionableTurn(args: {
   return !args.hasRealUnread && Boolean(args.contract?.taskId?.trim());
 }
 
+/** Drop a queued wake contract once this turn already acked its message or closed its task. */
+export function shouldDropQueuedWakeContract(
+  contract: RuntimeRunContract | null,
+  ackedMessageIds: ReadonlySet<string>,
+  closedTaskIds: ReadonlySet<string>,
+): boolean {
+  if (!contract) return false;
+  const messageId = contract.messageId?.trim();
+  if (messageId) return ackedMessageIds.has(messageId);
+  const taskId = contract.taskId?.trim();
+  if (taskId) return closedTaskIds.has(taskId);
+  return false;
+}
+
 export function routedTaskTriageVerdict(taskId: string): TriageVerdict {
   return {
     actionable: true,
@@ -1490,18 +1504,30 @@ export class AgentRunner {
     token: string,
     runId: string | undefined,
     fallbackSeen: Map<string, string>,
-  ): Promise<boolean> {
-    if (!runId) return false;
+  ): Promise<{ seen: Map<string, string>; closedTaskIds: Set<string> } | null> {
+    if (!runId) return null;
     const payload = await this.runActions(token, runId);
     const seen = new Map<string, string>();
+    const closedTaskIds = new Set<string>();
     for (const action of payload.actions ?? []) {
+      if (action.kind === "task" && typeof action.taskId === "string" && action.taskId.trim()) {
+        closedTaskIds.add(action.taskId);
+      }
       if (!action.conversationId) continue;
       const messageId = action.messageId ?? action.requestId ?? fallbackSeen.get(action.conversationId);
       if (messageId) seen.set(action.conversationId, messageId);
     }
-    if (!seen.size) return false;
-    await this.ackSeen(token, seen);
-    return true;
+    if (seen.size) await this.ackSeen(token, seen);
+    // Preserve prior boolean semantics: only treat message acks as "acked".
+    // Still return closedTaskIds when present so stale task wakes can be dropped.
+    if (!seen.size && !closedTaskIds.size) return null;
+    return { seen, closedTaskIds };
+  }
+
+  private maybeClearStaleWakeContract(ackedMessageIds: ReadonlySet<string>, closedTaskIds: ReadonlySet<string>): void {
+    if (shouldDropQueuedWakeContract(this.lastWakeContract, ackedMessageIds, closedTaskIds)) {
+      this.lastWakeContract = null;
+    }
   }
 
   private async runActions(token: string, runId: string): Promise<RunActionsPayload> {
@@ -2001,9 +2027,13 @@ ${delta}`;
             this.failOpenStreak = nextFailOpenStreak(this.failOpenStreak, triage.source, true);
             this.clearFailOpenBackoff();
           }
-          const acked = await this.withRuntimeAuthRetry((freshToken) =>
+          const ackResult = await this.withRuntimeAuthRetry((freshToken) =>
             this.ackRunActions(freshToken, run?.runId, seen),
           );
+          const acked = Boolean(ackResult?.seen.size);
+          if (ackResult) {
+            this.maybeClearStaleWakeContract(new Set(ackResult.seen.values()), ackResult.closedTaskIds);
+          }
           const unreadKey = unreadBatchKey(seen);
           if (acked || unreadKey !== this.noStateActionUnreadKey) {
             this.noStateActionUnreadKey = acked ? "" : unreadKey;
@@ -2028,6 +2058,7 @@ ${delta}`;
             // breaks the no-action reprocessing loop without dropping a message on a single turn.
             if (shouldFallbackAckSeen(acked, seen.size) && shouldFallbackAckAfterStreak(this.noStateActionStreak)) {
               await this.withRuntimeAuthRetry((freshToken) => this.ackSeen(freshToken, seen));
+              this.maybeClearStaleWakeContract(new Set(seen.values()), new Set());
               this.noStateActionStreak = 0;
               this.noStateActionUnreadKey = "";
               await this.publishEvent(

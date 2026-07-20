@@ -122,30 +122,46 @@ export const ENGINE_PREFERENCE_ORDER: EngineId[] = ["grok", "claude", "codex"];
 
 export function createGrokLogSink(onLog: (line: string) => void): (line: string) => void {
   let textBuffer = "";
+  let thoughtBuffer = "";
+  const flushThought = () => {
+    const text = thoughtBuffer.replace(/\s+/g, " ").trim();
+    thoughtBuffer = "";
+    if (text) onLog(`[grok] (thinking) ${text.slice(0, 500)}`);
+  };
   const flushText = () => {
     const text = textBuffer.replace(/\s+/g, " ").trim();
     textBuffer = "";
     if (text) onLog(`[grok] ${text.slice(0, 500)}`);
   };
+  const flushBuffered = () => {
+    flushThought();
+    flushText();
+  };
   return (line: string) => {
     const cleaned = cleanLine(line);
     if (!cleaned) return;
     if (!cleaned.startsWith("{")) {
-      flushText();
+      flushBuffered();
       onLog(cleaned);
       return;
     }
     try {
       const obj = JSON.parse(cleaned) as Record<string, unknown>;
+      if (obj.type === "thought" && typeof obj.data === "string") {
+        thoughtBuffer += obj.data;
+        return;
+      }
       if (obj.type === "text" && typeof obj.data === "string") {
+        // Emit thinking before text so the activity feed stays in stream order.
+        flushThought();
         textBuffer += obj.data;
         return;
       }
-      flushText();
+      flushBuffered();
       const display = formatEngineLogLine("grok", cleaned);
       if (display) onLog(display);
     } catch {
-      flushText();
+      flushBuffered();
       onLog(cleaned);
     }
   };
@@ -1435,7 +1451,7 @@ async function grokHeadlessArgv(args: {
   return [...base, ...structured, "-p", args.prompt, "--output-format", args.outputFormat];
 }
 
-function grokTurnFromStdout(stdout: string, model?: string | null): EngineResult {
+export function grokTurnFromStdout(stdout: string, model?: string | null): EngineResult {
   try {
     const obj = JSON.parse(stripLoneSurrogates(stdout).trim()) as Record<string, unknown>;
     const modelUsage = unknownRecord(obj.modelUsage);
@@ -1476,6 +1492,18 @@ function grokTurnFromStdout(stdout: string, model?: string | null): EngineResult
         if (typeof obj.sessionId === "string") sessionId = obj.sessionId;
         if (!error && typeof obj.stopReason === "string" && obj.stopReason.toLowerCase().includes("error")) {
           error = `grok turn failed: ${obj.stopReason}`;
+        }
+        // Streaming structured turns put the final payload on the end event.
+        if (Object.hasOwn(obj, "structuredOutput")) {
+          structuredOutput = obj.structuredOutput;
+          hasStructuredOutput = true;
+        }
+        usage = grokUsageFromResult(obj.usage) ?? usage;
+        const modelUsage = unknownRecord(obj.modelUsage);
+        if (typeof obj.modelId === "string") resolvedModel = obj.modelId;
+        else if (modelUsage) {
+          const modelKey = Object.keys(modelUsage)[0];
+          if (modelKey) resolvedModel = modelKey;
         }
         continue;
       }
@@ -1625,7 +1653,8 @@ class GrokSession implements EngineSession {
         reasoningEffort: this.opts.reasoningEffort,
         resumeSessionId,
         standingPrompt,
-        outputFormat: options?.outputSchema ? "json" : "streaming-json",
+        // Always stream so structured turns still emit thought/text deltas for the activity feed.
+        outputFormat: "streaming-json",
         imagePaths: options?.imagePaths,
         outputSchema: options?.outputSchema,
       });
@@ -1749,7 +1778,8 @@ class GrokAdapter implements EngineAdapter {
       reasoningEffort: args.reasoningEffort,
       resumeSessionId: args.resumeSessionId,
       standingPrompt: args.standingPrompt,
-      outputFormat: args.outputSchema ? "json" : "streaming-json",
+      // Always stream so structured turns still emit thought/text deltas for the activity feed.
+      outputFormat: "streaming-json",
       imagePaths: args.imagePaths,
       outputSchema: args.outputSchema,
     });

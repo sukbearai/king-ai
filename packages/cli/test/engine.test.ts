@@ -13,6 +13,7 @@ import {
   ENGINE_PREFERENCE_ORDER,
   formatEngineLogLine,
   getAdapter,
+  grokTurnFromStdout,
   parseTriage,
   personaHeader,
   reduceCodexAppEvent,
@@ -181,6 +182,39 @@ test("createGrokLogSink buffers streaming text deltas into one line", () => {
   assert.deepEqual(lines, []);
   sink('{"type":"end","stopReason":"EndTurn"}');
   assert.deepEqual(lines, ["[grok] hello there", "[grok] turn completed"]);
+});
+
+test("createGrokLogSink buffers thought deltas before subsequent text", () => {
+  const lines: string[] = [];
+  const sink = createGrokLogSink((line) => lines.push(line));
+  sink('{"type":"thought","data":"plan "}');
+  sink('{"type":"thought","data":"reply"}');
+  assert.deepEqual(lines, []);
+  sink('{"type":"text","data":"Hello."}');
+  assert.deepEqual(lines, ["[grok] (thinking) plan reply"]);
+  sink('{"type":"end","stopReason":"EndTurn"}');
+  assert.deepEqual(lines, ["[grok] (thinking) plan reply", "[grok] Hello.", "[grok] turn completed"]);
+});
+
+test("grokTurnFromStdout extracts structuredOutput usage and model from streaming end event", () => {
+  const stdout = [
+    '{"type":"thought","data":"thinking"}',
+    '{"type":"text","data":"hi"}',
+    JSON.stringify({
+      type: "end",
+      stopReason: "EndTurn",
+      sessionId: "sess-stream-1",
+      usage: { input_tokens: 124, output_tokens: 10, reasoning_tokens: 5 },
+      modelUsage: { "grok-4.5-build-free": { inputTokens: 124 } },
+      structuredOutput: { ok: true, replyMarkdown: "hi" },
+    }),
+  ].join("\n");
+  const result = grokTurnFromStdout(stdout, "fallback-model");
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.sessionId, "sess-stream-1");
+  assert.deepEqual(result.structuredOutput, { ok: true, replyMarkdown: "hi" });
+  assert.deepEqual(result.usage, { input_tokens: 124, cache_read_input_tokens: 0, output_tokens: 15 });
+  assert.equal(result.model, "grok-4.5-build-free");
 });
 
 test("ENGINE_PREFERENCE_ORDER prefers grok before claude and codex", () => {
@@ -720,7 +754,7 @@ process.stdout.write(JSON.stringify({ type: "end", stopReason: "EndTurn", sessio
   await rm(dir, { recursive: true, force: true });
 });
 
-test("Grok session passes --json-schema and reads structuredOutput", async () => {
+test("Grok session passes --json-schema and streams structuredOutput", async () => {
   const dir = await mkdtemp(join(tmpdir(), "king-ai-grok-structured-"));
   const binDir = join(dir, "bin");
   const seenFile = join(dir, "seen.json");
@@ -730,7 +764,11 @@ test("Grok session passes --json-schema and reads structuredOutput", async () =>
     grok,
     `#!/usr/bin/env node
 require("node:fs").writeFileSync(process.env.SEEN_FILE, JSON.stringify(process.argv.slice(2)));
+process.stdout.write(JSON.stringify({ type: "thought", data: "draft" }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "text", data: "Hello." }) + "\\n");
 process.stdout.write(JSON.stringify({
+  type: "end",
+  stopReason: "EndTurn",
   sessionId: "grok-structured-session",
   modelId: "grok-test",
   usage: { input_tokens: 4, output_tokens: 2 },
@@ -748,11 +786,12 @@ process.stdout.write(JSON.stringify({
   };
 
   try {
+    const logs: string[] = [];
     const session = getAdapter("grok").startSession?.({
       home: dir,
       env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}`, SEEN_FILE: seenFile },
       standingPrompt: "standing",
-      onLog: () => {},
+      onLog: (line) => logs.push(line),
     });
     assert.ok(session);
     const result = await session.send("reply", { outputSchema });
@@ -762,10 +801,13 @@ process.stdout.write(JSON.stringify({
     assert.equal(result.sessionId, "grok-structured-session");
     assert.deepEqual(result.structuredOutput, { replyMarkdown: "Hello." });
     assert.deepEqual(result.usage, { input_tokens: 4, cache_read_input_tokens: 0, output_tokens: 2 });
+    assert.equal(result.model, "grok-test");
+    assert.ok(logs.some((line) => line.includes("(thinking) draft")));
+    assert.ok(logs.some((line) => line === "[grok] Hello."));
     const argv = JSON.parse(await readFile(seenFile, "utf8")) as string[];
     assert.deepEqual(argv.slice(argv.indexOf("--output-format"), argv.indexOf("--output-format") + 2), [
       "--output-format",
-      "json",
+      "streaming-json",
     ]);
     assert.deepEqual(JSON.parse(argv[argv.indexOf("--json-schema") + 1]), outputSchema);
   } finally {
