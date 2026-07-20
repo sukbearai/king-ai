@@ -53,7 +53,7 @@ async function runPanews(args: string[]): Promise<Array<Record<string, string>>>
   }
 }
 
-export function buildPanewsUnclassifiedAlert(art: Record<string, string>): Alert {
+export function buildPanewsUnclassifiedAlert(art: Record<string, string>, cooldownKey?: string): Alert {
   const title = (art.title ?? "").trim();
   const desc = (art.desc ?? "").trim();
   return createAlert({
@@ -65,6 +65,7 @@ export function buildPanewsUnclassifiedAlert(art: Record<string, string>): Alert
     direction: 0,
     strength: 0.3,
     asset: "CRYPTO",
+    cooldownKey,
   });
 }
 
@@ -89,23 +90,24 @@ export function createRuleQ(): AlertRule {
       const articles = await runPanews(["list-articles", "--type", "NEWS", "--take", "15", "--lang", "zh"]);
       if (!articles.length) return alerts;
 
-      const candidates: Array<Record<string, string>> = [];
+      const candidates: Array<{ art: Record<string, string>; titleKey: string }> = [];
       for (const art of articles) {
         const title = (art.title ?? "").trim();
         const artId = art.id ?? "";
         if (!title) continue;
         const normTitle = title.toLowerCase().replace(/\s+/g, " ").trim();
         const titleHash = createHash("md5").update(normTitle).digest("hex").slice(0, 12);
-        if (!state.canAlert(`panews_${titleHash}`, 86400)) continue;
+        const titleKey = `panews_${titleHash}`;
+        if (!state.canAlert(titleKey, 86400)) continue;
         if (artId) {
           const idKey = `panews_id_${artId.slice(-12)}`;
           if (!state.canAlert(idKey, 86400)) continue;
         }
-        candidates.push(art);
+        candidates.push({ art, titleKey });
       }
       if (!candidates.length) return alerts;
 
-      const classifications = await llmClassify(candidates);
+      const classifications = await llmClassify(candidates.map((c) => c.art));
       const clsMap = new Map<number, Record<string, unknown>>();
       for (const c of classifications) {
         const idx = c.idx;
@@ -115,13 +117,13 @@ export function createRuleQ(): AlertRule {
       const agentUnavailable = classifications.length === 0 && candidates.length > 0;
 
       for (let i = 0; i < candidates.length; i++) {
-        const art = candidates[i]!;
+        const { art, titleKey } = candidates[i]!;
         const title = (art.title ?? "").trim();
         const desc = (art.desc ?? "").trim();
         const cls = clsMap.get(i);
         if (!cls) {
           if (!agentUnavailable) continue;
-          alerts.push(buildPanewsUnclassifiedAlert(art));
+          alerts.push(buildPanewsUnclassifiedAlert(art, titleKey));
           continue;
         }
 
@@ -139,6 +141,7 @@ export function createRuleQ(): AlertRule {
         const strength = impact === "high" ? 0.8 : 0.5;
 
         const assetKey = asset.toUpperCase() || "CRYPTO";
+        // dirSlot only demotes severity; not a 1:1 guard→emit — do not put on cooldownKey.
         if (severity === "warning" && (directionStr === "bullish" || directionStr === "bearish")) {
           const dirSlot = `panews_dir_${assetKey}_${directionStr}`;
           if (!state.canAlert(dirSlot, 7200)) severity = "info";
@@ -162,6 +165,7 @@ export function createRuleQ(): AlertRule {
             direction,
             strength,
             asset: assetKey,
+            cooldownKey: titleKey,
           }),
         );
       }

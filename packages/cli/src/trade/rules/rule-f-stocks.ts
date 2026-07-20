@@ -229,7 +229,8 @@ export function createRuleF(threshold = 5): AlertRule {
           if (priceStr !== lastPushedPrice[symbol]) {
             const band = Math.floor(Math.abs(change) / 2);
             const keyPrefix = `stock_${symbol}_b`;
-            if (state.canAlert(`${keyPrefix}${band}`, 72_000)) {
+            const bandKey = `${keyPrefix}${band}`;
+            if (state.canAlert(bandKey, 72_000)) {
               for (let lowerBand = 0; lowerBand < band; lowerBand++) {
                 state.claimCooldown(`${keyPrefix}${lowerBand}`);
               }
@@ -246,6 +247,7 @@ export function createRuleF(threshold = 5): AlertRule {
                   direction: change > 0 ? 1 : -1,
                   strength: Math.min(Math.abs(change) / 10, 1),
                   asset: symbol,
+                  cooldownKey: bandKey,
                 }),
               );
             }
@@ -257,7 +259,8 @@ export function createRuleF(threshold = 5): AlertRule {
           if (extStr !== lastPushedExtended[symbol]) {
             const band = Math.floor(Math.abs(extChange) / 2);
             const keyPrefix = `stock_${symbol}_ext_b`;
-            if (state.canAlert(`${keyPrefix}${band}`, 72_000)) {
+            const extBandKey = `${keyPrefix}${band}`;
+            if (state.canAlert(extBandKey, 72_000)) {
               for (let lowerBand = 0; lowerBand < band; lowerBand++) {
                 state.claimCooldown(`${keyPrefix}${lowerBand}`);
               }
@@ -274,6 +277,7 @@ export function createRuleF(threshold = 5): AlertRule {
                   direction: extChange > 0 ? 1 : -1,
                   strength: Math.min(Math.abs(extChange) / 10, 1),
                   asset: symbol,
+                  cooldownKey: extBandKey,
                 }),
               );
             }

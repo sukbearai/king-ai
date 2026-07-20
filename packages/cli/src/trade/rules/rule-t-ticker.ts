@@ -69,7 +69,9 @@ export function createRuleTTicker(): AlertRule {
         }
         if (!trigger) continue;
 
-        let severity: Alert["severity"] = "warning";
+        // First emergence stays in the audit stream as info (confluence can promote);
+        // sustained acceleration next window (baseline > 0) earns warning+.
+        let severity: Alert["severity"] = isFirst ? "info" : "warning";
         if (!isFirst && mult >= criticalMult && views24h >= criticalViews && authors24h >= criticalAuthors) {
           severity = "critical";
         }
@@ -98,6 +100,8 @@ export function createRuleTTicker(): AlertRule {
               direction: 0.5,
               strength: isFirst ? 0.5 : Math.min(mult / 10, 1),
               asset: ticker,
+              tags: isFirst ? ["first_seen"] : [],
+              cooldownKey: alertKey,
             }),
           );
         }

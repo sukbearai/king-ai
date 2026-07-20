@@ -104,6 +104,7 @@ export function createRuleDiscordWba(): AlertRule {
             direction: 0,
             strength: 0.8,
             asset: "BTC",
+            cooldownKey: alertKey,
           }),
         );
       }

@@ -50,6 +50,12 @@ export interface Alert {
   tags: string[];
   /** Set when confluence promoted info → warning. */
   confluencePromoted?: boolean;
+  /**
+   * Cooldown key claimed via canAlert/tryClaimCooldown for this alert.
+   * Used by runRuleTick to roll back claims when TG push is capped or fails.
+   * Absent for info-only / non-gated emissions; createAlert does not invent one.
+   */
+  cooldownKey?: string;
 }
 
 export function createAlert(
@@ -125,15 +131,23 @@ async function cachedPrices(): Promise<Record<string, number>> {
 export class AlertState {
   cooldowns: Record<string, number>;
   cooldownConfig: Record<string, number>;
+  /** Per-tick claim ledger for reserve/rollback when TG drop or delivery fails. */
+  pendingClaims = new Map<string, { prev: number; cooldownSec: number }>();
 
   constructor(cooldownConfig: Record<string, number>, sharedCooldowns?: Record<string, number>) {
     this.cooldownConfig = cooldownConfig;
     this.cooldowns = sharedCooldowns ?? {};
   }
 
+  /** Clear per-tick claim ledger; call once at the start of each rule tick. */
+  beginTick(): void {
+    this.pendingClaims.clear();
+  }
+
   /**
    * Claim-on-success cooldown gate: returns true once and records the timestamp.
    * Prefer this name; `canAlert` is kept as an alias.
+   * First successful claim per key per tick is recorded in pendingClaims for rollback.
    */
   tryClaimCooldown(key: string, cooldown?: number): boolean {
     const rulePrefix = key.includes("_") ? key.split("_")[0]! : key;
@@ -142,6 +156,9 @@ export class AlertState {
     const now = Date.now() / 1000;
     const last = this.cooldowns[key] ?? 0;
     if (now - last < cd) return false;
+    if (!this.pendingClaims.has(key)) {
+      this.pendingClaims.set(key, { prev: last, cooldownSec: cd });
+    }
     this.cooldowns[key] = now;
     return true;
   }
@@ -154,6 +171,17 @@ export class AlertState {
   /** Refresh a cooldown timestamp without gating. */
   claimCooldown(key: string): void {
     this.cooldowns[key] = Date.now() / 1000;
+  }
+
+  /**
+   * Soft-release a claim: set last-fire so ~10% of cooldownSec remains.
+   * Unclaimed keys are a no-op. Leaves residual throttle so retries are not instant.
+   */
+  rollbackClaim(key: string): void {
+    const entry = this.pendingClaims.get(key);
+    if (!entry) return;
+    this.cooldowns[key] = Date.now() / 1000 - 0.9 * entry.cooldownSec;
+    this.pendingClaims.delete(key);
   }
 }
 
@@ -306,6 +334,8 @@ export interface RunRuleTickOptions {
   tickTimeoutMs?: number;
   /** Test seam; production uses the configured local-agent chain. */
   adviceGenerator?: (alerts: Alert[]) => Promise<TradeAlertAdvice>;
+  /** Test seam; production uses telegram.sendTelegram. */
+  sendTelegram?: (text: string, config?: TradeConfig) => Promise<boolean>;
   /** When true, rethrow after recording heartbeat (used by scheduler isolation tests). */
   rethrow?: boolean;
 }
@@ -323,9 +353,11 @@ export async function runRuleTick(rule: AlertRule, state: AlertState, options: R
   const alertDir = dirname(TRADE_ALERT_LOG_PATH);
   await mkdir(alertDir, { recursive: true });
   const timeoutMs = resolveTickTimeoutMs(rule, config, options.tickTimeoutMs);
+  const deliverTelegram = options.sendTelegram ?? sendTelegram;
 
   try {
     const t0 = Date.now();
+    state.beginTick();
     const alerts = await withTimeout(`rule:${rule.ruleKey}`, timeoutMs, async () => rule.check(state));
     const elapsedMs = Date.now() - t0;
 
@@ -358,13 +390,32 @@ export async function runRuleTick(rule: AlertRule, state: AlertState, options: R
 
     if (options.pushTg) {
       const tgAlerts = await filterTgWorthy(alerts);
+      const tgSet = new Set(tgAlerts);
+      // Warning/critical that hit the daily cap never reached TG — soft-release their claim.
+      for (const alert of alerts) {
+        if (alert.severity !== "warning" && alert.severity !== "critical") continue;
+        const key = alert.cooldownKey;
+        if (!key || tgSet.has(alert)) continue;
+        state.rollbackClaim(key);
+      }
+
       if (tgAlerts.length) {
         const header = `🔔 交易告警 — ${formatDisplayTime(new Date(), "hm")}`;
         const formatted = await buildTgAlertItems(tgAlerts, config, options.adviceGenerator);
         const chunks = chunkAlertMessages(formatted, header);
+        let anyFailed = false;
         for (const chunk of chunks) {
-          const delivered = await sendTelegram(chunk, config);
-          if (!delivered) options.onStatus?.(`规则 ${rule.ruleKey} Telegram 投递失败`);
+          const delivered = await deliverTelegram(chunk, config);
+          if (!delivered) {
+            anyFailed = true;
+            options.onStatus?.(`规则 ${rule.ruleKey} Telegram 投递失败`);
+          }
+        }
+        // Any chunk failure: over-rollback all tgAlerts with keys (10% residual throttles spam).
+        if (anyFailed) {
+          for (const alert of tgAlerts) {
+            if (alert.cooldownKey) state.rollbackClaim(alert.cooldownKey);
+          }
         }
       }
     }

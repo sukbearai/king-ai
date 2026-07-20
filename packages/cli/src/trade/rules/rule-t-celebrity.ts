@@ -477,6 +477,7 @@ export function createCelebrityAlert(input: {
   tokenContract: string;
   tokenChain: string;
   tags: string[];
+  cooldownKey?: string;
 }): Alert {
   return createAlert({
     ruleId: "celebrity",
@@ -490,6 +491,7 @@ export function createCelebrityAlert(input: {
     tokenContract: input.tokenContract,
     tokenChain: input.tokenChain,
     tags: input.tags,
+    cooldownKey: input.cooldownKey,
   });
 }
 
@@ -612,7 +614,8 @@ export function createRuleTCelebrity(): AlertRule {
           await markSeen(tid, { ttlSeconds: NON_ALPHA_SEEN_SECONDS, outcome: "non_alpha" });
           continue;
         }
-        if (!state.canAlert(`t_${tid}`, 600)) {
+        const celebrityCooldownKey = `t_${tid}`;
+        if (!state.canAlert(celebrityCooldownKey, 600)) {
           await markSeen(tid);
           continue;
         }
@@ -647,6 +650,7 @@ export function createRuleTCelebrity(): AlertRule {
             confidence,
             severity: celebrityAlertSeverity(alphaType, entities.length, confidence, minConfidenceWarning),
             title,
+            cooldownKey: celebrityCooldownKey,
             detail: lines.join("\n"),
             timestamp: nowDisplay(),
             asset: entities[0] ?? "",

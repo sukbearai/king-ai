@@ -80,6 +80,7 @@ export function createRuleB(): AlertRule {
             strength: Math.min(Math.abs(quote.change_pct) / 3, 1),
             asset: symbol,
             tags: ["treasury", "price", "fed-expectations"],
+            cooldownKey: key,
           }),
         );
       }
@@ -126,6 +127,7 @@ export function createRuleB(): AlertRule {
             strength: Math.min(Math.max(quote.change_bps / 15, highCtx?.is_new_high ? 0.9 : 0.4), 1),
             asset: symbol.replace(/^\^/, ""),
             tags: ["treasury", "yield", "fed-expectations"],
+            cooldownKey: key,
           }),
         );
       }

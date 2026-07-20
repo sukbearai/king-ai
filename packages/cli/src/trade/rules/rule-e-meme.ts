@@ -73,6 +73,7 @@ export function createRuleE(minUsd = 1500): AlertRule {
             }
 
             const severity: Alert["severity"] = amount >= 5000 ? "critical" : "warning";
+            const memeCooldownKey = `meme_large_${contentHash}`;
             alerts.push(
               createAlert({
                 ruleId: "meme_large",
@@ -87,6 +88,7 @@ export function createRuleE(minUsd = 1500): AlertRule {
                 tokenChain,
                 tokenMcap: 0,
                 tags: ["meme_distribution_risk"],
+                cooldownKey: memeCooldownKey,
               }),
             );
           } catch {}
