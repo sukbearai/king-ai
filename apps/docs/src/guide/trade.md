@@ -162,7 +162,32 @@ king-ai trade collect
 king-ai trade verify-tg --dry-run
 king-ai trade verify-celebrity --dry-run
 king-ai trade watchdog --kill
+king-ai trade signal-quality
+king-ai trade signal-quality --days 14 --json
+king-ai trade signal-quality --refresh
 ```
+
+### Signal quality
+
+`king-ai trade signal-quality` scores historical alerts from the JSONL audit log (`~/.king-ai/trade/alerts/alert_log.jsonl`) using OKX 1-hour forward returns at T+4h and T+24h.
+
+| Flag | Meaning |
+|------|---------|
+| `--days N` | Lookback window in days (default `30`). Only alerts older than 25h are scored so T+24h outcomes exist. |
+| `--json` | Print machine-readable JSON instead of the plain-text table |
+| `--refresh` | Recompute all outcomes and rewrite `~/.king-ai/trade/state/signal_outcomes.jsonl` |
+
+The table is aggregated **per `rule_id`** plus a `TOTAL` row:
+
+| Column | Meaning |
+|--------|---------|
+| `alerts` | Eligible audit rows in the window (non-empty `asset`) |
+| `pushed` | Rows with severity `warning` or `critical` |
+| `priced%` | Share of rows that resolved against OKX candles |
+| `hit4h%` / `hit24h%` | Directional hit rate (long hit iff return &gt; 0; short hit iff return &lt; 0; `direction == 0` excluded) |
+| `edge4h` / `edge24h` | Average `sign(direction) * return%` over priced directional rows |
+
+Unknown instruments (no OKX candles) are marked `unpriced` and still count toward `alerts` but not hit/edge. Outcomes are cached under `signal_outcomes.jsonl` so re-runs only price new keys unless `--refresh` is set.
 
 `verify-tg` runs each enabled alert rule and each configured morning-brief section once, then pushes one Telegram message per source. Each source is isolated by timeout (shared helper with the daemon). Celebrity verification has a longer default budget unless `verify.step_timeout_ms` is set. Trade AI summaries and PANews classification use the configured local agent CLI chain, with Codex first by default and `llm.disabled_backends` omitted. If every local agent backend is unavailable, morning brief summaries fall back to compacted local text instead of sending the full raw feed.
 

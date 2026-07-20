@@ -53,6 +53,7 @@ import { runTwitterCollector } from "./trade/twitter-collector.js";
 
 import { runVerifySignalsPush } from "./trade/verify-signals.js";
 import { runVerifyCelebrity } from "./trade/verify-celebrity.js";
+import { runSignalQuality } from "./trade/signal-quality.js";
 import {
   installTradeService,
   killRunningTradeDaemons,
@@ -2109,6 +2110,28 @@ const tradeWatchdogCommand = command(
   },
 );
 
+const tradeSignalQualityCommand = command(
+  {
+    name: "signal-quality",
+    flags: {
+      help: { type: Boolean, alias: "h", description: "Show help" },
+      days: { type: Number, description: "Lookback days for audit alerts (default 30)" },
+      json: { type: Boolean, description: "Print machine-readable JSON instead of a table" },
+      refresh: { type: Boolean, description: "Recompute all outcomes (rewrite cache)" },
+    },
+    help: {
+      description: "Score historical trade alerts by T+4h / T+24h OKX forward returns (per-rule hit rate and edge)",
+    },
+  },
+  async (argv) => {
+    await runSignalQuality({
+      days: argv.flags.days,
+      json: argv.flags.json,
+      refresh: argv.flags.refresh,
+    });
+  },
+);
+
 const tradeCommand = command(
   {
     name: "trade",
@@ -2133,6 +2156,7 @@ const tradeCommand = command(
           tradeVerifyTgCommand,
           tradeVerifyCelebrityCommand,
           tradeWatchdogCommand,
+          tradeSignalQualityCommand,
           tradeAlertCommand,
           tradeBriefCommand,
         ],

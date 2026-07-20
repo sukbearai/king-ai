@@ -161,7 +161,32 @@ king-ai trade collect
 king-ai trade verify-tg --dry-run
 king-ai trade verify-celebrity --dry-run
 king-ai trade watchdog --kill
+king-ai trade signal-quality
+king-ai trade signal-quality --days 14 --json
+king-ai trade signal-quality --refresh
 ```
+
+### 信号质量（signal-quality）
+
+`king-ai trade signal-quality` 读取告警 JSONL 审计日志（`~/.king-ai/trade/alerts/alert_log.jsonl`），用 OKX 1 小时 K 线计算 T+4h / T+24h 前向收益，按规则评估命中率与 edge。
+
+| 标志 | 含义 |
+|------|------|
+| `--days N` | 回看天数（默认 `30`）。仅统计早于 25 小时的告警，确保 T+24h 结果已存在 |
+| `--json` | 输出机器可读 JSON，而不是纯文本表 |
+| `--refresh` | 重算全部结果并重写 `~/.king-ai/trade/state/signal_outcomes.jsonl` |
+
+表格按 **`rule_id`** 聚合，并附 `TOTAL` 行：
+
+| 列 | 含义 |
+|----|------|
+| `alerts` | 窗口内合格审计行（`asset` 非空） |
+| `pushed` | 严重度为 `warning` 或 `critical` 的行 |
+| `priced%` | 成功匹配 OKX K 线的占比 |
+| `hit4h%` / `hit24h%` | 方向命中率（多：收益 &gt; 0；空：收益 &lt; 0；`direction == 0` 不计入） |
+| `edge4h` / `edge24h` | 有方向样本上 `sign(direction) * return%` 的均值 |
+
+未知标的（无 OKX K 线）记为 `unpriced`，计入 `alerts` 但不进入 hit/edge。结果缓存在 `signal_outcomes.jsonl`，再次运行只补算新 key；加 `--refresh` 可全量重算。
 
 `verify-tg` 会各跑一遍当前启用的告警规则和晨报板块；超时工具与 daemon 共用。未设置 `verify.step_timeout_ms` 时按规则默认预算（名人推更长）。摘要与 PANews 分类走配置的本地 agent 链，默认优先 Codex，并跳过 `llm.disabled_backends` 中的后端。
 

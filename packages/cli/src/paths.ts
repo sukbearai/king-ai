@@ -47,6 +47,8 @@ export const TRADE_KIMPREMIUM_SNAPSHOTS_PATH = join(TRADE_STATE_DIR, "kimpremium
 export const TRADE_DAEMON_PID_PATH = join(TRADE_STATE_DIR, "daemon.pid");
 /** JSONL alert audit log written by trade rules. */
 export const TRADE_ALERT_LOG_PATH = process.env.KING_AI_ALERT_LOG || join(TRADE_ALERT_DIR, "alert_log.jsonl");
+/** JSONL cache of T+4h / T+24h forward outcomes for trade signal-quality. */
+export const TRADE_SIGNAL_OUTCOMES_PATH = join(TRADE_STATE_DIR, "signal_outcomes.jsonl");
 export const TRADE_TWITTER_CACHE_PATH = join(TRADE_STATE_DIR, "twitter_cache.jsonl");
 export const TRADE_MENTIONS_DB_PATH = join(TRADE_STATE_DIR, "twitter_mentions.db");
 export const TRADE_WATCHDOG_LOG_PATH = join(TRADE_LOG_DIR, "watchdog.log");
