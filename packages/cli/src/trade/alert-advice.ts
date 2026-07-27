@@ -8,57 +8,70 @@ export interface TradeAlertAdvice {
   source: "llm" | "fallback";
 }
 
-interface StructuredAdvice {
-  summary: string;
-  actions: string[];
-  avoid: string[];
-  checks: string[];
+/** Loose shape accepted from the model; output is always prose, not a checklist. */
+interface AdviceDraft {
+  take: string;
+  stance?: string;
+  watch?: string;
 }
 
-const UNSAFE_CERTAINTY = /保证|稳赚|必(?:涨|跌|赚)|梭哈|满仓|all[ -]?in|(?:立即|马上|现在)(?:买入|卖出)/i;
+const UNSAFE_CERTAINTY = /保证|稳赚|必(?:涨|跌|赚)|梭哈|满仓|all[ -]?in|(?:立即|马上|现在)(?:买入|卖出|建仓|清仓)/i;
 
-function cleanText(value: unknown, maxLength = 240): string {
+const DISCLAIMER = "仅供参考，不构成个性化投资建议。";
+
+function cleanText(value: unknown, maxLength = 420): string {
   const text = stripMarkdown(String(value ?? ""))
     .replace(/\s+/g, " ")
     .trim();
   return text.length <= maxLength ? text : `${text.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
-function cleanList(value: unknown, maxItems: number): string[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((item) => cleanText(item, 180))
-    .map((item) => item.replace(/[。；;]+$/g, ""))
-    .filter(Boolean)
-    .slice(0, maxItems);
+function hasUnsafeLanguage(...parts: Array<string | undefined>): boolean {
+  return parts.some((part) => part && UNSAFE_CERTAINTY.test(part));
 }
 
-export function tradeAlertAdviceEnabled(config: TradeConfig): boolean {
-  return dotGet(config, "alerts.llm_advice", false) === true;
+function formatAdviceProse(draft: AdviceDraft, heading: string): string {
+  const blocks = [heading, draft.take];
+  if (draft.stance) blocks.push(draft.stance);
+  if (draft.watch) blocks.push(draft.watch);
+  blocks.push(DISCLAIMER);
+  return blocks.join("\n\n");
 }
 
-export function parseTradeAlertAdvice(text: string): StructuredAdvice | null {
-  const parsed = extractJsonFromText(text);
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-  const obj = parsed as Record<string, unknown>;
-  const result: StructuredAdvice = {
-    summary: cleanText(obj.summary, 300),
-    actions: cleanList(obj.actions, 3),
-    avoid: cleanList(obj.avoid, 2),
-    checks: cleanList(obj.checks, 3),
-  };
-  // The avoid list is expected to name prohibited behavior such as all-in trading.
-  const actionableText = [result.summary, ...result.actions].join(" ");
-  if (
-    !result.summary ||
-    result.actions.length !== 3 ||
-    !result.avoid.length ||
-    !result.checks.length ||
-    UNSAFE_CERTAINTY.test(actionableText)
-  ) {
-    return null;
+/**
+ * Accept free-form prose, or compact JSON:
+ * {"take":"...","stance":"...","watch":"..."}
+ * Rejects empty / certainty / buy-sell imperative language.
+ */
+export function parseTradeAlertAdvice(text: string): AdviceDraft | null {
+  const raw = stripMarkdown(String(text ?? "")).trim();
+  if (!raw) return null;
+
+  const parsed = extractJsonFromText(raw);
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    const obj = parsed as Record<string, unknown>;
+    const take = cleanText(obj.take ?? obj.summary ?? obj.advice, 480);
+    const stance = cleanText(obj.stance ?? obj.bias ?? "", 280) || undefined;
+    const watch = cleanText(obj.watch ?? obj.next ?? "", 280) || undefined;
+    if (!take || hasUnsafeLanguage(take, stance, watch)) return null;
+    return { take, stance, watch };
   }
-  return result;
+
+  // Free-form: drop a trailing disclaimer the model may have added; keep 2–4 short paragraphs.
+  const body = raw.replace(/(?:仅供参考|不构成(?:个性化)?投资建议)[。．.!！]*\s*$/g, "").trim();
+  const paragraphs = body
+    .split(/\n{2,}/)
+    .map((p) => cleanText(p.replace(/\n+/g, " "), 480))
+    .filter(Boolean)
+    .slice(0, 4);
+  if (!paragraphs.length) return null;
+  const joined = paragraphs.join("\n\n");
+  if (hasUnsafeLanguage(joined) || joined.length < 24) return null;
+  return {
+    take: paragraphs[0]!,
+    stance: paragraphs[1],
+    watch: paragraphs.slice(2).join(" ") || undefined,
+  };
 }
 
 export function buildTradeAlertAdvicePrompt(alerts: Alert[]): string {
@@ -74,47 +87,52 @@ export function buildTradeAlertAdvicePrompt(alerts: Alert[]): string {
     tags: alert.tags,
   }));
   return [
-    "你是面向金融初学者的交易风险解读助手。只能使用给定告警事实，不得补充实时行情、新闻、价格或用户持仓假设。",
-    "目标是解释发生了什么、为什么重要，并给出三种风险承受方式下的情景化行动框架，不是预测涨跌。",
-    "禁止保证收益、确定性涨跌、梭哈/满仓、具体仓位比例，以及对具体证券的立即买入或卖出指令。",
-    "actions 必须依次覆盖保守、中性、激进三种方式；激进方式也必须限制损失并禁止新增杠杆。",
-    "如果输入只是数据源故障，不得给投资动作，只说明应等待数据恢复；不得编造输入中没有的数字。",
-    "用通俗中文输出严格 JSON，不要 Markdown，不要 JSON 外文字：",
-    '{"summary":"发生了什么及为什么重要","actions":["保守：...","中性：...","激进：..."],"avoid":["不要做什么"],"checks":["下一步复核什么"]}',
+    "你是资深交易员助手。根据下列告警，写一段给真人看的投资备忘，不要写成系统报告或模板。",
+    "只使用给定事实，不得编造价格、持仓、新闻或未出现的数字。",
+    "口吻：口语、有判断、短而密。像在微信里跟朋友说「现在怎么看、怎么做」，不要「风险行动框架」「可选行动 1/2/3」。",
+    "内容优先顺序：",
+    "1) 这件事本质是什么、对哪些标的/风险偏好最要紧；",
+    "2) 在当前信息下更合理的偏向（偏防守 / 观望 / 谨慎参与），并点出为何；",
+    "3) 若要动手，原则性建议（仓位心态、触发条件、何时放弃），不要下具体市价单指令。",
+    "禁止：保证收益、必涨必跌、梭哈/满仓、all-in、立即买入/卖出某证券、编造概率。",
+    "若只是数据源故障：只写应等待数据恢复，不要给交易方向。",
+    "输出严格 JSON（不要 Markdown、不要 JSON 外文字）：",
+    '{"take":"2～4 句说清事件与含义","stance":"1～3 句投资倾向与原则性建议","watch":"可选，1～2 句还要盯什么"}',
+    "stance 用完整句子，不要「保守/中性/激进」三档列表。",
     "告警事实：",
     JSON.stringify(facts),
   ].join("\n");
 }
 
-function formatStructuredAdvice(advice: StructuredAdvice, heading: string): string {
-  const lines = [heading, advice.summary, "可选行动："];
-  advice.actions.forEach((item, index) => {
-    lines.push(`${index + 1}. ${item}`);
-  });
-  lines.push(`应避免：${advice.avoid.join("；")}`);
-  lines.push(`继续复核：${advice.checks.join("；")}`);
-  lines.push("说明：内容仅基于本次公开告警，不了解你的持仓、现金流和亏损承受能力，不构成个性化投资建议。");
-  return lines.join("\n");
+function primaryAssets(alerts: Alert[]): string {
+  const assets = [...new Set(alerts.map((a) => (a.asset || "").trim().toUpperCase()).filter(Boolean))];
+  return assets.slice(0, 3).join("、") || "相关标的";
 }
 
 export function buildDeterministicTradeAlertAdvice(alerts: Alert[]): TradeAlertAdvice {
   const critical = alerts.some((alert) => alert.severity === "critical");
-  const labels = [...new Set(alerts.map((alert) => alert.rule))].slice(0, 3).join("、");
-  const advice: StructuredAdvice = {
-    summary: critical
-      ? `${labels || "交易"}告警已进入高风险级别。它提示风险暴露需要立即复核，但不能单独证明价格马上上涨或下跌。`
-      : `${labels || "交易"}风险正在升温。应先核对告警事实和自身风险承受能力，不要仅凭单条信号决定方向。`,
-    actions: [
-      critical
-        ? "保守：暂停新增风险敞口和杠杆，先确认现有持仓的最大可能亏损"
-        : "保守：暂缓新增风险敞口，等待下一次有效数据确认",
-      "中性：只按既定计划小额分批执行，预先写清退出条件并保留现金缓冲",
-      "激进：若仍参与，只使用可完全承受损失的风险预算，设置明确限损且不新增杠杆",
-    ],
-    avoid: ["不要因为单条告警追涨杀跌", "不要把历史信号当成确定的涨跌概率"],
-    checks: ["复核告警数据的时间和来源", "检查持仓集中度与最大回撤承受能力", "等待下一条独立信号确认"],
+  const labels = [...new Set(alerts.map((alert) => alert.rule))].slice(0, 3).join("、") || "交易";
+  const assets = primaryAssets(alerts);
+  const titles = alerts
+    .slice(0, 2)
+    .map((a) => a.title.trim())
+    .filter(Boolean);
+  const headline = titles[0] ? `核心事件：${titles[0].slice(0, 80)}。` : `${labels}出现新告警。`;
+
+  const take = critical
+    ? `${headline} 级别已到高风险，主要牵动 ${assets}。先当成风险提醒，而不是单边开仓信号。`
+    : `${headline} 来源：${labels}；关注 ${assets}。单条告警信息量有限，宜先定性再决定是否动手。`;
+
+  const stance = critical
+    ? "倾向先收缩风险：暂缓加仓与加杠杆，核对现有敞口和最坏回撤；若已持仓，优先明确退出条件，而不是借机扩大仓位。"
+    : "默认观望或轻仓试错：没有第二确认前不要追涨杀跌；若计划内本就关注该方向，也只按既定规则小步执行，并预留现金缓冲。";
+
+  const watch = "继续看：数据是否新鲜、有无独立来源印证、盘面是否真的跟着叙事走；对不上就放弃这条。";
+
+  return {
+    text: formatAdviceProse({ take, stance, watch }, "投资备忘"),
+    source: "fallback",
   };
-  return { text: formatStructuredAdvice(advice, "风险行动框架（本地回退）"), source: "fallback" };
 }
 
 export async function generateTradeAlertAdvice(
@@ -124,10 +142,14 @@ export async function generateTradeAlertAdvice(
 ): Promise<TradeAlertAdvice> {
   try {
     const parsed = parseTradeAlertAdvice(await runner(buildTradeAlertAdvicePrompt(alerts)));
-    if (parsed) return { text: formatStructuredAdvice(parsed, "LLM 风险解读与行动框架"), source: "llm" };
+    if (parsed) return { text: formatAdviceProse(parsed, "投资备忘"), source: "llm" };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     process.stderr.write(`[alert-advice] LLM fallback: ${message}\n`);
   }
   return buildDeterministicTradeAlertAdvice(alerts);
+}
+
+export function tradeAlertAdviceEnabled(config: TradeConfig): boolean {
+  return dotGet(config, "alerts.llm_advice", false) === true;
 }

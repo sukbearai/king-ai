@@ -12,18 +12,23 @@ function panewsCliPath(): string {
   return TRADE_PANEWS_CLI_PATH;
 }
 
-const LLM_PROMPT = `你是一个加密货币事件交易分析师。以下是最新热点新闻列表。
-请评估每条新闻的交易价值，返回 JSON 数组。
+const LLM_PROMPT = `你是加密事件交易分析师。对每条新闻做可交易性判断，返回 JSON 数组。
 
 评估维度：
-1. impact: "high" / "medium" / "low" — 交易价值
-2. direction: "bullish" / "bearish" / "neutral" — 对加密市场的方向影响
-3. asset: 最相关的资产代码（如 "BTC", "ETH", "SOL", "UNI"），无特定关联写 "CRYPTO"
-4. meme_potential: true/false — 该事件是否可能催生 meme 币
-5. reason: 一句话说明交易逻辑（中文，25字以内）
+1. impact: "high" / "medium" / "low"
+   - high：明确的供给冲击、安全事件、交易所/稳定币风险、ETF 大额流向、监管落地、解锁进 CEX 等，短线可能改变定价
+   - medium：有标的但间接（上币、合作、宏观二手解读）
+   - low：观点文、弱关联叙事、事后技术新闻、纯 AI/科技八卦且难映射到具体币
+2. direction: "bullish" / "bearish" / "neutral"
+   - 黑客/被盗/合约漏洞/交易所关停/提现异常/大额解锁进所 → 默认 bearish
+   - 含糊利好（合作、愿景、分析师喊单）→ 倾向 neutral 或 medium+谨慎 bullish，勿轻易 high+bullish
+   - risk-off 宏观（加息、油价、风险偏好收缩）对 BTC/山寨 → bearish 或 neutral，勿映射成强多
+3. asset: 最相关代码（BTC/ETH/SOL/具体代币）。仅当确实无单一标的时用 "CRYPTO"；能点名就不要写 CRYPTO
+4. meme_potential: true/false — 是否可能催生 meme
+5. reason: 一句中文交易含义（≤28字），写「为什么要紧 + 怎么看」，不要空话
 
-只返回 JSON 数组，不要其他文字。格式：
-[{"idx": 0, "impact": "high", "direction": "bullish", "asset": "BTC", "meme_potential": false, "reason": "..."}]
+只返回 JSON 数组：
+[{"idx": 0, "impact": "high", "direction": "bearish", "asset": "BTC", "meme_potential": false, "reason": "..."}]
 
 新闻列表：
 `;
@@ -149,11 +154,9 @@ export function createRuleQ(): AlertRule {
 
         const detailParts: string[] = [];
         if (desc) detailParts.push(desc.slice(0, 300));
-        if (reason) detailParts.push(`\n💡 交易逻辑: ${reason}`);
-        if (memePotential) detailParts.push("🐸 Meme 潜力: 该事件可能催生 meme 币");
-        detailParts.push(`📊 影响: ${impact} | 方向: ${directionStr}`);
-        if (direction > 0) detailParts.push(`📈 信号: 偏多 (${direction >= 0 ? "+" : ""}${direction.toFixed(1)})`);
-        else if (direction < 0) detailParts.push(`📉 信号: 偏空 (${direction.toFixed(1)})`);
+        if (reason) detailParts.push(`要点: ${reason}`);
+        const bias = directionStr === "bullish" ? "偏多" : directionStr === "bearish" ? "偏空" : "中性";
+        detailParts.push(`判断: ${bias} · 影响 ${impact}${memePotential ? " · 或有 meme 题材" : ""}`);
 
         alerts.push(
           createAlert({

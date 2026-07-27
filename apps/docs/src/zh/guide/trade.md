@@ -58,7 +58,7 @@ king-ai trade daemon --push-tg
 | `alerts.enabled` | 稳定规则 id（默认完整 slim 栈）；旧字母 id 仍可用 |
 | `alerts.poll_seconds` | 统一规则轮询间隔（默认 `120`） |
 | `alerts.tick_timeout_ms` | daemon 全局单规则 tick 超时（设置后覆盖各规则默认） |
-| `alerts.llm_advice` | 为所有最终推送的 warning/critical Telegram 告警追加面向初学者的 LLM 风险建议（默认 `false`） |
+| `alerts.llm_advice` | 为所有最终推送的 warning/critical Telegram 告警追加口语化「投资备忘」式 LLM 建议（默认 `false`） |
 | `alerts.confluence.enabled` | 多规则对同一**非空** asset 共振时将 info 升为 warning（默认 `true`）。旧键：`alerts.confluence_enabled` |
 | `alerts.confluence.window_seconds` | 共振窗口秒数（默认 `900`）。旧键：`alerts.confluence_window_seconds` |
 | `alerts.rule_stagger_ms` | 一轮中规则间隔毫秒（默认 `1000`） |
@@ -123,9 +123,9 @@ rule.check → regime 降级 → 共振（仅 asset）→ JSONL 审计 → TG �
 
 ### 所有 Telegram 告警的 LLM 建议
 
-`alerts.llm_advice=true` 时，每种规则最终通过 Telegram 严重度门槛和日 cap 的 warning/critical 告警，都会按本次发送批次调用一次 `llm.agent_tasks.alert_advice`。消息会附加面向初学者的风险解释，以及保守、中性、激进三种行动框架。源站健康故障不会调用建议，因为旧数据或缺失数据不能产生投资动作。
+`alerts.llm_advice=true` 时，每种规则最终通过 Telegram 严重度门槛和日 cap 的 warning/critical 告警，都会按本次发送批次调用一次 `llm.agent_tasks.alert_advice`。消息会附加一段口语化的「投资备忘」：先概括事件含义，再给原则性倾向与留意点，而不是保守/中性/激进三档清单。源站健康故障不会调用建议，因为旧数据或缺失数据不能产生投资动作。
 
-代码拒绝保证收益、确定性涨跌、满仓/梭哈和具体证券的立即买卖指令；模型不可用、执行异常或输出不合规时改用确定性本地解释，事实告警本身不会丢失。这些内容不知道用户持仓与承受能力，不构成个性化投资建议。
+代码拒绝保证收益、确定性涨跌、满仓/梭哈和具体证券的立即买卖指令；模型不可用、执行异常或输出不合规时改用确定性本地短文，事实告警本身不会丢失。这些内容不知道用户持仓与承受能力，不构成个性化投资建议。
 
 ```json
 {
@@ -198,7 +198,7 @@ king-ai trade signal-quality --refresh
 
 Twitter 采集器会对已登录的 `x.com/home` 虚拟时间线执行多轮下拉采样，并在 X 卸载旧 DOM 节点前跨轮合并推文。可用 `data_sources.twitter.collect_limit`、`scroll_rounds`、`scroll_wait_ms` 和 `stagnant_rounds` 调整覆盖量与采集耗时。采集日志会分别记录轮数、DOM 扫描量、唯一量、重复量、新增缓存、近 24 小时数量与作者数。这仍然是当前登录账号可见的主页流，不是 X 全量归档。
 
-Twitter 晨报默认相关性过滤；板块标题显示「缓存→筛后→已分析」漏斗。LLM 模式的排序候选同时受 `data_sources.twitter.llm_max_display`（默认 `150`）、总量上限 `max_display` 和 `per_author_cap` 限制；非 LLM 展示仍使用 `max_display`。摘要最多输出 5 条，并保留作者、UTC+8 时间和原始链接的来源索引；摘要后会追加高互动原文速览，`data_sources.twitter.quick_list_size` 默认为 `10`，设为 `0` 可关闭。需要原始时间线时设 `data_sources.twitter.relevance_filter` 为 `false`。Telegram meme 摘要优先保留有价格依据的买卖、流动性、市值和集中度，并压缩、限制普通转账与空投列表；Chain.fm 原文引用的代币合约和缩写钱包会在确定性的地址索引中输出完整地址。启用 LLM 摘要时，`briefing.daily_summary` 默认为 `true`；至少两个板块成功后，会结合 scratchpad 当前市场状态输出最多三条跨板块要点和风险倾向。干跑预览不会覆盖最近一次定时或手动投递晨报的持久化元数据。
+Twitter 晨报默认相关性过滤；板块标题显示「缓存→筛后→已分析」漏斗。筛选优先认 `$TICKER` 与已知交易标的，并拦截游戏联动、广告、账号登录等噪声；排序先看市场相关度，再看互动。LLM 模式的排序候选同时受 `data_sources.twitter.llm_max_display`（默认 `150`）、总量上限 `max_display` 和 `per_author_cap` 限制；非 LLM 展示仍使用 `max_display`。摘要最多输出 5 条交易相关判断，并保留作者、UTC+8 时间和原始链接的来源索引；摘要后会追加相关推文速览，`data_sources.twitter.quick_list_size` 默认为 `10`，设为 `0` 可关闭。需要原始时间线时设 `data_sources.twitter.relevance_filter` 为 `false`。Telegram 非 meme 频道摘要按影响写「发生了什么 + 为何要紧」；meme 摘要优先保留有价格依据的买卖、流动性、市值和集中度，并压缩普通转账与空投；Chain.fm 原文引用的代币合约和缩写钱包会在地址索引中输出完整地址。启用 LLM 摘要时，`briefing.daily_summary` 默认为 `true`；至少两个板块成功后，会结合 scratchpad 市场状态输出口语化「投资备忘」与风险倾向，而不是涨跌幅清单。各晨报板块并行拉取。股票板块默认只展开异动（个股 |Δ|≥5%、指数/ETF |Δ|≥3%），其余折叠；`briefing.stocks_show_all=true` 可恢复全量自选。meme 摘要会把侮辱性钱包昵称替换为中性「地址」。干跑预览不会覆盖最近一次定时或手动投递晨报的持久化元数据。
 
 ## OpenCLI Browser Bridge
 

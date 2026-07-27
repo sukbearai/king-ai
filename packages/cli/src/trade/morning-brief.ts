@@ -93,6 +93,20 @@ export function shouldGenerateDailySummary(config: Record<string, unknown>, part
   );
 }
 
+/** Cross-section daily memo: judgment first, not a price-change checklist. */
+export function buildDailySummaryInstruction(regime: MarketRegime, regimeLabel: string): string {
+  return [
+    `当前市场状态: ${regimeLabel}（${regime}）。`,
+    "写一段给交易者看的「今日投资备忘」，口语、有判断；禁止把各板块涨跌幅复读成 1/2/3 清单。",
+    "结构（纯文本，不要 Markdown）：",
+    "第一段（2～4 句）：今天主线是什么，尽量串联宏观/加密/个股的因果，区分官方数据与传闻。",
+    "第二段（1～3 句）：操作倾向与原则——偏防守还是可轻仓参与、什么情况下才动手，不要具体下单指令。",
+    "可选第三段（1～2 句）：今晚/明天最该盯的变量。",
+    "禁止：保证收益、必涨必跌、梭哈/满仓、立即买入或卖出。",
+    "最后单独一行输出：风险倾向: 偏多/偏空/中性/观望",
+  ].join("");
+}
+
 async function fetchMarketInstrument(
   inst: string,
   options: { showFr: boolean; showOi: boolean; requestTimeoutMs: number; fallbackTimeoutMs: number },
@@ -232,23 +246,73 @@ export function extractChainFmReferences(text: string): ChainFmReference[] {
   return references;
 }
 
+/** Drop insulting wallet nicknames; keep token tickers and known handles. */
+const MEME_OFFENSIVE_LABEL_RE =
+  /黑鬼|尼哥|nigg|n1gg|白皮|黄皮|杂种|死妈|傻逼|傻B|煞笔|操你|草你|妈的|艹|shit|fuck|bitch|cunt/i;
+const MEME_SAFE_HANDLES = new Set([
+  "cz",
+  "vitalik",
+  "trump",
+  "elon",
+  "musk",
+  "sbf",
+  "jump",
+  "wintermute",
+  "binance",
+  "coinbase",
+]);
+
+export function sanitizeMemeActorLabel(label: string, fallback = "地址"): string {
+  const trimmed = label.trim();
+  if (!trimmed) return fallback;
+  if (MEME_OFFENSIVE_LABEL_RE.test(trimmed)) return fallback;
+  // Pure numeric labels (row indexes) are noise in address indexes.
+  if (/^\d{1,4}$/.test(trimmed)) return fallback;
+  const key = trimmed.toLowerCase().replace(/^@/, "");
+  if (MEME_SAFE_HANDLES.has(key)) return trimmed;
+  return trimmed;
+}
+
+export function sanitizeMemeSummaryText(text: string): string {
+  // "黑鬼（AVA）卖出" / "黑鬼(AVA)买入" → "地址（AVA）…"
+  let out = text.replace(/([^\s（(]{1,24})\s*[（(]([A-Za-z0-9_$]{2,16})[）)]/g, (full, name: string, tag: string) => {
+    const clean = sanitizeMemeActorLabel(name, "地址");
+    return clean === "地址" ? `地址（${tag}）` : full;
+  });
+  out = out.replace(MEME_OFFENSIVE_LABEL_RE, "地址");
+  return out;
+}
+
 export function expandChainFmReferences(text: string): string {
   return text.replace(CHAIN_FM_MARKDOWN_LINK_RE, (markdown, label: string, rawUrl: string) => {
     const reference = parseChainFmReference(label, rawUrl);
     if (!reference) return markdown;
     const chain = reference.chain.toUpperCase();
-    if (reference.kind === "token") return `${label}（${chain} 合约 ${reference.address}）`;
-    if (label.includes("...")) return `${label}（${chain} 完整地址 ${reference.address}）`;
-    return label;
+    const safeLabel =
+      reference.kind === "account"
+        ? sanitizeMemeActorLabel(label, label.includes("...") ? label : `${reference.address.slice(0, 6)}…`)
+        : label;
+    if (reference.kind === "token") return `${safeLabel}（${chain} 合约 ${reference.address}）`;
+    if (label.includes("...") || safeLabel.includes("...")) {
+      return `${safeLabel}（${chain} 完整地址 ${reference.address}）`;
+    }
+    if (safeLabel !== label) return `${safeLabel}（${chain} ${reference.address}）`;
+    return safeLabel;
   });
 }
 
 export function formatMemeAddressIndex(summary: string, references: ChainFmReference[]): string {
   const selected = references.filter((reference) => {
     const label = reference.label.trim();
-    if (label.length < 2 || !/[A-Za-z一-鿿]/.test(label)) return false;
-    if (!summaryMentionsReference(summary, reference.label)) return false;
-    return reference.kind === "token" || reference.label.includes("...");
+    if (label.length < 2 || !/[A-Za-z一-鿿$]/.test(label)) return false;
+    if (!(reference.kind === "token" || reference.label.includes("..."))) return false;
+    const display =
+      reference.kind === "account" ? sanitizeMemeActorLabel(label, "地址") : sanitizeMemeActorLabel(label, label);
+    return (
+      summaryMentionsReference(summary, label) ||
+      summaryMentionsReference(summary, display) ||
+      (display === "地址" && /地址/.test(summary))
+    );
   });
   const seen = new Set<string>();
   const lines: string[] = [];
@@ -257,7 +321,12 @@ export function formatMemeAddressIndex(summary: string, references: ChainFmRefer
     if (seen.has(key)) continue;
     seen.add(key);
     const descriptor = reference.kind === "token" ? "合约" : "完整地址";
-    lines.push(`${reference.label} · ${reference.chain.toUpperCase()} ${descriptor} · ${reference.address}`);
+    const display =
+      reference.kind === "account"
+        ? sanitizeMemeActorLabel(reference.label, `${reference.address.slice(0, 6)}…`)
+        : sanitizeMemeActorLabel(reference.label, reference.label);
+    if (MEME_OFFENSIVE_LABEL_RE.test(display)) continue;
+    lines.push(`${display} · ${reference.chain.toUpperCase()} ${descriptor} · ${reference.address}`);
   }
   return lines.length ? `合约/地址索引：\n${lines.join("\n")}` : "";
 }
@@ -291,6 +360,9 @@ export interface TwitterSummaryCandidate {
 
 export function rankTwitterCandidates(candidates: TwitterSummaryCandidate[]): TwitterSummaryCandidate[] {
   return [...candidates].sort((a, b) => {
+    // Market signal first: pure engagement ranking lets games/ads drown real catalysts.
+    const marketDiff = tweetMarketScore(String(b.entry.text ?? "")) - tweetMarketScore(String(a.entry.text ?? ""));
+    if (marketDiff) return marketDiff;
     const scoreDiff = engagementScore(b.formatted) - engagementScore(a.formatted);
     if (scoreDiff) return scoreDiff;
     const timeDiff = (entryTimestamp(b.entry)?.getTime() ?? 0) - (entryTimestamp(a.entry)?.getTime() ?? 0);
@@ -304,7 +376,7 @@ export function buildTwitterQuickList(tweets: TwitterSummaryCandidate[], size: n
   const shown = Math.min(Math.trunc(size), tweets.length);
   if (shown <= 0) return [];
   return [
-    `⚡ 高互动推文速览（Top ${shown}，按互动排序）`,
+    `⚡ 相关推文速览（Top ${shown}，市场相关优先）`,
     ...tweets.slice(0, shown).map((tweet) => `  ${formatTweetLine(tweet.entry, { maxTextChars: 140 })}`),
   ];
 }
@@ -466,8 +538,14 @@ async function fetchTwitterSummary(hours: number): Promise<string> {
     const summaryInput = displayedTweets.map((tweet, index) => `[T${index + 1}] ${tweet.formatted}`).join("\n");
     const summary = await llmSummarize(
       summaryInput,
-      "Twitter 时间线（只保留交易、宏观、加密、AI芯片、上市公司与监管相关信息）",
-      "最多输出 5 条，按市场影响排序。每条末尾必须原样保留对应的 [Tn] 引用；区分官方消息与二手转述，不得把二手转述写成已证实事实。不要输出体育、促销、账号服务、VPN、信用卡或交易信号广告。",
+      "Twitter 交易相关动态",
+      [
+        "最多 5 条，按对交易决策的影响排序，写成简短判断而不是转述整条推文。",
+        "只保留：宏观/监管、加密现货与合约、ETF 流向、上市公司财报或指引、芯片与重要科技标的、链上大额异动。",
+        "直接丢弃：游戏/动漫联动、广告与 Ads Manager、品牌可持续发展报告、账号登录/密码、AI 作图促销、体育、VPN、信用卡、交易信号广告。",
+        "每条末尾必须原样保留对应的 [Tn]；区分官方与二手转述，不得把传闻写成事实。",
+        "若几乎没有交易相关内容，只输出一行：暂无高相关市场推文。",
+      ].join(""),
       { maxInputChars: null, timeoutMs: 120_000 },
     );
     const sourceNotes = formatTwitterSourceNotes(summary, displayedEntries);
@@ -512,32 +590,125 @@ export function pickTwitterDisplayTweets(
   return picked;
 }
 
-// Case-sensitive on purpose: uppercase-only ticker shapes ($BTC, NVDA). Folding this
-// into the /i regex below would make \b[A-Z]{2,6}\b match any short word.
-const TWITTER_TICKER_RE = /\$[A-Za-z]{1,8}\b|\b[A-Z]{2,6}\b/;
+// Dollar cashtags always count. Bare ALLCAPS tokens only count when known tickers —
+// otherwise "PV", "ADNOC", game collab titles flood the brief.
+const TWITTER_CASHTAG_RE = /\$[A-Za-z]{1,8}\b/;
+const TWITTER_BARE_TICKER_RE = /\b[A-Z]{2,6}\b/g;
+const KNOWN_TRADE_TICKERS = new Set([
+  "BTC",
+  "ETH",
+  "SOL",
+  "BNB",
+  "XRP",
+  "DOGE",
+  "ADA",
+  "AVAX",
+  "LINK",
+  "DOT",
+  "UNI",
+  "AAVE",
+  "PEPE",
+  "WIF",
+  "BONK",
+  "HYPE",
+  "SUI",
+  "APT",
+  "ARB",
+  "OP",
+  "TIA",
+  "SEI",
+  "INJ",
+  "NEAR",
+  "FIL",
+  "ATOM",
+  "LTC",
+  "BCH",
+  "TRX",
+  "TON",
+  "MKR",
+  "CRV",
+  "SNX",
+  "COMP",
+  "TSLA",
+  "NVDA",
+  "AAPL",
+  "MSFT",
+  "META",
+  "GOOG",
+  "GOOGL",
+  "AMZN",
+  "AMD",
+  "SMCI",
+  "COIN",
+  "MSTR",
+  "PLTR",
+  "RKLB",
+  "CRCL",
+  "HOOD",
+  "SQ",
+  "PYPL",
+  "BABA",
+  "PDD",
+  "JD",
+  "NFLX",
+  "INTC",
+  "MU",
+  "ARM",
+  "TSM",
+  "ASML",
+  "SPY",
+  "QQQ",
+  "IWM",
+  "TLT",
+  "GLD",
+  "SLV",
+  "USO",
+  "HYG",
+  "JPY",
+  "DXY",
+]);
 const TWITTER_RELEVANT_RE =
-  /(btc|eth|sol|crypto|bitcoin|ethereum|binance|coinbase|okx|bybit|etf|fomc|fed|sec|cpi|pce|tariff|yield|treasury|bond|stock|nasdaq|s&p|dow|ipo|earnings|revenue|profit|guidance|chips?|semiconductor|nvidia|tesla|meta|apple|google|microsoft|openai|deepseek|字节|阿里|英伟达|特斯拉|美联储|降息|加息|通胀|收益率|美债|关税|制裁|监管|证监会|交易所|上新|暴跌|暴涨|爆仓|链上|巨鲸|钱包|代币|加密|比特币|以太坊|山寨|芯片|财报|营收|利润|上市|美股|港股|A股|纳指|标普|道指|股票)/i;
+  /(btc|eth|sol|crypto|bitcoin|ethereum|binance|coinbase|okx|bybit|etf|fomc|fed|sec|cpi|pce|tariff|yield|treasury|bond|stock|nasdaq|s&p|dow|ipo|earnings|revenue|profit|guidance|chips?|semiconductor|nvidia|tesla|meta|apple|microsoft|openai|deepseek|字节|阿里|英伟达|特斯拉|美联储|降息|加息|通胀|收益率|美债|关税|制裁|监管|证监会|交易所|上新|暴跌|暴涨|爆仓|链上|巨鲸|钱包|代币|加密|比特币|以太坊|山寨|芯片|财报|营收|利润|上市|美股|港股|A股|纳指|标普|道指|股票|funding|open interest|清算|解锁|质押)/i;
 const TWITTER_HARD_NOISE_RE =
-  /(世界杯|world cup|\bfifa\b|football|soccer|the beautiful game|\besports?\b|prize pool|\bmlb\b|\bnba\b|\bnfl\b|leaderboard|bitcoin rewards|outcomes campaign|足球|进球|比利时|信用卡|申卡|返现|hsbc|pulse卡|账号池|七折|relayrouter|vpn|机场|推广|广告|品牌套件|高考分数线|小语种|设备锁定|切换账号|account banned|quota|gopty|tmux|\bfable\b|mythos|竞猜活动|免费试用|free trial|trading signals?|交易信号)/i;
+  /(世界杯|world cup|\bfifa\b|football|soccer|the beautiful game|\besports?\b|prize pool|\bmlb\b|\bnba\b|\bnfl\b|leaderboard|bitcoin rewards|outcomes campaign|足球|进球|比利时|信用卡|申卡|返现|hsbc|pulse卡|账号池|七折|relayrouter|vpn|机场|推广|广告|品牌套件|高考分数线|小语种|设备锁定|切换账号|account banned|quota|gopty|tmux|\bfable\b|mythos|竞猜活动|免费试用|free trial|trading signals?|交易信号|honkai|star rail|fate\/stay|collaboration pv|collab(?:oration)?\s*pv|\banime\b|ads manager|advertisers are using|sustainability report|forgot your password|selfie video|pay per image|create anything\.|start free|paintbrush)/i;
 const TWITTER_NOISE_RE = /(活动|抽奖|促销|教程|攻略|开户|办卡)/i;
 const TWITTER_NOISE_WITH_MARKET_RE =
   /(证监会|股票|市场|交易|美股|港股|A股|财报|营收|利润|监管|sec|stock|earnings|revenue|crypto|bitcoin|ethereum|币|链上|交易所)/i;
+const TWITTER_CATALYST_RE =
+  /(etf|fomc|fed|sec|cpi|pce|earnings|guidance|unlock|funding|liquidation|暴跌|暴涨|爆仓|加息|降息|财报|监管|制裁|净流入|净流出|上线|下架)/i;
 
-// All-caps shouty headlines ("BRAZIL WINS IN HOUSTON") would otherwise satisfy the
-// ticker shape; genuine ticker mentions come embedded in mixed-case prose.
-function tickerMatchIsCredible(cleaned: string): boolean {
-  if (!TWITTER_TICKER_RE.test(cleaned)) return false;
+// All-caps shouty headlines ("BRAZIL WINS IN HOUSTON") would otherwise look mixed only
+// via cashtags; bare known tickers are allowlisted separately.
+function hasCashtag(cleaned: string): boolean {
+  if (!TWITTER_CASHTAG_RE.test(cleaned)) return false;
   const letters = cleaned.match(/[A-Za-z]/g) ?? [];
   if (!letters.length) return false;
   const upper = letters.filter((ch) => ch >= "A" && ch <= "Z").length;
-  return upper / letters.length < 0.8;
+  return upper / letters.length < 0.85;
+}
+
+function hasKnownBareTicker(cleaned: string): boolean {
+  const matches = cleaned.match(TWITTER_BARE_TICKER_RE) ?? [];
+  return matches.some((token) => KNOWN_TRADE_TICKERS.has(token));
+}
+
+/** Higher = more useful for a trading brief; 0 should not outrank real catalysts. */
+export function tweetMarketScore(text: string): number {
+  const cleaned = stripMarkdown(text).trim();
+  if (!cleaned || TWITTER_HARD_NOISE_RE.test(cleaned)) return 0;
+  let score = 0;
+  if (TWITTER_RELEVANT_RE.test(cleaned)) score += 3;
+  if (hasCashtag(cleaned)) score += 2;
+  if (hasKnownBareTicker(cleaned)) score += 2;
+  if (TWITTER_CATALYST_RE.test(cleaned)) score += 2;
+  return score;
 }
 
 export function isTradeRelevantTweet(text: string): boolean {
   const cleaned = stripMarkdown(text).trim();
   if (!cleaned) return false;
   if (TWITTER_HARD_NOISE_RE.test(cleaned)) return false;
-  if (!tickerMatchIsCredible(cleaned) && !TWITTER_RELEVANT_RE.test(cleaned)) return false;
+  if (!hasCashtag(cleaned) && !hasKnownBareTicker(cleaned) && !TWITTER_RELEVANT_RE.test(cleaned)) return false;
   if (TWITTER_NOISE_RE.test(cleaned) && !TWITTER_NOISE_WITH_MARKET_RE.test(cleaned)) return false;
   return true;
 }
@@ -554,11 +725,12 @@ async function fetchTelegramSummary(hours: number): Promise<string> {
   const fallbackHours = Number(dotGet(config, "briefing.telegram_fallback_hours", 168)) || 168;
   const lines = [`📰 Telegram 频道摘要（最近 ${hours}h）\n`];
   const channelRows = parseTelegramChannels(channels);
-  const fetched: Array<{ label: string } & TgChannelFetch> = [];
-  for (const { label, chat } of channelRows) {
-    const result = await fetchTgChannelMessages(chat, hours, msgLimit, fallbackHours);
-    fetched.push({ label, ...result });
-  }
+  const fetched: Array<{ label: string } & TgChannelFetch> = await Promise.all(
+    channelRows.map(async ({ label, chat }) => ({
+      label,
+      ...(await fetchTgChannelMessages(chat, hours, msgLimit, fallbackHours)),
+    })),
+  );
 
   const blocks: Array<{
     label: string;
@@ -583,10 +755,11 @@ async function fetchTelegramSummary(hours: number): Promise<string> {
       ? `（最近 ${hours}h 无新消息${usedHours ? `，展示最近 ${usedHours}h 内消息` : "，展示最近缓存消息"}）\n`
       : "";
     const instruction = isMeme
-      ? "最多 5 条、350 字。优先保留真实买入/卖出、美元价值、流动性、市值和地址集中度；普通转账/空投合并为一条，不要逐个罗列代币。若只有转账而无买盘或估值依据，明确写「不构成交易信号」。涉及代币或转账方时禁止缩写链名、合约地址和钱包地址。"
-      : undefined;
-    blocks.push({ label, text: body, instruction, addressReferences });
-    if (!useLlm) lines.push(`【${label}】${staleNote}${body.slice(0, 1500)}`);
+      ? "最多 5 条、350 字。优先保留真实买入/卖出、美元价值、流动性、市值和地址集中度；普通转账/空投合并为一条，不要逐个罗列代币。若只有转账而无买盘或估值依据，明确写「不构成交易信号」。钱包称呼用中性「地址」或缩写，禁止复述侮辱性昵称；代币名可保留。禁止缩写链名、合约地址和钱包地址。"
+      : "最多 5 条。按市场影响排序，写成「发生了什么 + 为何要紧」；合并重复；优先监管、宏观、战争/能源、大资金、交易所与上市；保留关键数字和标的，不要流水账公告列表。";
+    const preparedBody = isMeme ? sanitizeMemeSummaryText(body) : body;
+    blocks.push({ label, text: preparedBody, instruction, addressReferences });
+    if (!useLlm) lines.push(`【${label}】${staleNote}${preparedBody.slice(0, 1500)}`);
   }
 
   if (useLlm && blocks.length) {
@@ -596,7 +769,9 @@ async function fetchTelegramSummary(hours: number): Promise<string> {
       const staleNote = fetchedRow?.stale
         ? `（最近 ${hours}h 无新消息${fetchedRow.usedHours ? `，展示最近 ${fetchedRow.usedHours}h 内消息` : "，展示最近缓存消息"}）\n`
         : "";
-      const compact = compactTelegramSummary(b.label, summaries[i] ?? "");
+      const isMeme = b.label.toLowerCase().includes("meme");
+      const rawSummary = summaries[i] ?? "";
+      const compact = compactTelegramSummary(b.label, isMeme ? sanitizeMemeSummaryText(rawSummary) : rawSummary);
       const addressIndex = formatMemeAddressIndex(compact, b.addressReferences ?? []);
       lines.push(`【${b.label}】${staleNote}${compact}${addressIndex ? `\n${addressIndex}` : ""}`);
     });
@@ -689,16 +864,22 @@ export async function runMorningBrief(
   const hours = options.hours ?? (Number(dotGet(config, "briefing.hours_lookback", 24)) || 24);
 
   const parts = [`🌅 每日晨报 — ${formatDisplayTime()}\n`];
-  for (const section of sections) {
-    const fetcher = SECTION_FETCHERS[section];
-    if (!fetcher) continue;
-    try {
-      parts.push(await fetcher(hours));
-      parts.push("");
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      parts.push(`[${section}] 获取失败: ${msg}\n`);
-    }
+  // Sections are independent I/O + LLM work; run in parallel, keep config order.
+  const sectionChunks = await Promise.all(
+    sections.map(async (section) => {
+      const fetcher = SECTION_FETCHERS[section];
+      if (!fetcher) return "";
+      try {
+        return await fetcher(hours);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return `[${section}] 获取失败: ${msg}\n`;
+      }
+    }),
+  );
+  for (const chunk of sectionChunks) {
+    if (!chunk) continue;
+    parts.push(chunk, "");
   }
 
   if (shouldGenerateDailySummary(config, parts)) {
@@ -707,11 +888,11 @@ export async function runMorningBrief(
       const regimeLabel = marketRegimeLabel(regime);
       const summary = await llmSummarize(
         successfulBriefSectionParts(parts).join("\n\n"),
-        "今日要点",
-        `已知当前市场状态: ${regimeLabel}(${regime})。综合各板块信息输出最多 3 条要点，每条一行、不超过60字，按市场影响排序；区分官方数据与传闻，不得将传闻写成事实。最后单独一行输出「风险倾向: 偏多/偏空/中性/观望」。`,
+        "今日投资备忘",
+        buildDailySummaryInstruction(regime, regimeLabel),
         { maxInputChars: 8000, timeoutMs: 120_000 },
       );
-      parts.splice(1, 0, `🧭 今日要点（市场状态: ${regimeLabel}(${regime})）\n\n${summary}`, "");
+      parts.splice(1, 0, `📌 投资备忘（${regimeLabel}）\n\n${summary}`, "");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       process.stderr.write(`[morning-brief] daily summary failed: ${msg}\n`);

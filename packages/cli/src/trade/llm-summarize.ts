@@ -51,10 +51,11 @@ export function buildSummaryPrompt(
 ): string {
   const input = maxInputChars === null ? text : text.slice(0, maxInputChars);
   return [
-    `请用中文简洁摘要以下「${label}」内容，保留关键数字和标的名称，不超过 500 字。`,
-    "输出要求：纯文本，不要使用任何 Markdown 格式（禁止 # 标题、**加粗**、- 列表、代码块、反引号等）。",
-    "可用换行分段，条目用「1.」「2.」编号或「·」开头。",
-    ...(instruction ? [instruction] : []),
+    `你在写交易晨报里的「${label}」小节：给忙着看盘的人看，要有判断，不要流水账。`,
+    "用中文，不超过 500 字；保留关键数字、标的、时间。",
+    "纯文本：禁止 Markdown（# 标题、**加粗**、- 列表、代码块、反引号）。",
+    "可用换行；条目用「1.」「2.」或「·」。合并重复，弱相关一笔带过。",
+    ...(instruction ? [instruction] : ["按市场影响排序；写清发生了什么、为何要紧。"]),
     "",
     input,
   ].join("\n");

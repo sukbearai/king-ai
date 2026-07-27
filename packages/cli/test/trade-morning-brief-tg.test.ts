@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { buildSummaryPrompt, compactSummaryFallback } from "../src/trade/llm-summarize.js";
 import {
+  buildDailySummaryInstruction,
   buildTwitterQuickList,
   compactTelegramSummary,
   expandChainFmReferences,
@@ -18,7 +19,10 @@ import {
   pickTwitterDisplayTweets,
   rankTwitterCandidates,
   resolveBriefingPushTg,
+  sanitizeMemeActorLabel,
+  sanitizeMemeSummaryText,
   shouldGenerateDailySummary,
+  tweetMarketScore,
 } from "../src/trade/morning-brief.js";
 import { chunkTelegramMessage } from "../src/trade/telegram.js";
 import { countRecentCacheRecords } from "../src/trade/twitter-cache.js";
@@ -58,6 +62,15 @@ describe("daily summary helpers", () => {
     assert.equal(shouldGenerateDailySummary({ briefing: { daily_summary: false } }, parts), false);
     assert.equal(shouldGenerateDailySummary({ briefing: { llm_summarize: false } }, parts), false);
     assert.equal(shouldGenerateDailySummary({}, ["title", "section one", "", "[twitter] 获取失败"]), false);
+  });
+
+  it("asks for an investment memo instead of a price-change checklist", () => {
+    const instruction = buildDailySummaryInstruction("risk_off", "避险");
+    assert.match(instruction, /投资备忘/);
+    assert.match(instruction, /risk_off/);
+    assert.match(instruction, /风险倾向/);
+    assert.doesNotMatch(instruction, /每条一行、不超过60字/);
+    assert.doesNotMatch(instruction, /最多 3 条要点/);
   });
 });
 
@@ -145,15 +158,25 @@ describe("formatTwitterSummaryHeading", () => {
 });
 
 describe("Twitter candidate selection", () => {
-  it("ranks engagement first and recency second", () => {
+  it("ranks market relevance before raw engagement", () => {
     const ranked = rankTwitterCandidates([
-      { entry: { id: "old", created_at: "2026-07-10T01:00:00Z" }, formatted: "@a: old" },
-      { entry: { id: "new", created_at: "2026-07-10T03:00:00Z" }, formatted: "@b: new" },
-      { entry: { id: "popular", created_at: "2026-07-10T00:00:00Z" }, formatted: "@c: popular [5❤️]" },
+      {
+        entry: { id: "game", text: "Honkai Star Rail collaboration PV", created_at: "2026-07-10T03:00:00Z" },
+        formatted: "@game: collab [20000❤️]",
+      },
+      {
+        entry: { id: "btc", text: "BTC ETF sees heavy net outflows today", created_at: "2026-07-10T01:00:00Z" },
+        formatted: "@macro: btc etf [5❤️]",
+      },
+      {
+        entry: { id: "noise", text: "random hello", created_at: "2026-07-10T02:00:00Z" },
+        formatted: "@x: hello [50❤️]",
+      },
     ]);
+    // Market score first (btc), then engagement among non-market posts (game >> noise).
     assert.deepEqual(
       ranked.map((candidate) => candidate.entry.id),
-      ["popular", "new", "old"],
+      ["btc", "game", "noise"],
     );
   });
 
@@ -198,7 +221,7 @@ describe("buildTwitterQuickList", () => {
 
   it("preserves top-N order and truncates text without losing suffixes", () => {
     const lines = buildTwitterQuickList(tweets, 2);
-    assert.equal(lines[0], "⚡ 高互动推文速览（Top 2，按互动排序）");
+    assert.equal(lines[0], "⚡ 相关推文速览（Top 2，市场相关优先）");
     assert.match(lines[1] ?? "", /^ {2}@alice: x{139}… \[100❤️\]/);
     assert.match(lines[1] ?? "", /https:\/\/x\.com\/alice\/status\/1$/);
     assert.equal(lines[2], "  @bob: second [50❤️] https://x.com/bob/status/2");
@@ -257,6 +280,27 @@ describe("compactTelegramSummary", () => {
   });
 });
 
+describe("meme label sanitization", () => {
+  it("replaces offensive actor nicknames while keeping token tickers", () => {
+    assert.equal(sanitizeMemeActorLabel("黑鬼"), "地址");
+    assert.equal(sanitizeMemeActorLabel("CZ"), "CZ");
+    assert.equal(
+      sanitizeMemeSummaryText("1. 黑鬼（AVA）卖出14.3M MEOW；CZ（288）收到空投"),
+      "1. 地址（AVA）卖出14.3M MEOW；CZ（288）收到空投",
+    );
+  });
+
+  it("expands chain.fm account links without echoing insults", () => {
+    const raw =
+      "[黑鬼](https://chain.fm/account/solana/Abcdefghijklmnopqrstuvwxyz123456) sold " +
+      "[MEOW](https://chain.fm/token/solana/7Lbe787dJ4bxpPiEWLb9R9VnQsMiET6Gbacxedm3pump)";
+    const expanded = expandChainFmReferences(raw);
+    assert.doesNotMatch(expanded, /黑鬼/);
+    assert.match(expanded, /地址|Abcdef/);
+    assert.match(expanded, /MEOW（SOLANA 合约 7Lbe/);
+  });
+});
+
 describe("formatMemeAddressIndex", () => {
   it("adds complete contracts and cited abbreviated wallets from chain.fm links", () => {
     const raw =
@@ -298,12 +342,18 @@ describe("isTradeRelevantTweet", () => {
     assert.equal(isTradeRelevantTweet("BTC突破64000美元，过去24小时全网合约爆仓扩大"), true);
   });
 
-  it("matches ticker shapes case-sensitively", () => {
+  it("matches tickers via cashtag or known bare symbols", () => {
     assert.equal(isTradeRelevantTweet("TSLA calls printing after the delivery beat"), true);
     assert.equal(isTradeRelevantTweet("$geo breaking out on prison contract news"), true);
     assert.equal(isTradeRelevantTweet("Join the group to get early access!"), false);
     assert.equal(isTradeRelevantTweet("The danger of acting like a third country is becoming one."), false);
     assert.equal(isTradeRelevantTweet("BRAZIL WINS IN HOUSTON AND IS ON TO THE ROUND OF 16"), false);
+    // Bare all-caps fragments like PV / ADNOC are not free tickets into the brief.
+    assert.equal(isTradeRelevantTweet('Honkai Star Rail Collaboration PV "A Long-Awaited Reunion"'), false);
+    assert.equal(
+      isTradeRelevantTweet("ADNOC delivered the energy the world depends on. Explore our 2025 Sustainability Report."),
+      false,
+    );
   });
 
   it("filters low-value social noise", () => {
@@ -322,6 +372,18 @@ describe("isTradeRelevantTweet", () => {
     assert.equal(isTradeRelevantTweet("TradingBox AI 交易信号 7 天免费试用推广"), false);
     assert.equal(isTradeRelevantTweet("Juggling a football for a chance to earn Bitcoin rewards"), false);
     assert.equal(isTradeRelevantTweet("Fable can be used again until July 12th but my quota is gone"), false);
+    assert.equal(
+      isTradeRelevantTweet("Forgot your password? You can now use a selfie video to log into your Google Account."),
+      false,
+    );
+    assert.equal(isTradeRelevantTweet("Advertisers are using (and loving) the new X Ads Manager"), false);
+    assert.equal(isTradeRelevantTweet("Da Vinci had a paintbrush. Create anything. Pay per image. Start free."), false);
+  });
+
+  it("scores market catalysts above viral non-market posts", () => {
+    assert.ok(tweetMarketScore("BTC ETF net outflow $240M") > tweetMarketScore("Honkai collab PV trailer drop"));
+    assert.ok(tweetMarketScore("Fed rate cut odds rise after CPI") > 0);
+    assert.equal(tweetMarketScore("Create anything. Pay per image. Start free."), 0);
   });
 });
 
