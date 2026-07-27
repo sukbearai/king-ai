@@ -1,0 +1,3 @@
+display_name: Dual VPS Reality Landing
+short_description: Chain Reality line VPS A to WireGuard landing VPS B with fail-closed egress.
+default_prompt: Use $dual-vps-reality-residential to keep or deploy VLESS Reality on line machine A and send marked egress through WireGuard to landing machine B with fail-closed routing and honest IP-type checks.

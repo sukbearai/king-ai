@@ -73,6 +73,20 @@ const requiredBodyMarkers = new Map([
     ],
   ],
   [
+    "dual-vps-reality-residential",
+    [
+      "Do not point A's default route at B",
+      "Fail closed: if WireGuard is down, marked proxy traffic must fail, not fall back to A's datacenter IP",
+      "Table = off",
+      '"mark": 102',
+      "Be honest about IP type",
+      "existing Reality on A was preserved",
+      "mark102 = `<b-ip>`",
+      "Do not include SSH passwords, Reality private keys, or WireGuard private keys",
+      "Related Skills",
+    ],
+  ],
+  [
     "digitalocean-cf-vless-deploy",
     [
       "Cloudflare SSL/TLS mode should be `Full (strict)`",
