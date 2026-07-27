@@ -25,10 +25,13 @@ export async function runScheduledRuleTick(
   rule: AlertRule,
   state: AlertState,
   options: RunRuleTickOptions,
-  saveCooldowns: (cooldowns: Record<string, number>) => Promise<void>,
+  saveCooldowns: (
+    cooldowns: Record<string, number>,
+    memo: Record<string, string | number | boolean | null>,
+  ) => Promise<void>,
 ): Promise<void> {
   await runRuleTick(rule, state, options);
-  await saveCooldowns(state.cooldowns);
+  await saveCooldowns(state.cooldowns, state.memo);
 }
 
 /** Single poll loop: run enabled rules sequentially with stagger + per-tick timeout, then wait poll_seconds. */
@@ -42,9 +45,10 @@ export async function runUnifiedRuleScheduler(options: UnifiedRuleSchedulerOptio
   const rules = await loadEnabledRules(enabledIds);
   const store = getTradeStore();
   const sharedCooldowns = await store.loadCooldowns();
+  const sharedMemo = await store.loadMemo();
   const cooldownConfig = resolveCooldownConfig(config);
   const states = new Map<string, AlertState>(
-    rules.map((rule) => [rule.ruleKey, new AlertState(cooldownConfig, sharedCooldowns)]),
+    rules.map((rule) => [rule.ruleKey, new AlertState(cooldownConfig, sharedCooldowns, sharedMemo)]),
   );
   const useConfluence = confluenceEnabled(config);
   const confluenceWindow = confluenceWindowSeconds(config);
@@ -67,7 +71,7 @@ export async function runUnifiedRuleScheduler(options: UnifiedRuleSchedulerOptio
           confluenceEnabled: useConfluence,
           confluenceWindowSeconds: confluenceWindow,
         },
-        (cooldowns) => store.saveCooldowns(cooldowns),
+        (cooldowns, memo) => store.saveCooldowns(cooldowns, memo),
       );
       if (staggerMs > 0) await sleep(staggerMs);
     }

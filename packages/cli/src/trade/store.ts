@@ -6,13 +6,15 @@
 import { appendJsonl } from "../jsonl.js";
 import { TRADE_ALERT_LOG_PATH } from "../paths.js";
 import type { Alert } from "./alert-rule.js";
-import { getRuleStateStore, type RuleStateStore } from "./rule-state.js";
+import { getRuleStateStore, type RuleMemoValue, type RuleStateStore } from "./rule-state.js";
 import { getScratchpad, type MarketRegime, type Scratchpad } from "./scratchpad.js";
 
 export interface TradeStore {
   claimCooldown(key: string, sec: number, cooldowns: Record<string, number>): boolean;
   loadCooldowns(): Promise<Record<string, number>>;
-  saveCooldowns(cooldowns: Record<string, number>): Promise<void>;
+  saveCooldowns(cooldowns: Record<string, number>, memo?: Record<string, RuleMemoValue>): Promise<void>;
+  loadMemo(): Promise<Record<string, RuleMemoValue>>;
+  saveMemo(memo: Record<string, RuleMemoValue>): Promise<void>;
   recordSignal(ruleKey: string, symbol: string, direction: string, severity: string, volState?: string): Promise<void>;
   checkConfluence(
     asset: string,
@@ -54,7 +56,9 @@ export function createTradeStore(options?: {
     scratchpad,
     claimCooldown,
     loadCooldowns: () => ruleState.loadAlertCooldowns(),
-    saveCooldowns: (cooldowns) => ruleState.saveAlertCooldowns(cooldowns),
+    saveCooldowns: (cooldowns, memo) => ruleState.saveAlertCooldowns(cooldowns, memo),
+    loadMemo: () => ruleState.loadAlertMemo(),
+    saveMemo: (memo) => ruleState.saveAlertMemo(memo),
     recordSignal: (ruleKey, symbol, direction, severity, volState) =>
       ruleState.recordSignal(ruleKey, symbol, direction, severity, volState),
     checkConfluence: (asset, windowSeconds) => ruleState.checkConfluence(asset, windowSeconds),

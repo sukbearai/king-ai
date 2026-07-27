@@ -120,7 +120,9 @@ describe("trade alert SNR regressions", () => {
       },
     };
 
-    await scheduler.runScheduledRuleTick(rule, state, { dryRun: true }, (claimed) => tradeStore.saveCooldowns(claimed));
+    await scheduler.runScheduledRuleTick(rule, state, { dryRun: true }, (claimed, memo) =>
+      tradeStore.saveCooldowns(claimed, memo),
+    );
 
     const persisted = await tradeStore.loadCooldowns();
     assert.ok(persisted.scheduler_single_tick);

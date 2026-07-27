@@ -128,15 +128,24 @@ async function cachedPrices(): Promise<Record<string, number>> {
   return prices;
 }
 
+export type AlertMemoValue = string | number | boolean | null;
+
 export class AlertState {
   cooldowns: Record<string, number>;
+  /** Opaque per-rule KV persisted with rule_state.json (last yields, etc.). */
+  memo: Record<string, AlertMemoValue>;
   cooldownConfig: Record<string, number>;
   /** Per-tick claim ledger for reserve/rollback when TG drop or delivery fails. */
   pendingClaims = new Map<string, { prev: number; cooldownSec: number }>();
 
-  constructor(cooldownConfig: Record<string, number>, sharedCooldowns?: Record<string, number>) {
+  constructor(
+    cooldownConfig: Record<string, number>,
+    sharedCooldowns?: Record<string, number>,
+    sharedMemo?: Record<string, AlertMemoValue>,
+  ) {
     this.cooldownConfig = cooldownConfig;
     this.cooldowns = sharedCooldowns ?? {};
+    this.memo = sharedMemo ?? {};
   }
 
   /** Clear per-tick claim ledger; call once at the start of each rule tick. */
@@ -182,6 +191,14 @@ export class AlertState {
     if (!entry) return;
     this.cooldowns[key] = Date.now() / 1000 - 0.9 * entry.cooldownSec;
     this.pendingClaims.delete(key);
+  }
+
+  getMemo(key: string): AlertMemoValue | undefined {
+    return Object.hasOwn(this.memo, key) ? this.memo[key] : undefined;
+  }
+
+  setMemo(key: string, value: AlertMemoValue): void {
+    this.memo[key] = value;
   }
 }
 
@@ -437,8 +454,9 @@ export async function runRuleLoop(rule: AlertRule, options: RunRuleLoopOptions =
   const config = await loadTradeConfig();
   const store = getTradeStore();
   const sharedCooldowns = await store.loadCooldowns();
+  const sharedMemo = await store.loadMemo();
   const cooldownConfig = resolveCooldownConfig(config);
-  const state = new AlertState(cooldownConfig, sharedCooldowns);
+  const state = new AlertState(cooldownConfig, sharedCooldowns, sharedMemo);
   const pollSeconds = options.pollSeconds ?? (Number(dotGet(config, "alerts.poll_seconds", 120)) || 120);
   let lastRegimeCheck = 0;
   const REGIME_INTERVAL = 4 * 3600;
@@ -462,7 +480,7 @@ export async function runRuleLoop(rule: AlertRule, options: RunRuleLoopOptions =
       confluenceWindowSeconds: confluenceWindowSeconds(config),
       tickTimeoutMs: options.tickTimeoutMs,
     });
-    if (!options.dryRun) await store.saveCooldowns(sharedCooldowns);
+    if (!options.dryRun) await store.saveCooldowns(sharedCooldowns, sharedMemo);
     if (options.runOnce) break;
     await new Promise((r) => setTimeout(r, pollSeconds * 1000));
   }

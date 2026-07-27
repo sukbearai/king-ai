@@ -3,8 +3,12 @@ import { dirname } from "node:path";
 import { TRADE_RULE_STATE_PATH } from "../paths.js";
 import { todayDisplayDate } from "./time-utils.js";
 
+export type RuleMemoValue = string | number | boolean | null;
+
 export interface RuleStateFile {
   cooldowns: Record<string, number>;
+  /** Cross-tick rule memo (last alert yields, etc.) — opaque KV, rules own their keys. */
+  memo: Record<string, RuleMemoValue>;
   dailyPushCounts: Record<string, number>;
   dailyPushDate: string;
   recentSignals: Array<{
@@ -20,6 +24,7 @@ export interface RuleStateFile {
 
 const DEFAULT_STATE: RuleStateFile = {
   cooldowns: {},
+  memo: {},
   dailyPushCounts: {},
   dailyPushDate: todayDisplayDate(),
   recentSignals: [],
@@ -104,9 +109,21 @@ export class RuleStateStore {
     return { ...state.cooldowns };
   }
 
-  async saveAlertCooldowns(cooldowns: Record<string, number>): Promise<void> {
+  async saveAlertCooldowns(cooldowns: Record<string, number>, memo?: Record<string, RuleMemoValue>): Promise<void> {
     await this.update((state) => {
       state.cooldowns = { ...cooldowns };
+      if (memo !== undefined) state.memo = { ...memo };
+    });
+  }
+
+  async loadAlertMemo(): Promise<Record<string, RuleMemoValue>> {
+    const state = await this.readState();
+    return { ...(state.memo ?? {}) };
+  }
+
+  async saveAlertMemo(memo: Record<string, RuleMemoValue>): Promise<void> {
+    await this.update((state) => {
+      state.memo = { ...memo };
     });
   }
 

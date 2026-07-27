@@ -466,6 +466,108 @@ export function celebrityAlertSeverity(
   return "info";
 }
 
+/** Built-in Chinese / informal name → ticker aliases (config may override/merge). */
+export const DEFAULT_CELEBRITY_ASSET_ALIASES: Record<string, string> = {
+  长鑫科技: "CXMT",
+  长鑫: "CXMT",
+  长鑫存储: "CXMT",
+};
+
+/** Built-in account tier map; config `account_tiers` merges on top. */
+export const DEFAULT_CELEBRITY_ACCOUNT_TIERS: Record<string, string> = {
+  _FORAB: "news",
+};
+
+export const CELEBRITY_ENTITY_COOLDOWN_SECONDS = 14_400;
+
+const ASSET_SUFFIX_RE = /(?:合约|股票|概念)$/u;
+const TICKER_LIKE_RE = /^[A-Za-z0-9.]{1,10}$/;
+
+/**
+ * Normalize celebrity entity strings to a stable asset ticker when possible.
+ * - trim; strip trailing 合约/股票/概念
+ * - alias lookup (case-insensitive for latin keys; exact for CJK)
+ * - bare ticker-like tokens uppercased; otherwise return cleaned raw
+ */
+export function normalizeCelebrityAsset(raw: string, aliases: Record<string, string> = {}): string {
+  let s = String(raw ?? "").trim();
+  if (!s) return "";
+  s = s.replace(ASSET_SUFFIX_RE, "").trim();
+  if (!s) return "";
+
+  const merged: Record<string, string> = { ...DEFAULT_CELEBRITY_ASSET_ALIASES, ...aliases };
+  // Exact match first (covers CJK keys).
+  if (Object.hasOwn(merged, s)) return merged[s]!;
+  const lower = s.toLowerCase();
+  for (const [key, ticker] of Object.entries(merged)) {
+    if (key.toLowerCase() === lower) return ticker;
+  }
+
+  if (TICKER_LIKE_RE.test(s)) return s.toUpperCase();
+  return s;
+}
+
+/** Stable slug for entity cooldown keys (alnum + underscore). */
+export function celebrityAssetSlug(asset: string): string {
+  const cleaned = String(asset ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fff.]+/gi, "_")
+    .replace(/^_+|_+$/g, "");
+  return cleaned || "unknown";
+}
+
+export function mergeCelebrityAssetAliases(configAliases: unknown): Record<string, string> {
+  const out: Record<string, string> = { ...DEFAULT_CELEBRITY_ASSET_ALIASES };
+  if (configAliases && typeof configAliases === "object" && !Array.isArray(configAliases)) {
+    for (const [k, v] of Object.entries(configAliases as Record<string, unknown>)) {
+      if (typeof v === "string" && v.trim()) out[k] = v.trim();
+    }
+  }
+  return out;
+}
+
+export function mergeCelebrityAccountTiers(configTiers: unknown): Record<string, string> {
+  const out: Record<string, string> = { ...DEFAULT_CELEBRITY_ACCOUNT_TIERS };
+  if (configTiers && typeof configTiers === "object" && !Array.isArray(configTiers)) {
+    for (const [k, v] of Object.entries(configTiers as Record<string, unknown>)) {
+      if (typeof v === "string" && v.trim()) out[k] = v.trim().toLowerCase();
+    }
+  }
+  return out;
+}
+
+export function resolveCelebrityAccountTier(account: string, tiers: Record<string, string>): string {
+  const raw = String(account ?? "").replace(/^@/, "");
+  if (Object.hasOwn(tiers, raw)) return tiers[raw]!;
+  const lower = raw.toLowerCase();
+  for (const [key, tier] of Object.entries(tiers)) {
+    if (key.toLowerCase() === lower) return tier;
+  }
+  return "";
+}
+
+export function celebrityEntityCooldownKey(account: string, normalizedAsset: string): string {
+  return `celebrity_${String(account).replace(/^@/, "")}_${celebrityAssetSlug(normalizedAsset)}`;
+}
+
+/**
+ * Dual cooldown gate: per-tweet + per (account, entity).
+ * Returns why a tweet was blocked so the caller can still markSeen.
+ */
+export function gateCelebrityTweetAlert(
+  state: AlertState,
+  tid: string,
+  account: string,
+  normalizedAsset: string,
+): "emit" | "skip_tweet_cd" | "skip_entity_cd" {
+  const tweetKey = `t_${tid}`;
+  if (!state.canAlert(tweetKey, 600)) return "skip_tweet_cd";
+  const entityKey = celebrityEntityCooldownKey(account, normalizedAsset);
+  if (!state.canAlert(entityKey, CELEBRITY_ENTITY_COOLDOWN_SECONDS)) return "skip_entity_cd";
+  return "emit";
+}
+
 export function createCelebrityAlert(input: {
   alphaType: string;
   confidence: number;
@@ -478,14 +580,17 @@ export function createCelebrityAlert(input: {
   tokenChain: string;
   tags: string[];
   cooldownKey?: string;
+  /** Force direction (e.g. news tier → 0). */
+  direction?: number;
 }): Alert {
+  const direction = input.direction != null ? input.direction : input.alphaType === "policy" ? 0 : 1;
   return createAlert({
     ruleId: "celebrity",
     severity: input.severity,
     title: input.title,
     detail: input.detail,
     timestamp: input.timestamp,
-    direction: input.alphaType === "policy" ? 0 : 1,
+    direction,
     strength: input.confidence,
     asset: input.asset,
     tokenContract: input.tokenContract,
@@ -558,6 +663,8 @@ export function createRuleTCelebrity(): AlertRule {
         cfg.min_confidence_warning ?? DEFAULT_MIN_CONFIDENCE_WARNING,
         DEFAULT_MIN_CONFIDENCE_WARNING,
       );
+      const assetAliases = mergeCelebrityAssetAliases(cfg.asset_aliases);
+      const accountTiers = mergeCelebrityAccountTiers(cfg.account_tiers);
       const seenState = await loadSeenState();
       seen = seenState.active;
       parseFails = seenState.parseFails;
@@ -614,11 +721,14 @@ export function createRuleTCelebrity(): AlertRule {
           await markSeen(tid, { ttlSeconds: NON_ALPHA_SEEN_SECONDS, outcome: "non_alpha" });
           continue;
         }
-        const celebrityCooldownKey = `t_${tid}`;
-        if (!state.canAlert(celebrityCooldownKey, 600)) {
+        const normalizedAsset = normalizeCelebrityAsset(entities[0] ?? "", assetAliases);
+        const gate = gateCelebrityTweetAlert(state, tid, user, normalizedAsset);
+        if (gate !== "emit") {
+          // Tweet or entity cooldown: still markSeen so we do not re-classify.
           await markSeen(tid);
           continue;
         }
+        const celebrityCooldownKey = `t_${tid}`;
 
         const alphaType = String(meta.alpha_type ?? "none");
         const reason = String(meta.reason ?? "");
@@ -643,20 +753,26 @@ export function createRuleTCelebrity(): AlertRule {
           }
         }
 
+        const accountTierResolved = resolveCelebrityAccountTier(user, accountTiers);
+        const isNewsTier = accountTierResolved === "news";
+        let severity = celebrityAlertSeverity(alphaType, entities.length, confidence, minConfidenceWarning);
+        if (isNewsTier) severity = "info";
+
         const primaryRef = chainRefs[0];
         alerts.push(
           createCelebrityAlert({
             alphaType,
             confidence,
-            severity: celebrityAlertSeverity(alphaType, entities.length, confidence, minConfidenceWarning),
+            severity,
             title,
             cooldownKey: celebrityCooldownKey,
             detail: lines.join("\n"),
             timestamp: nowDisplay(),
-            asset: entities[0] ?? "",
+            asset: normalizedAsset,
             tokenContract: primaryRef?.address ?? "",
             tokenChain: primaryRef?.chain ?? "",
             tags: ["celebrity", "llm_autonomous", `conf_${confidence.toFixed(2)}`],
+            direction: isNewsTier ? 0 : undefined,
           }),
         );
         await markSeen(tid);

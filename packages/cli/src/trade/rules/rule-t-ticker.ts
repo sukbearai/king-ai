@@ -3,14 +3,25 @@ import { createAlert, type Alert, type AlertRule, type AlertState } from "../ale
 import { dotGet, loadTradeConfig } from "../config.js";
 import { nowDisplay, sqliteQuery } from "../data-helpers.js";
 
+/** Absolute 24h views floor for velocity/first-seen alerts (config: alerts.ticker_velocity.min_views). */
+export const DEFAULT_TICKER_VELOCITY_MIN_VIEWS = 10_000;
+
+/** True when 24h view sum clears the absolute volume gate. */
+export function meetsTickerVelocityMinViews(views24h: number, minViews = DEFAULT_TICKER_VELOCITY_MIN_VIEWS): boolean {
+  return Number.isFinite(views24h) && views24h >= minViews;
+}
+
 export function createRuleTTicker(): AlertRule {
   let minMentions = 3;
-  let minViews = 1000;
+  /** SQL prefilter floor — keep low so velocity path can apply absolute min_views itself. */
+  let sqlMinViews = 1000;
   let minAuthors = 2;
   let velocityMult = 3;
   let criticalMult = 5;
   let criticalViews = 10_000;
   let criticalAuthors = 3;
+  /** Absolute views gate for emitting an alert (stricter than SQL prefilter). */
+  let alertMinViews = DEFAULT_TICKER_VELOCITY_MIN_VIEWS;
 
   return {
     name: "ticker_mention_velocity",
@@ -19,13 +30,19 @@ export function createRuleTTicker(): AlertRule {
     async check(state: AlertState): Promise<Alert[]> {
       const config = await loadTradeConfig();
       const params = (dotGet(config, "alerts.ticker_mention", {}) ?? {}) as Record<string, unknown>;
+      const velocityCfg = (dotGet(config, "alerts.ticker_velocity", {}) ?? {}) as Record<string, unknown>;
       minMentions = Number(params.min_mentions ?? 3);
-      minViews = Number(params.min_views ?? 1000);
+      sqlMinViews = Number(params.min_views ?? 1000);
       minAuthors = Number(params.min_authors ?? 2);
       velocityMult = Number(params.velocity_multiplier ?? 3);
       criticalMult = Number(params.critical_multiplier ?? 5);
       criticalViews = Number(params.critical_views ?? 10_000);
       criticalAuthors = Number(params.critical_authors ?? 3);
+      const configuredMinViews = Number(velocityCfg.min_views ?? DEFAULT_TICKER_VELOCITY_MIN_VIEWS);
+      alertMinViews =
+        Number.isFinite(configuredMinViews) && configuredMinViews > 0
+          ? configuredMinViews
+          : DEFAULT_TICKER_VELOCITY_MIN_VIEWS;
 
       const now = Date.now() / 1000;
       const cutoff24h = now - 86400;
@@ -35,7 +52,7 @@ export function createRuleTTicker(): AlertRule {
         TRADE_MENTIONS_DB_PATH,
         `SELECT ticker, COUNT(*) AS cnt_24h, SUM(views) AS views_24h, COUNT(DISTINCT author) AS authors_24h
          FROM ticker_mentions WHERE created_ts >= ${cutoff24h}
-         GROUP BY ticker HAVING cnt_24h >= ${minMentions} AND views_24h >= ${minViews} AND authors_24h >= ${minAuthors}
+         GROUP BY ticker HAVING cnt_24h >= ${minMentions} AND views_24h >= ${sqlMinViews} AND authors_24h >= ${minAuthors}
          ORDER BY cnt_24h DESC`,
       );
       if (!rows.length) return [];
@@ -47,6 +64,8 @@ export function createRuleTTicker(): AlertRule {
         const views24h = Number(row[2] ?? 0);
         const authors24h = Number(row[3] ?? 0);
         if (!ticker) continue;
+        // Absolute volume floor: reject tiny samples even when velocity multiplier looks large.
+        if (!meetsTickerVelocityMinViews(views24h, alertMinViews)) continue;
 
         const baselineRows = await sqliteQuery(
           TRADE_MENTIONS_DB_PATH,

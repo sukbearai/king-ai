@@ -1,4 +1,6 @@
-import { cronMatches } from "../cron.js";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { TRADE_STATE_DIR } from "../paths.js";
 import {
   dotGet,
   enabledAlertRules,
@@ -19,15 +21,58 @@ export interface TradeDaemonOptions {
   dryRun?: boolean;
 }
 
-interface ScheduledTick {
-  key: string;
-  lastMinuteKey: string;
-  cron: string;
-  run: () => Promise<void>;
+interface SchedulerStateFile {
+  morning_brief_last_run?: string;
 }
 
-function minuteKey(date = new Date()): string {
-  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}-${date.getHours()}-${date.getMinutes()}`;
+const SCHEDULER_STATE_PATH = join(TRADE_STATE_DIR, "scheduler_state.json");
+
+/** Local calendar date YYYY-MM-DD (machine local timezone). */
+export function localDateString(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * Catch-up semantics for morning brief: fire once the local clock is at/after
+ * briefHour:00 and today's date has not yet been claimed.
+ */
+export function shouldRunMorningBrief(now: Date, lastRunDate: string | null, briefHour: number): boolean {
+  const hour = Number.isFinite(briefHour) ? briefHour : 5;
+  if (now.getHours() < hour) return false;
+  const today = localDateString(now);
+  if (lastRunDate === today) return false;
+  return true;
+}
+
+export async function readMorningBriefLastRun(path = SCHEDULER_STATE_PATH): Promise<string | null> {
+  try {
+    const raw = JSON.parse(await readFile(path, "utf8")) as SchedulerStateFile;
+    const value = raw?.morning_brief_last_run;
+    return typeof value === "string" && value.length > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function claimMorningBriefRun(date: string, path = SCHEDULER_STATE_PATH): Promise<void> {
+  let existing: SchedulerStateFile = {};
+  try {
+    existing = JSON.parse(await readFile(path, "utf8")) as SchedulerStateFile;
+    if (!existing || typeof existing !== "object") existing = {};
+  } catch {
+    existing = {};
+  }
+  existing.morning_brief_last_run = date;
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${JSON.stringify(existing)}\n`, "utf8");
+}
+
+interface ScheduledTick {
+  key: string;
+  run: (now: Date) => Promise<void>;
 }
 
 export async function runTradeDaemon(options: TradeDaemonOptions = {}): Promise<void> {
@@ -77,14 +122,17 @@ export async function runTradeDaemon(options: TradeDaemonOptions = {}): Promise<
   });
 
   const briefHour = Number(dotGet(config, "briefing.schedule_hour", 5)) || 5;
-  const briefCron = `0 ${briefHour} * * *`;
 
   const scheduled: ScheduledTick[] = [
     {
       key: "morning_brief",
-      lastMinuteKey: "",
-      cron: briefCron,
-      run: async () => {
+      run: async (now) => {
+        const lastRun = await readMorningBriefLastRun();
+        if (!shouldRunMorningBrief(now, lastRun, briefHour)) return;
+        const today = localDateString(now);
+        // Claim-first: persist today's date before executing so failures still
+        // count as "attempted once today" (same as old once-per-day cron).
+        await claimMorningBriefRun(today);
         process.stderr.write("[scheduler] morning_brief\n");
         await runMorningBrief({ pushTg, dryRun: options.dryRun });
       },
@@ -99,16 +147,12 @@ export async function runTradeDaemon(options: TradeDaemonOptions = {}): Promise<
 
   const tick = async () => {
     const now = new Date();
-    const mk = minuteKey(now);
     for (const job of scheduled) {
-      if (cronMatches(job.cron, now) && job.lastMinuteKey !== mk) {
-        job.lastMinuteKey = mk;
-        try {
-          await job.run();
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          process.stderr.write(`[scheduler] ${job.key} failed: ${msg}\n`);
-        }
+      try {
+        await job.run(now);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`[scheduler] ${job.key} failed: ${msg}\n`);
       }
     }
 
