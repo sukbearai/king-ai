@@ -11,15 +11,29 @@ import urllib.request
 from pathlib import Path
 
 
-def parse_args():
+def non_negative_int(value):
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be non-negative")
+    return parsed
+
+
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", default=os.environ.get("GROK_MODELS_BASE_URL", "http://127.0.0.1:8317/v1"))
     parser.add_argument("--api-key-env", default="XAI_API_KEY")
     parser.add_argument("--auth-dir", default="~/.cli-proxy-api")
-    parser.add_argument("--expected-auth-count", type=int, default=0)
+    parser.add_argument(
+        "--expected-total-auth-count",
+        "--expected-auth-count",
+        dest="expected_total_auth_count",
+        type=non_negative_int,
+        default=None,
+        help="Expected total xai-*.json files in the auth directory",
+    )
     parser.add_argument("--model", default="grok-4.5")
     parser.add_argument("--live", action="store_true", help="Run one quota-consuming Grok inference check")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def fetch_models(base_url, api_key):
@@ -88,9 +102,10 @@ def main():
     print("[ok] cpa_auth_files=%d" % len(auth_files))
     if invalid:
         failures.append("invalid or non-private auth files: %d" % len(invalid))
-    if args.expected_auth_count and len(auth_files) != args.expected_auth_count:
+    if args.expected_total_auth_count is not None and len(auth_files) != args.expected_total_auth_count:
         failures.append(
-            "expected %d auth files, found %d" % (args.expected_auth_count, len(auth_files))
+            "expected %d total auth files, found %d"
+            % (args.expected_total_auth_count, len(auth_files))
         )
 
     env = dict(os.environ)

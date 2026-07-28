@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Shared Codex skills for King AI operational workflows.",
   "scripts": {
-    "validate": "node scripts/validate-skills.mjs"
+    "validate": "node scripts/validate-skills.mjs && python3 -m unittest discover -s skills/grok-cpa-bootstrap/tests -v"
   },
   "engines": {
     "node": ">=22.13.0"

@@ -20,6 +20,9 @@ const requiredBodyMarkers = new Map([
       "audit_stack.py",
       "retry_cpa_auth.py",
       "personal-team-blocked:spending-limit",
+      "invalid_grant: Access denied",
+      "--expected-total-auth-count",
+      "CPA_OIDC_PROXY",
     ],
   ],
   [

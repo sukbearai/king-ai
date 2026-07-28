@@ -9,6 +9,7 @@ REQUIRED_FILES = [
     ROOT / "scripts" / "configure_grok_cpa.py",
     ROOT / "scripts" / "audit_stack.py",
     ROOT / "scripts" / "retry_cpa_auth.py",
+    ROOT / "tests" / "test_recovery_scripts.py",
     ROOT / "references" / "cloudflare-temp-mail.md",
     ROOT / "references" / "registration-cpa.md",
 ]
@@ -24,6 +25,9 @@ REQUIRED_MARKERS = [
     "audit_stack.py",
     "retry_cpa_auth.py",
     "personal-team-blocked:spending-limit",
+    "invalid_grant: Access denied",
+    "--expected-total-auth-count",
+    "CPA_OIDC_PROXY",
 ]
 
 

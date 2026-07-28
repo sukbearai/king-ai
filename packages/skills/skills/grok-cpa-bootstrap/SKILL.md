@@ -70,7 +70,7 @@ Obtain or discover:
 - Worker API hostname, for example `temp-mail-api.example.com`.
 - Registration count. Default to a single dry-run mailbox unless real registration is explicitly authorized.
 - Grok default model. Prefer a model proven by a live CPA call; `grok-4.5` was the verified default in the source session but availability can change.
-- Proxy requirements for browser and OIDC flows.
+- Proxy requirements for the registration browser and CPA OIDC flow. When a proxy is required, use an explicit value and verify the route before registration.
 
 Generate locally:
 
@@ -185,9 +185,16 @@ printf 'start\n' | PYTHONUNBUFFERED=1 .venv/bin/python grok_register_ttk.py cli
 
 Do not expose generated passwords, mailbox JWTs, SSO tokens, or verification codes in the final report. Set result files to mode `600` after the process exits.
 
-## 6. Recover CPA OIDC Rate Limits
+## 6. Recover CPA OIDC Failures
 
 Registration success and CPA export success are separate. Preserve registered accounts when OIDC export reports `429 slow_down`.
+
+When a proxy is required, set `CPA_OIDC_PROXY` so the device-code request, authorization browser, and token poll use one explicit route. Do not put an authenticated proxy URL on the command line:
+
+```bash
+read -s 'CPA_OIDC_PROXY?CPA OIDC proxy: '
+export CPA_OIDC_PROXY
+```
 
 Run the bundled sequential recovery tool against the saved account file:
 
@@ -195,24 +202,34 @@ Run the bundled sequential recovery tool against the saved account file:
 <grok-register>/.venv/bin/python <skill-dir>/scripts/retry_cpa_auth.py \
   --repo <grok-register> \
   --accounts <grok-register>/accounts_<timestamp>.txt \
-  --expected-count <count>
+  --expected-account-count <batch-account-count>
 ```
 
-The tool skips existing auth files, waits between accounts, retries transient failures, and closes its reusable browser on exit. Never reduce the cooldown merely to make the run finish sooner.
+Unset the override after recovery:
+
+```bash
+unset CPA_OIDC_PROXY
+```
+
+The tool skips existing auth files, waits between accounts, retries only rate limits, network failures, and upstream `5xx` responses, redacts account identity and OAuth codes, and closes its reusable browser on exit. It stops the recovery run on `invalid_grant`, `access_denied`, identity mismatch, explicit risk-control errors, unknown failures, or exhausted transient retries. Never reduce the cooldown or rotate routes merely to bypass an upstream control.
+
+Treat a browser `Device Authorized` page as consent progress only. Require a successful token response and a private `xai-*.json` file before counting CPA auth success. `invalid_grant: Access denied` is an xAI-side rejection of that device grant; it does not identify the exact cause or prove that the account is permanently blocked. See [references/registration-cpa.md](references/registration-cpa.md) for the stop and reporting rules.
 
 ## 7. Verify End to End
 
 Run the safe audit first:
 
 ```bash
-zsh -lc 'python3 <skill-dir>/scripts/audit_stack.py --expected-auth-count <count>'
+zsh -lc 'python3 <skill-dir>/scripts/audit_stack.py \
+  --expected-total-auth-count <pre-batch-total-plus-expected-batch-auth>'
 ```
 
 Only when the user wants a billable or quota-consuming inference check, add `--live`:
 
 ```bash
 zsh -lc 'python3 <skill-dir>/scripts/audit_stack.py \
-  --expected-auth-count <count> --model grok-4.5 --live'
+  --expected-total-auth-count <pre-batch-total-plus-expected-batch-auth> \
+  --model grok-4.5 --live'
 ```
 
 Acceptance requires:
@@ -234,7 +251,7 @@ Report:
 - Installed CPA and Grok CLI versions.
 - Local CPA URL and selected default model, without the API key.
 - Worker name, API hostname, D1 database name, and mail domain, without Cloudflare secrets.
-- Requested, registered, and CPA-auth counts.
+- Requested, registered, batch CPA-auth, total CPA-auth, and terminal-rejection counts.
 - Test and audit commands run.
 - Any upstream entitlement error by exact model.
 - Sensitive file locations and permissions.
