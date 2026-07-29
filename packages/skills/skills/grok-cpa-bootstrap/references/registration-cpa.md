@@ -35,6 +35,8 @@ Create an ignored `config.json` under the `grok-register` checkout. Preserve rep
 }
 ```
 
+When continuing in the same shell from the Cloudflare setup, write `TEMP_MAIL_ADMIN_PASSWORD` directly into `cloudflare_api_key` without echoing it or placing it in a command argument. After `config.json` is ignored, mode `600`, and validated, run `unset TEMP_MAIL_ADMIN_PASSWORD`.
+
 Use `proxy` for the main registration browser and `cpa_proxy` for the complete CPA OIDC flow. When either flow must use a proxy, set it explicitly instead of relying on a terminal or desktop application's implicit proxy state. The CPA device-code request, authorization browser, and token poll must share the same resolved `cpa_proxy`.
 
 For a one-off recovery, prefer the `CPA_OIDC_PROXY` environment override accepted by `retry_cpa_auth.py`; it keeps proxy credentials out of command arguments and overrides `cpa_proxy` only in memory. The recovery output reports only whether the source is configured, never the proxy URL. Confirm a local proxy listener and OIDC discovery through that route before starting. Proxy consistency is a prerequisite, not evidence that an xAI rejection will be removed.
@@ -109,6 +111,20 @@ The account output format is `email----password----sso`. The tool must never ech
 Retry only `rate_limited`, `network`, and `upstream_server` categories. Stop the recovery run for `access_denied`, `identity_mismatch`, `risk_control`, `credentials`, `cancelled`, `unknown`, or exhausted transient retries. Preserve registered accounts and auth evidence instead of rerunning registration or cycling routes.
 
 Historical `cpa_auth_failed.txt` entries are audit records. A recovered entry can remain in that file; determine current success from the auth JSON set, not from the absence of historical errors.
+
+### Retry Exactly Once
+
+When the user asks to retry CPA OIDC once, that authorizes one OIDC export attempt, not a new registration and not the default three attempts. Use an account result file containing exactly the intended record:
+
+```bash
+<grok-register>/.venv/bin/python <skill-dir>/scripts/retry_cpa_auth.py \
+  --repo <grok-register> \
+  --accounts <single-account-output> \
+  --expected-account-count 1 \
+  --attempts 1
+```
+
+The tool still skips the account if its matching auth file already exists. A transient failure from this one attempt is terminal for this invocation; require renewed user authorization before another OIDC attempt, and never rerun registration to obtain the same account.
 
 ## Verify CPA Import
 

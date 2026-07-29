@@ -51,12 +51,13 @@ Do not point `KING_AI_SHARED_SKILLS` at the individual `grok-cpa-bootstrap` dire
 - Target macOS with Homebrew unless the user explicitly asks for another platform.
 - Inspect existing installations and configuration before mutating them. Preserve unrelated services, DNS records, shell configuration, and repositories.
 - Never commit or print API keys, Cloudflare tokens, JWT secrets, mailbox credentials, passwords, SSO cookies, OAuth tokens, account result files, or complete auth JSON.
+- Store the temporary-mail `JWT_SECRET` and JSON-encoded `ADMIN_PASSWORDS` as Cloudflare Worker secrets, not plaintext `[vars]`. Suppress raw Wrangler output until any legacy literal secrets have been migrated.
 - Generate fresh secrets on each machine. Do not copy secrets from examples, previous sessions, logs, or this skill.
 - Store sensitive local files with mode `600` and secret directories with mode `700`.
 - Keep `~/.cli-proxy-api/config.yaml`, `~/.grok/config.toml`, and the managed shell environment block consistent.
 - Require explicit user authorization and an exact count before creating real external accounts. Do not infer permission to register accounts from a request to install or audit the stack.
 - Pause for the user if a CAPTCHA or manual identity check appears. Do not claim success from browser progress alone.
-- Keep the Cloudflare root-domain mail route unchanged. Bind only the selected mail subdomain catch-all to the temporary-email Worker.
+- Snapshot the public root-domain MX set before any Email Routing mutation and require it to remain unchanged afterward. Never enable, disable, or replace apex routing as a shortcut; bind only the selected mail subdomain catch-all to the temporary-email Worker.
 - Treat `personal-team-blocked:spending-limit` as upstream entitlement failure, not CPA import failure.
 - Do not publish, deploy unrelated Workers, purchase credits, or subscribe accounts without explicit authorization.
 
@@ -204,6 +205,8 @@ Run the bundled sequential recovery tool against the saved account file:
   --accounts <grok-register>/accounts_<timestamp>.txt \
   --expected-account-count <batch-account-count>
 ```
+
+When the user asks to retry CPA OIDC exactly once for one saved account, do not rerun registration and do not inherit the default three attempts. Use an account file containing exactly that one record and add both `--expected-account-count 1` and `--attempts 1`.
 
 Unset the override after recovery:
 
