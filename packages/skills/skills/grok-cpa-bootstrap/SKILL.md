@@ -214,7 +214,7 @@ Unset the override after recovery:
 unset CPA_OIDC_PROXY
 ```
 
-The tool skips existing auth files, waits between accounts, retries only rate limits, network failures, and upstream `5xx` responses, redacts account identity and OAuth codes, and closes its reusable browser on exit. It stops the recovery run on `invalid_grant`, `access_denied`, identity mismatch, explicit risk-control errors, unknown failures, or exhausted transient retries. Never reduce the cooldown or rotate routes merely to bypass an upstream control.
+The tool skips existing auth files, waits between accounts, retries only rate limits, network failures, and upstream `5xx` responses, redacts account identity and OAuth codes, and closes its reusable browser on exit. It stops the recovery run on `invalid_grant`, `access_denied`, identity mismatch, identity unavailable after the bounded consent-page wait, explicit risk-control errors, unknown failures, or exhausted transient retries. Never reduce the cooldown or rotate routes merely to bypass an upstream control.
 
 Treat a browser `Device Authorized` page as consent progress only. Require a successful token response and a private `xai-*.json` file before counting CPA auth success. `invalid_grant: Access denied` is an xAI-side rejection of that device grant; it does not identify the exact cause or prove that the account is permanently blocked. See [references/registration-cpa.md](references/registration-cpa.md) for the stop and reporting rules.
 

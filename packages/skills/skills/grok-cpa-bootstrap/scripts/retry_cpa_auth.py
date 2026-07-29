@@ -11,6 +11,7 @@ from pathlib import Path
 ERROR_MARKERS = (
     ("access_denied", ("invalid_grant", "access_denied", "access denied")),
     ("identity_mismatch", ("consent identity mismatch", "identity mismatch")),
+    ("identity_unverified", ("consent identity unavailable", "identity unavailable")),
     ("risk_control", ("turnstile", "cloudflare", "risk control", "risk-control", "blocked")),
     ("credentials", ("invalid credentials", "incorrect password", "password rejected")),
     ("cancelled", ("cancelled", "canceled")),

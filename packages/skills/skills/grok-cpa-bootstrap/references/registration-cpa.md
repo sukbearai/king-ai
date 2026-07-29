@@ -108,7 +108,9 @@ Use the bundled recovery script:
 
 The account output format is `email----password----sso`. The tool must never echo the email, password, SSO value, OAuth user code, proxy URL, or auth path. It reports only account indexes, counts, sanitized progress events, and controlled error categories. It skips an account when the matching `xai-<email>.json` already exists.
 
-Retry only `rate_limited`, `network`, and `upstream_server` categories. Stop the recovery run for `access_denied`, `identity_mismatch`, `risk_control`, `credentials`, `cancelled`, `unknown`, or exhausted transient retries. Preserve registered accounts and auth evidence instead of rerunning registration or cycling routes.
+Retry only `rate_limited`, `network`, and `upstream_server` categories. Stop the recovery run for `access_denied`, `identity_mismatch`, `identity_unverified`, `risk_control`, `credentials`, `cancelled`, `unknown`, or exhausted transient retries. Preserve registered accounts and auth evidence instead of rerunning registration or cycling routes.
+
+Treat consent-page identity as three states. Proceed only when the target email is visible, stop immediately when a different email is visible, and wait for the bounded page-render interval when no email is visible. If the identity is still absent after that wait, report `identity_unverified` and stop without clicking Allow or Authorize.
 
 Historical `cpa_auth_failed.txt` entries are audit records. A recovered entry can remain in that file; determine current success from the auth JSON set, not from the absence of historical errors.
 

@@ -29,6 +29,13 @@ class RetryCpaAuthTests(unittest.TestCase):
         self.assertEqual("access_denied", category)
         self.assertFalse(retryable)
 
+    def test_unverified_identity_is_distinct_and_not_retryable(self):
+        category, retryable = retry_cpa_auth.classify_auth_error(
+            "auth failed: consent identity unavailable"
+        )
+        self.assertEqual("identity_unverified", category)
+        self.assertFalse(retryable)
+
     def test_only_transient_categories_are_retryable(self):
         self.assertEqual(
             ("rate_limited", True),
