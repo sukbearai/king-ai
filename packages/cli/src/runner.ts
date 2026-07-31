@@ -394,6 +394,7 @@ const CONTEXT_OVERFLOW_RE =
 const POISONED_BODY_RE =
   /no (?:low|high) surrogate|unpaired surrogate|lone surrogate|surrogate in string|request body is not valid json/i;
 const ENGINE_NO_OUTPUT_RE = /engine produced no output|session\.send|interactive prompt/i;
+const ENGINE_LAUNCH_FAILURE_RE = /\b(?:spawn|exec(?:file|ve)?)\b[^\n]*\b(?:E2BIG|ENOENT|EACCES|EPERM)\b/i;
 
 export function isContextOverflow(error: string): boolean {
   return CONTEXT_OVERFLOW_RE.test(error);
@@ -401,6 +402,10 @@ export function isContextOverflow(error: string): boolean {
 
 export function isPoisonedTranscript(error: string): boolean {
   return POISONED_BODY_RE.test(error);
+}
+
+export function isEngineLaunchFailure(error: string | undefined): boolean {
+  return !!error && ENGINE_LAUNCH_FAILURE_RE.test(error);
 }
 
 export function mustResetSession(error: string, hadResume: boolean): boolean {
@@ -2208,7 +2213,8 @@ ${delta}`;
         }
 
         if (error) {
-          if (isRateLimited(error)) this.engineBackoffUntil = Date.now() + ENGINE_BACKOFF_MS;
+          if (isRateLimited(error) || isEngineLaunchFailure(error))
+            this.engineBackoffUntil = Date.now() + ENGINE_BACKOFF_MS;
           const retryKey = activeContract?.taskId ? `task:${activeContract.taskId}` : `unread:${unreadBatchKey(seen)}`;
           if (retryKey !== this.noOutputRerunKey) {
             this.noOutputRerunKey = retryKey;
@@ -2453,7 +2459,8 @@ ${delta}`;
       await this.setActiveRun(null, null);
     }
     if (error) {
-      if (isRateLimited(error)) this.engineBackoffUntil = Date.now() + ENGINE_BACKOFF_MS;
+      if (isRateLimited(error) || isEngineLaunchFailure(error))
+        this.engineBackoffUntil = Date.now() + ENGINE_BACKOFF_MS;
       if (shouldPublishEngineFailureNotice(error))
         await this.publishEngineFailure({ token, runId: run?.runId, conversationId: null, error, exitCode });
     }

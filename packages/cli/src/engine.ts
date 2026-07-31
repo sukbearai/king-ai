@@ -1,6 +1,7 @@
 import { execFileSync, spawn } from "node:child_process";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, delimiter as PATH_DELIMITER } from "node:path";
 import type {
   EngineAdapter,
@@ -1411,7 +1412,12 @@ async function grokImageBlocks(imagePaths: readonly string[]): Promise<GrokPromp
   return blocks;
 }
 
-async function grokHeadlessArgv(args: {
+interface GrokHeadlessInvocation {
+  argv: string[];
+  cleanup: () => Promise<void>;
+}
+
+async function grokHeadlessInvocation(args: {
   home: string;
   prompt: string;
   model?: string;
@@ -1421,7 +1427,7 @@ async function grokHeadlessArgv(args: {
   outputFormat: "json" | "streaming-json" | "plain";
   imagePaths?: readonly string[];
   outputSchema?: JsonSchema;
-}): Promise<string[]> {
+}): Promise<GrokHeadlessInvocation> {
   const extra = envExtraArgs("KING_AI_GROK_ARGS");
   const model = args.model ? ["-m", args.model] : [];
   const reasoningEffort = args.reasoningEffort?.trim() ? ["--reasoning-effort", args.reasoningEffort.trim()] : [];
@@ -1446,9 +1452,23 @@ async function grokHeadlessArgv(args: {
       ...(await grokImageBlocks(imagePaths)),
       { type: "text", text: stripLoneSurrogates(args.prompt) },
     ];
-    return [...base, ...structured, "--prompt-json", JSON.stringify(blocks), "--output-format", args.outputFormat];
+    const promptDir = await mkdtemp(join(tmpdir(), "king-ai-grok-prompt-"));
+    const promptPath = join(promptDir, "prompt.json");
+    try {
+      await writeFile(promptPath, JSON.stringify(blocks), { encoding: "utf8", mode: 0o600 });
+    } catch (err) {
+      await rm(promptDir, { recursive: true, force: true });
+      throw err;
+    }
+    return {
+      argv: [...base, ...structured, "--prompt-file", promptPath, "--output-format", args.outputFormat],
+      cleanup: () => rm(promptDir, { recursive: true, force: true }),
+    };
   }
-  return [...base, ...structured, "-p", args.prompt, "--output-format", args.outputFormat];
+  return {
+    argv: [...base, ...structured, "-p", args.prompt, "--output-format", args.outputFormat],
+    cleanup: async () => undefined,
+  };
 }
 
 export function grokTurnFromStdout(stdout: string, model?: string | null): EngineResult {
@@ -1555,7 +1575,7 @@ function spawnGrokTurn(
     outputSchema?: JsonSchema;
   },
 ): Promise<EngineResult> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const child = spawn(bin, argv, {
       cwd: opts.home,
       env: opts.env,
@@ -1569,6 +1589,14 @@ function spawnGrokTurn(
     opts.signal.addEventListener("abort", onAbort, { once: true });
     const timeoutMs = turnTimeoutMs();
     if (timeoutMs > 0) timer = setTimeout(onAbort, timeoutMs);
+    let settled = false;
+    const settle = (result: EngineResult) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      opts.signal.removeEventListener("abort", onAbort);
+      resolve(result);
+    };
 
     const grokLog = createGrokLogSink(opts.onLog);
     // Stdout chunks can split a JSON event mid-line (large end events span chunks), so hold the
@@ -1591,10 +1619,8 @@ function spawnGrokTurn(
         if (line) stderr.push(line);
       }
     });
-    child.on("error", reject);
+    child.on("error", (err) => settle({ exitCode: 1, error: err.message, sessionId: null }));
     child.on("close", (code, signalName) => {
-      if (timer) clearTimeout(timer);
-      opts.signal.removeEventListener("abort", onAbort);
       const tail = cleanLine(lineRemainder);
       if (tail) grokLog(tail);
       const exitCode = code ?? (signalName ? 128 : 1);
@@ -1608,7 +1634,7 @@ function spawnGrokTurn(
         parsed.exitCode = exitCode;
         parsed.error = failurePreview(exitCode, signalName, stderr, merged.split("\n").map(cleanLine).filter(Boolean));
       }
-      resolve(parsed);
+      settle(parsed);
     });
   });
 }
@@ -1660,7 +1686,7 @@ class GrokSession implements EngineSession {
 
     const runOnce = async (resumeSessionId: string | null, standingPrompt?: string): Promise<EngineResult> => {
       const { command, shell } = resolveSpawn(this.bin);
-      const argv = await grokHeadlessArgv({
+      const invocation = await grokHeadlessInvocation({
         home: this.opts.home,
         prompt,
         model: this.opts.model,
@@ -1671,22 +1697,26 @@ class GrokSession implements EngineSession {
         imagePaths: options?.imagePaths,
         outputSchema: options?.outputSchema,
       });
-      return spawnGrokTurn(command, argv, {
-        home: this.opts.home,
-        env: this.opts.env,
-        signal: controller.signal,
-        shell,
-        model: this.opts.model ?? null,
-        outputSchema: options?.outputSchema,
-        onOutput: () => {
-          sawOutput = true;
-          if (noOutputTimer) {
-            clearTimeout(noOutputTimer);
-            noOutputTimer = null;
-          }
-        },
-        onLog: this.opts.onLog,
-      });
+      try {
+        return await spawnGrokTurn(command, invocation.argv, {
+          home: this.opts.home,
+          env: this.opts.env,
+          signal: controller.signal,
+          shell,
+          model: this.opts.model ?? null,
+          outputSchema: options?.outputSchema,
+          onOutput: () => {
+            sawOutput = true;
+            if (noOutputTimer) {
+              clearTimeout(noOutputTimer);
+              noOutputTimer = null;
+            }
+          },
+          onLog: this.opts.onLog,
+        });
+      } finally {
+        await invocation.cleanup();
+      }
     };
 
     this.pending = (async () => {
@@ -1736,19 +1766,24 @@ class GrokAdapter implements EngineAdapter {
 
   async classify(args: EngineClassifyArgs): Promise<{ text: string; error?: string; usage?: EngineUsage }> {
     const { command, shell } = resolveSpawn(this.bin);
-    const argv = await grokHeadlessArgv({
+    const invocation = await grokHeadlessInvocation({
       home: args.cwd,
       prompt: args.prompt,
       model: args.model || GROK_SMALL_MODEL,
       outputFormat: "json",
     });
-    const res = await spawnCapture(command, argv, {
-      cwd: args.cwd,
-      env: args.env,
-      signal: args.signal,
-      shell,
-      onLog: args.onLog,
-    });
+    let res: { text: string; error?: string; usage?: EngineUsage };
+    try {
+      res = await spawnCapture(command, invocation.argv, {
+        cwd: args.cwd,
+        env: args.env,
+        signal: args.signal,
+        shell,
+        onLog: args.onLog,
+      });
+    } finally {
+      await invocation.cleanup();
+    }
     if (res.error) return res;
     try {
       const parsed = JSON.parse(res.text) as { text?: string; _meta?: Record<string, unknown> };
@@ -1784,7 +1819,7 @@ class GrokAdapter implements EngineAdapter {
 
   async run(args: EngineRunArgs): Promise<EngineResult> {
     const { command, shell } = resolveSpawn(this.bin);
-    const argv = await grokHeadlessArgv({
+    const invocation = await grokHeadlessInvocation({
       home: args.home,
       prompt: args.prompt,
       model: args.model,
@@ -1795,15 +1830,19 @@ class GrokAdapter implements EngineAdapter {
       imagePaths: args.imagePaths,
       outputSchema: args.outputSchema,
     });
-    return spawnGrokTurn(command, argv, {
-      home: args.home,
-      env: args.env,
-      signal: args.signal,
-      shell,
-      model: args.model ?? null,
-      outputSchema: args.outputSchema,
-      onLog: args.onLog,
-    });
+    try {
+      return await spawnGrokTurn(command, invocation.argv, {
+        home: args.home,
+        env: args.env,
+        signal: args.signal,
+        shell,
+        model: args.model ?? null,
+        outputSchema: args.outputSchema,
+        onLog: args.onLog,
+      });
+    } finally {
+      await invocation.cleanup();
+    }
   }
 
   startSession(args: Omit<EngineRunArgs, "prompt" | "signal">): EngineSession | null {

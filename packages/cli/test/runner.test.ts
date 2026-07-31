@@ -15,6 +15,7 @@ import {
   formatTriageNote,
   formatSteerPrompt,
   isContextOverflow,
+  isEngineLaunchFailure,
   isPoisonedTranscript,
   isRuntimeAuthError,
   isWakeStreamHealthy,
@@ -591,6 +592,16 @@ test("no-output engine failures reset persistent sessions", () => {
     publishFailureNotice: true,
     nextAttempts: 0,
   });
+});
+
+test("engine launch failures are recognized for backoff", () => {
+  assert.equal(isEngineLaunchFailure("local grok failed (exit 1): spawn grok E2BIG"), true);
+  assert.equal(isEngineLaunchFailure("spawn codex ENOENT"), true);
+  assert.equal(isEngineLaunchFailure("execFile claude EACCES"), true);
+  assert.equal(isEngineLaunchFailure("execve grok EPERM"), true);
+  assert.equal(isEngineLaunchFailure("model mentioned E2BIG without a process launch failure"), false);
+  assert.equal(isEngineLaunchFailure("not logged in"), false);
+  assert.equal(isEngineLaunchFailure(undefined), false);
 });
 
 test("runtime auth errors are detected from strict runtime failures", () => {

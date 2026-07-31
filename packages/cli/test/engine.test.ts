@@ -668,7 +668,7 @@ test("codex seedHome refreshes generated persona files", async () => {
   }
 });
 
-test("Grok headless run passes images via --prompt-json", async () => {
+test("Grok headless run passes images via a temporary JSON prompt file", async () => {
   const dir = await mkdtemp(join(tmpdir(), "king-ai-grok-image-"));
   const binDir = join(dir, "bin");
   const imagePath = join(dir, "photo.png");
@@ -685,9 +685,11 @@ test("Grok headless run passes images via --prompt-json", async () => {
   await writeFile(
     grok,
     `#!/usr/bin/env node
-const idx = process.argv.indexOf("--prompt-json");
-const blocks = idx >= 0 ? JSON.parse(process.argv[idx + 1]) : null;
-require("node:fs").writeFileSync(process.env.SEEN_FILE, JSON.stringify({ blocks }, null, 2));
+const fs = require("node:fs");
+const idx = process.argv.indexOf("--prompt-file");
+const promptPath = idx >= 0 ? process.argv[idx + 1] : null;
+const blocks = promptPath ? JSON.parse(fs.readFileSync(promptPath, "utf8")) : null;
+fs.writeFileSync(process.env.SEEN_FILE, JSON.stringify({ blocks, promptPath, argv: process.argv.slice(2) }, null, 2));
 process.stdout.write(JSON.stringify({ type: "text", data: "ok" }) + "\\n");
 process.stdout.write(JSON.stringify({ type: "end", stopReason: "EndTurn", sessionId: "grok-image-session" }) + "\\n");
 `,
@@ -708,13 +710,85 @@ process.stdout.write(JSON.stringify({ type: "end", stopReason: "EndTurn", sessio
   assert.equal(result.sessionId, "grok-image-session");
   const seen = JSON.parse(await readFile(seenFile, "utf8")) as {
     blocks: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+    promptPath: string;
+    argv: string[];
   };
   assert.equal(seen.blocks.length, 2);
   assert.equal(seen.blocks[0]?.type, "image");
   assert.equal(seen.blocks[0]?.mimeType, "image/png");
   assert.match(seen.blocks[0]?.data ?? "", /^iVBOR/);
   assert.deepEqual(seen.blocks[1], { type: "text", text: "describe this" });
+  assert.equal(seen.argv.includes("--prompt-json"), false);
+  assert.ok(seen.argv.includes("--prompt-file"));
+  await assert.rejects(stat(seen.promptPath), { code: "ENOENT" });
   await rm(dir, { recursive: true, force: true });
+});
+
+test("Grok headless run keeps large image data out of argv", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-grok-large-image-"));
+  const binDir = join(dir, "bin");
+  const imagePath = join(dir, "large.png");
+  const imageBytes = 1_349_464;
+  await mkdir(binDir);
+  await writeFile(imagePath, Buffer.alloc(imageBytes, 1));
+  const seenFile = join(dir, "seen.json");
+  const grok = join(binDir, "grok");
+  await writeFile(
+    grok,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const argv = process.argv.slice(2);
+const idx = argv.indexOf("--prompt-file");
+const promptPath = idx >= 0 ? argv[idx + 1] : null;
+const blocks = promptPath ? JSON.parse(fs.readFileSync(promptPath, "utf8")) : [];
+const image = blocks.find((block) => block.type === "image");
+fs.writeFileSync(process.env.SEEN_FILE, JSON.stringify({
+  promptPath,
+  argvBytes: argv.reduce((total, arg) => total + Buffer.byteLength(arg) + 1, 0),
+  imageDataChars: image?.data?.length ?? 0
+}));
+process.stdout.write(JSON.stringify({ type: "end", stopReason: "EndTurn", sessionId: "grok-large-image" }) + "\\n");
+`,
+    "utf8",
+  );
+  await chmod(grok, 0o755);
+
+  const session = getAdapter("grok").startSession?.({
+    home: dir,
+    env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}`, SEEN_FILE: seenFile },
+    onLog: () => {},
+  });
+  assert.ok(session);
+  const result = await session.send("describe this large image", { imagePaths: [imagePath] });
+  session.stop();
+
+  assert.equal(result.exitCode, 0);
+  const seen = JSON.parse(await readFile(seenFile, "utf8")) as {
+    promptPath: string;
+    argvBytes: number;
+    imageDataChars: number;
+  };
+  assert.equal(seen.imageDataChars, Math.ceil(imageBytes / 3) * 4);
+  assert.ok(seen.argvBytes < 64 * 1024);
+  await assert.rejects(stat(seen.promptPath), { code: "ENOENT" });
+  await rm(dir, { recursive: true, force: true });
+});
+
+test("Grok headless spawn errors resolve as engine failures", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "king-ai-grok-spawn-error-"));
+  try {
+    const result = await getAdapter("grok").run({
+      home: dir,
+      prompt: "hello",
+      env: { ...process.env, PATH: "" },
+      signal: AbortSignal.timeout(5000),
+      onLog: () => {},
+    });
+    assert.equal(result.exitCode, 1);
+    assert.match(result.error ?? "", /spawn.*ENOENT|not found|not recognized/i);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("Grok headless run passes model and reasoning effort flags", async () => {
