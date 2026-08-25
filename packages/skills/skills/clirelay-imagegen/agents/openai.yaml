@@ -1,0 +1,4 @@
+interface:
+  display_name: "CliRelay ImageGen"
+  short_description: "Generate images through the configured CliRelay API."
+  default_prompt: "Use $clirelay-imagegen to generate an image from my prompt through the configured CliRelay image endpoint and save it locally."
