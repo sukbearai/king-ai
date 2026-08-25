@@ -1,0 +1,4 @@
+interface:
+  display_name: "File Kiwi Upload"
+  short_description: "Upload explicitly selected local files to file.kiwi."
+  default_prompt: "Use $file-kiwi-upload to validate explicitly selected local files, confirm external transfer, upload them with file.kiwi end-to-end encryption, and return the share link."
