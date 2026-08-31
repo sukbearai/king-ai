@@ -41,6 +41,9 @@ Important runtime paths:
 ~/.king-ai/trade/state/daemon.pid
 ~/.king-ai/trade/state/kimpremium_latest.json
 ~/.king-ai/trade/state/kimpremium_snapshots.jsonl
+~/.king-ai/trade/state/robinhood_chain.sqlite
+~/.king-ai/trade/state/robinhood_chain_phase1.sqlite
+~/.king-ai/trade/state/robinhood_chain_phase2.sqlite
 ~/.king-ai/trade/skills/panews/cli.mjs
 ```
 
@@ -67,6 +70,8 @@ Key config sections:
 | `verify.step_timeout_ms` | Per-source timeout for `verify-tg` (overrides per-rule defaults when set) |
 | `data_sources.pumpfun` | Pump.fun section filters and limits |
 | `data_sources.leaderboard` | Smart-money leaderboard options |
+| `data_sources.robinhood_chain` | Opt-in read-only Robinhood Chain Phase 0 collector and retention settings |
+| `data_sources.robinhood_chain.phase1.phase2` | Opt-in local shadow-draft and 72-hour readiness ledger |
 | `treasury` | Treasury stress: `^TYX` / `^TNX` / `TLT` thresholds |
 | `kimpremium` | Korea leverage KPIs, polling, and thresholds (disabled by default) |
 | `alerts.celebrity_tweet.max_classifications_per_tick` | Maximum celebrity LLM classifications per tick (default `8`, range `1..50`) |
@@ -142,7 +147,104 @@ The daemon runs a unified rule scheduler plus scheduled jobs:
 
 - Morning brief (`briefing.schedule_hour`)
 - Regime detection
-- Twitter collector and process watchdog
+- Twitter collector, opt-in Robinhood Chain collector, and process watchdog
+
+### Robinhood Chain Phase 0
+
+The Robinhood Chain collector is disabled by default. Set `data_sources.robinhood_chain.enabled=true` to collect
+confirmed chain activity through read-only JSON-RPC. The daemon samples every 30 seconds by default, validates
+chain id `4663`, keeps a bounded confirmed-block cursor, replays a recent overlap for reorg detection, and stores
+five-minute block, transaction, unique-sender, contract-creation, and gas aggregates in
+`~/.king-ai/trade/state/robinhood_chain.sqlite`.
+
+The default batch permits up to 1,000 blocks with at most 16 concurrent RPC requests. Raw transaction input,
+recipient history, wallet keys, signatures, orders, Telegram alerts, LLM advice, and trading actions are outside
+Phase 0. Data is retained for 14 days by default. RPC URLs are sanitized before logs or source-health state are
+written. A failed partial batch does not advance the durable cursor.
+
+Run one read-only collection manually, even while daemon collection remains disabled:
+
+```sh
+king-ai trade collect-robinhood
+```
+
+The command prints JSON containing the sanitized endpoint, latest and confirmed target blocks, persisted cursor,
+lag, fetched block count, and overlap replacements. Use `packages/cli/trade_config.example.json` for the complete
+configuration fields and bounds.
+
+### Robinhood Chain Phase 1 shadow trends
+
+Phase 1 is a second opt-in layer under `data_sources.robinhood_chain.phase1`. Both the parent collector and
+`phase1.enabled` must be true for daemon scheduling. Phase 1 remains `delivery=shadow`: it discovers verified
+pool creation and swap events through bounded read-only RPC logs, computes five-minute stablecoin-notional,
+trader, liquidity, venue-breadth, and data-quality components, and writes deterministic qualified/rejected
+candidates to `~/.king-ai/trade/state/robinhood_chain_phase1.sqlite`.
+
+The built-in enabled registry currently covers bytecode-checked Uniswap V2/V3/V4, UP V3, and Metric V1
+deployments on Chain ID 4663. Other researched venues remain disabled until their deployment and decoder are
+verified. USD notional recognizes the on-chain USDG and USDe legs; pools without a supported pricing or
+liquidity observation remain visible but fail closed with quality reasons. V4 pools are discovered from recent
+Initialize events, and remain liquidity-unknown until a safe pool-specific liquidity decoder exists.
+
+On the first enabled tick, Phase 1 performs a one-time stablecoin-pool creation bootstrap for the non-V4
+registries. It queries only creation-event token positions matching USDG or USDe over a configurable historical
+range (`stable_pool_discovery_backfill_blocks`, default 1,000,000), then writes a durable completion marker. This
+recovers relevant pools created before the normal cursor without turning every tick into a broad backfill. Swap
+processing remains bounded to the normal `max_log_blocks_per_tick` range (default 1,000 blocks), and a failed
+bootstrap is retried because the completion marker is not written.
+
+The default 60-second tick can process 1,000 blocks with at most four concurrent log calls. This is above the
+approximately 599 blocks per minute observed during the 2026-08-31 capacity sample. Phase 1 does not send
+Telegram, invoke an LLM, access a wallet, or place trades. Run one isolated shadow tick manually with:
+
+```sh
+king-ai trade collect-robinhood-phase1
+```
+
+The manual command always remains read-only and prints only a bounded shadow summary. Live Telegram delivery
+requires a separate approval after at least 72 hours of shadow evidence.
+
+The explicit X registry is separately opt-in with `phase1.x_enabled=true`. It searches configured Tier A/B/C
+accounts directly rather than assuming that the home timeline covers them, stores bounded post evidence and
+per-account health (`ok`, `no_results`, `auth_required`, `challenge`, `unknown`, or `error`), and never creates a
+chain trend by itself. Run one account pass with `king-ai trade collect-robinhood-x`.
+
+### Robinhood Chain Phase 2 shadow readiness
+
+Phase 2 is an additional opt-in local evidence layer under `phase1.phase2`. It reads Phase 1 candidates and audit
+records, materializes deterministic shadow alert drafts in a separate database, and measures the 72-hour field
+gate. It does not rescan the chain or change Phase 1 scores. X posts are attached only when their text contains a
+full pool or token address, and can never create a draft.
+
+The default readiness gate requires at least 72 hours, 800 successful runs, no gap above 15 minutes, no more than
+5% source errors, at least one audited Phase 1 window, and ten explicitly reviewed shadow drafts. Passing these
+checks returns `approval_required`; it does not authorize or enable Telegram delivery.
+
+Readiness is isolated by `phase2.field_run_revision`. Runs, drafts, and reviews from an older revision remain in
+SQLite for audit but do not count toward the current 72-hour gate. Bump this revision whenever a material collector,
+decoder, threshold, or field configuration change is loaded; otherwise pre-change runtime could be mistaken for
+continuous evidence from the final implementation.
+
+Run one materialization pass and inspect the local ledger with:
+
+```sh
+king-ai trade collect-robinhood-phase2
+king-ai trade robinhood-phase2-status --limit 20
+king-ai trade review-robinhood-phase2 <alert-id> accepted --note "review note"
+```
+
+For an isolated field run, use a dedicated `KING_AI_CONFIG_DIR` containing only the Robinhood Chain settings and
+start `king-ai trade robinhood-shadow-daemon`. This sidecar schedules Phase 0, Phase 1, and Phase 2 sequentially,
+uses its own PID lock and SQLite files, and has no Telegram, LLM, wallet, signing, order, or morning-brief path.
+Its scheduler wakes every 30 seconds by default while preserving the configured 30/60/300-second phase cadences.
+
+```sh
+KING_AI_CONFIG_DIR=~/.king-ai-robinhood-shadow king-ai trade robinhood-shadow-daemon
+```
+
+The verdict may be `accepted` or `rejected`. Phase 2 remains `delivery=shadow`, does not invoke an LLM, and does
+not access wallets, sign transactions, place orders, or trade. Live delivery requires a separate approval after
+the readiness evidence and false-positive samples are reviewed.
 
 Morning brief Telegram delivery writes `[morning-brief] telegram push ok|failed chunks=N` to
 `~/.king-ai/trade/logs/daemon.log`, and the latest delivery metadata is stored in
@@ -164,6 +266,12 @@ king-ai trade logs
 ```sh
 king-ai trade brief --push-tg
 king-ai trade collect
+king-ai trade collect-robinhood
+king-ai trade collect-robinhood-phase1
+king-ai trade collect-robinhood-x
+king-ai trade collect-robinhood-phase2
+king-ai trade robinhood-shadow-daemon
+king-ai trade robinhood-phase2-status --limit 20
 king-ai trade verify-tg --dry-run
 king-ai trade verify-celebrity --dry-run
 king-ai trade watchdog --kill

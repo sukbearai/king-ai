@@ -41,6 +41,9 @@ king-ai trade daemon --push-tg
 ~/.king-ai/trade/state/daemon.pid
 ~/.king-ai/trade/state/kimpremium_latest.json
 ~/.king-ai/trade/state/kimpremium_snapshots.jsonl
+~/.king-ai/trade/state/robinhood_chain.sqlite
+~/.king-ai/trade/state/robinhood_chain_phase1.sqlite
+~/.king-ai/trade/state/robinhood_chain_phase2.sqlite
 ~/.king-ai/trade/skills/panews/cli.mjs
 ```
 
@@ -66,6 +69,8 @@ king-ai trade daemon --push-tg
 | `briefing.schedule_hour` | 晨报 cron 小时（本地，默认 `5`） |
 | `verify.step_timeout_ms` | `verify-tg` 单源超时（设置后覆盖规则默认） |
 | `data_sources.pumpfun` / `leaderboard` | 链上晨报板块 |
+| `data_sources.robinhood_chain` | 可选的只读 Robinhood Chain Phase 0 采集器与保留配置 |
+| `data_sources.robinhood_chain.phase1.phase2` | 可选的本地 shadow 草稿与 72 小时 readiness 台账 |
 | `treasury` | 美债抛售 / 收益率阈值 |
 | `kimpremium` | 韩国杠杆 KPI、采集间隔和阈值（默认不启用） |
 | `alerts.celebrity_tweet.max_classifications_per_tick` | 每轮名人推文最多 LLM 分类数（默认 `8`，范围 `1..50`） |
@@ -141,7 +146,95 @@ daemon 使用统一规则调度器，并运行：
 
 - 晨报（`briefing.schedule_hour`）
 - regime 检测
-- Twitter 采集与看门狗
+- Twitter 采集、可选的 Robinhood Chain 采集与进程看门狗
+
+### Robinhood Chain Phase 0
+
+Robinhood Chain 采集器默认关闭。将 `data_sources.robinhood_chain.enabled=true` 后，daemon 才会通过只读
+JSON-RPC 采集已确认的链上活动。默认每 30 秒采样一次，校验 Chain ID `4663`，维护有界的已确认区块
+cursor，并重放最近一段区块用于重组检测；区块、交易、唯一发送者、合约创建和 Gas 的 5 分钟聚合保存在
+`~/.king-ai/trade/state/robinhood_chain.sqlite`。
+
+默认每批最多处理 1,000 个区块，同时最多 16 个 RPC 请求。原始交易 input、收款方历史、钱包密钥、签名、
+订单、Telegram 告警、LLM 建议和交易动作均不属于 Phase 0。默认保留 14 天数据。RPC URL 写入日志或
+source-health 前会脱敏；部分批次失败时不会推进持久化 cursor。
+
+可在 daemon 关闭采集时手动执行一次只读采集：
+
+```sh
+king-ai trade collect-robinhood
+```
+
+命令输出 JSON，包含脱敏 endpoint、最新区块、确认目标区块、持久化 cursor、lag、采集区块数和重放替换数。
+完整配置字段和边界见 `packages/cli/trade_config.example.json`。
+
+### Robinhood Chain Phase 1 shadow 趋势
+
+Phase 1 是 `data_sources.robinhood_chain.phase1` 下的第二层可选能力。daemon 调度要求父采集器和
+`phase1.enabled` 同时为 true。Phase 1 固定使用 `delivery=shadow`：通过有界只读 RPC logs 发现已验证
+协议的建池与 swap 事件，计算 5 分钟稳定币计价成交额、交易者、流动性、跨场所广度和数据质量分量，
+并把确定性的 qualified/rejected 候选写入
+`~/.king-ai/trade/state/robinhood_chain_phase1.sqlite`。
+
+当前内置启用注册表包括已在 Chain ID 4663 检查字节码的 Uniswap V2/V3/V4、UP V3 和 Metric V1。
+其他已调研场所会保持 disabled，直到部署地址和解码器得到验证。USD 计价目前识别链上 USDG 和 USDe
+交易腿；缺少支持价格或流动性观测的池仍会被记录，但通过质量原因 fail closed。V4 池通过近期
+Initialize 事件发现，在具备安全的池级流动性解码前保持 liquidity unknown。
+
+首次启用运行时，Phase 1 会为非 V4 注册表执行一次稳定币池建池事件历史引导。它仅查询建池事件中
+token 位置匹配 USDG 或 USDe 的日志，历史范围由 `stable_pool_discovery_backfill_blocks` 控制（默认
+1,000,000 个区块），成功后写入持久完成标记。这样可以补回正常 cursor 之前创建的相关池，又不会让
+每轮都执行大范围回溯。swap 处理仍严格限制在常规 `max_log_blocks_per_tick` 范围内（默认 1,000 个区块）；
+历史引导失败时不会写入完成标记，后续运行会继续重试。
+
+默认每 60 秒最多处理 1,000 个区块，同时最多四个日志请求。该容量高于 2026-08-31 实测的每分钟约
+599 个新区块。Phase 1 不发送 Telegram、不调用 LLM、不访问钱包、也不交易。可手动运行一次隔离的
+shadow tick：
+
+```sh
+king-ai trade collect-robinhood-phase1
+```
+
+手动命令始终只读，只输出有界 shadow 摘要。至少完成 72 小时 shadow 证据后，Telegram 仍需单独批准。
+
+显式 X 注册表通过 `phase1.x_enabled=true` 单独启用。它会直接搜索配置的 Tier A/B/C 账号，而不是假设
+主页时间线一定覆盖这些账号；系统只保存有界的推文证据和账号健康状态（`ok`、`no_results`、
+`auth_required`、`challenge`、`unknown` 或 `error`），X 内容本身不能创建链上趋势信号。可用
+`king-ai trade collect-robinhood-x` 手动执行一次账号采集。
+
+### Robinhood Chain Phase 2 shadow readiness
+
+Phase 2 是 `phase1.phase2` 下额外启用的本地证据层。它只读取 Phase 1 候选和审计记录，在独立数据库中
+物化确定性的 shadow 告警草稿，并衡量 72 小时实地门禁；它不会重新扫描链或修改 Phase 1 分数。只有当
+X 帖子正文包含完整池地址或代币地址时，才会附加为补充证据，而且 X 不能创建草稿。
+
+默认 readiness 要求至少覆盖 72 小时、成功运行 800 次、运行间隔不超过 15 分钟、源错误率不超过 5%、
+至少一个 Phase 1 审计窗口，以及十条经过人工明确复核的 shadow 草稿。全部通过时只返回
+`approval_required`，不会授权或开启 Telegram 投递。
+
+readiness 按 `phase2.field_run_revision` 隔离。旧 revision 的运行、草稿和复核记录仍保留在 SQLite 中供
+审计，但不会计入当前 72 小时门禁。每当采集器、解码器、阈值或现场配置发生实质变更并加载后，都必须
+提升该 revision，避免把变更前的运行时间误算成最终实现的连续证据。
+
+可执行一次物化、查看本地台账并记录人工结论：
+
+```sh
+king-ai trade collect-robinhood-phase2
+king-ai trade robinhood-phase2-status --limit 20
+king-ai trade review-robinhood-phase2 <alert-id> accepted --note "复核说明"
+```
+
+如需隔离开展现场运行，应准备一个仅包含 Robinhood Chain 设置的独立 `KING_AI_CONFIG_DIR`，并启动
+`king-ai trade robinhood-shadow-daemon`。该 sidecar 按顺序调度 Phase 0、Phase 1 和 Phase 2，使用独立
+PID 锁与 SQLite 文件，不包含 Telegram、LLM、钱包、签名、下单或晨报路径。调度器默认每 30 秒唤醒，
+同时保留配置中的 30/60/300 秒阶段周期。
+
+```sh
+KING_AI_CONFIG_DIR=~/.king-ai-robinhood-shadow king-ai trade robinhood-shadow-daemon
+```
+
+人工结论只能是 `accepted` 或 `rejected`。Phase 2 固定为 `delivery=shadow`，不调用 LLM、不访问钱包、
+不签名、不下单、不交易。完成 readiness 证据和误报样本复核后，live delivery 仍需单独批准。
 
 晨报 Telegram 投递会在 `~/.king-ai/trade/logs/daemon.log` 写入
 `[morning-brief] telegram push ok|failed chunks=N`，最近一次投递元数据在
@@ -162,6 +255,12 @@ king-ai trade logs
 ```sh
 king-ai trade brief --push-tg
 king-ai trade collect
+king-ai trade collect-robinhood
+king-ai trade collect-robinhood-phase1
+king-ai trade collect-robinhood-x
+king-ai trade collect-robinhood-phase2
+king-ai trade robinhood-shadow-daemon
+king-ai trade robinhood-phase2-status --limit 20
 king-ai trade verify-tg --dry-run
 king-ai trade verify-celebrity --dry-run
 king-ai trade watchdog --kill

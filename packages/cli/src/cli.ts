@@ -54,6 +54,15 @@ import { runTwitterCollector } from "./trade/twitter-collector.js";
 import { runVerifySignalsPush } from "./trade/verify-signals.js";
 import { runVerifyCelebrity } from "./trade/verify-celebrity.js";
 import { runSignalQuality } from "./trade/signal-quality.js";
+import { collectRobinhoodChain } from "./trade/robinhood-chain.js";
+import { collectRobinhoodPhase1, collectRobinhoodPhase1Accounts } from "./trade/robinhood-chain-phase1.js";
+import {
+  collectRobinhoodPhase2,
+  reviewRobinhoodPhase2Alert,
+  robinhoodPhase2Status,
+} from "./trade/robinhood-chain-phase2.js";
+import { runRobinhoodShadowDaemon } from "./trade/robinhood-shadow-daemon.js";
+import { loadTradeConfig } from "./trade/config.js";
 import {
   installTradeService,
   killRunningTradeDaemons,
@@ -2058,6 +2067,120 @@ const tradeCollectCommand = command(
   },
 );
 
+const tradeCollectRobinhoodCommand = command(
+  {
+    name: "collect-robinhood",
+    flags: {
+      help: { type: Boolean, alias: "h", description: "Show help" },
+    },
+    help: { description: "Collect confirmed Robinhood Chain activity once (read-only, opt-in)" },
+  },
+  async () => {
+    const result = await collectRobinhoodChain({ config: await loadTradeConfig(true), force: true });
+    console.log(JSON.stringify(result, null, 2));
+  },
+);
+
+const tradeCollectRobinhoodPhase1Command = command(
+  {
+    name: "collect-robinhood-phase1",
+    flags: {
+      help: { type: Boolean, alias: "h", description: "Show help" },
+    },
+    help: { description: "Collect Robinhood Chain pool trends once in shadow mode (read-only)" },
+  },
+  async () => {
+    const result = await collectRobinhoodPhase1({ config: await loadTradeConfig(true), force: true });
+    console.log(JSON.stringify(result, null, 2));
+  },
+);
+
+const tradeCollectRobinhoodXCommand = command(
+  {
+    name: "collect-robinhood-x",
+    flags: {
+      help: { type: Boolean, alias: "h", description: "Show help" },
+    },
+    help: { description: "Collect the explicit Robinhood ecosystem X registry once (shadow only)" },
+  },
+  async () => {
+    const result = await collectRobinhoodPhase1Accounts({ config: await loadTradeConfig(true), force: true });
+    console.log(JSON.stringify(result, null, 2));
+  },
+);
+
+const tradeCollectRobinhoodPhase2Command = command(
+  {
+    name: "collect-robinhood-phase2",
+    flags: {
+      help: { type: Boolean, alias: "h", description: "Show help" },
+    },
+    help: { description: "Materialize local Robinhood Chain shadow drafts and readiness (no delivery)" },
+  },
+  async () => {
+    const result = await collectRobinhoodPhase2({ config: await loadTradeConfig(true), force: true });
+    console.log(JSON.stringify(result, null, 2));
+  },
+);
+
+const tradeRobinhoodShadowDaemonCommand = command(
+  {
+    name: "robinhood-shadow-daemon",
+    flags: {
+      help: { type: Boolean, alias: "h", description: "Show help" },
+      intervalSeconds: { type: Number, description: "Scheduler wake ceiling (default 30 seconds)" },
+      once: { type: Boolean, description: "Run one Phase 0 -> Phase 1 -> Phase 2 cycle and exit" },
+    },
+    help: { description: "Run the isolated Robinhood Chain Phase 0/1/2 shadow collector" },
+  },
+  async (argv) => {
+    await runRobinhoodShadowDaemon({
+      intervalSeconds: argv.flags.intervalSeconds,
+      runOnce: argv.flags.once,
+    });
+  },
+);
+
+const tradeRobinhoodPhase2StatusCommand = command(
+  {
+    name: "robinhood-phase2-status",
+    flags: {
+      help: { type: Boolean, alias: "h", description: "Show help" },
+      limit: { type: Number, description: "Maximum shadow drafts to print" },
+    },
+    help: { description: "Show Robinhood Chain Phase 2 readiness and shadow drafts" },
+  },
+  async (argv) => {
+    const result = robinhoodPhase2Status({ config: await loadTradeConfig(true), limit: argv.flags.limit });
+    console.log(JSON.stringify(result, null, 2));
+  },
+);
+
+const tradeReviewRobinhoodPhase2Command = command(
+  {
+    name: "review-robinhood-phase2",
+    parameters: ["<alertId>", "<verdict>"],
+    flags: {
+      help: { type: Boolean, alias: "h", description: "Show help" },
+      note: { type: String, description: "Bounded human review note" },
+      reviewer: { type: String, description: "Reviewer label" },
+    },
+    help: { description: "Record an explicit local review for a Phase 2 shadow draft" },
+  },
+  async (argv) => {
+    const alertId = argv._.alertId;
+    const verdict = argv._.verdict;
+    if (!alertId || !verdict) throw new Error("alert id and verdict are required");
+    reviewRobinhoodPhase2Alert({
+      alertId,
+      verdict,
+      note: argv.flags.note,
+      reviewer: argv.flags.reviewer,
+    });
+    console.log(JSON.stringify({ status: "reviewed", alertId, verdict }, null, 2));
+  },
+);
+
 const tradeVerifyTgCommand = command(
   {
     name: "verify-tg",
@@ -2153,6 +2276,13 @@ const tradeCommand = command(
           tradeStatusCommand,
           tradeLogsCommand,
           tradeCollectCommand,
+          tradeCollectRobinhoodCommand,
+          tradeCollectRobinhoodPhase1Command,
+          tradeCollectRobinhoodXCommand,
+          tradeCollectRobinhoodPhase2Command,
+          tradeRobinhoodShadowDaemonCommand,
+          tradeRobinhoodPhase2StatusCommand,
+          tradeReviewRobinhoodPhase2Command,
           tradeVerifyTgCommand,
           tradeVerifyCelebrityCommand,
           tradeWatchdogCommand,

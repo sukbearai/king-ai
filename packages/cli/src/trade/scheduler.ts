@@ -15,10 +15,85 @@ import { runUnifiedRuleScheduler } from "./rule-scheduler.js";
 import { getTradeStore } from "./store.js";
 import { runProcessWatchdog } from "./process-watchdog.js";
 import { runTwitterCollector } from "./twitter-collector.js";
+import { collectRobinhoodChain, resolveRobinhoodChainConfig } from "./robinhood-chain.js";
+import {
+  collectRobinhoodPhase1,
+  collectRobinhoodPhase1Accounts,
+  resolveRobinhoodPhase1Config,
+} from "./robinhood-chain-phase1.js";
+import { collectRobinhoodPhase2, resolveRobinhoodPhase2Config } from "./robinhood-chain-phase2.js";
 
 export interface TradeDaemonOptions {
   pushTg?: boolean;
   dryRun?: boolean;
+}
+
+export type RobinhoodChainCollector = typeof collectRobinhoodChain;
+
+export async function runRobinhoodChainCollectorJob(
+  config: TradeConfig,
+  collector: RobinhoodChainCollector = collectRobinhoodChain,
+  onStatus: (line: string) => void = (line) => process.stderr.write(`${line}\n`),
+): Promise<void> {
+  try {
+    const result = await collector({ config });
+    onStatus(
+      `[robinhood-chain] ${result.status} latest=${result.latestBlock ?? "-"} target=${result.targetBlock ?? "-"} persisted=${result.persistedBlock ?? "-"} fetched=${result.fetchedBlocks ?? 0}`,
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    onStatus(`[robinhood-chain] failed: ${msg.slice(0, 500)}`);
+  }
+}
+
+export type RobinhoodPhase1Collector = typeof collectRobinhoodPhase1;
+
+export async function runRobinhoodPhase1CollectorJob(
+  config: TradeConfig,
+  collector: RobinhoodPhase1Collector = collectRobinhoodPhase1,
+  onStatus: (line: string) => void = (line) => process.stderr.write(`${line}\n`),
+): Promise<void> {
+  try {
+    const result = await collector({ config });
+    onStatus(
+      `[robinhood-phase1] ${result.status} delivery=${result.delivery} latest=${result.latestBlock ?? "-"} target=${result.targetBlock ?? "-"} persisted=${result.persistedBlock ?? "-"} pools=${result.poolsDiscovered ?? 0} swaps=${result.swapsObserved ?? 0} qualified=${result.candidatesQualified ?? 0}`,
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    onStatus(`[robinhood-phase1] failed: ${msg.slice(0, 500)}`);
+  }
+}
+
+export async function runRobinhoodPhase1XCollectorJob(
+  config: TradeConfig,
+  collector: typeof collectRobinhoodPhase1Accounts = collectRobinhoodPhase1Accounts,
+  onStatus: (line: string) => void = (line) => process.stderr.write(`${line}\n`),
+): Promise<void> {
+  try {
+    const result = await collector({ config });
+    onStatus(
+      `[robinhood-x] ${result.status} accounts=${result.accountsChecked} posts=${result.postsObserved} health=${JSON.stringify(result.health)}`,
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    onStatus(`[robinhood-x] failed: ${msg.slice(0, 500)}`);
+  }
+}
+
+export async function runRobinhoodPhase2CollectorJob(
+  config: TradeConfig,
+  collector: typeof collectRobinhoodPhase2 = collectRobinhoodPhase2,
+  onStatus: (line: string) => void = (line) => process.stderr.write(`${line}\n`),
+): Promise<void> {
+  try {
+    const result = await collector({ config });
+    onStatus(
+      `[robinhood-phase2] ${result.status} delivery=${result.delivery} drafts=${result.draftsMaterialized} stale=${result.draftsStaled} readiness=${result.readiness?.state ?? "-"}`,
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    onStatus(`[robinhood-phase2] failed: ${msg.slice(0, 500)}`);
+  }
 }
 
 interface SchedulerStateFile {
@@ -141,8 +216,19 @@ export async function runTradeDaemon(options: TradeDaemonOptions = {}): Promise<
 
   let lastRegime = 0;
   let lastTwitterCollector = 0;
+  let lastRobinhoodChainCollector = 0;
+  let robinhoodChainInFlight: Promise<void> | null = null;
+  let lastRobinhoodPhase1Collector = 0;
+  let robinhoodPhase1InFlight: Promise<void> | null = null;
+  let lastRobinhoodPhase1XCollector = 0;
+  let robinhoodPhase1XInFlight: Promise<void> | null = null;
+  let lastRobinhoodPhase2Collector = 0;
+  let robinhoodPhase2InFlight: Promise<void> | null = null;
   let lastWatchdog = 0;
   const twitterCollectorInterval = Number(dotGet(config, "data_sources.twitter.collect_seconds", 7200)) || 7200;
+  const robinhoodChainConfig = resolveRobinhoodChainConfig(config);
+  const robinhoodPhase1Config = resolveRobinhoodPhase1Config(config);
+  const robinhoodPhase2Config = resolveRobinhoodPhase2Config(config);
   const watchdogInterval = Number(dotGet(config, "watchdog.interval_seconds", 300)) || 300;
 
   const tick = async () => {
@@ -171,6 +257,56 @@ export async function runTradeDaemon(options: TradeDaemonOptions = {}): Promise<
         const msg = err instanceof Error ? err.message : String(err);
         process.stderr.write(`[twitter-collector] failed: ${msg}\n`);
       }
+    }
+
+    if (
+      robinhoodChainConfig.enabled &&
+      ts - lastRobinhoodChainCollector >= robinhoodChainConfig.collectSeconds &&
+      !robinhoodChainInFlight
+    ) {
+      lastRobinhoodChainCollector = ts;
+      robinhoodChainInFlight = runRobinhoodChainCollectorJob(config).finally(() => {
+        robinhoodChainInFlight = null;
+      });
+    }
+
+    if (
+      robinhoodChainConfig.enabled &&
+      robinhoodPhase1Config.enabled &&
+      robinhoodPhase1Config.xEnabled &&
+      ts - lastRobinhoodPhase1XCollector >= robinhoodPhase1Config.xCollectSeconds &&
+      !robinhoodPhase1XInFlight
+    ) {
+      lastRobinhoodPhase1XCollector = ts;
+      robinhoodPhase1XInFlight = runRobinhoodPhase1XCollectorJob(config).finally(() => {
+        robinhoodPhase1XInFlight = null;
+      });
+    }
+
+    if (
+      robinhoodChainConfig.enabled &&
+      robinhoodPhase1Config.enabled &&
+      ts - lastRobinhoodPhase1Collector >= robinhoodPhase1Config.discoverySeconds &&
+      !robinhoodPhase1InFlight
+    ) {
+      lastRobinhoodPhase1Collector = ts;
+      robinhoodPhase1InFlight = runRobinhoodPhase1CollectorJob(config).finally(() => {
+        robinhoodPhase1InFlight = null;
+      });
+    }
+
+    if (
+      robinhoodChainConfig.enabled &&
+      robinhoodPhase1Config.enabled &&
+      robinhoodPhase2Config.enabled &&
+      ts - lastRobinhoodPhase2Collector >= robinhoodPhase2Config.collectSeconds &&
+      !robinhoodPhase1InFlight &&
+      !robinhoodPhase2InFlight
+    ) {
+      lastRobinhoodPhase2Collector = ts;
+      robinhoodPhase2InFlight = runRobinhoodPhase2CollectorJob(config).finally(() => {
+        robinhoodPhase2InFlight = null;
+      });
     }
 
     if (ts - lastWatchdog >= watchdogInterval) {
