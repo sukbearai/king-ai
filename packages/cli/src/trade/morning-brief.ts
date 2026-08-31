@@ -725,12 +725,10 @@ async function fetchTelegramSummary(hours: number): Promise<string> {
   const fallbackHours = Number(dotGet(config, "briefing.telegram_fallback_hours", 168)) || 168;
   const lines = [`📰 Telegram 频道摘要（最近 ${hours}h）\n`];
   const channelRows = parseTelegramChannels(channels);
-  const fetched: Array<{ label: string } & TgChannelFetch> = await Promise.all(
-    channelRows.map(async ({ label, chat }) => ({
-      label,
-      ...(await fetchTgChannelMessages(chat, hours, msgLimit, fallbackHours)),
-    })),
-  );
+  const fetched: Array<{ label: string } & TgChannelFetch> = [];
+  for (const { label, chat } of channelRows) {
+    fetched.push({ label, ...(await fetchTgChannelMessages(chat, hours, msgLimit, fallbackHours)) });
+  }
 
   const blocks: Array<{
     label: string;

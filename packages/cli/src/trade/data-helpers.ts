@@ -76,17 +76,48 @@ function cliEnv(): NodeJS.ProcessEnv {
 }
 
 interface ExecFileError extends Error {
+  code?: string | number | null;
+  signal?: string;
   stdout?: string;
   stderr?: string;
 }
 
+const MAX_CLI_ERROR_LENGTH = 1_000;
+const TELETHON_LOG_RE = /^\s*\d{2}:\d{2}:\d{2}\s+\[telethon\.[^\]]+\]\s+WARNING:.*$/i;
+const TERMINAL_CONTROL_RE = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)/g;
+
+/** Keep child-process failures useful to callers without promoting progress/log output to user content. */
+export function summarizeCliFailure(err: unknown): string {
+  const e = err as ExecFileError;
+  const message = err instanceof Error ? err.message : String(err);
+  const stderr = e.stderr ? String(e.stderr) : "";
+  const stdout = e.stdout ? String(e.stdout) : "";
+  const source = stderr || stdout || message;
+  const lines = source
+    .replace(TERMINAL_CONTROL_RE, "")
+    .split(/[\r\n]+/)
+    .map((line) => line.trim())
+    .filter((line) => line && !TELETHON_LOG_RE.test(line) && !/^Syncing\b|^[\u2800-\u28ff]/.test(line));
+  const detail = lines.join(" ").replace(/\s+/g, " ").trim();
+  const code = e.code != null ? `exit=${e.code}` : e.signal ? `signal=${e.signal}` : "command failed";
+  const result = detail ? `${code}: ${detail}` : code;
+  return result.length > MAX_CLI_ERROR_LENGTH ? `${result.slice(0, MAX_CLI_ERROR_LENGTH - 3)}...` : result;
+}
+
 async function runCli(bin: string, args: string[], timeoutMs: number): Promise<string> {
-  const { stdout } = await execFileP(bin, args, {
-    timeout: timeoutMs,
-    maxBuffer: 10 * 1024 * 1024,
-    env: cliEnv(),
-  });
-  return stdout;
+  try {
+    const { stdout } = await execFileP(bin, args, {
+      timeout: timeoutMs,
+      killSignal: "SIGKILL",
+      maxBuffer: 10 * 1024 * 1024,
+      env: cliEnv(),
+    });
+    return stdout;
+  } catch (err) {
+    const failure = err instanceof Error ? (err as ExecFileError) : (new Error(String(err)) as ExecFileError);
+    failure.message = `${bin} ${args.join(" ")} failed: ${summarizeCliFailure(err)}`;
+    throw failure;
+  }
 }
 
 function parseCliJson(stdout: string): unknown {
@@ -126,18 +157,31 @@ function extractSurfObject(resp: unknown): Record<string, unknown> {
 }
 
 function logCliFailure(bin: string, args: string[], err: unknown): void {
-  const msg = err instanceof Error ? err.message : String(err);
+  const msg = summarizeCliFailure(err);
   process.stderr.write(`[${bin}] ${args.join(" ")} failed: ${msg}\n`);
 }
 
-export async function runTg(args: string[], timeoutMs = 60_000): Promise<CliRunResult<string>> {
+let tgQueue: Promise<void> = Promise.resolve();
+
+async function runTgOnce(args: string[], timeoutMs: number): Promise<CliRunResult<string>> {
   try {
     return cliSuccess(await runCli("tg", args, timeoutMs));
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = err instanceof Error ? err.message : summarizeCliFailure(err);
     logCliFailure("tg", args, err);
     return cliFailure("", msg);
   }
+}
+
+export async function runTg(args: string[], timeoutMs = 60_000): Promise<CliRunResult<string>> {
+  // tg-cli and Telethon share one session file. Serialize every call in this
+  // daemon so sync-first, rule checks, and brief reads cannot corrupt it.
+  const result = tgQueue.then(() => runTgOnce(args, timeoutMs));
+  tgQueue = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
 }
 
 // onchainos emits a structured `{ ok: false, error }` on stdout when a call

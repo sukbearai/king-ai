@@ -147,6 +147,10 @@ daemon 使用统一规则调度器，并运行：
 `[morning-brief] telegram push ok|failed chunks=N`，最近一次投递元数据在
 `~/.king-ai/trade/scratchpad.json` 的 `last_brief_push`。
 
+Telegram 频道读取会串行执行，因为 `tg` 命令共用同一个 Telethon session。子进程失败只会生成有长度
+上限的诊断摘要，不会把依赖日志原样写入晨报。单次消息最多发送 10 个 Telegram 分片，首个分片失败后
+立即停止，避免依赖日志演变成连续刷屏。
+
 ```sh
 king-ai trade daemon --push-tg
 king-ai trade restart-service
@@ -198,7 +202,7 @@ king-ai trade signal-quality --refresh
 
 Twitter 采集器会对已登录的 `x.com/home` 虚拟时间线执行多轮下拉采样，并在 X 卸载旧 DOM 节点前跨轮合并推文。可用 `data_sources.twitter.collect_limit`、`scroll_rounds`、`scroll_wait_ms` 和 `stagnant_rounds` 调整覆盖量与采集耗时。采集日志会分别记录轮数、DOM 扫描量、唯一量、重复量、新增缓存、近 24 小时数量与作者数。这仍然是当前登录账号可见的主页流，不是 X 全量归档。
 
-Twitter 晨报默认相关性过滤；板块标题显示「缓存→筛后→已分析」漏斗。筛选优先认 `$TICKER` 与已知交易标的，并拦截游戏联动、广告、账号登录等噪声；排序先看市场相关度，再看互动。LLM 模式的排序候选同时受 `data_sources.twitter.llm_max_display`（默认 `150`）、总量上限 `max_display` 和 `per_author_cap` 限制；非 LLM 展示仍使用 `max_display`。摘要最多输出 5 条交易相关判断，并保留作者、UTC+8 时间和原始链接的来源索引；摘要后会追加相关推文速览，`data_sources.twitter.quick_list_size` 默认为 `10`，设为 `0` 可关闭。需要原始时间线时设 `data_sources.twitter.relevance_filter` 为 `false`。Telegram 非 meme 频道摘要按影响写「发生了什么 + 为何要紧」；meme 摘要优先保留有价格依据的买卖、流动性、市值和集中度，并压缩普通转账与空投；Chain.fm 原文引用的代币合约和缩写钱包会在地址索引中输出完整地址。启用 LLM 摘要时，`briefing.daily_summary` 默认为 `true`；至少两个板块成功后，会结合 scratchpad 市场状态输出口语化「投资备忘」与风险倾向，而不是涨跌幅清单。各晨报板块并行拉取。股票板块默认只展开异动（个股 |Δ|≥5%、指数/ETF |Δ|≥3%），其余折叠；`briefing.stocks_show_all=true` 可恢复全量自选。meme 摘要会把侮辱性钱包昵称替换为中性「地址」。干跑预览不会覆盖最近一次定时或手动投递晨报的持久化元数据。
+Twitter 晨报默认相关性过滤；板块标题显示「缓存→筛后→已分析」漏斗。筛选优先认 `$TICKER` 与已知交易标的，并拦截游戏联动、广告、账号登录等噪声；排序先看市场相关度，再看互动。LLM 模式的排序候选同时受 `data_sources.twitter.llm_max_display`（默认 `150`）、总量上限 `max_display` 和 `per_author_cap` 限制；非 LLM 展示仍使用 `max_display`。摘要最多输出 5 条交易相关判断，并保留作者、UTC+8 时间和原始链接的来源索引；摘要后会追加相关推文速览，`data_sources.twitter.quick_list_size` 默认为 `10`，设为 `0` 可关闭。需要原始时间线时设 `data_sources.twitter.relevance_filter` 为 `false`。Telegram 非 meme 频道摘要按影响写「发生了什么 + 为何要紧」；meme 摘要优先保留有价格依据的买卖、流动性、市值和集中度，并压缩普通转账与空投；Chain.fm 原文引用的代币合约和缩写钱包会在地址索引中输出完整地址。启用 LLM 摘要时，`briefing.daily_summary` 默认为 `true`；至少两个板块成功后，会结合 scratchpad 市场状态输出口语化「投资备忘」与风险倾向，而不是涨跌幅清单。晨报板块仍并行拉取，但 Telegram 各频道会串行读取，因为所有 `tg` 调用共用一个 Telethon session。股票板块默认只展开异动（个股 |Δ|≥5%、指数/ETF |Δ|≥3%），其余折叠；`briefing.stocks_show_all=true` 可恢复全量自选。meme 摘要会把侮辱性钱包昵称替换为中性「地址」。干跑预览不会覆盖最近一次定时或手动投递晨报的持久化元数据。
 
 ## OpenCLI Browser Bridge
 

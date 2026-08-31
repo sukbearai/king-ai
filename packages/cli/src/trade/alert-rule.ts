@@ -426,6 +426,7 @@ export async function runRuleTick(rule: AlertRule, state: AlertState, options: R
           if (!delivered) {
             anyFailed = true;
             options.onStatus?.(`规则 ${rule.ruleKey} Telegram 投递失败`);
+            break;
           }
         }
         // Any chunk failure: over-rollback all tgAlerts with keys (10% residual throttles spam).

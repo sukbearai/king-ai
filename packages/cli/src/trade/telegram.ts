@@ -2,6 +2,7 @@ import type { TradeConfig } from "./config.js";
 import { loadTradeConfig, telegramFromConfig } from "./config.js";
 
 export const TG_MAX_LEN = 4000;
+export const MAX_TELEGRAM_CHUNKS = 10;
 
 export function chunkTelegramMessage(text: string, maxLen = TG_MAX_LEN): string[] {
   if (text.length <= maxLen) return [text];
@@ -84,11 +85,27 @@ export async function sendTelegram(text: string, config?: TradeConfig): Promise<
   const { botToken, chatId } = telegramFromConfig(cfg);
   if (!botToken || !chatId) return false;
 
+  return deliverTelegramChunks(text, (chunk) => sendChunk(botToken, chatId, chunk));
+}
+
+export async function deliverTelegramChunks(
+  text: string,
+  sender: (chunk: string) => Promise<boolean>,
+): Promise<boolean> {
   const chunks = chunkTelegramMessage(text);
+  if (chunks.length > MAX_TELEGRAM_CHUNKS) {
+    process.stderr.write(
+      `[telegram] refusing oversized message: ${chunks.length} chunks (limit ${MAX_TELEGRAM_CHUNKS})\n`,
+    );
+    return false;
+  }
   let success = true;
   for (const chunk of chunks) {
-    const ok = await sendChunk(botToken, chatId, chunk);
-    if (!ok) success = false;
+    const ok = await sender(chunk);
+    if (!ok) {
+      success = false;
+      break;
+    }
   }
   return success;
 }

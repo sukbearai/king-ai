@@ -171,6 +171,49 @@ describe("runRuleTick cooldown rollback", () => {
     assert.ok(residual > 0 && residual < cd * 0.2, `expected soft residual after TG fail, got ${residual}`);
   });
 
+  it("Telegram alert delivery stops after the first failed chunk", async () => {
+    resetTradeStoreForTests();
+    const key = "kimpremium_long_failure";
+    const cd = 3600;
+    const state = new AlertState({});
+    const alert = createAlert({
+      ruleId: "kimpremium",
+      severity: "critical",
+      title: "long failure",
+      detail: "x".repeat(5000),
+      asset: "BTC",
+      direction: -1,
+      cooldownKey: key,
+    });
+    let attempts = 0;
+
+    await runRuleTick(
+      {
+        name: "kimpremium_leverage",
+        ruleKey: "kimpremium",
+        defaultCooldown: cd,
+        check(s) {
+          s.tryClaimCooldown(key, cd);
+          return [alert];
+        },
+      },
+      state,
+      {
+        pushTg: true,
+        confluenceEnabled: false,
+        sendTelegram: async () => {
+          attempts += 1;
+          return false;
+        },
+        adviceGenerator: async () => ({ text: "", source: "fallback" as const }),
+      },
+    );
+
+    assert.equal(attempts, 1);
+    const residual = remainingCooldown(state, key, cd);
+    assert.ok(residual > 0 && residual < cd * 0.2, `expected soft residual after TG fail, got ${residual}`);
+  });
+
   it("info alert is not rolled back when daily cap drops it from TG", async () => {
     resetTradeStoreForTests();
     const store = getTradeStore();
