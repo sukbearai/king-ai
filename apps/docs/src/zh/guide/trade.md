@@ -43,6 +43,7 @@ king-ai trade daemon --push-tg
 ~/.king-ai/trade/state/kimpremium_snapshots.jsonl
 ~/.king-ai/trade/state/robinhood_chain.sqlite
 ~/.king-ai/trade/state/robinhood_chain_phase1.sqlite
+~/.king-ai/trade/state/robinhood_chain_gmgn.sqlite
 ~/.king-ai/trade/state/robinhood_chain_phase2.sqlite
 ~/.king-ai/trade/skills/panews/cli.mjs
 ```
@@ -65,11 +66,17 @@ king-ai trade daemon --push-tg
 | `alerts.confluence.enabled` | 多规则对同一**非空** asset 共振时将 info 升为 warning（默认 `true`）。旧键：`alerts.confluence_enabled` |
 | `alerts.confluence.window_seconds` | 共振窗口秒数（默认 `900`）。旧键：`alerts.confluence_window_seconds` |
 | `alerts.rule_stagger_ms` | 一轮中规则间隔毫秒（默认 `1000`） |
+| `watchdog.interval_seconds` | 服务、负载、磁盘和进程看门狗间隔（默认 `300`） |
+| `watchdog.disk.path` | 要监控其所在文件系统的已有路径（默认 King AI 配置目录） |
+| `watchdog.disk.warning_free_percent` | 可用空间降到该百分比时 warning（默认 `15`） |
+| `watchdog.disk.critical_free_percent` | 可用空间降到该百分比时升级为 critical（默认 `8`） |
+| `watchdog.disk.recovery_free_percent` | 可用空间恢复到该百分比时发送恢复通知（默认 `20`） |
 | `briefing.enabled` | 晨报板块 |
 | `briefing.schedule_hour` | 晨报 cron 小时（本地，默认 `5`） |
 | `verify.step_timeout_ms` | `verify-tg` 单源超时（设置后覆盖规则默认） |
 | `data_sources.pumpfun` / `leaderboard` | 链上晨报板块 |
 | `data_sources.robinhood_chain` | 可选的只读 Robinhood Chain Phase 0 采集器与保留配置 |
+| `data_sources.robinhood_chain.phase1.discovery_source` | 显式趋势源：默认的全链 `rpc`，或只读 `gmgn` |
 | `data_sources.robinhood_chain.phase1.phase2` | 可选的本地 shadow 草稿与 72 小时 readiness 台账 |
 | `treasury` | 美债抛售 / 收益率阈值 |
 | `kimpremium` | 韩国杠杆 KPI、采集间隔和阈值（默认不启用） |
@@ -146,7 +153,12 @@ daemon 使用统一规则调度器，并运行：
 
 - 晨报（`briefing.schedule_hour`）
 - regime 检测
-- Twitter 采集、可选的 Robinhood Chain 采集与进程看门狗
+- Twitter 采集、可选的 Robinhood Chain 采集，以及服务、负载、磁盘和进程看门狗
+
+看门狗每隔 `watchdog.interval_seconds` 运行一次（默认 300 秒）。磁盘检查默认监控 King AI 配置目录
+所在的文件系统；如需监控其他挂载盘或已挂载磁盘镜像，可把 `watchdog.disk.path` 设为该文件系统上的
+已有路径。只有在状态变化时才会发送 warning、critical 或恢复消息，且 daemon 必须以 Telegram 推送模式
+安装或启动。
 
 ### Robinhood Chain Phase 0
 
@@ -155,9 +167,21 @@ JSON-RPC 采集已确认的链上活动。默认每 30 秒采样一次，校验 
 cursor，并重放最近一段区块用于重组检测；区块、交易、唯一发送者、合约创建和 Gas 的 5 分钟聚合保存在
 `~/.king-ai/trade/state/robinhood_chain.sqlite`。
 
-默认每批最多处理 1,000 个区块，同时最多 16 个 RPC 请求。原始交易 input、收款方历史、钱包密钥、签名、
+默认每轮最多处理 1,000 个区块，通过单个在途 JSON-RPC batch 依次读取，每个 HTTP batch 最多包含 50 个
+完整区块请求。响应会先按 JSON-RPC id 匹配，再校验区块顺序和父哈希连续性。原始交易 input、收款方历史、钱包密钥、签名、
 订单、Telegram 告警、LLM 建议和交易动作均不属于 Phase 0。默认保留 14 天数据。RPC URL 写入日志或
 source-health 前会脱敏；部分批次失败时不会推进持久化 cursor。
+
+Phase 0 将实时新鲜度与历史完整性分别记录。升级后，旧 `last_confirmed_block` 继续作为可回滚的历史回填
+cursor，新 realtime cursor 从 confirmed tip 附近开始。每个采集 tick 都优先处理 realtime；历史车道再按
+`backfill_collect_seconds`（默认 300 秒）向 realtime 覆盖起点前一个区块这一固定边界推进，因此链尖继续增长
+不会扩大历史缺口。只有连续 gap 归零后 `history_complete` 才为 true。两个车道共用一个 SQLite writer，数据
+与对应 cursor 在同一事务提交；backfill 失败会独立记录，不会把已经成功提交的 realtime 数据标成不健康。
+
+长驻 trade daemon 或 shadow daemon 中，每个 collector 只有进程内第一次尝试可以把 realtime 覆盖移动到
+confirmed tip 窗口，该权限即使首次尝试失败也会被消耗。后续同进程容量越界会在任何 cursor 或历史状态变更前
+把 realtime health 标为失败，从而显式暴露新鲜度不足，而不是静默扩大历史缺口。新进程重新获得一次恢复机会；
+手动单次采集默认仍允许恢复 rebase。
 
 可在 daemon 关闭采集时手动执行一次只读采集：
 
@@ -184,11 +208,35 @@ Initialize 事件发现，在具备安全的池级流动性解码前保持 liqui
 首次启用运行时，Phase 1 会为非 V4 注册表执行一次稳定币池建池事件历史引导。它仅查询建池事件中
 token 位置匹配 USDG 或 USDe 的日志，历史范围由 `stable_pool_discovery_backfill_blocks` 控制（默认
 1,000,000 个区块），成功后写入持久完成标记。这样可以补回正常 cursor 之前创建的相关池，又不会让
-每轮都执行大范围回溯。swap 处理仍严格限制在常规 `max_log_blocks_per_tick` 范围内（默认 1,000 个区块）；
-历史引导失败时不会写入完成标记，后续运行会继续重试。
+每轮都执行大范围回溯。swap 处理仍严格限制在常规 `max_log_blocks_per_tick` 范围内（默认值和最大值均为
+1,000 个区块）；历史引导失败时不会写入完成标记，后续运行会继续重试。
 
-默认每 60 秒最多处理 1,000 个区块，同时最多四个日志请求。该容量高于 2026-08-31 实测的每分钟约
-599 个新区块。Phase 1 不发送 Telegram、不调用 LLM、不访问钱包、也不交易。可手动运行一次隔离的
+稳态下默认每 60 秒最多处理 1,000 个区块，日志请求按每次 500 个区块分片，并保持三个并发日志 worker。
+当 confirmed target 比持久 cursor 超前超过 `catch_up_lag_blocks`（默认 10,000）时，同一采集器临时使用
+独立有界的 `catch_up_blocks_per_tick`（默认值和最大值均为 2,000）。追赶模式不会改变单次请求大小、并发、
+重试、稳定币池过滤或 cursor 原子提交规则。当前区间的建池扫描会把全部已启用协议地址和建池 topic 合并为
+每个区块分片一个有界 OR filter，再按返回日志的地址/topic 对映射回已验证解码器；这样保留完整协议覆盖，
+同时避免对同一区间按协议重复查询。非 V4 稳定币池 swap 扫描也会把最多 50 个执行地址及其协议 swap topic
+合并到一个有界 filter，并要求每条返回日志的地址/topic 都能映射回请求中的池与解码器。V4 每个有界区块分片
+只按 swap topic 查询一次已验证 PoolManager；返回日志仍必须匹配该 PoolManager 与 topic。已知非稳定币 pool key
+和格式合法但本地未知的 pool key 会被过滤，已知稳定币池会被解码；畸形 pool key 或已登记但身份冲突的池会使
+批次失败且不推进状态。这样既降低请求突发，也不会引入非稳定币池或未知日志。
+
+Phase 1 使用相同的 realtime/backfill 双车道。旧 `last_confirmed_block` 保留为安全回滚所需的历史进度；
+realtime 仍受 `max_log_blocks_per_tick` 约束，历史批次按 `backfill_collect_seconds`（默认 300 秒）使用已有稳态或
+catch-up budget。两个车道在同一个 collector 内顺序运行，并保持单一 SQLite writer。审计行记录
+`collection_lane`，Phase 2 只统计和物化 realtime 审计，因此即使迟到历史窗口仍落在 24 小时 lookback 内，
+也不能变成当前 shadow 告警。现场加载这一新采集语义时必须提升 `phase2.field_run_revision`，旧 epoch 的时长
+不能证明新的 realtime 路径。
+
+可通过 `phase1.rpc_urls` 把日志采集器与父级 Phase 0 端点列表隔离；
+未配置或为空时继续继承 `data_sources.robinhood_chain.rpc_urls`，因此旧配置与回滚行为保持不变。当两个阶段同时到期且清洗后的 RPC endpoint
+集合完全不重叠时，sidecar 会并行运行 Phase 0 和 Phase 1，等待两者均结束后再启动 Phase 2。每个阶段仍为
+single-flight，任一阶段失败不会取消另一阶段。如果存在任何重叠，包括继承端点或同一 URL 的凭据/query 变体，
+则继续使用 Phase 0 -> `provider_cooldown_ms`
+（默认 5,000，范围 0-30,000）-> Phase 1 串行路径。停机可中断尚未结束的 cooldown，不会启动后续 Phase 2 或 X 工作，并在释放 PID lock 前
+排空已经启动的链上采集任务。遇到限流或拒绝访问时会进行有界重试和端点轮换；全部端点耗尽时保持 source
+unhealthy，且不会推进 cursor。Phase 1 不发送 Telegram、不调用 LLM、不访问钱包、也不交易。可手动运行一次隔离的
 shadow tick：
 
 ```sh
@@ -197,14 +245,36 @@ king-ai trade collect-robinhood-phase1
 
 手动命令始终只读，只输出有界 shadow 摘要。至少完成 72 小时 shadow 证据后，Telegram 仍需单独批准。
 
-显式 X 注册表通过 `phase1.x_enabled=true` 单独启用。它会直接搜索配置的 Tier A/B/C 账号，而不是假设
-主页时间线一定覆盖这些账号；系统只保存有界的推文证据和账号健康状态（`ok`、`no_results`、
-`auth_required`、`challenge`、`unknown` 或 `error`），X 内容本身不能创建链上趋势信号。可用
-`king-ai trade collect-robinhood-x` 手动执行一次账号采集。
+显式 X 注册表在 Phase 1 启用时默认开启；如需关闭请设置 `phase1.x_enabled=false`。shadow sidecar 按
+`x_collect_seconds`（默认 300 秒）调度它。它会直接搜索配置的 Tier A/B/C 账号，而不是假设主页时间线一定
+覆盖这些账号；系统只保存有界的推文证据和账号健康状态（`ok`、`no_results`、`auth_required`、`challenge`、
+`unknown` 或 `error`），X 内容本身不能创建链上趋势信号。可用 `king-ai trade collect-robinhood-x` 手动执行
+一次账号采集。
+
+显式设置 `phase1.discovery_source="gmgn"` 可启用以 GMGN 为主源的 token 趋势路径。该模式只要求
+`GMGN_API_KEY`；运行时不读取 `GMGN_PRIVATE_KEY`，不签名钱包载荷，也不具备 swap、订单或投递能力。每个到期
+tick 读取 Robinhood 的 `1m`、`5m`、`1h` 排名，以及 trenches 的 `new_creation`、`near_completion`、
+`completed` 三类数据，在客户端对每个分类分别执行硬上限，并把归一化观测写入独立数据库
+`~/.king-ai/trade/state/robinhood_chain_gmgn.sqlite`。API origin 固定为 `https://openapi.gmgn.ai`；认证
+timestamp 根据有界的 HTTPS `Date` 响应校正，不修改操作系统时钟。
+
+候选必须由 fresh 且安全的 `5m` 记录与同窗 `1m` 或 trenches 记录交叉确认，再对最多 20 个唯一地址执行
+Chain ID 和 bytecode 限界验证。GMGN 模式下 daemon 跳过全链 Phase 0 和 RPC Phase 1 发现，保留其数据库与
+历史 cursor 不动，然后仅使用已验证的 GMGN 候选运行 Phase 2。Phase 2 自动隔离到
+`phase2-v13-gmgn-primary`，旧 RPC epoch 不能计入 readiness；X 仍只能按精确地址补充证据。
+`gmgn_limit`（默认 100，最大 200）、`gmgn_max_age_seconds`（最大 600）和 `gmgn_rpc_verify_limit`（最大 20）
+都是 fail-closed 边界。可手动执行一次已配置的 GMGN tick：
+
+```sh
+king-ai trade collect-robinhood-gmgn
+```
+
+该命令始终为 shadow-only，不会启用交易或 Telegram 投递。把 `discovery_source` 改回 `rpc` 即可恢复使用未被
+改写的旧扫描器数据库；v13 readiness 不会并入 RPC epoch。
 
 ### Robinhood Chain Phase 2 shadow readiness
 
-Phase 2 是 `phase1.phase2` 下额外启用的本地证据层。它只读取 Phase 1 候选和审计记录，在独立数据库中
+Phase 2 是 `phase1.phase2` 下额外启用的本地证据层。它只读取候选和审计记录，在独立数据库中
 物化确定性的 shadow 告警草稿，并衡量 72 小时实地门禁；它不会重新扫描链或修改 Phase 1 分数。只有当
 X 帖子正文包含完整池地址或代币地址时，才会附加为补充证据，而且 X 不能创建草稿。
 
@@ -225,9 +295,11 @@ king-ai trade review-robinhood-phase2 <alert-id> accepted --note "复核说明"
 ```
 
 如需隔离开展现场运行，应准备一个仅包含 Robinhood Chain 设置的独立 `KING_AI_CONFIG_DIR`，并启动
-`king-ai trade robinhood-shadow-daemon`。该 sidecar 按顺序调度 Phase 0、Phase 1 和 Phase 2，使用独立
-PID 锁与 SQLite 文件，不包含 Telegram、LLM、钱包、签名、下单或晨报路径。调度器默认每 30 秒唤醒，
-同时保留配置中的 30/60/300 秒阶段周期。
+`king-ai trade robinhood-shadow-daemon`。仅当清洗后的 RPC endpoint 集合完全不重叠时，该 sidecar 才并行运行到期的 Phase 0 与 Phase 1；
+否则继续使用串行 provider cooldown 路径，Phase 2 始终等待两个链上阶段结束。Phase 1 X 注册表作为独立的
+single-flight 任务调度，账号扫描不会延迟链上周期。它使用独立 PID 锁与
+SQLite 文件，不包含 Telegram、LLM、钱包、签名、下单或晨报路径。调度器默认每 30 秒唤醒，同时保留
+配置中的 30/60/300 秒周期；停止时会等待已在运行的链上与 X 采集结束，再释放 PID 锁。
 
 ```sh
 KING_AI_CONFIG_DIR=~/.king-ai-robinhood-shadow king-ai trade robinhood-shadow-daemon

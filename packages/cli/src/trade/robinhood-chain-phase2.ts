@@ -2,8 +2,13 @@ import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { ROBINHOOD_CHAIN_PHASE1_DB_PATH, ROBINHOOD_CHAIN_PHASE2_DB_PATH } from "../paths.js";
+import {
+  ROBINHOOD_CHAIN_GMGN_DB_PATH,
+  ROBINHOOD_CHAIN_PHASE1_DB_PATH,
+  ROBINHOOD_CHAIN_PHASE2_DB_PATH,
+} from "../paths.js";
 import { dotGet, type TradeConfig } from "./config.js";
+import { GMGN_FIELD_RUN_REVISION } from "./robinhood-chain-gmgn.js";
 import { closeSqliteDb, openSqliteDb, sqliteDbExists } from "./sqlite-db.js";
 
 const DEFAULT_FIELD_RUN_REVISION = "phase2-v3-readiness-epoch";
@@ -52,6 +57,10 @@ export interface RobinhoodPhase2Result {
 
 interface Phase1CandidateRow {
   pool_key: string;
+  subject_type?: "pool" | "token";
+  subject_address?: string;
+  pool_address?: string | null;
+  source_kind?: "rpc" | "gmgn";
   window_start: number;
   score: number;
   components_json: string;
@@ -67,6 +76,7 @@ interface Phase1CandidateRow {
 
 interface Phase1Snapshot {
   status: "ok" | "unavailable" | "unhealthy";
+  sourceKind?: "rpc" | "gmgn";
   lastSuccessAt: number | null;
   auditedWindows: number;
   candidates: Phase1CandidateRow[];
@@ -92,13 +102,14 @@ function fieldRunRevision(value: unknown): string {
 
 export function resolveRobinhoodPhase2Config(config: TradeConfig): RobinhoodPhase2Config {
   const raw = (dotGet(config, "data_sources.robinhood_chain.phase1.phase2", {}) ?? {}) as Record<string, unknown>;
+  const discoverySource = dotGet(config, "data_sources.robinhood_chain.phase1.discovery_source", "rpc");
   const enabled = raw.enabled === true;
   const delivery = String(raw.delivery ?? "shadow");
   if (enabled && delivery !== "shadow") throw new Error("Robinhood Chain Phase 2 supports shadow delivery only");
   return {
     enabled,
     delivery: "shadow",
-    fieldRunRevision: fieldRunRevision(raw.field_run_revision),
+    fieldRunRevision: discoverySource === "gmgn" ? GMGN_FIELD_RUN_REVISION : fieldRunRevision(raw.field_run_revision),
     collectSeconds: boundedInt(raw.collect_seconds, 300, 60, 86400),
     lookbackHours: boundedInt(raw.lookback_hours, 24, 1, 168),
     sourceMaxAgeSeconds: boundedInt(raw.source_max_age_seconds, 600, 60, 600),
@@ -123,8 +134,10 @@ function safeJson(value: string): Record<string, unknown> {
 }
 
 function alertId(row: Phase1CandidateRow, fieldRunRevision: string): string {
+  const subjectType = row.subject_type ?? "pool";
+  const subjectAddress = row.subject_address ?? row.pool_key;
   return createHash("sha256")
-    .update(`${row.pool_key}:${row.window_start}:${row.config_revision}:${fieldRunRevision}`)
+    .update(`${subjectType}:${subjectAddress}:${row.window_start}:${row.config_revision}:${fieldRunRevision}`)
     .digest("hex")
     .slice(0, 32);
 }
@@ -137,20 +150,34 @@ function strength(score: number): "strong" | "moderate" | "watch" {
 
 function draftMessage(row: Phase1CandidateRow): string {
   const evidence = safeJson(row.evidence_json);
-  const volume = Number(evidence.volumeUsd ?? 0);
+  const volume = Number(evidence.volumeUsd ?? evidence.volume5mUsd ?? 0);
   const traders = Number(evidence.uniqueTraders ?? 0);
+  const subjectType = row.subject_type ?? "pool";
+  const subjectAddress = row.subject_address ?? row.pool_key;
+  const poolAddress = row.pool_address ?? (subjectType === "pool" ? row.pool_key : null);
+  const sourceKind = row.source_kind ?? "rpc";
+  const identity = poolAddress ? `token=${subjectAddress} pool=${poolAddress}` : `${subjectType}=${subjectAddress}`;
   return [
     `Robinhood Chain shadow trend (${strength(row.score)})`,
-    `protocol=${row.protocol_id} pool=${row.pool_key}`,
+    `source=${sourceKind} ${identity}`,
     `score=${row.score.toFixed(2)} volume_5m_usd=${volume.toFixed(2)} unique_traders=${traders}`,
-    `window_start=${row.window_start} blocks=${row.source_first_block}-${row.source_last_block}`,
+    sourceKind === "rpc"
+      ? `window_start=${row.window_start} blocks=${row.source_first_block}-${row.source_last_block}`
+      : `window_start=${row.window_start}`,
     "Shadow evidence only; not a trading instruction.",
   ].join("\n");
 }
 
 function readPhase1Snapshot(path: string, now: number, cfg: RobinhoodPhase2Config): Phase1Snapshot {
   if (!sqliteDbExists(path)) {
-    return { status: "unavailable", lastSuccessAt: null, auditedWindows: 0, candidates: [], xPosts: new Map() };
+    return {
+      status: "unavailable",
+      sourceKind: "rpc",
+      lastSuccessAt: null,
+      auditedWindows: 0,
+      candidates: [],
+      xPosts: new Map(),
+    };
   }
   const db = new DatabaseSync(path, { readOnly: true });
   try {
@@ -165,21 +192,41 @@ function readPhase1Snapshot(path: string, now: number, cfg: RobinhoodPhase2Confi
       lastSuccessAt > now + 60 ||
       now - lastSuccessAt > cfg.sourceMaxAgeSeconds
     ) {
-      return { status: "unhealthy", lastSuccessAt, auditedWindows: 0, candidates: [], xPosts: new Map() };
+      return {
+        status: "unhealthy",
+        sourceKind: "rpc",
+        lastSuccessAt,
+        auditedWindows: 0,
+        candidates: [],
+        xPosts: new Map(),
+      };
     }
     const since = now - cfg.lookbackHours * 3600;
-    const auditRow = db.prepare("SELECT COUNT(*) AS count FROM signal_audit WHERE window_start>=?").get(since) as {
-      count?: number;
-    };
+    const auditColumns = db.prepare("PRAGMA table_info(signal_audit)").all() as Array<{ name?: string }>;
+    const laneAware = auditColumns.some((row) => row.name === "collection_lane");
+    if (!laneAware) {
+      return {
+        status: "unavailable",
+        sourceKind: "rpc",
+        lastSuccessAt,
+        auditedWindows: 0,
+        candidates: [],
+        xPosts: new Map(),
+      };
+    }
+    const auditRow = db
+      .prepare("SELECT COUNT(*) AS count FROM signal_audit WHERE window_start>=? AND collection_lane='realtime'")
+      .get(since) as { count?: number };
     const candidates = db
       .prepare(`
-        SELECT tc.pool_key,tc.window_start,tc.score,tc.components_json,tc.evidence_json,
+        SELECT tc.pool_key,'pool' AS subject_type,tc.pool_key AS subject_address,tc.pool_key AS pool_address,
+               'rpc' AS source_kind,tc.window_start,tc.score,tc.components_json,tc.evidence_json,
                p.protocol_id,p.token0,p.token1,sa.source_first_block,sa.source_last_block,
                sa.decoder_version,sa.config_revision
         FROM trend_candidates tc
         JOIN pools p ON p.pool_key=tc.pool_key
         JOIN signal_audit sa ON sa.pool_key=tc.pool_key AND sa.window_start=tc.window_start
-        WHERE tc.state='qualified' AND tc.window_start>=?
+        WHERE tc.state='qualified' AND tc.window_start>=? AND sa.collection_lane='realtime'
         ORDER BY tc.score DESC,tc.window_start DESC LIMIT ?
       `)
       .all(since, cfg.maxCandidatesPerRun) as unknown as Phase1CandidateRow[];
@@ -212,13 +259,139 @@ function readPhase1Snapshot(path: string, now: number, cfg: RobinhoodPhase2Confi
     }
     return {
       status: "ok",
+      sourceKind: "rpc",
       lastSuccessAt,
       auditedWindows: Number(auditRow.count ?? 0),
       candidates,
       xPosts,
     };
   } catch {
-    return { status: "unavailable", lastSuccessAt: null, auditedWindows: 0, candidates: [], xPosts: new Map() };
+    return {
+      status: "unavailable",
+      sourceKind: "rpc",
+      lastSuccessAt: null,
+      auditedWindows: 0,
+      candidates: [],
+      xPosts: new Map(),
+    };
+  } finally {
+    db.close();
+  }
+}
+
+function readXPosts(
+  path: string,
+  since: number,
+  candidates: readonly Phase1CandidateRow[],
+): Map<string, Array<{ id: string; handle: string; text: string; url: string; createdAt: string }>> {
+  const xPosts = new Map<string, Array<{ id: string; handle: string; text: string; url: string; createdAt: string }>>();
+  if (!sqliteDbExists(path)) return xPosts;
+  const db = new DatabaseSync(path, { readOnly: true });
+  try {
+    const table = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='account_posts'").get();
+    if (!table) return xPosts;
+    const query = db.prepare(`
+      SELECT post_id,handle,text,url,created_at FROM account_posts
+      WHERE fetched_at>=? AND (lower(text) LIKE ? OR lower(text) LIKE ?)
+      ORDER BY fetched_at DESC LIMIT 3
+    `);
+    for (const candidate of candidates) {
+      const subjectType = candidate.subject_type ?? "pool";
+      const subjectAddress = candidate.subject_address ?? candidate.pool_key;
+      const poolAddress = candidate.pool_address ?? (subjectType === "pool" ? candidate.pool_key : null);
+      const rows = query.all(
+        since,
+        `%${subjectAddress.toLowerCase()}%`,
+        `%${(poolAddress ?? subjectAddress).toLowerCase()}%`,
+      ) as Array<Record<string, unknown>>;
+      xPosts.set(
+        `${subjectType}:${subjectAddress}:${candidate.window_start}`,
+        rows.map((row) => ({
+          id: String(row.post_id),
+          handle: String(row.handle),
+          text: String(row.text).slice(0, 1000),
+          url: String(row.url).slice(0, 1000),
+          createdAt: String(row.created_at).slice(0, 100),
+        })),
+      );
+    }
+    return xPosts;
+  } catch {
+    return new Map();
+  } finally {
+    db.close();
+  }
+}
+
+function readGmgnSnapshot(path: string, xPath: string, now: number, cfg: RobinhoodPhase2Config): Phase1Snapshot {
+  if (!sqliteDbExists(path)) {
+    return {
+      status: "unavailable",
+      sourceKind: "gmgn",
+      lastSuccessAt: null,
+      auditedWindows: 0,
+      candidates: [],
+      xPosts: new Map(),
+    };
+  }
+  const db = new DatabaseSync(path, { readOnly: true });
+  try {
+    const health = db
+      .prepare("SELECT status,last_success_at,field_run_revision FROM source_health WHERE source='gmgn'")
+      .get() as { status?: string; last_success_at?: number | null; field_run_revision?: string } | undefined;
+    const lastSuccessAt = health?.last_success_at == null ? null : Number(health.last_success_at);
+    if (
+      health?.status !== "ok" ||
+      health.field_run_revision !== GMGN_FIELD_RUN_REVISION ||
+      lastSuccessAt == null ||
+      !Number.isFinite(lastSuccessAt) ||
+      lastSuccessAt > now + 60 ||
+      now - lastSuccessAt > cfg.sourceMaxAgeSeconds
+    ) {
+      return {
+        status: "unhealthy",
+        sourceKind: "gmgn",
+        lastSuccessAt,
+        auditedWindows: 0,
+        candidates: [],
+        xPosts: new Map(),
+      };
+    }
+    const since = now - cfg.lookbackHours * 3600;
+    const candidates = db
+      .prepare(`
+        SELECT COALESCE(pool_address,subject_address) AS pool_key,subject_type,subject_address,pool_address,
+               'gmgn' AS source_kind,window_start,score,'{}' AS components_json,evidence_json,
+               'gmgn' AS protocol_id,subject_address AS token0,'' AS token1,0 AS source_first_block,
+               0 AS source_last_block,'gmgn-v1' AS decoder_version,field_run_revision AS config_revision
+        FROM gmgn_candidates
+        WHERE state='qualified' AND verified=1 AND window_start>=? AND field_run_revision=?
+        ORDER BY score DESC,window_start DESC LIMIT ?
+      `)
+      .all(since, GMGN_FIELD_RUN_REVISION, cfg.maxCandidatesPerRun) as unknown as Phase1CandidateRow[];
+    const audit = db
+      .prepare(`
+        SELECT COUNT(*) AS count FROM gmgn_candidates
+        WHERE state='qualified' AND verified=1 AND window_start>=? AND field_run_revision=?
+      `)
+      .get(since, GMGN_FIELD_RUN_REVISION) as { count?: number };
+    return {
+      status: "ok",
+      sourceKind: "gmgn",
+      lastSuccessAt,
+      auditedWindows: Number(audit.count ?? 0),
+      candidates,
+      xPosts: readXPosts(xPath, since, candidates),
+    };
+  } catch {
+    return {
+      status: "unavailable",
+      sourceKind: "gmgn",
+      lastSuccessAt: null,
+      auditedWindows: 0,
+      candidates: [],
+      xPosts: new Map(),
+    };
   } finally {
     db.close();
   }
@@ -234,14 +407,17 @@ export class RobinhoodPhase2Store {
       CREATE TABLE IF NOT EXISTS phase2_runs (
         run_id INTEGER PRIMARY KEY AUTOINCREMENT,started_at INTEGER NOT NULL,status TEXT NOT NULL,
         phase1_status TEXT NOT NULL,phase1_last_success_at INTEGER,candidate_count INTEGER NOT NULL,
-        audit_count INTEGER NOT NULL,error_code TEXT,field_run_revision TEXT NOT NULL DEFAULT 'legacy'
+        audit_count INTEGER NOT NULL,error_code TEXT,field_run_revision TEXT NOT NULL DEFAULT 'legacy',
+        source_kind TEXT NOT NULL DEFAULT 'rpc'
       );
       CREATE INDEX IF NOT EXISTS phase2_runs_started_idx ON phase2_runs(started_at);
       CREATE TABLE IF NOT EXISTS shadow_alerts (
         alert_id TEXT PRIMARY KEY,pool_key TEXT NOT NULL,window_start INTEGER NOT NULL,protocol_id TEXT NOT NULL,
         token0 TEXT NOT NULL,token1 TEXT NOT NULL,score REAL NOT NULL,strength TEXT NOT NULL,state TEXT NOT NULL,
         message TEXT NOT NULL,evidence_json TEXT NOT NULL,first_materialized_at INTEGER NOT NULL,
-        last_materialized_at INTEGER NOT NULL,field_run_revision TEXT NOT NULL DEFAULT 'legacy'
+        last_materialized_at INTEGER NOT NULL,field_run_revision TEXT NOT NULL DEFAULT 'legacy',
+        subject_type TEXT NOT NULL DEFAULT 'pool',subject_address TEXT NOT NULL DEFAULT '',pool_address TEXT,
+        source_kind TEXT NOT NULL DEFAULT 'rpc'
       );
       CREATE INDEX IF NOT EXISTS shadow_alerts_state_idx ON shadow_alerts(state,last_materialized_at);
       CREATE TABLE IF NOT EXISTS alert_reviews (
@@ -257,9 +433,18 @@ export class RobinhoodPhase2Store {
       );
     `);
     this.ensureColumn("phase2_runs", "field_run_revision", "TEXT NOT NULL DEFAULT 'legacy'");
+    this.ensureColumn("phase2_runs", "source_kind", "TEXT NOT NULL DEFAULT 'rpc'");
     this.ensureColumn("shadow_alerts", "field_run_revision", "TEXT NOT NULL DEFAULT 'legacy'");
     this.ensureColumn("alert_reviews", "field_run_revision", "TEXT NOT NULL DEFAULT 'legacy'");
     this.ensureColumn("readiness_checks", "field_run_revision", "TEXT NOT NULL DEFAULT 'legacy'");
+    this.ensureColumn("shadow_alerts", "subject_type", "TEXT NOT NULL DEFAULT 'pool'");
+    this.ensureColumn("shadow_alerts", "subject_address", "TEXT NOT NULL DEFAULT ''");
+    this.ensureColumn("shadow_alerts", "pool_address", "TEXT");
+    this.ensureColumn("shadow_alerts", "source_kind", "TEXT NOT NULL DEFAULT 'rpc'");
+    this.db.prepare("UPDATE shadow_alerts SET subject_address=pool_key WHERE subject_address='' ").run();
+    this.db
+      .prepare("UPDATE shadow_alerts SET pool_address=pool_key WHERE subject_type='pool' AND pool_address IS NULL")
+      .run();
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS phase2_runs_revision_started_idx
       ON phase2_runs(field_run_revision,started_at);
@@ -291,20 +476,28 @@ export class RobinhoodPhase2Store {
             .all(cfg.fieldRunRevision) as Array<{ alert_id: string }>
         ).map((row) => row.alert_id),
       );
-      this.db.prepare("UPDATE shadow_alerts SET state='stale' WHERE state='draft'").run();
+      this.db
+        .prepare("UPDATE shadow_alerts SET state='stale' WHERE state='draft' AND field_run_revision=?")
+        .run(cfg.fieldRunRevision);
       let materialized = 0;
       const currentIds = new Set<string>();
       if (snapshot.status === "ok") {
         const upsert = this.db.prepare(`
           INSERT INTO shadow_alerts (
             alert_id,pool_key,window_start,protocol_id,token0,token1,score,strength,state,message,evidence_json,
-            first_materialized_at,last_materialized_at,field_run_revision
-          ) VALUES (?,?,?,?,?,?,?,?,'draft',?,?,?,?,?)
+            first_materialized_at,last_materialized_at,field_run_revision,subject_type,subject_address,pool_address,
+            source_kind
+          ) VALUES (?,?,?,?,?,?,?,?,'draft',?,?,?,?,?,?,?,?,?)
           ON CONFLICT(alert_id) DO UPDATE SET score=excluded.score,strength=excluded.strength,state='draft',
           message=excluded.message,evidence_json=excluded.evidence_json,last_materialized_at=excluded.last_materialized_at,
-          field_run_revision=excluded.field_run_revision
+          field_run_revision=excluded.field_run_revision,subject_type=excluded.subject_type,
+          subject_address=excluded.subject_address,pool_address=excluded.pool_address,source_kind=excluded.source_kind
         `);
         for (const row of snapshot.candidates) {
+          const subjectType = row.subject_type ?? "pool";
+          const subjectAddress = row.subject_address ?? row.pool_key;
+          const poolAddress = row.pool_address ?? (subjectType === "pool" ? row.pool_key : null);
+          const sourceKind = row.source_kind ?? "rpc";
           const id = alertId(row, cfg.fieldRunRevision);
           currentIds.add(id);
           const evidence = {
@@ -316,7 +509,10 @@ export class RobinhoodPhase2Store {
               decoderVersion: row.decoder_version,
               configRevision: row.config_revision,
             },
-            matchedXPosts: snapshot.xPosts.get(`${row.pool_key}:${row.window_start}`) ?? [],
+            matchedXPosts:
+              snapshot.xPosts.get(`${subjectType}:${subjectAddress}:${row.window_start}`) ??
+              snapshot.xPosts.get(`${row.pool_key}:${row.window_start}`) ??
+              [],
           };
           upsert.run(
             id,
@@ -332,6 +528,10 @@ export class RobinhoodPhase2Store {
             now,
             now,
             cfg.fieldRunRevision,
+            subjectType,
+            subjectAddress,
+            poolAddress,
+            sourceKind,
           );
           materialized += 1;
         }
@@ -340,8 +540,8 @@ export class RobinhoodPhase2Store {
         .prepare(`
           INSERT INTO phase2_runs (
             started_at,status,phase1_status,phase1_last_success_at,candidate_count,audit_count,error_code,
-            field_run_revision
-          ) VALUES (?,?,?,?,?,?,?,?)
+            field_run_revision,source_kind
+          ) VALUES (?,?,?,?,?,?,?,?,?)
         `)
         .run(
           now,
@@ -350,8 +550,9 @@ export class RobinhoodPhase2Store {
           snapshot.lastSuccessAt,
           snapshot.candidates.length,
           snapshot.auditedWindows,
-          snapshot.status === "ok" ? null : `phase1_${snapshot.status}`,
+          snapshot.status === "ok" ? null : `${snapshot.sourceKind ?? "rpc"}_${snapshot.status}`,
           cfg.fieldRunRevision,
+          snapshot.sourceKind ?? "rpc",
         );
       const cutoff = now - cfg.retentionDays * 86400;
       this.db.prepare("DELETE FROM phase2_runs WHERE started_at<?").run(cutoff);
@@ -486,6 +687,7 @@ export class RobinhoodPhase2Store {
 export async function collectRobinhoodPhase2(options: {
   config: TradeConfig;
   phase1DbPath?: string;
+  gmgnDbPath?: string;
   phase2DbPath?: string;
   force?: boolean;
   now?: number;
@@ -499,7 +701,12 @@ export async function collectRobinhoodPhase2(options: {
   const store = new RobinhoodPhase2Store(phase2DbPath);
   try {
     const now = options.now ?? Math.floor(Date.now() / 1000);
-    const snapshot = readPhase1Snapshot(options.phase1DbPath ?? ROBINHOOD_CHAIN_PHASE1_DB_PATH, now, cfg);
+    const phase1DbPath = options.phase1DbPath ?? ROBINHOOD_CHAIN_PHASE1_DB_PATH;
+    const discoverySource = dotGet(options.config, "data_sources.robinhood_chain.phase1.discovery_source", "rpc");
+    const snapshot =
+      discoverySource === "gmgn"
+        ? readGmgnSnapshot(options.gmgnDbPath ?? ROBINHOOD_CHAIN_GMGN_DB_PATH, phase1DbPath, now, cfg)
+        : readPhase1Snapshot(phase1DbPath, now, cfg);
     const result = store.materialize({ now, cfg, snapshot });
     return {
       status:

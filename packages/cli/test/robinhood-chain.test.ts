@@ -9,7 +9,9 @@ import {
   sanitizeRpcUrl,
   RobinhoodChainStore,
   WrongChainError,
+  type RpcBatchTransport,
   type RpcTransport,
+  type RobinhoodCollectionResult,
 } from "../src/trade/robinhood-chain.js";
 import { runRobinhoodChainCollectorJob } from "../src/trade/scheduler.js";
 
@@ -60,6 +62,16 @@ function config(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function batchOptions(input: {
+  config: ReturnType<typeof config>;
+  dbPath: string;
+  transport: RpcTransport;
+  batchTransport: RpcBatchTransport;
+  sleep?: (ms: number) => Promise<void>;
+}): Parameters<typeof collectRobinhoodChain>[0] {
+  return input;
+}
+
 describe("Robinhood Chain Phase 0", () => {
   it("bounds config and redacts RPC credentials", () => {
     const resolved = resolveRobinhoodChainConfig(config({ collect_seconds: 1, confirmations: 999 }));
@@ -67,7 +79,11 @@ describe("Robinhood Chain Phase 0", () => {
     assert.equal(resolved.confirmations, 200);
     const defaults = resolveRobinhoodChainConfig({ data_sources: { robinhood_chain: {} } });
     assert.equal(defaults.maxBlocksPerTick, 1000);
-    assert.equal(defaults.rpcConcurrency, 16);
+    assert.equal(defaults.rpcBatchSize, 50);
+    assert.equal(defaults.backfillCollectSeconds, 300);
+    const bounded = resolveRobinhoodChainConfig(config({ rpc_batch_size: 999, rpc_concurrency: 32 }));
+    assert.equal(bounded.rpcBatchSize, 100);
+    assert.equal(resolveRobinhoodChainConfig(config({ backfill_collect_seconds: 1 })).backfillCollectSeconds, 30);
     assert.equal(sanitizeRpcUrl("https://user:secret@example.test/rpc?token=abc#x"), "https://example.test/rpc");
   });
 
@@ -184,34 +200,427 @@ describe("Robinhood Chain Phase 0", () => {
     }
   });
 
-  it("bounds concurrent block reads and keeps the batch ordered", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "king-ai-rh-concurrency-"));
-    let inFlight = 0;
-    let maxInFlight = 0;
-    const base = transportFor({ latest: 110 });
-    const transport: RpcTransport = async (url, method, params) => {
-      if (method === "eth_getBlockByNumber") {
-        inFlight += 1;
-        maxInFlight = Math.max(maxInFlight, inFlight);
-        await new Promise((resolve) => setTimeout(resolve, 2));
-        try {
-          return await base(url, method, params);
-        } finally {
-          inFlight -= 1;
-        }
-      }
-      return base(url, method, params);
+  it("migrates an existing cursor into independent realtime and backfill coverage", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "king-ai-rh-dual-lane-"));
+    const dbPath = join(dir, "rh.sqlite");
+    const store = new RobinhoodChainStore(dbPath);
+    const seeded = await transportFor({ latest: 102 })("https://rpc.example", "eth_getBlockByNumber", [hex(100), true]);
+    store.persistBlocks(
+      [
+        {
+          number: 100,
+          hash: String((seeded as Record<string, unknown>).hash),
+          parentHash: String((seeded as Record<string, unknown>).parentHash),
+          timestamp: Number.parseInt(String((seeded as Record<string, unknown>).timestamp).slice(2), 16),
+          gasUsed: 21_000,
+          transactions: [{ from: `0x${"a".repeat(40)}`, to: `0x${"b".repeat(40)}` }],
+        },
+      ],
+      100,
+      7,
+    );
+    store.close();
+    try {
+      const result = await collectRobinhoodChain({
+        config: config({ initial_backfill_blocks: 3, max_blocks_per_tick: 5 }),
+        dbPath,
+        transport: transportFor({ latest: 1000 }),
+      });
+      const lanes = result as RobinhoodCollectionResult & Record<string, number | undefined>;
+      const migrated = new RobinhoodChainStore(dbPath);
+      assert.equal(lanes.realtimeFirstBlock, 996);
+      assert.equal(lanes.realtimePersistedBlock, 998);
+      assert.equal(lanes.backfillFirstBlock, 99);
+      assert.equal(lanes.backfillPersistedBlock, 103);
+      assert.equal(migrated.getState("realtime_start_block"), "996");
+      assert.equal(migrated.getState("realtime_cursor"), "998");
+      assert.equal(migrated.getState("backfill_cursor"), "103");
+      assert.equal(migrated.getState("last_confirmed_block"), "103");
+      assert.equal(migrated.getState("history_complete"), "0");
+      migrated.close();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps committed realtime health when a bounded historical backfill batch fails", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "king-ai-rh-backfill-failure-"));
+    const dbPath = join(dir, "rh.sqlite");
+    const seed = new RobinhoodChainStore(dbPath);
+    const base = transportFor({ latest: 1000 });
+    const raw = (await base("https://rpc.example", "eth_getBlockByNumber", [hex(100), true])) as Record<
+      string,
+      unknown
+    >;
+    seed.persistBlocks(
+      [
+        {
+          number: 100,
+          hash: String(raw.hash),
+          parentHash: String(raw.parentHash),
+          timestamp: Number.parseInt(String(raw.timestamp).slice(2), 16),
+          gasUsed: 21_000,
+          transactions: [{ from: `0x${"a".repeat(40)}`, to: `0x${"b".repeat(40)}` }],
+        },
+      ],
+      100,
+      7,
+    );
+    seed.close();
+    const batchTransport: RpcBatchTransport = async (url, requests) => {
+      const first = Number.parseInt(String(requests[0]!.params[0]).slice(2), 16);
+      if (first < 500) throw new Error("HTTP 429");
+      return await Promise.all(
+        requests.map(async (request) => ({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: await base(url, request.method, request.params),
+        })),
+      );
     };
     try {
       const result = await collectRobinhoodChain({
-        config: config({ initial_backfill_blocks: 10, rpc_concurrency: 2 }),
-        dbPath: join(dir, "rh.sqlite"),
-        transport,
+        config: config({ initial_backfill_blocks: 3, max_blocks_per_tick: 5 }),
+        dbPath,
+        transport: base,
+        batchTransport,
+        sleep: async () => undefined,
       });
+      const store = new RobinhoodChainStore(dbPath);
+      assert.equal(result.status, "persisted");
+      assert.equal(result.backfillStatus, "failed");
+      assert.equal(store.getHealthStatus(), "ok");
+      assert.equal(store.getHealthStatus("robinhood_chain_backfill"), "error");
+      assert.equal(store.getState("realtime_cursor"), "998");
+      assert.equal(store.getState("last_confirmed_block"), "100");
+      store.close();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reopens backfill coverage while jumping realtime to the tip after downtime", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "king-ai-rh-realtime-gap-"));
+    const dbPath = join(dir, "rh.sqlite");
+    const store = new RobinhoodChainStore(dbPath);
+    const base = transportFor({ latest: 200 });
+    const block = (await base("https://rpc.example", "eth_getBlockByNumber", [hex(100), true])) as Record<
+      string,
+      unknown
+    >;
+    store.persistBlocks(
+      [
+        {
+          number: 100,
+          hash: String(block.hash),
+          parentHash: String(block.parentHash),
+          timestamp: Number.parseInt(String(block.timestamp).slice(2), 16),
+          gasUsed: 21_000,
+          transactions: [{ from: `0x${"a".repeat(40)}`, to: `0x${"b".repeat(40)}` }],
+        },
+      ],
+      100,
+      7,
+      "realtime",
+      {
+        realtime_start_block: "96",
+        backfill_cursor: "95",
+        last_confirmed_block: "100",
+        history_complete: "1",
+      },
+    );
+    store.close();
+    try {
+      const result = await collectRobinhoodChain({
+        config: config({ max_blocks_per_tick: 5, initial_backfill_blocks: 3 }),
+        dbPath,
+        transport: transportFor({ latest: 1000 }),
+      });
+      const reopened = new RobinhoodChainStore(dbPath);
+      assert.equal(result.realtimeFirstBlock, 994);
+      assert.equal(reopened.getState("realtime_start_block"), "994");
+      assert.equal(reopened.getState("history_complete"), "0");
+      assert.equal(result.backfillFirstBlock, 99);
+      assert.equal(result.backfillTargetBlock, 993);
+      reopened.close();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails freshness without moving the fixed history boundary when an in-process cycle exceeds capacity", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "king-ai-rh-realtime-capacity-"));
+    const dbPath = join(dir, "rh.sqlite");
+    const store = new RobinhoodChainStore(dbPath);
+    const base = transportFor({ latest: 200 });
+    const block = (await base("https://rpc.example", "eth_getBlockByNumber", [hex(100), true])) as Record<
+      string,
+      unknown
+    >;
+    store.persistBlocks(
+      [
+        {
+          number: 100,
+          hash: String(block.hash),
+          parentHash: String(block.parentHash),
+          timestamp: Number.parseInt(String(block.timestamp).slice(2), 16),
+          gasUsed: 21_000,
+          transactions: [{ from: `0x${"a".repeat(40)}`, to: `0x${"b".repeat(40)}` }],
+        },
+      ],
+      100,
+      7,
+      "realtime",
+      {
+        realtime_start_block: "96",
+        backfill_cursor: "95",
+        last_confirmed_block: "95",
+        history_complete: "0",
+      },
+    );
+    store.close();
+    try {
+      await assert.rejects(
+        () =>
+          collectRobinhoodChain({
+            config: config({ max_blocks_per_tick: 5, initial_backfill_blocks: 3 }),
+            dbPath,
+            transport: transportFor({ latest: 1000 }),
+            allowRealtimeRebase: false,
+          } as Parameters<typeof collectRobinhoodChain>[0]),
+        /realtime capacity exceeded/,
+      );
+      const unchanged = new RobinhoodChainStore(dbPath);
+      assert.equal(unchanged.getState("realtime_start_block"), "96");
+      assert.equal(unchanged.getState("realtime_cursor"), "100");
+      assert.equal(unchanged.getState("backfill_cursor"), "95");
+      assert.equal(unchanged.getState("history_complete"), "0");
+      assert.equal(unchanged.getHealthStatus(), "error");
+      unchanged.close();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("closes the fixed historical gap and advances the rollback cursor to realtime", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "king-ai-rh-history-close-"));
+    const dbPath = join(dir, "rh.sqlite");
+    const store = new RobinhoodChainStore(dbPath);
+    const base = transportFor({ latest: 105 });
+    const raw = (await base("https://rpc.example", "eth_getBlockByNumber", [hex(99), true])) as Record<string, unknown>;
+    store.persistBlocks(
+      [
+        {
+          number: 99,
+          hash: String(raw.hash),
+          parentHash: String(raw.parentHash),
+          timestamp: Number.parseInt(String(raw.timestamp).slice(2), 16),
+          gasUsed: 21_000,
+          transactions: [{ from: `0x${"a".repeat(40)}`, to: `0x${"b".repeat(40)}` }],
+        },
+      ],
+      99,
+      7,
+    );
+    store.close();
+    try {
+      const result = await collectRobinhoodChain({ config: config(), dbPath, transport: base });
+      const closed = new RobinhoodChainStore(dbPath);
+      assert.equal(result.historyComplete, true);
+      assert.equal(result.backfillStatus, "complete");
+      assert.equal(closed.getState("backfill_cursor"), "100");
+      assert.equal(closed.getState("last_confirmed_block"), "103");
+      assert.equal(closed.getState("history_complete"), "1");
+      closed.close();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses one bounded block batch at a time and matches shuffled response ids", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "king-ai-rh-batch-"));
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const batchSizes: number[] = [];
+    const base = transportFor({ latest: 110 });
+    const batchTransport: RpcBatchTransport = async (url, requests) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      batchSizes.push(requests.length);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      try {
+        const responses = await Promise.all(
+          requests.map(async (request) => ({
+            jsonrpc: "2.0",
+            id: request.id,
+            result: await base(url, request.method, request.params),
+          })),
+        );
+        return responses.reverse();
+      } finally {
+        inFlight -= 1;
+      }
+    };
+    try {
+      const result = await collectRobinhoodChain(
+        batchOptions({
+          config: config({ initial_backfill_blocks: 10, rpc_batch_size: 3 }),
+          dbPath: join(dir, "rh.sqlite"),
+          transport: async (url, method, params) => {
+            if (method === "eth_getBlockByNumber") throw new Error("single block transport used");
+            return base(url, method, params);
+          },
+          batchTransport,
+        }),
+      );
       assert.equal(result.fetchedBlocks, 10);
-      assert.ok(maxInFlight <= 2);
+      assert.equal(maxInFlight, 1);
+      assert.deepEqual(batchSizes, [3, 3, 3, 1]);
       assert.equal(result.firstBlock, 99);
       assert.equal(result.lastBlock, 108);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when a block batch response is incomplete", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "king-ai-rh-batch-partial-"));
+    const dbPath = join(dir, "rh.sqlite");
+    const base = transportFor({ latest: 105 });
+    try {
+      await collectRobinhoodChain({ config: config(), dbPath, transport: transportFor({ latest: 100 }) });
+      await assert.rejects(
+        () =>
+          collectRobinhoodChain(
+            batchOptions({
+              config: config({ max_blocks_per_tick: 10, rpc_batch_size: 4 }),
+              dbPath,
+              transport: base,
+              batchTransport: async (url, requests) =>
+                Promise.all(
+                  requests.slice(0, -1).map(async (request) => ({
+                    jsonrpc: "2.0",
+                    id: request.id,
+                    result: await base(url, request.method, request.params),
+                  })),
+                ),
+            }),
+          ),
+        /missing response/i,
+      );
+      const store = new RobinhoodChainStore(dbPath);
+      assert.equal(store.getState("last_confirmed_block"), "98");
+      assert.equal(store.count("chain_blocks"), 3);
+      store.close();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects duplicate batch response ids without advancing the cursor", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "king-ai-rh-batch-duplicate-"));
+    const dbPath = join(dir, "rh.sqlite");
+    const base = transportFor({ latest: 100 });
+    try {
+      await assert.rejects(
+        () =>
+          collectRobinhoodChain(
+            batchOptions({
+              config: config({ initial_backfill_blocks: 4, rpc_batch_size: 4 }),
+              dbPath,
+              transport: base,
+              batchTransport: async (url, requests) => {
+                const responses = await Promise.all(
+                  requests.map(async (request) => ({
+                    jsonrpc: "2.0",
+                    id: request.id,
+                    result: await base(url, request.method, request.params),
+                  })),
+                );
+                responses[1]!.id = responses[0]!.id;
+                return responses;
+              },
+            }),
+          ),
+        /duplicate response id/i,
+      );
+      const store = new RobinhoodChainStore(dbPath);
+      assert.equal(store.getState("last_confirmed_block"), null);
+      assert.equal(store.count("chain_blocks"), 0);
+      store.close();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rotates endpoints after a transient block batch failure", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "king-ai-rh-batch-retry-"));
+    const base = transportFor({ latest: 100 });
+    const urls: string[] = [];
+    const batchTransport: RpcBatchTransport = async (url, requests) => {
+      urls.push(url);
+      if (url.includes("first.example")) throw new Error("HTTP 429");
+      return Promise.all(
+        requests.map(async (request) => ({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: await base(url, request.method, request.params),
+        })),
+      );
+    };
+    try {
+      const result = await collectRobinhoodChain(
+        batchOptions({
+          config: config({
+            rpc_urls: ["https://first.example", "https://second.example"],
+            rpc_batch_size: 4,
+          }),
+          dbPath: join(dir, "rh.sqlite"),
+          transport: base,
+          batchTransport,
+          sleep: async () => undefined,
+        }),
+      );
+      assert.equal(result.status, "persisted");
+      assert.deepEqual(urls.slice(0, 2), ["https://first.example", "https://second.example"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("retries a JSON-RPC rate-limit error returned inside a block batch", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "king-ai-rh-batch-rpc-limit-"));
+    const base = transportFor({ latest: 100 });
+    let attempts = 0;
+    const batchTransport: RpcBatchTransport = async (url, requests) => {
+      attempts += 1;
+      if (attempts === 1) {
+        return requests.map((request) => ({
+          jsonrpc: "2.0",
+          id: request.id,
+          error: { code: -32005, message: "rate limit exceeded" },
+        }));
+      }
+      return Promise.all(
+        requests.map(async (request) => ({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: await base(url, request.method, request.params),
+        })),
+      );
+    };
+    try {
+      const result = await collectRobinhoodChain(
+        batchOptions({
+          config: config({ rpc_urls: ["https://only.example"], rpc_batch_size: 4 }),
+          dbPath: join(dir, "rh.sqlite"),
+          transport: base,
+          batchTransport,
+          sleep: async () => undefined,
+        }),
+      );
+      assert.equal(result.status, "persisted");
+      assert.equal(attempts, 2);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -234,6 +643,33 @@ describe("Robinhood Chain Phase 0", () => {
       assert.equal(store.getState("last_confirmed_block"), "98");
       assert.equal(store.count("chain_blocks"), 3);
       store.close();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("retries a transient block read before failing the batch", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "king-ai-rh-block-retry-"));
+    const attempts = new Map<number, number>();
+    const base = transportFor({ latest: 100 });
+    const transport: RpcTransport = async (url, method, params) => {
+      if (method === "eth_getBlockByNumber") {
+        const number = Number.parseInt(String(params[0]).slice(2), 16);
+        const count = (attempts.get(number) ?? 0) + 1;
+        attempts.set(number, count);
+        if (number === 96 && count === 1) throw new Error("HTTP 429");
+      }
+      return base(url, method, params);
+    };
+    try {
+      const result = await collectRobinhoodChain({
+        config: config({ rpc_urls: ["https://only.example"] }),
+        dbPath: join(dir, "rh.sqlite"),
+        transport,
+        sleep: async () => undefined,
+      });
+      assert.equal(result.status, "persisted");
+      assert.equal(attempts.get(96), 2);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -297,13 +733,17 @@ describe("Robinhood Chain Phase 0", () => {
 
   it("isolates auxiliary collector failures from the scheduler caller", async () => {
     const lines: string[] = [];
+    let permission: boolean | undefined;
     await runRobinhoodChainCollectorJob(
       config(),
-      async () => {
+      async (options) => {
+        permission = options.allowRealtimeRebase;
         throw new Error("RPC offline");
       },
       (line) => lines.push(line),
+      false,
     );
+    assert.equal(permission, false);
     assert.deepEqual(lines, ["[robinhood-chain] failed: RPC offline"]);
   });
 });

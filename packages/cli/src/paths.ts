@@ -53,10 +53,12 @@ export const TRADE_TWITTER_CACHE_PATH = join(TRADE_STATE_DIR, "twitter_cache.jso
 export const TRADE_MENTIONS_DB_PATH = join(TRADE_STATE_DIR, "twitter_mentions.db");
 export const ROBINHOOD_CHAIN_DB_PATH = join(TRADE_STATE_DIR, "robinhood_chain.sqlite");
 export const ROBINHOOD_CHAIN_PHASE1_DB_PATH = join(TRADE_STATE_DIR, "robinhood_chain_phase1.sqlite");
+export const ROBINHOOD_CHAIN_GMGN_DB_PATH = join(TRADE_STATE_DIR, "robinhood_chain_gmgn.sqlite");
 export const ROBINHOOD_CHAIN_PHASE2_DB_PATH = join(TRADE_STATE_DIR, "robinhood_chain_phase2.sqlite");
 export const TRADE_WATCHDOG_LOG_PATH = join(TRADE_LOG_DIR, "watchdog.log");
 export const TRADE_WATCHDOG_HEALTH_PATH = join(TRADE_LOG_DIR, "watchdog_health_state.txt");
 export const TRADE_WATCHDOG_SERVICE_PATH = join(TRADE_LOG_DIR, "watchdog_service_state.json");
+export const TRADE_WATCHDOG_DISK_PATH = join(TRADE_STATE_DIR, "watchdog_disk_state.txt");
 export const SERVICE_LABEL = "dev.king-ai";
 /** LaunchAgent label for `king-ai trade daemon` background supervisor. */
 export const TRADE_SERVICE_LABEL = "dev.king-ai-trade";

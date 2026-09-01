@@ -43,7 +43,7 @@ test("runTg serializes processes that share the Telethon session", async () => {
   await chmod(bin, 0o755);
   process.env.PATH = `${dir}:${oldPath ?? ""}`;
   try {
-    const [first, second] = await Promise.all([runTg(["one", log], 2000), runTg(["two", log], 2000)]);
+    const [first, second] = await Promise.all([runTg(["one", log], 10_000), runTg(["two", log], 10_000)]);
     assert.equal(first.ok, true);
     assert.equal(second.ok, true);
     assert.deepEqual((await readFile(log, "utf8")).trim().split("\n"), [

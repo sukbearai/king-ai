@@ -23,6 +23,7 @@ const METRIC_POOL_CREATED_TOPIC = "0x4b36a0ddce54edb36597ee7d496df06c53fe875aba9
 const METRIC_SWAP_TOPIC = "0x87d25816ca01843f551b4caa5eea03b5173c84c383573c63081fb7575378276e";
 const GET_RESERVES_SELECTOR = "0x0902f1ac";
 const BALANCE_OF_SELECTOR = "0x70a08231";
+const ROBINHOOD_X_BROWSER_SESSION = "trade-robinhood-search";
 
 const USDG = "0x5fc5360d0400a0fd4f2af552add042d716f1d168";
 const USDE = "0x5d3a1ff2b6bab83b63cd9ad0787074081a52ef34";
@@ -139,11 +140,17 @@ export const BUILTIN_ROBINHOOD_ACCOUNTS = [
 export interface RobinhoodPhase1Config {
   enabled: boolean;
   delivery: "shadow";
+  discoverySource: "rpc" | "gmgn";
+  rpcUrls: string[];
   windowSeconds: 300;
   discoverySeconds: number;
   stablePoolDiscoveryBackfillBlocks: number;
   initialBackfillBlocks: number;
   maxLogBlocksPerTick: number;
+  catchUpLagBlocks: number;
+  catchUpBlocksPerTick: number;
+  providerCooldownMs: number;
+  maxLogBlocksPerRequest: number;
   logRpcConcurrency: number;
   reorgOverlapBlocks: number;
   minLiquidityUsd: number;
@@ -156,6 +163,7 @@ export interface RobinhoodPhase1Config {
   xFetchLimit: number;
   xMaxAccounts: number;
   xAccounts: string[];
+  backfillCollectSeconds: number;
 }
 
 export interface Phase1RpcLog {
@@ -237,6 +245,17 @@ export interface RobinhoodPhase1Result {
   poolsDiscovered?: number;
   swapsObserved?: number;
   candidatesQualified?: number;
+  realtimeFirstBlock?: number;
+  realtimeLastBlock?: number;
+  realtimePersistedBlock?: number;
+  backfillStatus?: "skipped" | "complete" | "persisted" | "failed";
+  backfillFirstBlock?: number;
+  backfillLastBlock?: number;
+  backfillPersistedBlock?: number;
+  backfillTargetBlock?: number;
+  backfillLagBlocks?: number;
+  backfillError?: string;
+  historyComplete?: boolean;
 }
 
 export interface RobinhoodPhase1XResult {
@@ -258,11 +277,25 @@ function boundedNumber(value: unknown, fallback: number, min: number, max: numbe
   return Math.min(max, Math.max(min, parsed));
 }
 
+function stateNumber(value: string | null): number | undefined {
+  if (value == null) return undefined;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function configuredStringArray(value: unknown, fallback: string[]): string[] {
+  if (!Array.isArray(value)) return fallback;
+  const values = value.map((item) => String(item).trim()).filter(Boolean);
+  return values.length ? values : fallback;
+}
+
 export function resolveRobinhoodPhase1Config(config: TradeConfig): RobinhoodPhase1Config {
+  const phase0 = resolveRobinhoodChainConfig(config);
   const raw = (dotGet(config, "data_sources.robinhood_chain.phase1", {}) ?? {}) as Record<string, unknown>;
   const enabled = raw.enabled === true;
   const delivery = String(raw.delivery ?? "shadow");
   if (enabled && delivery !== "shadow") throw new Error("Robinhood Chain Phase 1 supports shadow delivery only");
+  const discoverySource = raw.discovery_source === "gmgn" ? "gmgn" : "rpc";
   const maxLogBlocksPerTick = boundedInt(raw.max_log_blocks_per_tick, 1000, 1, 2000);
   const configuredAccounts = Array.isArray(raw.x_accounts)
     ? raw.x_accounts.map(String).map((value) => value.replace(/^@/, "").trim())
@@ -271,6 +304,8 @@ export function resolveRobinhoodPhase1Config(config: TradeConfig): RobinhoodPhas
   return {
     enabled,
     delivery: "shadow",
+    discoverySource,
+    rpcUrls: configuredStringArray(raw.rpc_urls, phase0.rpcUrls),
     windowSeconds: 300,
     discoverySeconds: boundedInt(raw.discovery_seconds, 60, 30, 3600),
     stablePoolDiscoveryBackfillBlocks: boundedInt(
@@ -281,18 +316,23 @@ export function resolveRobinhoodPhase1Config(config: TradeConfig): RobinhoodPhas
     ),
     initialBackfillBlocks: boundedInt(raw.initial_backfill_blocks, 1000, 1, 2000),
     maxLogBlocksPerTick,
-    logRpcConcurrency: boundedInt(raw.log_rpc_concurrency, 4, 1, 16),
+    catchUpLagBlocks: boundedInt(raw.catch_up_lag_blocks, 10_000, 1_000, 1_000_000),
+    catchUpBlocksPerTick: boundedInt(raw.catch_up_blocks_per_tick, 2000, 1000, 2000),
+    providerCooldownMs: boundedInt(raw.provider_cooldown_ms, 5000, 0, 30_000),
+    maxLogBlocksPerRequest: boundedInt(raw.max_log_blocks_per_request, 500, 10, 2000),
+    logRpcConcurrency: boundedInt(raw.log_rpc_concurrency, 3, 1, 16),
     reorgOverlapBlocks: Math.min(boundedInt(raw.reorg_overlap_blocks, 20, 1, 200), maxLogBlocksPerTick),
     minLiquidityUsd: boundedNumber(raw.min_liquidity_usd, 25_000, 0, 100_000_000),
     minVolume5mUsd: boundedNumber(raw.min_volume_5m_usd, 10_000, 0, 100_000_000),
     minUniqueTraders: boundedInt(raw.min_unique_traders, 3, 1, 100_000),
     minTrendScore: boundedNumber(raw.min_trend_score, 50, 0, 100),
     retentionDays: boundedInt(raw.retention_days, 30, 7, 90),
-    xEnabled: raw.x_enabled === true,
+    xEnabled: raw.x_enabled !== false,
     xCollectSeconds: boundedInt(raw.x_collect_seconds, 300, 300, 86400),
     xFetchLimit: boundedInt(raw.x_fetch_limit, 5, 1, 20),
     xMaxAccounts: boundedInt(raw.x_max_accounts, 15, 1, 50),
     xAccounts: xAccounts.length ? xAccounts : BUILTIN_ROBINHOOD_ACCOUNTS.map((account) => account.handle),
+    backfillCollectSeconds: boundedInt(raw.backfill_collect_seconds, 300, 30, 3600),
   };
 }
 
@@ -551,7 +591,7 @@ export class RobinhoodPhase1Store {
         audit_id TEXT PRIMARY KEY, pool_key TEXT NOT NULL REFERENCES pools(pool_key) ON DELETE CASCADE,
         window_start INTEGER NOT NULL, state TEXT NOT NULL, score REAL NOT NULL, reason_codes_json TEXT NOT NULL,
         source_first_block INTEGER NOT NULL, source_last_block INTEGER NOT NULL, decoder_version TEXT NOT NULL,
-        config_revision TEXT NOT NULL, created_at INTEGER NOT NULL
+        config_revision TEXT NOT NULL, created_at INTEGER NOT NULL, collection_lane TEXT NOT NULL DEFAULT 'legacy'
       );
       CREATE TABLE IF NOT EXISTS source_health (
         source TEXT PRIMARY KEY, status TEXT NOT NULL, endpoint TEXT NOT NULL, latest_block INTEGER,
@@ -559,7 +599,14 @@ export class RobinhoodPhase1Store {
         last_success_at INTEGER, last_error_at INTEGER, last_error TEXT
       );
     `);
+    this.ensureColumn("signal_audit", "collection_lane", "TEXT NOT NULL DEFAULT 'legacy'");
     this.seedRegistries();
+  }
+
+  private ensureColumn(table: string, column: string, definition: string): void {
+    const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: string }>;
+    if (columns.some((row) => row.name === column)) return;
+    this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
 
   private seedRegistries(): void {
@@ -705,6 +752,13 @@ export class RobinhoodPhase1Store {
     );
   }
 
+  getAuditLane(poolKey: string, windowStart: number): string | null {
+    const row = this.db
+      .prepare("SELECT collection_lane FROM signal_audit WHERE pool_key=? AND window_start=?")
+      .get(poolKey, windowStart) as { collection_lane?: string } | undefined;
+    return row?.collection_lane ?? null;
+  }
+
   getWindow(poolKey: string, windowStart: number): { volumeUsd: number; swapCount: number } | null {
     const row = this.db
       .prepare("SELECT volume_usd,swap_count FROM pool_windows WHERE pool_key=? AND window_start=?")
@@ -712,7 +766,15 @@ export class RobinhoodPhase1Store {
     return row ? { volumeUsd: Number(row.volume_usd ?? 0), swapCount: Number(row.swap_count ?? 0) } : null;
   }
 
+  getHealthStatus(source = "robinhood_chain_phase1"): string | null {
+    const row = this.db.prepare("SELECT status FROM source_health WHERE source=?").get(source) as
+      | { status?: string }
+      | undefined;
+    return row?.status ?? null;
+  }
+
   updateHealth(input: {
+    source?: string;
     status: "ok" | "error";
     endpoint?: string;
     latestBlock?: number;
@@ -721,14 +783,15 @@ export class RobinhoodPhase1Store {
     error?: string;
   }): void {
     const now = Math.floor(Date.now() / 1000);
-    const current = this.db
-      .prepare("SELECT consecutive_failures FROM source_health WHERE source='robinhood_chain_phase1'")
-      .get() as { consecutive_failures?: number } | undefined;
+    const source = input.source ?? "robinhood_chain_phase1";
+    const current = this.db.prepare("SELECT consecutive_failures FROM source_health WHERE source=?").get(source) as
+      | { consecutive_failures?: number }
+      | undefined;
     const failures = input.status === "ok" ? 0 : Number(current?.consecutive_failures ?? 0) + 1;
     this.db
       .prepare(`
       INSERT INTO source_health (source,status,endpoint,latest_block,target_block,lag_blocks,consecutive_failures,last_success_at,last_error_at,last_error)
-      VALUES ('robinhood_chain_phase1',?,?,?,?,?,?,?,?,?)
+      VALUES (?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(source) DO UPDATE SET status=excluded.status,endpoint=excluded.endpoint,latest_block=excluded.latest_block,
       target_block=excluded.target_block,lag_blocks=excluded.lag_blocks,consecutive_failures=excluded.consecutive_failures,
       last_success_at=CASE WHEN excluded.status='ok' THEN excluded.last_success_at ELSE source_health.last_success_at END,
@@ -736,6 +799,7 @@ export class RobinhoodPhase1Store {
       last_error=CASE WHEN excluded.status='ok' THEN NULL ELSE excluded.last_error END
     `)
       .run(
+        source,
         input.status,
         input.endpoint ? sanitizeRpcUrl(input.endpoint) : "",
         input.latestBlock ?? null,
@@ -764,6 +828,8 @@ export class RobinhoodPhase1Store {
     events: NormalizedDexEvent[];
     retentionDays: number;
     cursor?: number;
+    lane?: "legacy" | "realtime" | "backfill";
+    stateUpdates?: Record<string, string>;
     thresholds?: Pick<
       RobinhoodPhase1Config,
       "minLiquidityUsd" | "minVolume5mUsd" | "minUniqueTraders" | "minTrendScore"
@@ -786,7 +852,9 @@ export class RobinhoodPhase1Store {
       this.db
         .prepare("DELETE FROM dex_events WHERE block_number BETWEEN ? AND ?")
         .run(input.firstBlock, input.lastBlock);
-      this.db.prepare("DELETE FROM pools WHERE created_block BETWEEN ? AND ?").run(input.firstBlock, input.lastBlock);
+      if (input.lane !== "backfill") {
+        this.db.prepare("DELETE FROM pools WHERE created_block BETWEEN ? AND ?").run(input.firstBlock, input.lastBlock);
+      }
 
       const poolStmt = this.db.prepare(`
         INSERT INTO pools (pool_key,execution_address,protocol_id,token0,token1,created_block,created_at,creation_event_id,quality)
@@ -844,6 +912,7 @@ export class RobinhoodPhase1Store {
       this.db.prepare("DELETE FROM signal_audit WHERE window_start < ?").run(cutoff);
 
       let qualified = 0;
+      const realtimeStartBlock = stateNumber(this.getState("realtime_start_block"));
       for (const key of affected) {
         const separator = key.lastIndexOf(":");
         const poolKey = key.slice(0, separator);
@@ -867,6 +936,17 @@ export class RobinhoodPhase1Store {
         `)
           .get(poolKey, start, start + 300) as { liquidity_usd?: number } | undefined;
         const liquidityUsd = liquidityRow?.liquidity_usd == null ? null : Number(liquidityRow.liquidity_usd);
+        const containsRealtimeEvent =
+          input.lane === "backfill" && realtimeStartBlock != null
+            ? Boolean(
+                this.db
+                  .prepare(
+                    "SELECT 1 FROM dex_events WHERE pool_key=? AND event_ts>=? AND event_ts<? AND block_number>=? LIMIT 1",
+                  )
+                  .get(poolKey, start, start + 300, realtimeStartBlock),
+              )
+            : false;
+        const collectionLane = containsRealtimeEvent ? "realtime" : (input.lane ?? "legacy");
         this.db
           .prepare(`
           INSERT INTO pool_windows (pool_key,window_start,window_end,swap_count,priced_swap_count,volume_usd,unique_traders,liquidity_usd,updated_at)
@@ -928,8 +1008,8 @@ export class RobinhoodPhase1Store {
         if (evaluation.state === "qualified") qualified += 1;
         this.db
           .prepare(`
-          INSERT INTO signal_audit (audit_id,pool_key,window_start,state,score,reason_codes_json,source_first_block,source_last_block,decoder_version,config_revision,created_at)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?)
+          INSERT INTO signal_audit (audit_id,pool_key,window_start,state,score,reason_codes_json,source_first_block,source_last_block,decoder_version,config_revision,created_at,collection_lane)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
         `)
           .run(
             `${poolKey}:${start}:phase1-v1`,
@@ -943,6 +1023,7 @@ export class RobinhoodPhase1Store {
             "phase1-v1",
             "approved-2026-08-31-capacity-1000",
             now,
+            collectionLane,
           );
         this.db
           .prepare(`
@@ -960,18 +1041,27 @@ export class RobinhoodPhase1Store {
             now,
           );
       }
-      const previousState = this.getState("last_confirmed_block");
+      const lane = input.lane ?? "legacy";
+      const cursorKey = lane === "realtime" ? "realtime_cursor" : "last_confirmed_block";
+      const previousState = this.getState(cursorKey);
       const previousCursor = previousState == null ? -1 : Number(previousState);
       const cursor = Math.max(
         Number.isSafeInteger(previousCursor) ? previousCursor : -1,
         input.cursor ?? input.lastBlock,
       );
-      this.db
-        .prepare(`
-        INSERT INTO collector_state (key,value,updated_at) VALUES ('last_confirmed_block',?,?)
+      const states = {
+        ...(lane === "realtime"
+          ? { realtime_cursor: String(cursor) }
+          : lane === "backfill"
+            ? { backfill_cursor: String(cursor), last_confirmed_block: String(cursor) }
+            : { last_confirmed_block: String(cursor) }),
+        ...(input.stateUpdates ?? {}),
+      };
+      const stateStmt = this.db.prepare(`
+        INSERT INTO collector_state (key,value,updated_at) VALUES (?,?,?)
         ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at
-      `)
-        .run(String(cursor), now);
+      `);
+      for (const [key, value] of Object.entries(states)) stateStmt.run(key, value, now);
       this.db.exec("COMMIT");
       return { qualified };
     } catch (error) {
@@ -1006,7 +1096,8 @@ export async function collectRobinhoodPhase1Accounts(options: {
   const dbPath = options.dbPath ?? ROBINHOOD_CHAIN_PHASE1_DB_PATH;
   await mkdir(dirname(dbPath), { recursive: true });
   const store = new RobinhoodPhase1Store(dbPath);
-  const fetcher = options.fetcher ?? ((handle, limit) => fetchTweets(handle, limit));
+  const fetcher =
+    options.fetcher ?? ((handle, limit) => fetchTweets(handle, limit, undefined, ROBINHOOD_X_BROWSER_SESSION));
   const health: Record<string, number> = {};
   let postsObserved = 0;
   const accounts = cfg.xAccounts.slice(0, cfg.xMaxAccounts);
@@ -1027,6 +1118,24 @@ export async function collectRobinhoodPhase1Accounts(options: {
   return { status: "persisted", accountsChecked: accounts.length, postsObserved, health };
 }
 
+class RpcHttpError extends Error {
+  constructor(
+    readonly status: number,
+    readonly retryAfterMs: number | null,
+  ) {
+    super(`HTTP ${status}`);
+  }
+}
+
+function parseRetryAfterMs(response: Response): number | null {
+  const value = response.headers.get("retry-after")?.trim();
+  if (!value) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(30_000, Math.round(seconds * 1000));
+  const retryAt = Date.parse(value);
+  return Number.isFinite(retryAt) ? Math.min(30_000, Math.max(0, retryAt - Date.now())) : null;
+}
+
 function defaultTransport(timeoutMs: number): RpcTransport {
   return async (url, method, params) => {
     const response = await fetch(url, {
@@ -1035,7 +1144,7 @@ function defaultTransport(timeoutMs: number): RpcTransport {
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
       signal: AbortSignal.timeout(timeoutMs),
     });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (!response.ok) throw new RpcHttpError(response.status, parseRetryAfterMs(response));
     const body = (await response.json()) as Record<string, unknown>;
     if (body.error && typeof body.error === "object") {
       throw new Error(String((body.error as Record<string, unknown>).message ?? "JSON-RPC error").slice(0, 300));
@@ -1053,26 +1162,85 @@ async function rpcCall(
   transport: RpcTransport,
   method: string,
   params: unknown[],
+  options: {
+    maxAttempts?: number;
+    retryBaseMs?: number;
+    sleep?: (ms: number) => Promise<void>;
+  } = {},
 ): Promise<{ value: unknown; endpoint: string }> {
   const errors: string[] = [];
-  for (const url of urls) {
-    try {
-      return { value: await transport(url, method, params), endpoint: sanitizeRpcUrl(url) };
-    } catch (error) {
-      errors.push(
-        `${sanitizeRpcUrl(url)}: ${sanitizeErrorText(error instanceof Error ? error.message : String(error)).slice(0, 200)}`,
-      );
+  const maxAttempts = Math.min(3, Math.max(1, Math.trunc(options.maxAttempts ?? 3)));
+  const retryBaseMs = Math.min(5000, Math.max(100, Math.trunc(options.retryBaseMs ?? 1000)));
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    let retryable = false;
+    let retryAfterMs = 0;
+    for (const url of urls) {
+      try {
+        return { value: await transport(url, method, params), endpoint: sanitizeRpcUrl(url) };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(`${sanitizeRpcUrl(url)}: ${sanitizeErrorText(message).slice(0, 200)}`);
+        const status = error instanceof RpcHttpError ? error.status : Number(message.match(/HTTP\s+(\d{3})/i)?.[1]);
+        retryable ||=
+          status === 403 ||
+          status === 408 ||
+          status === 425 ||
+          status === 429 ||
+          status >= 500 ||
+          /timeout|timed out|fetch failed|connection|socket|network/i.test(message);
+        if (error instanceof RpcHttpError && error.retryAfterMs != null) {
+          retryAfterMs = Math.max(retryAfterMs, error.retryAfterMs);
+        }
+      }
     }
+    if (!retryable || attempt + 1 >= maxAttempts) break;
+    await sleep(Math.max(retryAfterMs, Math.min(5000, retryBaseMs * 2 ** attempt)));
   }
   throw new Error(`${method} failed on all RPC endpoints: ${errors.join("; ")}`);
 }
 
-async function verifyRpcAndProtocols(urls: string[], transport: RpcTransport): Promise<string[]> {
+async function fetchRpcLogs(
+  urls: string[],
+  transport: RpcTransport,
+  filter: Record<string, unknown>,
+  maxBlocksPerRequest: number,
+  sleep?: (ms: number) => Promise<void>,
+): Promise<Phase1RpcLog[]> {
+  const fromBlock = parseHexNumber(filter.fromBlock, "log from block");
+  const toBlock = parseHexNumber(filter.toBlock, "log to block");
+  if (toBlock < fromBlock) throw new Error("invalid RPC log block range");
+  const logs = new Map<string, Phase1RpcLog>();
+  for (let first = fromBlock; first <= toBlock; first += maxBlocksPerRequest) {
+    const last = Math.min(toBlock, first + maxBlocksPerRequest - 1);
+    const response = await rpcCall(
+      urls,
+      transport,
+      "eth_getLogs",
+      [
+        {
+          ...filter,
+          fromBlock: `0x${first.toString(16)}`,
+          toBlock: `0x${last.toString(16)}`,
+        },
+      ],
+      { maxAttempts: 3, sleep },
+    );
+    for (const item of parseLogs(response.value).filter((row) => !row.removed)) logs.set(eventId(item), item);
+  }
+  return [...logs.values()];
+}
+
+async function verifyRpcAndProtocols(
+  urls: string[],
+  transport: RpcTransport,
+  sleep?: (ms: number) => Promise<void>,
+): Promise<string[]> {
   const valid: string[] = [];
   const observed: number[] = [];
   for (const url of urls) {
     try {
-      const chainId = parseHexNumber(await transport(url, "eth_chainId", []), "chain id");
+      const chainId = parseHexNumber((await rpcCall([url], transport, "eth_chainId", [], { sleep })).value, "chain id");
       observed.push(chainId);
       if (chainId === ROBINHOOD_CHAIN_ID) valid.push(url);
     } catch {
@@ -1087,7 +1255,9 @@ async function verifyRpcAndProtocols(urls: string[], transport: RpcTransport): P
   for (const url of valid) {
     try {
       for (const protocol of BUILTIN_ROBINHOOD_PROTOCOLS.filter((item) => item.enabled)) {
-        const code = String(await transport(url, "eth_getCode", [protocol.discoveryAddress, "latest"]));
+        const code = String(
+          (await rpcCall([url], transport, "eth_getCode", [protocol.discoveryAddress, "latest"], { sleep })).value,
+        );
         if (!/^0x[0-9a-f]+$/i.test(code) || code === "0x") throw new Error(`${protocol.id} bytecode missing`);
       }
       verified.push(url);
@@ -1130,10 +1300,13 @@ async function fetchBlockTimestamps(
   urls: string[],
   transport: RpcTransport,
   concurrency: number,
+  sleep?: (ms: number) => Promise<void>,
 ): Promise<Map<number, number>> {
   const unique = [...new Set(blockNumbers)].sort((a, b) => a - b);
   const rows = await mapConcurrent(unique, concurrency, async (number) => {
-    const response = await rpcCall(urls, transport, "eth_getBlockByNumber", [`0x${number.toString(16)}`, false]);
+    const response = await rpcCall(urls, transport, "eth_getBlockByNumber", [`0x${number.toString(16)}`, false], {
+      sleep,
+    });
     const block = response.value as Record<string, unknown>;
     if (parseHexNumber(block.number, "block number") !== number) throw new Error(`RPC returned wrong block ${number}`);
     return [number, parseHexNumber(block.timestamp, "block timestamp")] as const;
@@ -1169,11 +1342,292 @@ function parseStableBalanceLiquidity(result: unknown, decimals: number): number 
   return decimalAmount(unsignedWord(dataWords[0]!), decimals) * 2;
 }
 
+async function collectPhase1Range(input: {
+  store: RobinhoodPhase1Store;
+  cfg: RobinhoodPhase1Config;
+  urls: string[];
+  transport: RpcTransport;
+  firstBlock: number;
+  lastBlock: number;
+  targetBlock: number;
+  bootstrapDiscovery: boolean;
+  lane: "realtime" | "backfill";
+  cursor: number;
+  stateUpdates: Record<string, string>;
+  sleep?: (ms: number) => Promise<void>;
+}): Promise<{ poolsDiscovered: number; swapsObserved: number; candidatesQualified: number }> {
+  const { store, cfg, urls, transport, firstBlock, lastBlock, targetBlock } = input;
+  const range = { fromBlock: `0x${firstBlock.toString(16)}`, toBlock: `0x${lastBlock.toString(16)}` };
+  const discoveryFirstBlock = input.bootstrapDiscovery
+    ? Math.max(0, targetBlock - cfg.stablePoolDiscoveryBackfillBlocks + 1)
+    : firstBlock;
+  const discoveryRange = {
+    fromBlock: `0x${discoveryFirstBlock.toString(16)}`,
+    toBlock: `0x${targetBlock.toString(16)}`,
+  };
+  const enabledProtocols = BUILTIN_ROBINHOOD_PROTOCOLS.filter((item) => item.enabled);
+  const currentCreationLogs = await fetchRpcLogs(
+    urls,
+    transport,
+    {
+      ...range,
+      address: enabledProtocols.map((protocol) => protocol.discoveryAddress),
+      topics: [enabledProtocols.map((protocol) => protocol.creationTopic)],
+    },
+    cfg.maxLogBlocksPerRequest,
+    input.sleep,
+  );
+  const currentCreationGroups = enabledProtocols.map((protocol) => ({
+    protocol,
+    logs: currentCreationLogs.filter(
+      (item) =>
+        item.address.toLowerCase() === protocol.discoveryAddress &&
+        String(item.topics[0] ?? "").toLowerCase() === protocol.creationTopic,
+    ),
+  }));
+  if (currentCreationGroups.reduce((count, group) => count + group.logs.length, 0) !== currentCreationLogs.length) {
+    throw new Error("pool creation log does not match an enabled protocol");
+  }
+  const stableTopics = [...STABLECOIN_DECIMALS.keys()].map(addressTopic);
+  const bootstrapGroups = input.bootstrapDiscovery
+    ? await mapConcurrent(
+        enabledProtocols.filter((protocol) => protocol.kind !== "v4"),
+        cfg.logRpcConcurrency,
+        async (protocol) => {
+          const positions = protocol.kind === "metric" ? [2, 3] : [1, 2];
+          const logs = new Map<string, Phase1RpcLog>();
+          for (const position of positions) {
+            const topics: Array<string | string[] | null> = [protocol.creationTopic];
+            while (topics.length <= position) topics.push(null);
+            topics[position] = stableTopics;
+            const rows = await fetchRpcLogs(
+              urls,
+              transport,
+              { ...discoveryRange, address: protocol.discoveryAddress, topics },
+              cfg.maxLogBlocksPerRequest,
+              input.sleep,
+            );
+            for (const item of rows) logs.set(eventId(item), item);
+          }
+          return { protocol, logs: [...logs.values()] };
+        },
+      )
+    : [];
+  const creationGroups = enabledProtocols.map((protocol) => {
+    const logs = new Map<string, Phase1RpcLog>();
+    for (const group of [...currentCreationGroups, ...bootstrapGroups]) {
+      if (group.protocol.id !== protocol.id) continue;
+      for (const item of group.logs) logs.set(eventId(item), item);
+    }
+    return { protocol, logs: [...logs.values()] };
+  });
+  const creationLogs = creationGroups.flatMap((group) => group.logs);
+  const timestampBlocks = creationLogs.map((item) => parseHexNumber(item.blockNumber, "block number"));
+  let timestamps = await fetchBlockTimestamps(timestampBlocks, urls, transport, cfg.logRpcConcurrency, input.sleep);
+  const discovered = creationGroups.flatMap(({ protocol, logs }) =>
+    logs.map((item) =>
+      decodePoolCreatedLog(protocol, item, timestamps.get(parseHexNumber(item.blockNumber, "block number"))!),
+    ),
+  );
+  const poolMap = new Map(store.getPools().map((pool) => [pool.poolKey, pool]));
+  for (const pool of discovered) poolMap.set(pool.poolKey, pool);
+  type SwapGroup = { protocol: RobinhoodProtocolDefinition; pools: DiscoveredPool[]; logs: Phase1RpcLog[] };
+  type SwapTask =
+    | { kind: "v4"; protocol: RobinhoodProtocolDefinition; pools: DiscoveredPool[] }
+    | { kind: "non_v4"; pools: DiscoveredPool[] };
+  const protocolById = new Map(enabledProtocols.map((protocol) => [protocol.id, protocol]));
+  const stablePools = [...poolMap.values()].filter((pool) => stablecoinForPool(pool) !== null);
+  const swapTasks: SwapTask[] = [];
+  for (const protocol of enabledProtocols.filter((item) => item.kind === "v4")) {
+    const pools = stablePools.filter((pool) => pool.protocolId === protocol.id);
+    if (pools.length > 0) swapTasks.push({ kind: "v4", protocol, pools });
+  }
+  for (const pools of chunk(
+    stablePools.filter((pool) => protocolById.get(pool.protocolId)?.kind !== "v4"),
+    50,
+  )) {
+    swapTasks.push({ kind: "non_v4", pools });
+  }
+  const swapGroups = (
+    await mapConcurrent(swapTasks, cfg.logRpcConcurrency, async (task): Promise<SwapGroup[]> => {
+      if (task.kind === "v4") {
+        const logs = await fetchRpcLogs(
+          urls,
+          transport,
+          {
+            ...range,
+            address: task.protocol.discoveryAddress,
+            topics: [task.protocol.swapTopic],
+          },
+          cfg.maxLogBlocksPerRequest,
+          input.sleep,
+        );
+        const stablePoolKeys = new Set(task.pools.map((pool) => pool.poolKey));
+        const filteredLogs = logs.filter((item) => {
+          if (
+            item.address.toLowerCase() !== task.protocol.discoveryAddress ||
+            String(item.topics[0] ?? "").toLowerCase() !== task.protocol.swapTopic
+          ) {
+            throw new Error("V4 swap log does not match the requested PoolManager and topic");
+          }
+          const poolKey = String(item.topics[1] ?? "").toLowerCase();
+          if (!/^0x[0-9a-f]{64}$/.test(poolKey)) throw new Error("V4 swap log contains an invalid pool key");
+          const pool = poolMap.get(poolKey);
+          if (!pool) return false;
+          if (pool.protocolId !== task.protocol.id || pool.executionAddress !== task.protocol.discoveryAddress) {
+            throw new Error(`${task.protocol.id} swap references an invalid pool identity`);
+          }
+          return stablePoolKeys.has(poolKey);
+        });
+        return [{ protocol: task.protocol, pools: task.pools, logs: filteredLogs }];
+      }
+      const poolByExecution = new Map(task.pools.map((pool) => [pool.executionAddress, pool]));
+      if (poolByExecution.size !== task.pools.length) throw new Error("duplicate swap execution address");
+      const protocols = [
+        ...new Map(
+          task.pools.map((pool) => {
+            const protocol = protocolById.get(pool.protocolId);
+            if (!protocol || protocol.kind === "v4") throw new Error("stable pool references an invalid protocol");
+            return [protocol.id, protocol] as const;
+          }),
+        ).values(),
+      ];
+      const logs = await fetchRpcLogs(
+        urls,
+        transport,
+        {
+          ...range,
+          address: task.pools.map((pool) => pool.executionAddress),
+          topics: [protocols.map((protocol) => protocol.swapTopic)],
+        },
+        cfg.maxLogBlocksPerRequest,
+        input.sleep,
+      );
+      const groups = new Map<string, SwapGroup>();
+      for (const pool of task.pools) {
+        const protocol = protocolById.get(pool.protocolId)!;
+        const group = groups.get(protocol.id) ?? { protocol, pools: [], logs: [] };
+        group.pools.push(pool);
+        groups.set(protocol.id, group);
+      }
+      for (const item of logs) {
+        const pool = poolByExecution.get(item.address.toLowerCase());
+        const protocol = pool ? protocolById.get(pool.protocolId) : undefined;
+        if (!pool || !protocol || String(item.topics[0] ?? "").toLowerCase() !== protocol.swapTopic) {
+          throw new Error("swap log does not match a requested pool and protocol");
+        }
+        groups.get(protocol.id)!.logs.push(item);
+      }
+      return [...groups.values()];
+    })
+  ).flat();
+  const swapLogs = swapGroups.flatMap((group) => group.logs);
+  timestamps = await fetchBlockTimestamps(
+    [...timestampBlocks, ...swapLogs.map((item) => parseHexNumber(item.blockNumber, "block number"))],
+    urls,
+    transport,
+    cfg.logRpcConcurrency,
+    input.sleep,
+  );
+  const liquidityByPool = new Map<string, number | null>();
+  const activePoolKeys = new Set<string>();
+  for (const { protocol, pools, logs } of swapGroups) {
+    const byExecution = new Map(pools.map((pool) => [pool.executionAddress, pool.poolKey]));
+    for (const item of logs) {
+      const key =
+        protocol.kind === "v4"
+          ? String(item.topics[1] ?? "").toLowerCase()
+          : byExecution.get(item.address.toLowerCase());
+      if (key) activePoolKeys.add(key);
+    }
+  }
+  const activePools = [...poolMap.values()].filter((pool) => activePoolKeys.has(pool.poolKey));
+  await mapConcurrent(activePools, cfg.logRpcConcurrency, async (pool) => {
+    try {
+      const protocol = enabledProtocols.find((item) => item.id === pool.protocolId)!;
+      if (protocol.kind === "v4") {
+        liquidityByPool.set(pool.poolKey, null);
+        return;
+      }
+      if (protocol.kind === "v2") {
+        const response = await rpcCall(
+          urls,
+          transport,
+          "eth_call",
+          [{ to: pool.executionAddress, data: GET_RESERVES_SELECTOR }, `0x${lastBlock.toString(16)}`],
+          { sleep: input.sleep },
+        );
+        liquidityByPool.set(pool.poolKey, parseV2LiquidityUsd(response.value, pool));
+        return;
+      }
+      const stablecoin = stablecoinForPool(pool);
+      if (!stablecoin) {
+        liquidityByPool.set(pool.poolKey, null);
+        return;
+      }
+      const response = await rpcCall(
+        urls,
+        transport,
+        "eth_call",
+        [{ to: stablecoin.address, data: balanceOfCallData(pool.executionAddress) }, `0x${lastBlock.toString(16)}`],
+        { sleep: input.sleep },
+      );
+      liquidityByPool.set(pool.poolKey, parseStableBalanceLiquidity(response.value, stablecoin.decimals));
+    } catch {
+      liquidityByPool.set(pool.poolKey, null);
+    }
+  });
+  const events: NormalizedDexEvent[] = [];
+  for (const { protocol, pools, logs } of swapGroups) {
+    const poolsByExecution = new Map(pools.map((pool) => [pool.executionAddress, pool]));
+    const poolsByKey = new Map(pools.map((pool) => [pool.poolKey, pool]));
+    for (const item of logs) {
+      const pool =
+        protocol.kind === "v4"
+          ? poolsByKey.get(String(item.topics[1] ?? "").toLowerCase())
+          : poolsByExecution.get(String(item.address).toLowerCase());
+      if (!pool) throw new Error(`${protocol.id} swap references an unknown pool`);
+      const blockNumber = parseHexNumber(item.blockNumber, "block number");
+      events.push(
+        decodeSwapLog(
+          protocol,
+          pool,
+          item,
+          timestamps.get(blockNumber)!,
+          STABLECOIN_DECIMALS,
+          liquidityByPool.get(pool.poolKey) ?? null,
+        ),
+      );
+    }
+  }
+  const applied = store.applyBatch({
+    firstBlock,
+    lastBlock,
+    pools: discovered,
+    events,
+    retentionDays: cfg.retentionDays,
+    cursor: input.cursor,
+    thresholds: cfg,
+    lane: input.lane,
+    stateUpdates: {
+      ...input.stateUpdates,
+      ...(input.bootstrapDiscovery ? { pool_discovery_bootstrap_v1: "1" } : {}),
+    },
+  });
+  return {
+    poolsDiscovered: discovered.length,
+    swapsObserved: events.length,
+    candidatesQualified: applied.qualified,
+  };
+}
+
 export async function collectRobinhoodPhase1(options: {
   config: TradeConfig;
   dbPath?: string;
   transport?: RpcTransport;
   force?: boolean;
+  allowRealtimeRebase?: boolean;
+  sleep?: (ms: number) => Promise<void>;
 }): Promise<RobinhoodPhase1Result> {
   const phase0 = resolveRobinhoodChainConfig(options.config);
   const cfg = resolveRobinhoodPhase1Config(options.config);
@@ -1187,18 +1641,18 @@ export async function collectRobinhoodPhase1(options: {
   let latestBlock: number | undefined;
   let targetBlock: number | undefined;
   try {
-    const urls = await verifyRpcAndProtocols(phase0.rpcUrls, transport);
-    const latest = await rpcCall(urls, transport, "eth_blockNumber", []);
+    const urls = await verifyRpcAndProtocols(cfg.rpcUrls, transport, options.sleep);
+    const latest = await rpcCall(urls, transport, "eth_blockNumber", [], { sleep: options.sleep });
     latestBlock = parseHexNumber(latest.value, "latest block");
     targetBlock = latestBlock - phase0.confirmations;
-    const previousState = store.getState("last_confirmed_block");
-    const previous = previousState == null ? Number.NaN : Number(previousState);
-    const previousCursor = Number.isSafeInteger(previous) && previous >= 0 ? previous : undefined;
+    const legacyCursor = stateNumber(store.getState("last_confirmed_block"));
+    const previousRealtimeCursor = stateNumber(store.getState("realtime_cursor"));
+    const persistedRealtimeStart = stateNumber(store.getState("realtime_start_block"));
     if (targetBlock < 0) {
       store.updateHealth({ status: "ok", endpoint: latest.endpoint, latestBlock, targetBlock, lagBlocks: 0 });
       return { status: "idle", delivery: "shadow", endpoint: latest.endpoint, latestBlock, targetBlock };
     }
-    if (previousCursor != null && targetBlock < previousCursor) {
+    if (previousRealtimeCursor != null && targetBlock < previousRealtimeCursor) {
       store.updateHealth({ status: "ok", endpoint: latest.endpoint, latestBlock, targetBlock, lagBlocks: 0 });
       return {
         status: "idle",
@@ -1206,15 +1660,24 @@ export async function collectRobinhoodPhase1(options: {
         endpoint: latest.endpoint,
         latestBlock,
         targetBlock,
-        persistedBlock: previousCursor,
+        persistedBlock: previousRealtimeCursor,
       };
     }
-    const firstBlock =
-      previousCursor == null
+    const realtimeBudget = previousRealtimeCursor == null ? cfg.initialBackfillBlocks : cfg.maxLogBlocksPerTick;
+    const realtimeTipFirstBlock = Math.max(0, targetBlock - realtimeBudget + 1);
+    const sequentialRealtimeFirstBlock =
+      previousRealtimeCursor == null
         ? Math.max(0, targetBlock - cfg.initialBackfillBlocks + 1)
-        : Math.max(0, previousCursor - cfg.reorgOverlapBlocks + 1);
-    const lastBlock = Math.min(targetBlock, firstBlock + cfg.maxLogBlocksPerTick - 1);
-    if (firstBlock > lastBlock) {
+        : Math.max(0, previousRealtimeCursor - cfg.reorgOverlapBlocks + 1);
+    const realtimeFirstBlock = Math.max(sequentialRealtimeFirstBlock, realtimeTipFirstBlock);
+    const realtimeLastBlock = Math.min(targetBlock, realtimeFirstBlock + realtimeBudget - 1);
+    const realtimeJumped = previousRealtimeCursor != null && realtimeFirstBlock > sequentialRealtimeFirstBlock;
+    if (realtimeJumped && options.allowRealtimeRebase === false) {
+      throw new Error(
+        `realtime capacity exceeded: cursor=${previousRealtimeCursor} target=${targetBlock} capacity=${realtimeBudget}`,
+      );
+    }
+    if (realtimeFirstBlock > realtimeLastBlock) {
       store.updateHealth({ status: "ok", endpoint: latest.endpoint, latestBlock, targetBlock, lagBlocks: 0 });
       return {
         status: "idle",
@@ -1222,186 +1685,130 @@ export async function collectRobinhoodPhase1(options: {
         endpoint: latest.endpoint,
         latestBlock,
         targetBlock,
-        persistedBlock: previousCursor,
+        persistedBlock: previousRealtimeCursor,
       };
     }
-    const range = { fromBlock: `0x${firstBlock.toString(16)}`, toBlock: `0x${lastBlock.toString(16)}` };
     const bootstrapDiscovery = store.getState("pool_discovery_bootstrap_v1") !== "1";
-    const discoveryFirstBlock = bootstrapDiscovery
-      ? Math.max(0, targetBlock - cfg.stablePoolDiscoveryBackfillBlocks + 1)
-      : firstBlock;
-    const discoveryRange = {
-      fromBlock: `0x${discoveryFirstBlock.toString(16)}`,
-      toBlock: `0x${targetBlock.toString(16)}`,
+    const realtimeStartBlock = realtimeJumped ? realtimeFirstBlock : (persistedRealtimeStart ?? realtimeFirstBlock);
+    const priorHistoryComplete = store.getState("history_complete") === "1";
+    const storedBackfillCursor =
+      priorHistoryComplete && realtimeJumped
+        ? legacyCursor
+        : (stateNumber(store.getState("backfill_cursor")) ?? legacyCursor);
+    const backfillCursor = storedBackfillCursor ?? realtimeStartBlock - 1;
+    const backfillTargetBlock = realtimeStartBlock - 1;
+    const historyCompleteBefore = !realtimeJumped && (priorHistoryComplete || backfillCursor >= backfillTargetBlock);
+    const realtimeCursor = Math.max(previousRealtimeCursor ?? -1, realtimeLastBlock);
+    const realtimeStates: Record<string, string> = {
+      realtime_start_block: String(realtimeStartBlock),
+      backfill_cursor: String(backfillCursor),
+      history_complete: historyCompleteBefore ? "1" : "0",
     };
-    const enabledProtocols = BUILTIN_ROBINHOOD_PROTOCOLS.filter((item) => item.enabled);
-    const currentCreationGroups = await mapConcurrent(enabledProtocols, cfg.logRpcConcurrency, async (protocol) => {
-      const response = await rpcCall(urls, transport, "eth_getLogs", [
-        { ...range, address: protocol.discoveryAddress, topics: [protocol.creationTopic] },
-      ]);
-      return { protocol, logs: parseLogs(response.value).filter((item) => !item.removed) };
-    });
-    const stableTopics = [...STABLECOIN_DECIMALS.keys()].map(addressTopic);
-    const bootstrapGroups = bootstrapDiscovery
-      ? await mapConcurrent(
-          enabledProtocols.filter((protocol) => protocol.kind !== "v4"),
-          cfg.logRpcConcurrency,
-          async (protocol) => {
-            const positions = protocol.kind === "metric" ? [2, 3] : [1, 2];
-            const logs = new Map<string, Phase1RpcLog>();
-            for (const position of positions) {
-              const topics: Array<string | string[] | null> = [protocol.creationTopic];
-              while (topics.length <= position) topics.push(null);
-              topics[position] = stableTopics;
-              const response = await rpcCall(urls, transport, "eth_getLogs", [
-                { ...discoveryRange, address: protocol.discoveryAddress, topics },
-              ]);
-              for (const item of parseLogs(response.value).filter((row) => !row.removed)) {
-                logs.set(eventId(item), item);
-              }
-            }
-            return { protocol, logs: [...logs.values()] };
-          },
-        )
-      : [];
-    const creationGroups = enabledProtocols.map((protocol) => {
-      const logs = new Map<string, Phase1RpcLog>();
-      for (const group of [...currentCreationGroups, ...bootstrapGroups]) {
-        if (group.protocol.id !== protocol.id) continue;
-        for (const item of group.logs) logs.set(eventId(item), item);
-      }
-      return { protocol, logs: [...logs.values()] };
-    });
-    const creationLogs = creationGroups.flatMap((group) => group.logs);
-    const timestampBlocks = creationLogs.map((item) => parseHexNumber(item.blockNumber, "block number"));
-    let timestamps = await fetchBlockTimestamps(timestampBlocks, urls, transport, cfg.logRpcConcurrency);
-    const discovered = creationGroups.flatMap(({ protocol, logs }) =>
-      logs.map((item) =>
-        decodePoolCreatedLog(protocol, item, timestamps.get(parseHexNumber(item.blockNumber, "block number"))!),
-      ),
-    );
-    const poolMap = new Map(store.getPools().map((pool) => [pool.poolKey, pool]));
-    for (const pool of discovered) poolMap.set(pool.poolKey, pool);
-    const swapTasks: Array<{ protocol: RobinhoodProtocolDefinition; pools: DiscoveredPool[] }> = [];
-    for (const protocol of enabledProtocols) {
-      const pools = [...poolMap.values()].filter((pool) => pool.protocolId === protocol.id);
-      for (const group of chunk(pools, protocol.kind === "v4" ? 100 : 50)) swapTasks.push({ protocol, pools: group });
-    }
-    const swapGroups = await mapConcurrent(swapTasks, cfg.logRpcConcurrency, async ({ protocol, pools }) => {
-      if (!pools.length) return { protocol, pools, logs: [] as Phase1RpcLog[] };
-      const filter =
-        protocol.kind === "v4"
-          ? {
-              ...range,
-              address: protocol.discoveryAddress,
-              topics: [protocol.swapTopic, pools.map((pool) => pool.poolKey)],
-            }
-          : { ...range, address: pools.map((pool) => pool.executionAddress), topics: [protocol.swapTopic] };
-      const response = await rpcCall(urls, transport, "eth_getLogs", [filter]);
-      return { protocol, pools, logs: parseLogs(response.value).filter((item) => !item.removed) };
-    });
-    const swapLogs = swapGroups.flatMap((group) => group.logs);
-    timestamps = await fetchBlockTimestamps(
-      [...timestampBlocks, ...swapLogs.map((item) => parseHexNumber(item.blockNumber, "block number"))],
+    if (historyCompleteBefore) realtimeStates.last_confirmed_block = String(realtimeCursor);
+    const realtime = await collectPhase1Range({
+      store,
+      cfg,
       urls,
       transport,
-      cfg.logRpcConcurrency,
-    );
-    const liquidityByPool = new Map<string, number | null>();
-    const activePoolKeys = new Set<string>();
-    for (const { protocol, pools, logs } of swapGroups) {
-      const byExecution = new Map(pools.map((pool) => [pool.executionAddress, pool.poolKey]));
-      for (const item of logs) {
-        const key =
-          protocol.kind === "v4"
-            ? String(item.topics[1] ?? "").toLowerCase()
-            : byExecution.get(item.address.toLowerCase());
-        if (key) activePoolKeys.add(key);
-      }
-    }
-    const activePools = [...poolMap.values()].filter((pool) => activePoolKeys.has(pool.poolKey));
-    await mapConcurrent(activePools, cfg.logRpcConcurrency, async (pool) => {
-      try {
-        const protocol = enabledProtocols.find((item) => item.id === pool.protocolId)!;
-        if (protocol.kind === "v4") {
-          liquidityByPool.set(pool.poolKey, null);
-          return;
-        }
-        if (protocol.kind === "v2") {
-          const response = await rpcCall(urls, transport, "eth_call", [
-            { to: pool.executionAddress, data: GET_RESERVES_SELECTOR },
-            `0x${lastBlock.toString(16)}`,
-          ]);
-          liquidityByPool.set(pool.poolKey, parseV2LiquidityUsd(response.value, pool));
-          return;
-        }
-        const stablecoin = stablecoinForPool(pool);
-        if (!stablecoin) {
-          liquidityByPool.set(pool.poolKey, null);
-          return;
-        }
-        const response = await rpcCall(urls, transport, "eth_call", [
-          { to: stablecoin.address, data: balanceOfCallData(pool.executionAddress) },
-          `0x${lastBlock.toString(16)}`,
-        ]);
-        liquidityByPool.set(pool.poolKey, parseStableBalanceLiquidity(response.value, stablecoin.decimals));
-      } catch {
-        liquidityByPool.set(pool.poolKey, null);
-      }
+      firstBlock: realtimeFirstBlock,
+      lastBlock: realtimeLastBlock,
+      targetBlock,
+      bootstrapDiscovery,
+      lane: "realtime",
+      cursor: realtimeCursor,
+      stateUpdates: realtimeStates,
+      sleep: options.sleep,
     });
-    const events: NormalizedDexEvent[] = [];
-    for (const { protocol, pools, logs } of swapGroups) {
-      const poolsByExecution = new Map(pools.map((pool) => [pool.executionAddress, pool]));
-      const poolsByKey = new Map(pools.map((pool) => [pool.poolKey, pool]));
-      for (const item of logs) {
-        const pool =
-          protocol.kind === "v4"
-            ? poolsByKey.get(String(item.topics[1] ?? "").toLowerCase())
-            : poolsByExecution.get(String(item.address).toLowerCase());
-        if (!pool) throw new Error(`${protocol.id} swap references an unknown pool`);
-        const blockNumber = parseHexNumber(item.blockNumber, "block number");
-        events.push(
-          decodeSwapLog(
-            protocol,
-            pool,
-            item,
-            timestamps.get(blockNumber)!,
-            STABLECOIN_DECIMALS,
-            liquidityByPool.get(pool.poolKey) ?? null,
-          ),
-        );
-      }
-    }
-    const applied = store.applyBatch({
-      firstBlock,
-      lastBlock,
-      pools: discovered,
-      events,
-      retentionDays: cfg.retentionDays,
-      cursor: Math.max(previousCursor ?? -1, lastBlock),
-      thresholds: cfg,
-    });
-    if (bootstrapDiscovery) store.setState("pool_discovery_bootstrap_v1", "1");
-    const persistedBlock = Math.max(previousCursor ?? -1, lastBlock);
     store.updateHealth({
       status: "ok",
       endpoint: latest.endpoint,
       latestBlock,
       targetBlock,
-      lagBlocks: Math.max(0, targetBlock - persistedBlock),
+      lagBlocks: Math.max(0, targetBlock - realtimeCursor),
     });
+    let backfillStatus: RobinhoodPhase1Result["backfillStatus"] = historyCompleteBefore ? "complete" : "skipped";
+    let backfillFirstBlock: number | undefined;
+    let backfillLastBlock: number | undefined;
+    let backfillPersistedBlock = backfillCursor;
+    let backfillError: string | undefined;
+    const now = Math.floor(Date.now() / 1000);
+    const lastBackfillAt = stateNumber(store.getState("last_backfill_at")) ?? Number.NEGATIVE_INFINITY;
+    if (!historyCompleteBefore && now - lastBackfillAt >= cfg.backfillCollectSeconds) {
+      const backfillLag = Math.max(0, backfillTargetBlock - backfillCursor);
+      const backfillBudget =
+        backfillLag > cfg.catchUpLagBlocks ? cfg.catchUpBlocksPerTick : Math.min(cfg.maxLogBlocksPerTick, 1000);
+      backfillFirstBlock = Math.max(0, backfillCursor - cfg.reorgOverlapBlocks + 1);
+      backfillLastBlock = Math.min(backfillTargetBlock, backfillFirstBlock + backfillBudget - 1);
+      try {
+        backfillPersistedBlock = Math.max(backfillCursor, backfillLastBlock);
+        const historyComplete = backfillPersistedBlock >= backfillTargetBlock;
+        const states: Record<string, string> = {
+          last_backfill_at: String(now),
+          history_complete: historyComplete ? "1" : "0",
+        };
+        if (historyComplete) states.last_confirmed_block = String(realtimeCursor);
+        await collectPhase1Range({
+          store,
+          cfg,
+          urls,
+          transport,
+          firstBlock: backfillFirstBlock,
+          lastBlock: backfillLastBlock,
+          targetBlock,
+          bootstrapDiscovery: false,
+          lane: "backfill",
+          cursor: backfillPersistedBlock,
+          stateUpdates: states,
+          sleep: options.sleep,
+        });
+        store.updateHealth({
+          source: "robinhood_chain_phase1_backfill",
+          status: "ok",
+          endpoint: latest.endpoint,
+          latestBlock: realtimeStartBlock,
+          targetBlock: backfillTargetBlock,
+          lagBlocks: Math.max(0, backfillTargetBlock - backfillPersistedBlock),
+        });
+        backfillStatus = historyComplete ? "complete" : "persisted";
+      } catch (error) {
+        backfillPersistedBlock = backfillCursor;
+        backfillError = sanitizeErrorText(error instanceof Error ? error.message : String(error));
+        store.setState("last_backfill_at", String(now));
+        store.updateHealth({
+          source: "robinhood_chain_phase1_backfill",
+          status: "error",
+          latestBlock: realtimeStartBlock,
+          targetBlock: backfillTargetBlock,
+          lagBlocks: Math.max(0, backfillTargetBlock - backfillCursor),
+          error: backfillError,
+        });
+        backfillStatus = "failed";
+      }
+    }
+    const historyComplete = store.getState("history_complete") === "1";
     return {
       status: "persisted",
       delivery: "shadow",
       endpoint: latest.endpoint,
       latestBlock,
       targetBlock,
-      firstBlock,
-      lastBlock,
-      persistedBlock,
-      poolsDiscovered: discovered.length,
-      swapsObserved: events.length,
-      candidatesQualified: applied.qualified,
+      firstBlock: realtimeFirstBlock,
+      lastBlock: realtimeLastBlock,
+      persistedBlock: realtimeCursor,
+      poolsDiscovered: realtime.poolsDiscovered,
+      swapsObserved: realtime.swapsObserved,
+      candidatesQualified: realtime.candidatesQualified,
+      realtimeFirstBlock,
+      realtimeLastBlock,
+      realtimePersistedBlock: realtimeCursor,
+      backfillStatus,
+      backfillFirstBlock,
+      backfillLastBlock,
+      backfillPersistedBlock,
+      backfillTargetBlock,
+      backfillLagBlocks: Math.max(0, backfillTargetBlock - backfillPersistedBlock),
+      backfillError,
+      historyComplete,
     };
   } catch (error) {
     const message = sanitizeErrorText(error instanceof Error ? error.message : String(error));

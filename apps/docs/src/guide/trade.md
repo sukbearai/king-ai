@@ -43,6 +43,7 @@ Important runtime paths:
 ~/.king-ai/trade/state/kimpremium_snapshots.jsonl
 ~/.king-ai/trade/state/robinhood_chain.sqlite
 ~/.king-ai/trade/state/robinhood_chain_phase1.sqlite
+~/.king-ai/trade/state/robinhood_chain_gmgn.sqlite
 ~/.king-ai/trade/state/robinhood_chain_phase2.sqlite
 ~/.king-ai/trade/skills/panews/cli.mjs
 ```
@@ -65,12 +66,18 @@ Key config sections:
 | `alerts.confluence.enabled` | Promote info→warning when multiple rules share the same **non-empty** asset (default `true`). Legacy key: `alerts.confluence_enabled` |
 | `alerts.confluence.window_seconds` | Confluence lookback window (default `900`). Legacy: `alerts.confluence_window_seconds` |
 | `alerts.rule_stagger_ms` | Delay between rules in one poll round (default `1000`) |
+| `watchdog.interval_seconds` | Service, load, disk, and process watchdog interval (default `300`) |
+| `watchdog.disk.path` | Existing path whose filesystem is monitored (default King AI config directory) |
+| `watchdog.disk.warning_free_percent` | Warn when free space reaches this percentage (default `15`) |
+| `watchdog.disk.critical_free_percent` | Escalate when free space reaches this percentage (default `8`) |
+| `watchdog.disk.recovery_free_percent` | Send recovery after free space reaches this percentage (default `20`) |
 | `briefing.enabled` | Morning brief sections, such as `market`, `stocks`, `telegram`, `twitter`, `leaderboard`, `pumpfun` |
 | `briefing.schedule_hour` | Morning brief cron hour (local, default `5`) |
 | `verify.step_timeout_ms` | Per-source timeout for `verify-tg` (overrides per-rule defaults when set) |
 | `data_sources.pumpfun` | Pump.fun section filters and limits |
 | `data_sources.leaderboard` | Smart-money leaderboard options |
 | `data_sources.robinhood_chain` | Opt-in read-only Robinhood Chain Phase 0 collector and retention settings |
+| `data_sources.robinhood_chain.phase1.discovery_source` | Explicit trend source: legacy full-chain `rpc` (default) or read-only `gmgn` |
 | `data_sources.robinhood_chain.phase1.phase2` | Opt-in local shadow-draft and 72-hour readiness ledger |
 | `treasury` | Treasury stress: `^TYX` / `^TNX` / `TLT` thresholds |
 | `kimpremium` | Korea leverage KPIs, polling, and thresholds (disabled by default) |
@@ -147,7 +154,12 @@ The daemon runs a unified rule scheduler plus scheduled jobs:
 
 - Morning brief (`briefing.schedule_hour`)
 - Regime detection
-- Twitter collector, opt-in Robinhood Chain collector, and process watchdog
+- Twitter collector, opt-in Robinhood Chain collector, and service/load/disk/process watchdog
+
+The watchdog runs every `watchdog.interval_seconds` (default 300 seconds). Disk checks monitor the filesystem
+containing the King AI config directory by default. Set `watchdog.disk.path` to an existing path on another
+mount or mounted disk image to monitor that filesystem instead. Warning, critical, and recovery messages are
+sent only on state changes when the daemon was installed or started with Telegram pushes enabled.
 
 ### Robinhood Chain Phase 0
 
@@ -157,10 +169,26 @@ chain id `4663`, keeps a bounded confirmed-block cursor, replays a recent overla
 five-minute block, transaction, unique-sender, contract-creation, and gas aggregates in
 `~/.king-ai/trade/state/robinhood_chain.sqlite`.
 
-The default batch permits up to 1,000 blocks with at most 16 concurrent RPC requests. Raw transaction input,
+The default collection tick permits up to 1,000 blocks and fetches them through one in-flight JSON-RPC batch at a
+time, with at most 50 full-block requests per HTTP batch. Responses are matched by JSON-RPC id before block order
+and parent continuity are validated. Raw transaction input,
 recipient history, wallet keys, signatures, orders, Telegram alerts, LLM advice, and trading actions are outside
 Phase 0. Data is retained for 14 days by default. RPC URLs are sanitized before logs or source-health state are
 written. A failed partial batch does not advance the durable cursor.
+
+Phase 0 keeps realtime freshness and historical completeness as separate authorities. On upgrade, the existing
+`last_confirmed_block` remains the historical backfill cursor, while a new realtime cursor starts near the confirmed
+tip. Realtime runs first on every collector tick. Historical work then advances on
+`backfill_collect_seconds` (default 300 seconds) toward the fixed block immediately before realtime coverage, so the
+gap eventually closes without chasing a moving tip. `history_complete` becomes true only when that contiguous gap is
+zero. The two lanes share one SQLite writer and retain atomic cursor/data commits; a backfill failure is reported
+separately and does not invalidate an already committed realtime batch.
+
+A long-lived trade or shadow-daemon process may move realtime coverage to the confirmed-tip window only on that
+collector's first process attempt, including when the attempt fails. Later same-process capacity overruns fail the
+realtime health check before any cursor or history state changes, so they are visible instead of silently expanding
+the historical gap. A new process receives one recovery attempt again. Manual one-shot collection keeps recovery
+enabled by default.
 
 Run one read-only collection manually, even while daemon collection remains disabled:
 
@@ -190,11 +218,40 @@ On the first enabled tick, Phase 1 performs a one-time stablecoin-pool creation 
 registries. It queries only creation-event token positions matching USDG or USDe over a configurable historical
 range (`stable_pool_discovery_backfill_blocks`, default 1,000,000), then writes a durable completion marker. This
 recovers relevant pools created before the normal cursor without turning every tick into a broad backfill. Swap
-processing remains bounded to the normal `max_log_blocks_per_tick` range (default 1,000 blocks), and a failed
-bootstrap is retried because the completion marker is not written.
+processing remains bounded to the normal `max_log_blocks_per_tick` range (default and maximum 1,000 blocks), and
+a failed bootstrap is retried because the completion marker is not written.
 
-The default 60-second tick can process 1,000 blocks with at most four concurrent log calls. This is above the
-approximately 599 blocks per minute observed during the 2026-08-31 capacity sample. Phase 1 does not send
+The default 60-second steady-state tick processes at most 1,000 blocks in 500-block log requests with three
+concurrent log workers. When the confirmed target is more than `catch_up_lag_blocks` ahead of the persisted cursor
+(default 10,000), the same collector temporarily uses the separately bounded `catch_up_blocks_per_tick` budget
+(default and maximum 2,000). Request size, concurrency, retries, stable-pool filtering, and atomic cursor commit do
+not change in catch-up mode. The current-range pool-creation scan combines all enabled protocol addresses and
+creation topics into one bounded OR filter per block chunk, then maps each returned address/topic pair back to its
+verified decoder; this preserves complete protocol coverage without repeating the same range once per protocol.
+Non-V4 stablecoin swap scans likewise combine up to 50 execution addresses and their protocol swap topics in one
+bounded filter, then require every returned address/topic pair to map back to the requested pool and decoder. For
+V4, each bounded block chunk queries the verified PoolManager once using only the swap topic. Returned logs must
+still match that PoolManager and topic: known non-stable pool keys are discarded, known stablecoin pool keys are
+decoded, valid unknown pool keys are discarded, and malformed or conflicting pool identity fails the batch without
+advancing state. This reduces request bursts without admitting non-stable pools or unknown logs.
+
+Phase 1 uses the same realtime/backfill split. The existing `last_confirmed_block` remains rollback-safe historical
+progress, realtime scans remain bounded by `max_log_blocks_per_tick`, and historical batches use the existing
+steady/catch-up budgets on `backfill_collect_seconds` (default 300 seconds). Both lanes remain sequential inside one
+collector and one SQLite writer. Audit rows record `collection_lane`; Phase 2 counts and materializes only realtime
+audits, so a delayed historical window inside the 24-hour lookback cannot become a current shadow alert. When this
+collector semantics is loaded in a field sidecar, use a new `phase2.field_run_revision`; earlier readiness time does
+not prove the new realtime path.
+
+`phase1.rpc_urls` can optionally isolate the log collector from the parent Phase 0 endpoint list; when omitted or
+empty it inherits `data_sources.robinhood_chain.rpc_urls`, preserving existing configurations and rollback behavior.
+When both phases are due and their sanitized RPC endpoint sets are disjoint, the sidecar runs Phase 0 and Phase 1
+concurrently, waits for both to settle, and only then starts Phase 2. Each phase remains single-flight, and a failure
+in one phase does not cancel the other. If any sanitized endpoint overlaps, including inherited endpoints or
+credential/query variants of the same URL, the sidecar keeps the sequential Phase 0 -> `provider_cooldown_ms`
+(default 5,000, range 0-30,000) -> Phase 1 path. Shutdown interrupts a pending cooldown, starts no later phase or X
+work, and drains already-started chain work before releasing the PID lock. Rate-limited or access-denied endpoints
+receive bounded retries and endpoint rotation; an exhausted batch remains unhealthy and does not advance the cursor. Phase 1 does not send
 Telegram, invoke an LLM, access a wallet, or place trades. Run one isolated shadow tick manually with:
 
 ```sh
@@ -204,14 +261,41 @@ king-ai trade collect-robinhood-phase1
 The manual command always remains read-only and prints only a bounded shadow summary. Live Telegram delivery
 requires a separate approval after at least 72 hours of shadow evidence.
 
-The explicit X registry is separately opt-in with `phase1.x_enabled=true`. It searches configured Tier A/B/C
-accounts directly rather than assuming that the home timeline covers them, stores bounded post evidence and
+The explicit X registry is enabled by default when Phase 1 is enabled; set `phase1.x_enabled=false` to opt out.
+The shadow sidecar schedules it every `x_collect_seconds` (default 300 seconds). It searches configured Tier
+A/B/C accounts directly rather than assuming that the home timeline covers them, stores bounded post evidence and
 per-account health (`ok`, `no_results`, `auth_required`, `challenge`, `unknown`, or `error`), and never creates a
 chain trend by itself. Run one account pass with `king-ai trade collect-robinhood-x`.
 
+Set `phase1.discovery_source="gmgn"` explicitly to use the GMGN-primary token trend path. This mode requires only
+`GMGN_API_KEY`; the runtime does not read `GMGN_PRIVATE_KEY`, does not sign wallet payloads, and does not expose
+swap, order, or delivery capabilities. Each due tick reads the Robinhood `1m`, `5m`, and `1h` rankings plus the
+`new_creation`, `near_completion`, and `completed` trenches categories, applies the local hard limit independently
+to every category, and stores
+normalized observations in the separate
+`~/.king-ai/trade/state/robinhood_chain_gmgn.sqlite` database. The API origin is fixed to
+`https://openapi.gmgn.ai`; authenticated timestamps are corrected from the bounded HTTPS `Date` response without
+changing the operating-system clock.
+
+A candidate requires a fresh safe `5m` record plus same-window `1m` or trenches corroboration, followed by bounded
+Chain ID and bytecode verification of at most 20 unique addresses. In GMGN mode the daemon skips full-chain Phase 0
+and RPC Phase 1 discovery, leaves their databases and historical cursors untouched, then runs Phase 2 from verified
+GMGN candidates. Phase 2 is automatically isolated under `phase2-v13-gmgn-primary`; an older RPC epoch cannot count
+toward its readiness. X remains exact-address enrichment only. The settings `gmgn_limit` (default 100, maximum 200),
+`gmgn_max_age_seconds` (maximum 600), and `gmgn_rpc_verify_limit` (maximum 20) are fail-closed bounds. Run one
+configured GMGN tick with:
+
+```sh
+king-ai trade collect-robinhood-gmgn
+```
+
+This command remains shadow-only and does not enable trading or Telegram delivery. Returning
+`discovery_source` to `rpc` restores the legacy scanner against its untouched databases; it does not merge v13
+readiness into the RPC epoch.
+
 ### Robinhood Chain Phase 2 shadow readiness
 
-Phase 2 is an additional opt-in local evidence layer under `phase1.phase2`. It reads Phase 1 candidates and audit
+Phase 2 is an additional opt-in local evidence layer under `phase1.phase2`. It reads candidates and audit
 records, materializes deterministic shadow alert drafts in a separate database, and measures the 72-hour field
 gate. It does not rescan the chain or change Phase 1 scores. X posts are attached only when their text contains a
 full pool or token address, and can never create a draft.
@@ -234,9 +318,12 @@ king-ai trade review-robinhood-phase2 <alert-id> accepted --note "review note"
 ```
 
 For an isolated field run, use a dedicated `KING_AI_CONFIG_DIR` containing only the Robinhood Chain settings and
-start `king-ai trade robinhood-shadow-daemon`. This sidecar schedules Phase 0, Phase 1, and Phase 2 sequentially,
-uses its own PID lock and SQLite files, and has no Telegram, LLM, wallet, signing, order, or morning-brief path.
-Its scheduler wakes every 30 seconds by default while preserving the configured 30/60/300-second phase cadences.
+start `king-ai trade robinhood-shadow-daemon`. This sidecar runs due Phase 0 and Phase 1 work concurrently only when
+their sanitized RPC endpoint sets are disjoint; otherwise it keeps the sequential provider-cooldown path. Phase 2
+always waits for both chain stages. The Phase 1 X registry remains an independent single-flight job so account
+scanning cannot delay the chain cycle. It uses its own PID lock and SQLite files and has no Telegram, LLM, wallet, signing, order, or morning-brief
+path. Its scheduler wakes every 30 seconds by default while preserving the configured 30/60/300-second cadences;
+shutdown drains already-running chain and X work before releasing the PID lock.
 
 ```sh
 KING_AI_CONFIG_DIR=~/.king-ai-robinhood-shadow king-ai trade robinhood-shadow-daemon

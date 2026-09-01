@@ -232,6 +232,7 @@ export async function fetchTweets(
   username: string,
   fetchLimit: number,
   runner: CelebrityFetchRunner = runOpencli,
+  session = TWITTER_SEARCH_SESSION,
 ): Promise<Array<Record<string, unknown>>> {
   const url = `https://x.com/search?q=${encodeURIComponent(`from:${username}`)}&f=live`;
   const js = `(function() {
@@ -273,21 +274,18 @@ export async function fetchTweets(
     let opened: CliRunResult<unknown[]>;
     let evalResult: CliRunResult<unknown[]>;
     try {
-      await runner(["browser", TWITTER_SEARCH_SESSION, "close"], 10_000);
-      opened = await runner(["browser", TWITTER_SEARCH_SESSION, "--window", "background", "open", url], 30_000);
+      await runner(["browser", session, "close"], 10_000);
+      opened = await runner(["browser", session, "--window", "background", "open", url], 30_000);
       if (!opened.ok) {
         lastReason = safeCollectionReason(opened.error ?? "open failed");
         continue;
       }
-      const waited = await runner(
-        ["browser", TWITTER_SEARCH_SESSION, "--window", "background", "wait", "time", "5"],
-        10_000,
-      );
+      const waited = await runner(["browser", session, "--window", "background", "wait", "time", "5"], 10_000);
       if (!waited.ok) {
         lastReason = safeCollectionReason(waited.error ?? "wait failed");
         continue;
       }
-      evalResult = await runner(["browser", TWITTER_SEARCH_SESSION, "--window", "background", "eval", js], 30_000);
+      evalResult = await runner(["browser", session, "--window", "background", "eval", js], 30_000);
       if (!evalResult.ok) {
         lastReason = safeCollectionReason(evalResult.error ?? "eval failed");
         continue;

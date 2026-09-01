@@ -336,8 +336,10 @@ May 23
   });
 
   it("fetchTweets returns usable rows after the retry structure succeeds", async () => {
-    const runner = async (args: string[]) =>
-      args.includes("eval")
+    const calls: string[][] = [];
+    const runner = async (args: string[]) => {
+      calls.push(args);
+      return args.includes("eval")
         ? cliSuccess([
             {
               title: "Search",
@@ -348,8 +350,10 @@ May 23
             },
           ])
         : cliSuccess([]);
-    const rows = await fetchTweets("alice", 10, runner);
+    };
+    const rows = await fetchTweets("alice", 10, runner, "trade-robinhood-search");
     assert.deepEqual(rows, [{ id: "tweet-1", text: "A usable tweet" }]);
+    assert.ok(calls.every((args) => args[1] === "trade-robinhood-search"));
   });
 });
 

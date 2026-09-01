@@ -21,6 +21,7 @@ import {
   collectRobinhoodPhase1Accounts,
   resolveRobinhoodPhase1Config,
 } from "./robinhood-chain-phase1.js";
+import { collectRobinhoodGmgn, type RobinhoodGmgnResult } from "./robinhood-chain-gmgn.js";
 import { collectRobinhoodPhase2, resolveRobinhoodPhase2Config } from "./robinhood-chain-phase2.js";
 
 export interface TradeDaemonOptions {
@@ -34,11 +35,12 @@ export async function runRobinhoodChainCollectorJob(
   config: TradeConfig,
   collector: RobinhoodChainCollector = collectRobinhoodChain,
   onStatus: (line: string) => void = (line) => process.stderr.write(`${line}\n`),
+  allowRealtimeRebase = true,
 ): Promise<void> {
   try {
-    const result = await collector({ config });
+    const result = await collector({ config, allowRealtimeRebase });
     onStatus(
-      `[robinhood-chain] ${result.status} latest=${result.latestBlock ?? "-"} target=${result.targetBlock ?? "-"} persisted=${result.persistedBlock ?? "-"} fetched=${result.fetchedBlocks ?? 0}`,
+      `[robinhood-chain] ${result.status} latest=${result.latestBlock ?? "-"} target=${result.targetBlock ?? "-"} realtime=${result.realtimePersistedBlock ?? result.persistedBlock ?? "-"} backfill=${result.backfillPersistedBlock ?? "-"}/${result.backfillTargetBlock ?? "-"} historyComplete=${result.historyComplete ?? "-"} fetched=${result.fetchedBlocks ?? 0}`,
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -52,11 +54,12 @@ export async function runRobinhoodPhase1CollectorJob(
   config: TradeConfig,
   collector: RobinhoodPhase1Collector = collectRobinhoodPhase1,
   onStatus: (line: string) => void = (line) => process.stderr.write(`${line}\n`),
+  allowRealtimeRebase = true,
 ): Promise<void> {
   try {
-    const result = await collector({ config });
+    const result = await collector({ config, allowRealtimeRebase });
     onStatus(
-      `[robinhood-phase1] ${result.status} delivery=${result.delivery} latest=${result.latestBlock ?? "-"} target=${result.targetBlock ?? "-"} persisted=${result.persistedBlock ?? "-"} pools=${result.poolsDiscovered ?? 0} swaps=${result.swapsObserved ?? 0} qualified=${result.candidatesQualified ?? 0}`,
+      `[robinhood-phase1] ${result.status} delivery=${result.delivery} latest=${result.latestBlock ?? "-"} target=${result.targetBlock ?? "-"} realtime=${result.realtimePersistedBlock ?? result.persistedBlock ?? "-"} backfill=${result.backfillPersistedBlock ?? "-"}/${result.backfillTargetBlock ?? "-"} historyComplete=${result.historyComplete ?? "-"} pools=${result.poolsDiscovered ?? 0} swaps=${result.swapsObserved ?? 0} qualified=${result.candidatesQualified ?? 0}`,
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -77,6 +80,26 @@ export async function runRobinhoodPhase1XCollectorJob(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     onStatus(`[robinhood-x] failed: ${msg.slice(0, 500)}`);
+  }
+}
+
+export async function runRobinhoodGmgnCollectorJob(
+  config: TradeConfig,
+  collector: typeof collectRobinhoodGmgn = collectRobinhoodGmgn,
+  onStatus: (line: string) => void = (line) => process.stderr.write(`${line}\n`),
+  signal?: AbortSignal,
+): Promise<RobinhoodGmgnResult | null> {
+  try {
+    const result = await collector({ config, signal });
+    onStatus(
+      `[robinhood-gmgn] ${result.status} observations=${result.observationsPersisted} qualified=${result.candidatesQualified} verified=${result.candidatesVerified} error=${result.errorCategory ?? "-"}`,
+    );
+    return result;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const errorCategory = message.match(/gmgn_[a-z0-9_]+/i)?.[0]?.toLowerCase() ?? "gmgn_collector_error";
+    onStatus(`[robinhood-gmgn] failed: ${errorCategory}`);
+    return null;
   }
 }
 
@@ -168,6 +191,8 @@ export async function runTradeDaemon(options: TradeDaemonOptions = {}): Promise<
   }
 
   const pidLock = await acquireDaemonPidLock();
+  const daemonController = new AbortController();
+  let drainCollectors = async (): Promise<void> => undefined;
   const releaseLock = async () => {
     await pidLock.release();
   };
@@ -175,10 +200,16 @@ export async function runTradeDaemon(options: TradeDaemonOptions = {}): Promise<
     void releaseLock();
   });
   process.once("SIGINT", () => {
-    void releaseLock().finally(() => process.exit(130));
+    daemonController.abort();
+    void drainCollectors()
+      .finally(releaseLock)
+      .finally(() => process.exit(130));
   });
   process.once("SIGTERM", () => {
-    void releaseLock().finally(() => process.exit(143));
+    daemonController.abort();
+    void drainCollectors()
+      .finally(releaseLock)
+      .finally(() => process.exit(143));
   });
 
   const pushTg = resolveBriefingPushTg(config, options);
@@ -218,12 +249,21 @@ export async function runTradeDaemon(options: TradeDaemonOptions = {}): Promise<
   let lastTwitterCollector = 0;
   let lastRobinhoodChainCollector = 0;
   let robinhoodChainInFlight: Promise<void> | null = null;
+  let robinhoodChainFirstAttempt = true;
   let lastRobinhoodPhase1Collector = 0;
   let robinhoodPhase1InFlight: Promise<void> | null = null;
+  let robinhoodPhase1FirstAttempt = true;
   let lastRobinhoodPhase1XCollector = 0;
   let robinhoodPhase1XInFlight: Promise<void> | null = null;
   let lastRobinhoodPhase2Collector = 0;
   let robinhoodPhase2InFlight: Promise<void> | null = null;
+  drainCollectors = async () => {
+    await Promise.allSettled(
+      [robinhoodChainInFlight, robinhoodPhase1InFlight, robinhoodPhase1XInFlight, robinhoodPhase2InFlight].filter(
+        (task): task is Promise<void> => task != null,
+      ),
+    );
+  };
   let lastWatchdog = 0;
   const twitterCollectorInterval = Number(dotGet(config, "data_sources.twitter.collect_seconds", 7200)) || 7200;
   const robinhoodChainConfig = resolveRobinhoodChainConfig(config);
@@ -261,11 +301,19 @@ export async function runTradeDaemon(options: TradeDaemonOptions = {}): Promise<
 
     if (
       robinhoodChainConfig.enabled &&
+      robinhoodPhase1Config.discoverySource === "rpc" &&
       ts - lastRobinhoodChainCollector >= robinhoodChainConfig.collectSeconds &&
       !robinhoodChainInFlight
     ) {
+      const allowRealtimeRebase = robinhoodChainFirstAttempt;
+      robinhoodChainFirstAttempt = false;
       lastRobinhoodChainCollector = ts;
-      robinhoodChainInFlight = runRobinhoodChainCollectorJob(config).finally(() => {
+      robinhoodChainInFlight = runRobinhoodChainCollectorJob(
+        config,
+        collectRobinhoodChain,
+        onStatus,
+        allowRealtimeRebase,
+      ).finally(() => {
         robinhoodChainInFlight = null;
       });
     }
@@ -290,9 +338,29 @@ export async function runTradeDaemon(options: TradeDaemonOptions = {}): Promise<
       !robinhoodPhase1InFlight
     ) {
       lastRobinhoodPhase1Collector = ts;
-      robinhoodPhase1InFlight = runRobinhoodPhase1CollectorJob(config).finally(() => {
-        robinhoodPhase1InFlight = null;
-      });
+      if (robinhoodPhase1Config.discoverySource === "gmgn") {
+        robinhoodPhase1InFlight = runRobinhoodGmgnCollectorJob(
+          config,
+          collectRobinhoodGmgn,
+          onStatus,
+          daemonController.signal,
+        )
+          .then(() => undefined)
+          .finally(() => {
+            robinhoodPhase1InFlight = null;
+          });
+      } else {
+        const allowRealtimeRebase = robinhoodPhase1FirstAttempt;
+        robinhoodPhase1FirstAttempt = false;
+        robinhoodPhase1InFlight = runRobinhoodPhase1CollectorJob(
+          config,
+          collectRobinhoodPhase1,
+          onStatus,
+          allowRealtimeRebase,
+        ).finally(() => {
+          robinhoodPhase1InFlight = null;
+        });
+      }
     }
 
     if (

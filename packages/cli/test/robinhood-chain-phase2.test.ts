@@ -16,6 +16,7 @@ import { runRobinhoodPhase2CollectorJob } from "../src/trade/scheduler.js";
 const POOL = `0x${"3".repeat(40)}`;
 const TOKEN0 = `0x${"1".repeat(40)}`;
 const USDG = "0x5fc5360d0400a0fd4f2af552add042d716f1d168";
+const GMGN_TOKEN = `0x${"a".repeat(40)}`;
 
 function config(overrides: Record<string, unknown> = {}) {
   return {
@@ -49,7 +50,7 @@ function seedPhase1(
     );
     CREATE TABLE signal_audit (
       pool_key TEXT,window_start INTEGER,source_first_block INTEGER,source_last_block INTEGER,
-      decoder_version TEXT,config_revision TEXT
+      decoder_version TEXT,config_revision TEXT,collection_lane TEXT NOT NULL DEFAULT 'realtime'
     );
     CREATE TABLE account_posts (
       post_id TEXT,handle TEXT,text TEXT,url TEXT,created_at TEXT,fetched_at INTEGER
@@ -70,13 +71,14 @@ function seedPhase1(
       JSON.stringify({ volumeAcceleration: 40 }),
       JSON.stringify({ volumeUsd: 50_000, uniqueTraders: 12 }),
     );
-    db.prepare("INSERT INTO signal_audit VALUES (?,?,?,?,?,?)").run(
+    db.prepare("INSERT INTO signal_audit VALUES (?,?,?,?,?,?,?)").run(
       POOL,
       windowStart,
       100,
       120,
       "phase1-v1",
       "approved-test",
+      "realtime",
     );
   }
   if (options.post) {
@@ -89,6 +91,31 @@ function seedPhase1(
       options.now,
     );
   }
+  db.close();
+}
+
+function seedGmgn(path: string, now: number, revision = "phase2-v13-gmgn-primary", verified = 1): void {
+  const db = new DatabaseSync(path);
+  db.exec(`
+    CREATE TABLE source_health (
+      source TEXT PRIMARY KEY,status TEXT,last_success_at INTEGER,field_run_revision TEXT
+    );
+    CREATE TABLE gmgn_candidates (
+      subject_type TEXT,subject_address TEXT,pool_address TEXT,window_start INTEGER,state TEXT,score REAL,
+      evidence_json TEXT,verified INTEGER,field_run_revision TEXT
+    );
+  `);
+  db.prepare("INSERT INTO source_health VALUES ('gmgn','ok',?,?)").run(now, "phase2-v13-gmgn-primary");
+  db.prepare("INSERT INTO gmgn_candidates VALUES ('token',?,?,?,?,?,?,?,?)").run(
+    GMGN_TOKEN,
+    POOL,
+    Math.floor((now - 300) / 300) * 300,
+    "qualified",
+    95,
+    JSON.stringify({ volume5mUsd: 50_000, holderCount: 250 }),
+    verified,
+    revision,
+  );
   db.close();
 }
 
@@ -145,6 +172,15 @@ describe("Robinhood Chain Phase 2", () => {
       resolveRobinhoodPhase2Config(config({ field_run_revision: "invalid revision" })).fieldRunRevision,
       "phase2-v3-readiness-epoch",
     );
+    const gmgn = resolveRobinhoodPhase2Config({
+      data_sources: {
+        robinhood_chain: {
+          enabled: true,
+          phase1: { enabled: true, discovery_source: "gmgn", phase2: { enabled: true, delivery: "shadow" } },
+        },
+      },
+    });
+    assert.equal(gmgn.fieldRunRevision, "phase2-v13-gmgn-primary");
     assert.throws(() => resolveRobinhoodPhase2Config(config({ delivery: "telegram" })), /shadow/);
   });
 
@@ -180,6 +216,27 @@ describe("Robinhood Chain Phase 2", () => {
     }
   });
 
+  it("fails closed when Phase 1 has no realtime provenance column", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "king-ai-rh-p2-legacy-provenance-"));
+    const phase1DbPath = join(dir, "phase1.sqlite");
+    const phase2DbPath = join(dir, "phase2.sqlite");
+    const now = 1_700_000_000;
+    const db = new DatabaseSync(phase1DbPath);
+    db.exec(`
+      CREATE TABLE source_health (source TEXT PRIMARY KEY,status TEXT,last_success_at INTEGER);
+      CREATE TABLE signal_audit (window_start INTEGER);
+    `);
+    db.prepare("INSERT INTO source_health VALUES ('robinhood_chain_phase1','ok',?)").run(now);
+    db.close();
+    try {
+      const result = await collectRobinhoodPhase2({ config: config(), phase1DbPath, phase2DbPath, now });
+      assert.equal(result.status, "source_unavailable");
+      assert.equal(result.draftsMaterialized, 0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("materializes qualified candidates idempotently and only enriches exact address matches", async () => {
     const dir = await mkdtemp(join(tmpdir(), "king-ai-rh-p2-materialize-"));
     const phase1DbPath = join(dir, "phase1.sqlite");
@@ -206,6 +263,128 @@ describe("Robinhood Chain Phase 2", () => {
     }
   });
 
+  it("materializes only verified v13 GMGN subjects and enriches exact token addresses", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "king-ai-rh-p2-gmgn-"));
+    const gmgnDbPath = join(dir, "gmgn.sqlite");
+    const phase1DbPath = join(dir, "phase1.sqlite");
+    const phase2DbPath = join(dir, "phase2.sqlite");
+    const now = 1_700_000_000;
+    const gmgnConfig = {
+      data_sources: {
+        robinhood_chain: {
+          enabled: true,
+          phase1: {
+            enabled: true,
+            discovery_source: "gmgn",
+            phase2: { enabled: true, delivery: "shadow" },
+          },
+        },
+      },
+    };
+    try {
+      seedGmgn(gmgnDbPath, now);
+      const xDb = new DatabaseSync(phase1DbPath);
+      xDb.exec(
+        "CREATE TABLE account_posts (post_id TEXT,handle TEXT,text TEXT,url TEXT,created_at TEXT,fetched_at INTEGER)",
+      );
+      xDb
+        .prepare("INSERT INTO account_posts VALUES (?,?,?,?,?,?)")
+        .run(
+          "gmgn-post",
+          "RobinhoodCrypto",
+          `Token update ${GMGN_TOKEN}`,
+          "https://x.com/i/status/gmgn-post",
+          "now",
+          now,
+        );
+      xDb.close();
+      const result = await collectRobinhoodPhase2({
+        config: gmgnConfig,
+        gmgnDbPath,
+        phase1DbPath,
+        phase2DbPath,
+        now,
+      });
+      assert.equal(result.status, "persisted");
+      assert.equal(result.draftsMaterialized, 1);
+      const store = new RobinhoodPhase2Store(phase2DbPath);
+      const alert = store.getAlert(String(store.listAlerts(1)[0]!.alert_id))!;
+      assert.equal(alert.subject_type, "token");
+      assert.equal(alert.subject_address, GMGN_TOKEN);
+      assert.equal(alert.pool_address, POOL);
+      assert.equal(alert.source_kind, "gmgn");
+      assert.equal(alert.field_run_revision, "phase2-v13-gmgn-primary");
+      assert.equal((JSON.parse(String(alert.evidence_json)) as { matchedXPosts: unknown[] }).matchedXPosts.length, 1);
+      store.close();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not materialize legacy GMGN candidates into the v13 epoch", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "king-ai-rh-p2-gmgn-legacy-"));
+    const gmgnDbPath = join(dir, "gmgn.sqlite");
+    const phase2DbPath = join(dir, "phase2.sqlite");
+    const now = 1_700_000_000;
+    try {
+      seedGmgn(gmgnDbPath, now, "phase2-v12-rpc");
+      const result = await collectRobinhoodPhase2({
+        config: {
+          data_sources: {
+            robinhood_chain: {
+              enabled: true,
+              phase1: {
+                enabled: true,
+                discovery_source: "gmgn",
+                phase2: { enabled: true, delivery: "shadow" },
+              },
+            },
+          },
+        },
+        gmgnDbPath,
+        phase2DbPath,
+        now,
+      });
+      assert.equal(result.status, "persisted");
+      assert.equal(result.draftsMaterialized, 0);
+      assert.equal(result.readiness?.auditedWindows, 0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not materialize an unverified v13 GMGN candidate", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "king-ai-rh-p2-gmgn-unverified-"));
+    const gmgnDbPath = join(dir, "gmgn.sqlite");
+    const phase2DbPath = join(dir, "phase2.sqlite");
+    const now = 1_700_000_000;
+    try {
+      seedGmgn(gmgnDbPath, now, "phase2-v13-gmgn-primary", 0);
+      const result = await collectRobinhoodPhase2({
+        config: {
+          data_sources: {
+            robinhood_chain: {
+              enabled: true,
+              phase1: {
+                enabled: true,
+                discovery_source: "gmgn",
+                phase2: { enabled: true, delivery: "shadow" },
+              },
+            },
+          },
+        },
+        gmgnDbPath,
+        phase2DbPath,
+        now,
+      });
+      assert.equal(result.status, "persisted");
+      assert.equal(result.draftsMaterialized, 0);
+      assert.equal(result.readiness?.auditedWindows, 0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("does not let X-only observations create a shadow draft", async () => {
     const dir = await mkdtemp(join(tmpdir(), "king-ai-rh-p2-x-only-"));
     const phase1DbPath = join(dir, "phase1.sqlite");
@@ -218,6 +397,62 @@ describe("Robinhood Chain Phase 2", () => {
       assert.equal(result.draftsMaterialized, 0);
       const store = new RobinhoodPhase2Store(phase2DbPath);
       assert.equal(store.count("shadow_alerts"), 0);
+      store.close();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("retains backfill audits without materializing them as realtime drafts", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "king-ai-rh-p2-backfill-isolation-"));
+    const phase1DbPath = join(dir, "phase1.sqlite");
+    const phase2DbPath = join(dir, "phase2.sqlite");
+    const now = 1_700_000_000;
+    const db = new DatabaseSync(phase1DbPath);
+    db.exec(`
+      CREATE TABLE source_health (source TEXT PRIMARY KEY,status TEXT,last_success_at INTEGER);
+      CREATE TABLE pools (pool_key TEXT PRIMARY KEY,protocol_id TEXT,token0 TEXT,token1 TEXT);
+      CREATE TABLE trend_candidates (
+        pool_key TEXT,window_start INTEGER,state TEXT,score REAL,components_json TEXT,evidence_json TEXT,
+        collection_lane TEXT NOT NULL DEFAULT 'legacy',PRIMARY KEY(pool_key,window_start)
+      );
+      CREATE TABLE signal_audit (
+        pool_key TEXT,window_start INTEGER,source_first_block INTEGER,source_last_block INTEGER,
+        decoder_version TEXT,config_revision TEXT,collection_lane TEXT NOT NULL DEFAULT 'legacy'
+      );
+      CREATE TABLE account_posts (post_id TEXT,handle TEXT,text TEXT,url TEXT,created_at TEXT,fetched_at INTEGER);
+    `);
+    db.prepare("INSERT INTO source_health VALUES ('robinhood_chain_phase1','ok',?)").run(now);
+    const windowStart = Math.floor((now - 300) / 300) * 300;
+    for (const [index, lane] of ["realtime", "backfill"].entries()) {
+      const pool = `0x${(index + 20).toString(16).padStart(40, "0")}`;
+      db.prepare("INSERT INTO pools VALUES (?,?,?,?)").run(pool, "uniswap_v2", TOKEN0, USDG);
+      db.prepare("INSERT INTO trend_candidates VALUES (?,?,?,?,?,?,?)").run(
+        pool,
+        windowStart - index * 300,
+        "qualified",
+        82,
+        "{}",
+        JSON.stringify({ volumeUsd: 50_000, uniqueTraders: 12 }),
+        lane,
+      );
+      db.prepare("INSERT INTO signal_audit VALUES (?,?,?,?,?,?,?)").run(
+        pool,
+        windowStart - index * 300,
+        100,
+        120,
+        "phase1-v1",
+        "approved-test",
+        lane,
+      );
+    }
+    db.close();
+    try {
+      const result = await collectRobinhoodPhase2({ config: config(), phase1DbPath, phase2DbPath, now });
+      const store = new RobinhoodPhase2Store(phase2DbPath);
+      assert.equal(result.status, "persisted");
+      assert.equal(result.draftsMaterialized, 1);
+      assert.equal(store.count("shadow_alerts"), 1);
       store.close();
     } finally {
       await rm(dir, { recursive: true, force: true });

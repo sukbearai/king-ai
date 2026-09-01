@@ -56,6 +56,7 @@ import { runVerifyCelebrity } from "./trade/verify-celebrity.js";
 import { runSignalQuality } from "./trade/signal-quality.js";
 import { collectRobinhoodChain } from "./trade/robinhood-chain.js";
 import { collectRobinhoodPhase1, collectRobinhoodPhase1Accounts } from "./trade/robinhood-chain-phase1.js";
+import { collectRobinhoodGmgn } from "./trade/robinhood-chain-gmgn.js";
 import {
   collectRobinhoodPhase2,
   reviewRobinhoodPhase2Alert,
@@ -2109,6 +2110,20 @@ const tradeCollectRobinhoodXCommand = command(
   },
 );
 
+const tradeCollectRobinhoodGmgnCommand = command(
+  {
+    name: "collect-robinhood-gmgn",
+    flags: {
+      help: { type: Boolean, alias: "h", description: "Show help" },
+    },
+    help: { description: "Collect GMGN Robinhood trends once with bounded RPC verification (shadow only)" },
+  },
+  async () => {
+    const result = await collectRobinhoodGmgn({ config: await loadTradeConfig(true) });
+    console.log(JSON.stringify(result, null, 2));
+  },
+);
+
 const tradeCollectRobinhoodPhase2Command = command(
   {
     name: "collect-robinhood-phase2",
@@ -2221,7 +2236,7 @@ const tradeWatchdogCommand = command(
       pushTg: { type: Boolean, description: "Push alerts to Telegram" },
       health: { type: Boolean, description: "Health check only" },
     },
-    help: { description: "Process watchdog: orphans, load, service health" },
+    help: { description: "Process watchdog: orphans, load, disk, service health" },
   },
   async (argv) => {
     await runProcessWatchdog({
@@ -2278,6 +2293,7 @@ const tradeCommand = command(
           tradeCollectCommand,
           tradeCollectRobinhoodCommand,
           tradeCollectRobinhoodPhase1Command,
+          tradeCollectRobinhoodGmgnCommand,
           tradeCollectRobinhoodXCommand,
           tradeCollectRobinhoodPhase2Command,
           tradeRobinhoodShadowDaemonCommand,
