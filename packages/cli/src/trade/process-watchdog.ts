@@ -1,15 +1,17 @@
 import { execFile } from "node:child_process";
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, statfs, writeFile } from "node:fs/promises";
 import { loadavg } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import {
+  CONFIG_DIR,
   TRADE_SERVICE_LABEL,
+  TRADE_WATCHDOG_DISK_PATH,
   TRADE_WATCHDOG_HEALTH_PATH,
   TRADE_WATCHDOG_LOG_PATH,
   TRADE_WATCHDOG_SERVICE_PATH,
 } from "../paths.js";
-import { loadTradeConfig } from "./config.js";
+import { dotGet, loadTradeConfig, type TradeConfig } from "./config.js";
 import { sendTelegram } from "./telegram.js";
 
 const execFileP = promisify(execFile);
@@ -17,6 +19,7 @@ const execFileP = promisify(execFile);
 const LOG_PATH = TRADE_WATCHDOG_LOG_PATH;
 const HEALTH_STATE_PATH = TRADE_WATCHDOG_HEALTH_PATH;
 const SERVICE_STATE_PATH = TRADE_WATCHDOG_SERVICE_PATH;
+const DISK_STATE_PATH = TRADE_WATCHDOG_DISK_PATH;
 
 const MAX_AGE_MINUTES = 30;
 const LEAKER_AGE_MINUTES = 5;
@@ -25,6 +28,25 @@ const LOAD_AVG_ALERT = 15;
 const LOAD_AVG_CLEAR = 8;
 const HIGH_CPU_PROCS_ALERT = 3;
 const SERVICE_ALERT_COOLDOWN = 1800;
+const DEFAULT_DISK_THRESHOLDS = {
+  warningFreePercent: 15,
+  criticalFreePercent: 8,
+  recoveryFreePercent: 20,
+} as const;
+
+export type DiskHealthState = "clear" | "warning" | "critical";
+
+export interface DiskWatchdogConfig {
+  path: string;
+  warningFreePercent: number;
+  criticalFreePercent: number;
+  recoveryFreePercent: number;
+}
+
+export interface DiskHealthTransition {
+  state: DiskHealthState;
+  event: "warning" | "critical" | "recovered" | null;
+}
 
 const ORPHAN_PATTERNS = [/shell-snapshots\/snapshot-/, /CODEX_COMPANION_SESSION_ID/, /claude-\d+-cwd/];
 const KNOWN_LEAKERS = [/bun\s+.*server\.ts/, /bun\s+run\s+--cwd.*plugins/, /bun.*worker-service\.cjs/];
@@ -32,6 +54,48 @@ const KNOWN_LEAKERS = [/bun\s+.*server\.ts/, /bun\s+run\s+--cwd.*plugins/, /bun.
 const MONITORED_SERVICES: Record<string, { keepAlive: boolean; label: string; skipAlert?: boolean }> = {
   [TRADE_SERVICE_LABEL]: { keepAlive: true, label: "King AI Trade Daemon" },
 };
+
+export function resolveDiskWatchdogConfig(config: TradeConfig): DiskWatchdogConfig {
+  const pathValue = dotGet(config, "watchdog.disk.path", CONFIG_DIR);
+  const path = typeof pathValue === "string" && pathValue.trim() ? pathValue.trim() : CONFIG_DIR;
+  const warningFreePercent = Number(
+    dotGet(config, "watchdog.disk.warning_free_percent", DEFAULT_DISK_THRESHOLDS.warningFreePercent),
+  );
+  const criticalFreePercent = Number(
+    dotGet(config, "watchdog.disk.critical_free_percent", DEFAULT_DISK_THRESHOLDS.criticalFreePercent),
+  );
+  const recoveryFreePercent = Number(
+    dotGet(config, "watchdog.disk.recovery_free_percent", DEFAULT_DISK_THRESHOLDS.recoveryFreePercent),
+  );
+  const values = [criticalFreePercent, warningFreePercent, recoveryFreePercent];
+  const valid =
+    values.every((value) => Number.isFinite(value) && value >= 0 && value <= 100) &&
+    criticalFreePercent < warningFreePercent &&
+    warningFreePercent < recoveryFreePercent;
+
+  return {
+    path,
+    ...(valid ? { warningFreePercent, criticalFreePercent, recoveryFreePercent } : { ...DEFAULT_DISK_THRESHOLDS }),
+  };
+}
+
+export function evaluateDiskHealth(
+  previous: DiskHealthState,
+  freePercent: number,
+  config: DiskWatchdogConfig,
+): DiskHealthTransition {
+  if (previous === "clear") {
+    if (freePercent <= config.criticalFreePercent) return { state: "critical", event: "critical" };
+    if (freePercent <= config.warningFreePercent) return { state: "warning", event: "warning" };
+    return { state: "clear", event: null };
+  }
+
+  if (freePercent >= config.recoveryFreePercent) return { state: "clear", event: "recovered" };
+  if (freePercent <= config.criticalFreePercent) {
+    return { state: "critical", event: previous === "warning" ? "critical" : null };
+  }
+  return { state: "warning", event: null };
+}
 
 function parseElapsed(elapsed: string): number {
   const parts = elapsed.trim().split(/[-:]/);
@@ -99,6 +163,54 @@ async function readHealthState(): Promise<string> {
   } catch {
     return "clear";
   }
+}
+
+async function readDiskState(): Promise<DiskHealthState> {
+  try {
+    const state = (await readFile(DISK_STATE_PATH, "utf8")).trim();
+    if (state === "warning" || state === "critical") return state;
+  } catch {
+    // Missing state means no disk alert has been emitted yet.
+  }
+  return "clear";
+}
+
+async function writeDiskState(state: DiskHealthState): Promise<void> {
+  await mkdir(join(DISK_STATE_PATH, ".."), { recursive: true });
+  await writeFile(DISK_STATE_PATH, state, "utf8");
+}
+
+async function checkDisk(pushTg: boolean): Promise<string[]> {
+  const config = await loadTradeConfig();
+  const diskConfig = resolveDiskWatchdogConfig(config);
+  const stats = await statfs(diskConfig.path, { bigint: true });
+  const freeBytes = stats.bavail * stats.bsize;
+  const totalBytes = stats.blocks * stats.bsize;
+  if (totalBytes <= 0n) throw new Error(`disk check returned zero capacity for ${diskConfig.path}`);
+
+  const freePercent = Number((freeBytes * 10_000n) / totalBytes) / 100;
+  const freeGiB = Number(freeBytes) / 1024 ** 3;
+  const totalGiB = Number(totalBytes) / 1024 ** 3;
+  const previous = await readDiskState();
+  const transition = evaluateDiskHealth(previous, freePercent, diskConfig);
+  if (transition.state !== previous) await writeDiskState(transition.state);
+  if (!transition.event) return [];
+
+  const now = new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  const usage =
+    `Path: ${diskConfig.path}\n` +
+    `Free: ${freeGiB.toFixed(1)} GiB / ${totalGiB.toFixed(1)} GiB (${freePercent.toFixed(1)}%)`;
+  let message: string;
+  if (transition.event === "recovered") {
+    message = `[Watchdog] Disk space recovered @ ${now}\n${usage}`;
+  } else {
+    const threshold = transition.event === "critical" ? diskConfig.criticalFreePercent : diskConfig.warningFreePercent;
+    message =
+      `[Watchdog] Disk space ${transition.event} @ ${now}\n` + `${usage}\nThreshold: ${threshold.toFixed(1)}% free`;
+  }
+
+  if (pushTg) await sendTelegram(message, config);
+  return [message];
 }
 
 async function checkHealth(pushTg: boolean): Promise<string[]> {
@@ -197,6 +309,10 @@ export async function runProcessWatchdog(
   for (const alert of await checkHealth(!!options.pushTg)) {
     process.stderr.write(`${alert}\n`);
     logLines.push(`[${timestamp}] HEALTH: ${alert}`);
+  }
+  for (const alert of await checkDisk(!!options.pushTg)) {
+    process.stderr.write(`${alert}\n`);
+    logLines.push(`[${timestamp}] DISK: ${alert}`);
   }
 
   if (options.healthOnly) {
