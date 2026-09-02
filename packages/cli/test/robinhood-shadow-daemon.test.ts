@@ -39,6 +39,12 @@ function gmgnConfig() {
   return config;
 }
 
+function telegramGmgnConfig() {
+  const config = gmgnConfig();
+  config.data_sources.robinhood_chain.phase1.phase2.delivery = "telegram";
+  return config;
+}
+
 test("GMGN shadow mode skips full-chain RPC discovery and runs GMGN before Phase 2", async () => {
   const order: string[] = [];
   const result = await runRobinhoodShadowCycle({
@@ -74,6 +80,123 @@ test("GMGN shadow mode skips full-chain RPC discovery and runs GMGN before Phase
   assert.deepEqual(order, ["gmgn", "phase2"]);
   assert.equal(result.phase0.status, "skipped");
   assert.equal(result.phase1.status, "ok");
+});
+
+test("shadow cycle owns Telegram delivery after Phase 2 persistence", async () => {
+  const order: string[] = [];
+  const lines: string[] = [];
+  await runRobinhoodShadowCycle({
+    config: telegramGmgnConfig(),
+    phase0DbPath: "/tmp/phase0.sqlite",
+    phase1DbPath: "/tmp/phase1.sqlite",
+    phase2DbPath: "/tmp/phase2.sqlite",
+    onStatus: (line: string) => lines.push(line),
+    collectors: {
+      gmgn: async () => {
+        order.push("gmgn");
+        return {
+          status: "persisted",
+          delivery: "shadow",
+          observationsPersisted: 1,
+          candidatesQualified: 1,
+          candidatesVerified: 1,
+        };
+      },
+      phase2: async () => {
+        order.push("phase2");
+        return {
+          status: "persisted",
+          delivery: "telegram",
+          draftsMaterialized: 1,
+          draftsStaled: 0,
+        };
+      },
+      phase2Telegram: async () => {
+        order.push("telegram");
+        return {
+          status: "completed",
+          sent: 1,
+          retryWait: 0,
+          unknown: 0,
+          suppressedCooldown: 0,
+          oversized: 0,
+        };
+      },
+    },
+  } as never);
+  assert.deepEqual(order, ["gmgn", "phase2", "telegram"]);
+  assert.ok(lines.some((line) => line.includes("telegram completed sent=1")));
+});
+
+test("shadow cycle does not call Telegram delivery in shadow mode or after Phase 2 failure", async () => {
+  for (const phase2Fails of [false, true]) {
+    let deliveryCalls = 0;
+    const config = phase2Fails ? telegramGmgnConfig() : gmgnConfig();
+    await runRobinhoodShadowCycle({
+      config,
+      phase0DbPath: "/tmp/phase0.sqlite",
+      phase1DbPath: "/tmp/phase1.sqlite",
+      phase2DbPath: "/tmp/phase2.sqlite",
+      collectors: {
+        gmgn: async () => ({
+          status: "persisted",
+          delivery: "shadow",
+          observationsPersisted: 1,
+          candidatesQualified: 1,
+          candidatesVerified: 1,
+        }),
+        phase2: async () => {
+          if (phase2Fails) throw new Error("phase2 offline");
+          return { status: "persisted", delivery: "shadow", draftsMaterialized: 1, draftsStaled: 0 };
+        },
+        phase2Telegram: async () => {
+          deliveryCalls += 1;
+          return {
+            status: "completed",
+            sent: 1,
+            retryWait: 0,
+            unknown: 0,
+            suppressedCooldown: 0,
+            oversized: 0,
+          };
+        },
+      },
+    } as never);
+    assert.equal(deliveryCalls, 0);
+  }
+});
+
+test("Telegram delivery failure does not roll back a persisted Phase 2 cycle", async () => {
+  const lines: string[] = [];
+  const result = await runRobinhoodShadowCycle({
+    config: telegramGmgnConfig(),
+    phase0DbPath: "/tmp/phase0.sqlite",
+    phase1DbPath: "/tmp/phase1.sqlite",
+    phase2DbPath: "/tmp/phase2.sqlite",
+    onStatus: (line: string) => lines.push(line),
+    collectors: {
+      gmgn: async () => ({
+        status: "persisted",
+        delivery: "shadow",
+        observationsPersisted: 1,
+        candidatesQualified: 1,
+        candidatesVerified: 1,
+      }),
+      phase2: async () => ({
+        status: "persisted",
+        delivery: "telegram",
+        draftsMaterialized: 1,
+        draftsStaled: 0,
+      }),
+      phase2Telegram: async () => {
+        throw new Error("Telegram unavailable");
+      },
+    },
+  } as never);
+  assert.equal(result.phase2.status, "ok");
+  assert.equal(result.phase2.result?.status, "persisted");
+  assert.equal(result.telegram.status, "failed");
+  assert.ok(lines.some((line) => line.includes("telegram failed: Telegram unavailable")));
 });
 
 test("shadow cycle cools down the provider between due Phase 0 and Phase 1 stages", async () => {

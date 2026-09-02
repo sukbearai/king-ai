@@ -2146,7 +2146,7 @@ const tradeRobinhoodShadowDaemonCommand = command(
       intervalSeconds: { type: Number, description: "Scheduler wake ceiling (default 30 seconds)" },
       once: { type: Boolean, description: "Run one Phase 0 -> Phase 1 -> Phase 2 cycle and exit" },
     },
-    help: { description: "Run the isolated Robinhood Chain Phase 0/1/2 shadow collector" },
+    help: { description: "Run the isolated Robinhood Chain collector with configured Phase 2 delivery" },
   },
   async (argv) => {
     await runRobinhoodShadowDaemon({

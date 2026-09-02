@@ -284,3 +284,219 @@ Approval is required before implementation because this revision changes the pri
 - Revision 9 approved: 2026-09-01; after the GMGN-primary source, server-date clock correction, credential boundary, independent persistence, source-agnostic candidate identity, bounded RPC verification, v13 readiness epoch, legacy-backlog retirement, failure behavior, rollback, and acceptance contract were presented, the user replied `批准 Revision 9`.
 - Approval authorizes the described source, focused tests and disposable SQLite writes, configuration example, SPEC/EVIDENCE/decision records, aligned English/Chinese documentation, and local verification. It does not authorize changing or migrating any existing shadow database, reading or using `GMGN_PRIVATE_KEY`, changing the existing shadow configuration, restarting either daemon, commit, push, deployment, paid operations, live delivery, wallet access, signing, swaps, orders, or trading.
 - Revision 9 local implementation clarification: the requested trenches limit is enforced independently for `new_creation`, `near_completion`, and `completed`, so an oversized first category cannot prevent the other required feeds from being observed. The daemon-owned abort signal also covers bounded RPC shortlist verification, preventing shutdown from entering another endpoint or retry after cancellation. Trending requires both observed success codes and exact Chain ID validation rejects malformed hexadecimal suffixes. These changes implement the already approved feed, fail-closed, and shutdown contracts without adding endpoints, credentials, delivery, or trading capability.
+
+## Proposed Revision 10 - automatic Telegram delivery
+
+- Tier: 3
+- Artifact path: `docs/robinhood-chain-x-rpc-reliability-spec.md`
+- Source scope: `packages/cli/src/trade/robinhood-chain-phase2.ts`, `packages/cli/src/trade/robinhood-shadow-daemon.ts`, `packages/cli/src/trade/telegram.ts`, focused tests, trade configuration example, English/Chinese trade documentation, decision and evidence records
+- Isolation: the existing `main` worktree; the current tree is clean and the deployed Robinhood sidecar continues to run from its fixed detached runtime until a separately verified rollout
+
+### Revision 10 setup plan
+
+- Tools or dependencies to add: none; use the existing SQLite and Telegram `fetch` implementation.
+- Persistent repository files to add or change: the source and test paths above, `packages/cli/trade_config.example.json`, `apps/docs/src/guide/trade.md`, `apps/docs/src/zh/guide/trade.md`, a repository-owned focused mutation runner, this SPEC/EVIDENCE pair, and `docs/decisions/proposed/2026-09-01-robinhood-telegram-auto-delivery.md`.
+- Persisted runtime format: additive Phase 2 SQLite tables for Telegram delivery metadata, per-alert delivery state, and per-subject cooldown state. Existing Phase 2 rows remain readable; no old row is deleted or reinterpreted as delivered.
+- Environment changes proposed for field rollout: set isolated Phase 2 `delivery="telegram"`; inject only `TG_BOT_TOKEN` and `TG_PUSH_CHAT_ID` at runtime from the existing formal trade configuration without copying values into the shadow JSON, LaunchAgent plist, logs, repository, or evidence. The existing GMGN API-key boundary remains unchanged.
+- Git operations proposed: none under SPEC approval; commit and push remain separately controlled.
+- External actions proposed: after the final local gauntlet, create a consistent Phase 2/config/plist/wrapper backup, build a fixed source revision, restart only `dev.king-ai-robinhood-shadow`, and observe the real delivery ledger and Telegram result. The formal `dev.king-ai-trade` daemon remains untouched. No wallet, signing, swap, order, trade, LLM, or paid write-capable GMGN action is added.
+
+### Revision 10 scenarios
+
+Feature: Robinhood 新趋势无需逐条人工批准即可自动投递到现有 Telegram 目标
+
+Scenario: shadow remains the backward-compatible default
+  Given Phase 2 omits `delivery` or sets `delivery="shadow"`
+  When the sidecar materializes new drafts
+  Then it writes the existing Phase 2 ledger and readiness metrics but creates no Telegram delivery claim and calls no Telegram sender
+
+Scenario: enabling Telegram establishes a no-history-flood baseline
+  Given an existing Phase 2 database contains draft or stale alerts before Telegram is enabled
+  When the first `delivery="telegram"` cycle opens the additive delivery ledger
+  Then it records one durable enablement boundary, marks every pre-existing current draft as `suppressed_existing`, seeds its subject cooldown at that boundary, sends none of those historical drafts, and leaves stale and older revision rows ineligible
+
+Scenario: a newly observed subject is delivered without readiness approval
+  Given Telegram mode is enabled, credentials are available, the GMGN source is healthy, and a new v13 verified draft appears after the enablement boundary
+  When the sidecar completes Phase 2
+  Then it durably claims the alert before network I/O, sends one message to the configured Telegram target, marks the claim `sent` only after success, updates the subject cooldown, and reports the sent count in the sidecar log even while readiness remains `collecting`
+
+Scenario: repeated windows do not spam the same subject
+  Given a subject was sent or baseline-suppressed within the configured cooldown
+  When another eligible window for the same exact subject address appears
+  Then that window is durably marked `suppressed_cooldown`, no sender call occurs, and another distinct subject remains eligible
+
+Scenario: a known Telegram failure retries without a busy loop
+  Given a claimed single-alert message receives a known failed result before success
+  When the sidecar records the result
+  Then the claim becomes `retry_wait` with bounded exponential backoff, at most one attempt is made for that alert in one cycle, and only a still-current draft can be retried after `next_attempt_at`
+
+Scenario: an interrupted or ambiguous send never duplicates automatically
+  Given an alert is in `sending` when the process stops or the abort signal fires while the network outcome is uncertain
+  When the sidecar restarts
+  Then the claim becomes terminal `unknown`, it is not automatically retried, the alert identifier and timestamps remain inspectable, and later alerts continue normally
+
+Scenario: stale, legacy, oversized, or unverified evidence is not delivered
+  Given an alert is stale, outside `phase2-v13-gmgn-primary`, lacks verified GMGN authority, or its single-alert text exceeds the Telegram limit
+  When automatic delivery scans the ledger
+  Then it calls no sender and records an explicit non-delivered state or leaves the row outside the eligible query
+
+Scenario: bounded delivery preserves shutdown ownership
+  Given up to ten distinct eligible subjects are available in one Phase 2 cycle
+  When shutdown occurs during delivery
+  Then the daemon aborts new sends, classifies the active claim without retry ambiguity, starts no later alert, drains the owned operation within the LaunchAgent deadline, and releases the Robinhood PID lock
+
+### Revision 10 contract
+
+- `phase1.delivery` remains `shadow`. Only `phase1.phase2.delivery` becomes `"shadow" | "telegram"`; omission continues to mean `shadow`, so old configurations and manual one-shot collection remain non-delivering.
+- Automatic Telegram delivery is owned only by `runRobinhoodShadowDaemon` after a committed Phase 2 materialization. `collect-robinhood-phase2`, status, review, tests, and the ordinary trade scheduler do not gain an implicit external side effect.
+- The existing 72-hour, 800-run, source-health, gap, audit, and review calculations remain visible quality evidence. They no longer gate Telegram when an operator explicitly configures `delivery="telegram"`; `liveDeliveryAuthorized` reflects the actual explicit delivery mode. The user does not approve individual alerts.
+- Each external call contains exactly one alert and must fit within `TG_MAX_LEN`, preventing partial multi-chunk success from being retried as a whole. Telegram mode sends at most ten alerts per Phase 2 cycle.
+- Exact subject identity is `field_run_revision + subject_type + lowercase subject_address`. The default subject cooldown is 3,600 seconds, configurable from 300 to 86,400 seconds. A higher score does not bypass cooldown in Revision 10; the next distinct post-cooldown window may deliver.
+- Delivery is at-most-once across ambiguous process failure, not exactly-once: a known failure may retry, but an uncertain `sending` outcome becomes `unknown` and is never resent automatically. This prefers a visible possible miss over duplicate Telegram spam.
+- Delivery persistence and source materialization use the same single-writer Phase 2 database but separate transactions around external I/O. No SQLite transaction remains open during a Telegram request.
+- Telegram credentials are resolved by the existing `telegramFromConfig` contract. Missing credentials fail only the delivery stage, remain observable and retryable, and do not roll back successful GMGN or Phase 2 persistence.
+
+### Revision 10 Must NOT
+
+- Must not send the current historical v13 drafts or any old revision during first enablement.
+- Must not send a draft twice after `sent`, automatically retry an ambiguous `unknown`, or hold a SQLite transaction across network I/O.
+- Must not let X-only, stale, unverified, legacy RPC, or source-unhealthy evidence create a Telegram delivery.
+- Must not make `delivery="telegram"` the default or cause manual Phase 2 commands to send.
+- Must not log or persist Telegram bot tokens, GMGN keys, raw Telegram responses, wallet data, signatures, orders, or trades.
+- Must not restart or change `dev.king-ai-trade`, enable LLM advice, or add wallet/signing/swap/order/trading capability.
+
+### Revision 10 failure model
+
+| Failure mode | Impact | Falsifying layer |
+| --- | --- | --- |
+| Existing 105 alerts are treated as new | immediate Telegram flood | legacy SQLite migration and first-enable integration test |
+| Same token repeats every five-minute window | sustained alert spam | subject cooldown and persisted-restart tests |
+| Crash after send causes retry | duplicate external message | sending-to-unknown restart test |
+| Known failure retries continuously | rate-limit amplification | fake-clock backoff and one-attempt-per-cycle test |
+| Sender succeeds but ledger update fails | delivery state is ambiguous | injected post-send SQLite failure and restart classification test |
+| Shutdown begins another send | slow or orphaned daemon exit | deterministic abort/drain daemon test |
+| Missing credentials break GMGN persistence | monitoring outage | stage-isolation integration test |
+| Old config starts delivering | unauthorized external side effect | default/legacy configuration compatibility tests |
+| Secret enters log/config/evidence | credential compromise | repository and field value-leak scans |
+
+### Revision 10 planned gauntlet
+
+| Claim or risk | Layer | Command or scenario | What it cannot prove |
+| --- | --- | --- | --- |
+| Parser, states, cooldown, baseline, retry, restart and stale filtering | focused SQLite/module integration | compiled Phase 2 Telegram tests with disposable databases and injected sender | real Telegram availability |
+| Sidecar owns delivery and drains shutdown | daemon integration | compiled shadow-daemon order, failure-isolation and cancellation tests | LaunchAgent kill behavior |
+| Tests reject likely delivery defects | mutation sensitivity | repository-owned Revision 10 mutation runner | unmutated defects |
+| Repository remains assembled | full/static | `pnpm lint`, `pnpm verify`, focused suites, docs build, decision validator, capability/secret scans, `git diff --check` | deployed delivery |
+| Existing database migration and actual Telegram result | separately authorized field execution | backup, fixed build, sidecar restart, SQLite/log inspection and one naturally eligible alert | future Telegram uptime or trading outcomes |
+
+### Revision 10 approval gate
+
+Approval is required before implementation because this revision adds an external side effect, changes the Phase 2 configuration and readiness semantics, and introduces durable delivery/retry state. Approval authorizes the described source, tests, additive disposable SQLite verification, configuration example, SPEC/EVIDENCE/decision records, aligned English/Chinese documentation, and local gauntlet. The user's current instruction separately authorizes automatic delivery to the existing Telegram target without per-alert approval, but the exact field database migration, credential injection, sidecar restart, commit, and push remain explicit rollout checkpoints after the verified implementation.
+
+### Revision 10 approval
+
+- Revision 10 approved: 2026-09-01; after the no-history-flood baseline, per-subject cooldown, bounded batch, known-failure retry, ambiguous-send at-most-once behavior, shadow default, credential boundary, field rollout boundary, and continued wallet/trading prohibition were presented, the user replied `批准 Revision 10 SPEC`.
+- Approval authorizes the described source, tests, additive disposable SQLite verification, configuration example, SPEC/EVIDENCE/decision records, aligned English/Chinese documentation, and local gauntlet. It does not authorize modifying the existing shadow configuration or SQLite, injecting Telegram credentials into the sidecar, restarting a daemon, commit, push, wallet access, signing, swaps, orders, or trading.
+
+## Proposed Revision 11 - GMGN-declared project X account signal
+
+- Tier: 3
+- Artifact path: `docs/robinhood-chain-x-rpc-reliability-spec.md`
+- Source scope: `packages/cli/src/trade/robinhood-chain-gmgn.ts`, `packages/cli/src/trade/robinhood-chain-phase2.ts`, focused GMGN/Phase 2/Telegram tests, English/Chinese trade documentation, decision and evidence records
+- Isolation: the existing `main` worktree containing the approved but uncommitted Revision 10 implementation; Revision 11 must preserve those task changes and must not modify unrelated work
+
+### Revision 11 setup plan
+
+- Tools or dependencies to add: none; use the standard `URL` parser and existing GMGN evidence, SQLite, Phase 2, and Telegram paths.
+- Persistent repository files to add or change: the source and focused test paths above, `apps/docs/src/guide/trade.md`, `apps/docs/src/zh/guide/trade.md`, the existing Revision 10 mutation runner when required to keep the combined gauntlet sensitive, this SPEC/EVIDENCE pair, and the existing proposed Telegram delivery decision if its epoch or rendered-message contract changes.
+- Persisted runtime format: no SQLite schema migration. Normalized project-X evidence is additive inside existing observation and candidate `evidence_json`. Candidate/readiness/delivery authority advances from `phase2-v13-gmgn-primary` to `phase2-v14-gmgn-project-x`, so old v13 rows remain readable but cannot be mixed into v14 qualification or automatic delivery.
+- Environment changes proposed: none. Revision 11 adds no X credentials, browser session, API token, account login, or runtime configuration.
+- Git operations proposed: none under SPEC approval; commit and push remain separately controlled.
+- External actions proposed: none under SPEC approval. Live sidecar build/restart, existing-database observation, and real Telegram delivery remain separately authorized rollout actions. No new GMGN endpoint, paid operation, wallet, signing, swap, order, or trade is added.
+- Field limitation recorded before implementation: a read-only 2026-09-01 snapshot of the current shadow GMGN database contained 26,326 observations, with zero `social_links` values and zero `is_social_duplicate` values in `evidence_json`. The current feeds therefore cannot support a hard "has X account" gate or prove that a declared account is official.
+
+### Revision 11 scenarios
+
+Feature: Robinhood Chain trend alerts include a bounded project-X credibility signal when GMGN supplies one
+
+Scenario: one valid declared project account adds bounded evidence
+  Given a candidate already has a fresh qualifying five-minute observation, required corroboration, complete market and risk fields, and one unambiguous GMGN-declared X account
+  When the GMGN candidate is scored
+  Then the normalized account is persisted as `projectXHandle`, the evidence score receives exactly five additional points capped at 100, and the Phase 2/Telegram message displays `project_x=@handle (GMGN-declared)`
+
+Scenario: missing or malformed social data remains backward compatible
+  Given the current GMGN feed omits `social_links`, supplies an unsupported shape, or contains only malformed/non-account values
+  When the observation and candidate are normalized
+  Then no project-X bonus is added, no account is rendered, and an otherwise valid candidate is neither rejected nor created solely because of that missing signal
+
+Scenario: strict account normalization excludes unsafe or non-profile URLs
+  Given social data contains credentials, a port, a non-X host, a status/share/intent/search path, multiple path segments, a query or fragment, an invalid handle, or another non-profile URL
+  When project-X evidence is parsed
+  Then the value is ignored as malformed, is not persisted as a normalized account, adds no score, and is never rendered as a clickable or trusted project identity
+
+Scenario: duplicate or conflicting project social identity fails closed
+  Given any fresh same-window GMGN observation explicitly reports `is_social_duplicate=true`, or valid social entries normalize to more than one distinct X handle
+  When the candidate is evaluated
+  Then the candidate is rejected with an explicit bounded reason, is not materialized into Phase 2, and cannot be automatically delivered to Telegram
+
+Scenario: an X account cannot replace market authority
+  Given a token has a valid declared project X account but lacks the qualifying five-minute feed, required one-minute/trenches corroboration, complete market/risk fields, or bounded RPC verification
+  When the monitoring cycle runs
+  Then the X account neither creates nor verifies a candidate and no Phase 2 draft or Telegram delivery is produced
+
+Scenario: old epochs do not acquire the new score retroactively
+  Given persisted v13 observations, candidates, drafts, delivery claims, or cooldown rows exist
+  When v14 is enabled
+  Then those rows remain auditable under their original semantics, are not rescored or relabelled, and cannot satisfy v14 readiness or automatic-delivery selection
+
+### Revision 11 contract
+
+- The signal means only "GMGN-declared project X account". It is not an independent ownership, identity, blue-check, domain-link, follower, account-age, compromise, or official-endorsement verification and must not be labelled simply `official` in persisted data, logs, documentation, or Telegram output.
+- Accepted account identities are normalized only from explicitly X/Twitter-labelled entries in `social_links`. Supported container forms are a direct labelled string, labelled object field, or bounded labelled array/object entry; arbitrary free text is not scanned for handles.
+- A normalized URL must use HTTPS, have no credentials or explicit port, use exactly `x.com`, `www.x.com`, `twitter.com`, or `www.twitter.com`, contain exactly one profile-path segment plus an optional trailing slash, and have no query or fragment. The handle must match X's bounded ASCII account form and reserved product routes are rejected. A directly labelled `@handle` may use the same handle validator.
+- Exactly one distinct normalized handle across the candidate's fresh same-window observations is required for the five-point bonus. Repeated representations of the same handle are deduplicated. Missing or malformed entries produce no bonus; conflicting valid handles reject the candidate rather than choosing one by order.
+- An explicit boolean `is_social_duplicate=true` on any fresh same-window observation rejects the candidate. Missing, malformed, or false duplicate flags do not reject it. String truthiness or arbitrary non-boolean values must not be treated as authoritative duplicate evidence.
+- The project-X bonus participates only after the existing five-minute, corroboration, market, risk, and pool-conflict checks. It may help an otherwise complete candidate meet `min_trend_score`, but cannot compensate for any other rejection reason or for failed RPC verification.
+- Phase 2 reads only qualified, verified `phase2-v14-gmgn-project-x` candidates. Telegram renders the normalized handle as plain bounded text, not an HTML/Markdown link, preserving the existing one-alert length and retry contracts.
+- Revision 11 enriches only data already returned by the approved GMGN trending/trenches reads. Discovery of a separate token-info/social endpoint is outside this revision and requires a later source, authentication, rate-limit, freshness, and field-acceptance contract.
+
+### Revision 11 Must NOT
+
+- Must not advertise a GMGN-declared account as independently verified or official.
+- Must not make `social_links` presence a hard requirement while the current field feed omits it.
+- Must not scan arbitrary token text, symbol, description, X posts, or URLs to manufacture a project account.
+- Must not allow a valid account to bypass missing market/risk/corroboration evidence, failed RPC verification, cooldown, stale filtering, delivery baseline, or Telegram eligibility rules.
+- Must not silently combine v13 scores, readiness, drafts, claims, or cooldown authority with v14 semantics.
+- Must not add X login, scraping, write-capable GMGN calls, configurable upstream origins, secrets, LLM judgment, wallet access, signing, swaps, orders, or trading.
+
+### Revision 11 failure model
+
+| Failure mode | Impact | Falsifying layer |
+| --- | --- | --- |
+| Missing social fields become mandatory | all current field candidates disappear | recorded missing-field fixture and current-shape compatibility test |
+| Status/share/spoof URL is accepted as a project account | misleading identity in an automatic alert | strict URL/handle parser table tests and mutation |
+| Duplicate social identity still delivers | likely cloned-project alert reaches Telegram | candidate rejection plus Phase 2 exclusion integration test |
+| Multiple handles are resolved by input order | nondeterministic or attacker-selected identity | permutation/conflict tests |
+| Account bonus bypasses core evidence | weak or unsafe token becomes actionable alert | candidate qualification matrix and negative integration test |
+| v13 rows are rescored under v14 | mixed evidence semantics and duplicate delivery risk | persisted old/new epoch compatibility tests |
+| Telegram labels the account official | unsupported trust claim | exact message-rendering assertion and docs review |
+
+### Revision 11 planned gauntlet
+
+| Claim or risk | Layer | Command or scenario | What it cannot prove |
+| --- | --- | --- | --- |
+| Object/array/string normalization and hostile URL rejection | focused unit/property table | compiled GMGN parser tests using secret-free fixtures and entry permutations | a future undocumented GMGN shape |
+| Bonus, missing compatibility, duplicate/conflict rejection, and no-X-only qualification | module integration | compiled GMGN candidate tests through the production normalizer and scorer | live upstream field presence |
+| v14-only materialization and account rendering | SQLite/Phase 2 integration | disposable old-v13/new-v14 databases and exact draft/Telegram message assertions | real Telegram availability |
+| Tests reject likely parser, scoring, epoch, and rendering defects | mutation sensitivity | extend the repository-owned Robinhood mutation runner with Revision 11 mutants | unmutated defects |
+| Combined Revision 10/11 tree remains assembled | full/static | focused compiled Robinhood suites, `pnpm lint`, `pnpm verify`, English/Chinese docs build, decision validation, secret/capability scan, and `git diff --check` | deployed sidecar behavior |
+| GMGN actually supplies the signal in production | separately authorized field execution | fixed-build sidecar restart followed by read-only log/SQLite inspection across fresh ticks | correctness of GMGN's ownership claim |
+
+### Revision 11 approval gate
+
+Approval is required before implementation because this revision changes candidate scoring, rejection semantics, persisted evidence, epoch authority, and automatic Telegram content. Approval authorizes only the described source, focused tests, disposable SQLite verification, SPEC/EVIDENCE/decision updates, aligned English/Chinese documentation, mutation updates, and local gauntlet. It does not authorize modifying the current shadow configuration or SQLite database, injecting credentials, adding a new GMGN endpoint, restarting a daemon, commit, push, deployment, wallet access, signing, swaps, orders, or trading.
+
+### Revision 11 approval
+
+- Revision 11 approved: 2026-09-01; after the soft five-point GMGN-declared project-X bonus, strict account normalization, duplicate/conflict rejection, missing-field compatibility, v14 epoch isolation, Telegram labelling, field-data limitation, and continued no-X-only/no-trading boundaries were presented, the user replied `批准 Revision 11 SPEC`.
+- Approval authorizes only the described source, focused tests, disposable SQLite verification, SPEC/EVIDENCE/decision updates, aligned English/Chinese documentation, mutation updates, and local gauntlet. It does not authorize modifying the current shadow configuration or SQLite database, injecting credentials, adding a new GMGN endpoint, restarting a daemon, commit, push, deployment, wallet access, signing, swaps, orders, or trading.

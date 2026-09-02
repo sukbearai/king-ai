@@ -118,6 +118,55 @@ const mutants = [
         2,
       ),
   },
+  {
+    name: "accept-reserved-project-x-route",
+    apply: () =>
+      replaceExact(
+        gmgnPath,
+        "  if (!/^[a-z0-9_]{1,15}$/.test(normalized) || PROJECT_X_RESERVED_HANDLES.has(normalized)) return null;",
+        "  if (!/^[a-z0-9_]{1,15}$/.test(normalized) || false) return null;",
+      ),
+  },
+  {
+    name: "ignore-social-duplicate-rejection",
+    apply: () =>
+      replaceExact(
+        gmgnPath,
+        '    if (socialDuplicate) reasons.push("social_identity_duplicate");',
+        '    if (false) reasons.push("social_identity_duplicate");',
+      ),
+  },
+  {
+    name: "ignore-social-identity-conflict",
+    apply: () =>
+      replaceExact(
+        gmgnPath,
+        '    if (projectXHandles.length > 1) reasons.push("social_identity_conflict");',
+        '    if (false) reasons.push("social_identity_conflict");',
+      ),
+  },
+  {
+    name: "remove-project-x-score-bonus",
+    apply: () => replaceExact(gmgnPath, "    if (projectXHandle) score += 5;", "    if (projectXHandle) score += 0;"),
+  },
+  {
+    name: "reuse-v13-field-epoch",
+    apply: () =>
+      replaceExact(
+        gmgnPath,
+        'export const GMGN_FIELD_RUN_REVISION = "phase2-v14-gmgn-project-x";',
+        'export const GMGN_FIELD_RUN_REVISION = "phase2-v13-gmgn-primary";',
+      ),
+  },
+  {
+    name: "label-declared-account-official",
+    apply: () =>
+      replaceExact(
+        phase2Path,
+        "`project_x=@$" + "{projectXHandle} (GMGN-declared)`",
+        "`project_x=@$" + "{projectXHandle} (official)`",
+      ),
+  },
 ];
 
 try {

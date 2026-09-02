@@ -11,6 +11,7 @@ import {
   reviewRobinhoodPhase2Alert,
   robinhoodPhase2Status,
 } from "../src/trade/robinhood-chain-phase2.js";
+import { GMGN_FIELD_RUN_REVISION } from "../src/trade/robinhood-chain-gmgn.js";
 import { runRobinhoodPhase2CollectorJob } from "../src/trade/scheduler.js";
 
 const POOL = `0x${"3".repeat(40)}`;
@@ -94,7 +95,13 @@ function seedPhase1(
   db.close();
 }
 
-function seedGmgn(path: string, now: number, revision = "phase2-v13-gmgn-primary", verified = 1): void {
+function seedGmgn(
+  path: string,
+  now: number,
+  revision = GMGN_FIELD_RUN_REVISION,
+  verified = 1,
+  evidence: Record<string, unknown> = { volume5mUsd: 50_000, holderCount: 250 },
+): void {
   const db = new DatabaseSync(path);
   db.exec(`
     CREATE TABLE source_health (
@@ -105,14 +112,14 @@ function seedGmgn(path: string, now: number, revision = "phase2-v13-gmgn-primary
       evidence_json TEXT,verified INTEGER,field_run_revision TEXT
     );
   `);
-  db.prepare("INSERT INTO source_health VALUES ('gmgn','ok',?,?)").run(now, "phase2-v13-gmgn-primary");
+  db.prepare("INSERT INTO source_health VALUES ('gmgn','ok',?,?)").run(now, GMGN_FIELD_RUN_REVISION);
   db.prepare("INSERT INTO gmgn_candidates VALUES ('token',?,?,?,?,?,?,?,?)").run(
     GMGN_TOKEN,
     POOL,
     Math.floor((now - 300) / 300) * 300,
     "qualified",
     95,
-    JSON.stringify({ volume5mUsd: 50_000, holderCount: 250 }),
+    JSON.stringify(evidence),
     verified,
     revision,
   );
@@ -180,8 +187,15 @@ describe("Robinhood Chain Phase 2", () => {
         },
       },
     });
-    assert.equal(gmgn.fieldRunRevision, "phase2-v13-gmgn-primary");
-    assert.throws(() => resolveRobinhoodPhase2Config(config({ delivery: "telegram" })), /shadow/);
+    assert.equal(gmgn.fieldRunRevision, "phase2-v14-gmgn-project-x");
+    const telegram = resolveRobinhoodPhase2Config(
+      config({ delivery: "telegram", telegram_subject_cooldown_seconds: 7_200 }),
+    );
+    assert.equal(telegram.delivery, "telegram");
+    assert.equal(telegram.telegramSubjectCooldownSeconds, 7_200);
+    const omittedDelivery = config();
+    delete (omittedDelivery.data_sources.robinhood_chain.phase1.phase2 as Record<string, unknown>).delivery;
+    assert.equal(resolveRobinhoodPhase2Config(omittedDelivery).delivery, "shadow");
   });
 
   it("does not create a database while disabled", async () => {
@@ -263,7 +277,7 @@ describe("Robinhood Chain Phase 2", () => {
     }
   });
 
-  it("materializes only verified v13 GMGN subjects and enriches exact token addresses", async () => {
+  it("materializes only verified v14 GMGN subjects and renders a declared project X account", async () => {
     const dir = await mkdtemp(join(tmpdir(), "king-ai-rh-p2-gmgn-"));
     const gmgnDbPath = join(dir, "gmgn.sqlite");
     const phase1DbPath = join(dir, "phase1.sqlite");
@@ -282,7 +296,11 @@ describe("Robinhood Chain Phase 2", () => {
       },
     };
     try {
-      seedGmgn(gmgnDbPath, now);
+      seedGmgn(gmgnDbPath, now, GMGN_FIELD_RUN_REVISION, 1, {
+        volume5mUsd: 50_000,
+        holderCount: 250,
+        projectXHandle: "projectalpha",
+      });
       const xDb = new DatabaseSync(phase1DbPath);
       xDb.exec(
         "CREATE TABLE account_posts (post_id TEXT,handle TEXT,text TEXT,url TEXT,created_at TEXT,fetched_at INTEGER)",
@@ -313,21 +331,22 @@ describe("Robinhood Chain Phase 2", () => {
       assert.equal(alert.subject_address, GMGN_TOKEN);
       assert.equal(alert.pool_address, POOL);
       assert.equal(alert.source_kind, "gmgn");
-      assert.equal(alert.field_run_revision, "phase2-v13-gmgn-primary");
+      assert.equal(alert.field_run_revision, "phase2-v14-gmgn-project-x");
       assert.equal((JSON.parse(String(alert.evidence_json)) as { matchedXPosts: unknown[] }).matchedXPosts.length, 1);
+      assert.match(String(alert.message), /project_x=@projectalpha \(GMGN-declared\)/);
       store.close();
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
   });
 
-  it("does not materialize legacy GMGN candidates into the v13 epoch", async () => {
+  it("does not materialize v13 GMGN candidates into the v14 epoch", async () => {
     const dir = await mkdtemp(join(tmpdir(), "king-ai-rh-p2-gmgn-legacy-"));
     const gmgnDbPath = join(dir, "gmgn.sqlite");
     const phase2DbPath = join(dir, "phase2.sqlite");
     const now = 1_700_000_000;
     try {
-      seedGmgn(gmgnDbPath, now, "phase2-v12-rpc");
+      seedGmgn(gmgnDbPath, now, "phase2-v13-gmgn-primary");
       const result = await collectRobinhoodPhase2({
         config: {
           data_sources: {
@@ -353,13 +372,13 @@ describe("Robinhood Chain Phase 2", () => {
     }
   });
 
-  it("does not materialize an unverified v13 GMGN candidate", async () => {
+  it("does not materialize an unverified v14 GMGN candidate", async () => {
     const dir = await mkdtemp(join(tmpdir(), "king-ai-rh-p2-gmgn-unverified-"));
     const gmgnDbPath = join(dir, "gmgn.sqlite");
     const phase2DbPath = join(dir, "phase2.sqlite");
     const now = 1_700_000_000;
     try {
-      seedGmgn(gmgnDbPath, now, "phase2-v13-gmgn-primary", 0);
+      seedGmgn(gmgnDbPath, now, GMGN_FIELD_RUN_REVISION, 0);
       const result = await collectRobinhoodPhase2({
         config: {
           data_sources: {

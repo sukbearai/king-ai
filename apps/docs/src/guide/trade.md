@@ -78,7 +78,7 @@ Key config sections:
 | `data_sources.leaderboard` | Smart-money leaderboard options |
 | `data_sources.robinhood_chain` | Opt-in read-only Robinhood Chain Phase 0 collector and retention settings |
 | `data_sources.robinhood_chain.phase1.discovery_source` | Explicit trend source: legacy full-chain `rpc` (default) or read-only `gmgn` |
-| `data_sources.robinhood_chain.phase1.phase2` | Opt-in local shadow-draft and 72-hour readiness ledger |
+| `data_sources.robinhood_chain.phase1.phase2` | Opt-in local draft/readiness ledger with default shadow or explicit sidecar Telegram delivery |
 | `treasury` | Treasury stress: `^TYX` / `^TNX` / `TLT` thresholds |
 | `kimpremium` | Korea leverage KPIs, polling, and thresholds (disabled by default) |
 | `alerts.celebrity_tweet.max_classifications_per_tick` | Maximum celebrity LLM classifications per tick (default `8`, range `1..50`) |
@@ -258,8 +258,8 @@ Telegram, invoke an LLM, access a wallet, or place trades. Run one isolated shad
 king-ai trade collect-robinhood-phase1
 ```
 
-The manual command always remains read-only and prints only a bounded shadow summary. Live Telegram delivery
-requires a separate approval after at least 72 hours of shadow evidence.
+The manual command always remains read-only and prints only a bounded shadow summary. It never invokes the Phase 2
+Telegram delivery stage.
 
 The explicit X registry is enabled by default when Phase 1 is enabled; set `phase1.x_enabled=false` to opt out.
 The shadow sidecar schedules it every `x_collect_seconds` (default 300 seconds). It searches configured Tier
@@ -274,8 +274,8 @@ existing official and infrastructure accounts. This collector reads account-auth
 claim coverage of follows or likes. Run one account pass with `king-ai trade collect-robinhood-x`.
 
 Set `phase1.discovery_source="gmgn"` explicitly to use the GMGN-primary token trend path. This mode requires only
-`GMGN_API_KEY`; the runtime does not read `GMGN_PRIVATE_KEY`, does not sign wallet payloads, and does not expose
-swap, order, or delivery capabilities. Each due tick reads the Robinhood `1m`, `5m`, and `1h` rankings plus the
+`GMGN_API_KEY`; the GMGN collector does not read `GMGN_PRIVATE_KEY`, sign wallet payloads, place swaps or orders,
+or deliver messages itself. Each due tick reads the Robinhood `1m`, `5m`, and `1h` rankings plus the
 `new_creation`, `near_completion`, and `completed` trenches categories, applies the local hard limit independently
 to every category, and stores
 normalized observations in the separate
@@ -284,10 +284,17 @@ normalized observations in the separate
 changing the operating-system clock.
 
 A candidate requires a fresh safe `5m` record plus same-window `1m` or trenches corroboration, followed by bounded
-Chain ID and bytecode verification of at most 20 unique addresses. In GMGN mode the daemon skips full-chain Phase 0
-and RPC Phase 1 discovery, leaves their databases and historical cursors untouched, then runs Phase 2 from verified
-GMGN candidates. Phase 2 is automatically isolated under `phase2-v13-gmgn-primary`; an older RPC epoch cannot count
-toward its readiness. X remains exact-address enrichment only. The settings `gmgn_limit` (default 100, maximum 200),
+Chain ID and bytecode verification of at most 20 unique addresses. When an existing GMGN response includes exactly
+one strictly normalized, GMGN-declared project X account, it adds five evidence-score points and appears as
+`project_x=@handle (GMGN-declared)` in the Phase 2 message. This is not independent proof that the account is
+official. Missing or malformed social data adds no score but does not reject an otherwise valid candidate; an
+explicit boolean social-duplicate flag or conflicting valid handles rejects it. The account can never replace the
+required market, risk, corroboration, or RPC evidence.
+
+In GMGN mode the daemon skips full-chain Phase 0 and RPC Phase 1 discovery, leaves their databases and historical
+cursors untouched, then runs Phase 2 from verified GMGN candidates. Phase 2 is automatically isolated under
+`phase2-v14-gmgn-project-x`; v13 and older epochs cannot count toward its readiness or automatic delivery. X posts
+remain exact-address enrichment only. The settings `gmgn_limit` (default 100, maximum 200),
 `gmgn_max_age_seconds` (maximum 600), and `gmgn_rpc_verify_limit` (maximum 20) are fail-closed bounds. Run one
 configured GMGN tick with:
 
@@ -296,19 +303,21 @@ king-ai trade collect-robinhood-gmgn
 ```
 
 This command remains shadow-only and does not enable trading or Telegram delivery. Returning
-`discovery_source` to `rpc` restores the legacy scanner against its untouched databases; it does not merge v13
+`discovery_source` to `rpc` restores the legacy scanner against its untouched databases; it does not merge GMGN
 readiness into the RPC epoch.
 
-### Robinhood Chain Phase 2 shadow readiness
+### Robinhood Chain Phase 2 readiness and optional Telegram delivery
 
-Phase 2 is an additional opt-in local evidence layer under `phase1.phase2`. It reads candidates and audit
-records, materializes deterministic shadow alert drafts in a separate database, and measures the 72-hour field
-gate. It does not rescan the chain or change Phase 1 scores. X posts are attached only when their text contains a
-full pool or token address, and can never create a draft.
+Phase 2 is an additional opt-in local evidence layer under `phase1.phase2`. It reads candidates and audit records,
+materializes deterministic alert drafts in a separate database, and measures the 72-hour field gate. It does not
+rescan the chain or change Phase 1 scores. X posts are attached only when their text contains a full pool or token
+address, and can never create a draft. `delivery` defaults to `shadow`; setting it to `telegram` authorizes only the
+isolated shadow daemon to deliver newly materialized, verified GMGN drafts after the Phase 2 transaction commits.
 
-The default readiness gate requires at least 72 hours, 800 successful runs, no gap above 15 minutes, no more than
-5% source errors, at least one audited Phase 1 window, and ten explicitly reviewed shadow drafts. Passing these
-checks returns `approval_required`; it does not authorize or enable Telegram delivery.
+The default readiness metrics require at least 72 hours, 800 successful runs, no gap above 15 minutes, no more than
+5% source errors, at least one audited Phase 1 window, and ten explicitly reviewed drafts. They remain visible as
+quality evidence. In explicit `delivery="telegram"` mode they are not a per-alert approval gate;
+`liveDeliveryAuthorized` reports the configured delivery authority, not trading authority or signal quality.
 
 Readiness is isolated by `phase2.field_run_revision`. Runs, drafts, and reviews from an older revision remain in
 SQLite for audit but do not count toward the current 72-hour gate. Bump this revision whenever a material collector,
@@ -327,17 +336,24 @@ For an isolated field run, use a dedicated `KING_AI_CONFIG_DIR` containing only 
 start `king-ai trade robinhood-shadow-daemon`. This sidecar runs due Phase 0 and Phase 1 work concurrently only when
 their sanitized RPC endpoint sets are disjoint; otherwise it keeps the sequential provider-cooldown path. Phase 2
 always waits for both chain stages. The Phase 1 X registry remains an independent single-flight job so account
-scanning cannot delay the chain cycle. It uses its own PID lock and SQLite files and has no Telegram, LLM, wallet, signing, order, or morning-brief
-path. Its scheduler wakes every 30 seconds by default while preserving the configured 30/60/300-second cadences;
-shutdown drains already-running chain and X work before releasing the PID lock.
+scanning cannot delay the chain cycle. It uses its own PID lock and SQLite files and has no LLM, wallet, signing,
+order, trade, or morning-brief path. Its scheduler wakes every 30 seconds by default while preserving the configured
+30/60/300-second cadences; shutdown drains already-running collection, delivery, and X work before releasing the PID
+lock.
 
 ```sh
 KING_AI_CONFIG_DIR=~/.king-ai-robinhood-shadow king-ai trade robinhood-shadow-daemon
 ```
 
-The verdict may be `accepted` or `rejected`. Phase 2 remains `delivery=shadow`, does not invoke an LLM, and does
-not access wallets, sign transactions, place orders, or trade. Live delivery requires a separate approval after
-the readiness evidence and false-positive samples are reviewed.
+The verdict may be `accepted` or `rejected`. Manual collection, status, and review commands never send. When the
+sidecar first observes `delivery="telegram"`, it records an enablement boundary, marks existing current-revision
+drafts `suppressed_existing`, and seeds their subject cooldown instead of backfilling them. Later alerts use the
+identity `field revision + subject type + lowercase address`; the default cooldown is 3,600 seconds and the accepted
+range is 300-86,400 seconds. One cycle makes at most ten single-alert requests and never splits one alert into
+multiple Telegram chunks. Known failures enter bounded exponential `retry_wait`; an interrupted or otherwise
+ambiguous `sending` result becomes terminal `unknown` and is not automatically retried. No SQLite transaction is
+held during the network request. Phase 2 does not invoke an LLM, access wallets, sign transactions, place orders, or
+trade.
 
 Morning brief Telegram delivery writes `[morning-brief] telegram push ok|failed chunks=N` to
 `~/.king-ai/trade/logs/daemon.log`, and the latest delivery metadata is stored in

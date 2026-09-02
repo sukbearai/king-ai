@@ -19,8 +19,10 @@ import {
 import { collectRobinhoodGmgn, type RobinhoodGmgnResult } from "./robinhood-chain-gmgn.js";
 import {
   collectRobinhoodPhase2,
+  deliverRobinhoodPhase2Telegram,
   resolveRobinhoodPhase2Config,
   type RobinhoodPhase2Result,
+  type RobinhoodPhase2TelegramDeliveryResult,
 } from "./robinhood-chain-phase2.js";
 
 export interface RobinhoodShadowCycleResult {
@@ -31,6 +33,11 @@ export interface RobinhoodShadowCycleResult {
     error?: string;
   };
   phase2: { status: "ok" | "failed" | "skipped"; result?: RobinhoodPhase2Result; error?: string };
+  telegram: {
+    status: "ok" | "failed" | "skipped";
+    result?: RobinhoodPhase2TelegramDeliveryResult;
+    error?: string;
+  };
 }
 
 export interface RobinhoodShadowScheduleState {
@@ -77,6 +84,11 @@ export interface RobinhoodShadowDaemonOptions {
       gmgnDbPath?: string;
       phase2DbPath: string;
     }) => Promise<RobinhoodPhase2Result>;
+    phase2Telegram?: (options: {
+      config: TradeConfig;
+      phase2DbPath: string;
+      signal?: AbortSignal;
+    }) => Promise<RobinhoodPhase2TelegramDeliveryResult>;
   };
 }
 
@@ -150,13 +162,45 @@ export async function runRobinhoodShadowCycle(
       collectRobinhoodPhase2({
         config: input.config,
         phase1DbPath: input.phase1DbPath,
+        gmgnDbPath: input.gmgnDbPath,
         phase2DbPath: input.phase2DbPath,
       }));
+  const phase2TelegramCollector =
+    options.collectors?.phase2Telegram ?? ((input) => deliverRobinhoodPhase2Telegram(input));
 
   const result: RobinhoodShadowCycleResult = {
     phase0: { status: "skipped" },
     phase1: { status: "skipped" },
     phase2: { status: "skipped" },
+    telegram: { status: "skipped" },
+  };
+
+  const runTelegramDelivery = async () => {
+    if (
+      signal?.aborted ||
+      result.phase2.status !== "ok" ||
+      result.phase2.result?.status !== "persisted" ||
+      result.phase2.result.delivery !== "telegram"
+    ) {
+      return;
+    }
+    try {
+      const telegram = await phase2TelegramCollector({
+        config: options.config,
+        phase2DbPath: options.phase2DbPath,
+        signal,
+      });
+      result.telegram = {
+        status: "ok",
+        result: telegram,
+      };
+      onStatus(
+        `[robinhood-shadow] telegram ${telegram.status} sent=${telegram.sent} retry=${telegram.retryWait} unknown=${telegram.unknown} cooldown=${telegram.suppressedCooldown} oversized=${telegram.oversized}`,
+      );
+    } catch (error) {
+      result.telegram = { status: "failed", error: boundedError(error) };
+      onStatus(`[robinhood-shadow] telegram failed: ${result.telegram.error}`);
+    }
   };
 
   if (phase1Config.discoverySource === "gmgn") {
@@ -197,6 +241,7 @@ export async function runRobinhoodShadowCycle(
         result.phase2 = { status: "failed", error: boundedError(error) };
         onStatus(`[robinhood-shadow] phase2 failed: ${result.phase2.error}`);
       }
+      await runTelegramDelivery();
     }
     return result;
   }
@@ -278,6 +323,7 @@ export async function runRobinhoodShadowCycle(
       result.phase2 = { status: "failed", error: boundedError(error) };
       onStatus(`[robinhood-shadow] phase2 failed: ${result.phase2.error}`);
     }
+    await runTelegramDelivery();
   }
 
   return result;

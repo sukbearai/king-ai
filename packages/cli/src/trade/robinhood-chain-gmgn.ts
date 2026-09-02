@@ -7,7 +7,7 @@ import { ROBINHOOD_CHAIN_ID, type RpcTransport } from "./robinhood-chain.js";
 import { closeSqliteDb, openSqliteDb } from "./sqlite-db.js";
 
 export const GMGN_API_ORIGIN = "https://openapi.gmgn.ai";
-export const GMGN_FIELD_RUN_REVISION = "phase2-v13-gmgn-primary";
+export const GMGN_FIELD_RUN_REVISION = "phase2-v14-gmgn-project-x";
 const GMGN_SCHEMA_VERSION = "gmgn-v1";
 const TRENCHES_CATEGORIES = ["new_creation", "near_completion", "completed"] as const;
 const CLOCK_REFRESH_MS = 10 * 60 * 1000;
@@ -158,6 +158,112 @@ function first(row: Record<string, unknown>, ...keys: string[]): unknown {
   return undefined;
 }
 
+const PROJECT_X_HOSTS = new Set(["x.com", "www.x.com", "twitter.com", "www.twitter.com"]);
+const PROJECT_X_LABELS = new Set(["x", "twitter", "x.com", "twitter.com"]);
+const PROJECT_X_RESERVED_HANDLES = new Set([
+  "about",
+  "account",
+  "compose",
+  "download",
+  "explore",
+  "hashtag",
+  "home",
+  "i",
+  "intent",
+  "jobs",
+  "login",
+  "messages",
+  "notifications",
+  "privacy",
+  "search",
+  "settings",
+  "share",
+  "signup",
+  "tos",
+]);
+const PROJECT_X_MAX_NODES = 64;
+const PROJECT_X_MAX_DEPTH = 4;
+
+export function normalizeGmgnProjectXHandle(value: unknown): string | null {
+  if (typeof value !== "string" || value.length > 100) return null;
+  const normalized = value.trim().replace(/^@/, "").toLowerCase();
+  if (!/^[a-z0-9_]{1,15}$/.test(normalized) || PROJECT_X_RESERVED_HANDLES.has(normalized)) return null;
+  return normalized;
+}
+
+function projectXHandleFromString(value: unknown, allowBareHandle: boolean): string | null {
+  if (typeof value !== "string" || value.length > 500) return null;
+  const trimmed = value.trim();
+  if (trimmed.startsWith("@")) return normalizeGmgnProjectXHandle(trimmed);
+  if (allowBareHandle && !trimmed.includes(":")) return normalizeGmgnProjectXHandle(trimmed);
+  if (!/^https:\/\//i.test(trimmed)) return null;
+  const authority = trimmed.match(/^https:\/\/([^/?#]+)/i)?.[1];
+  if (!authority || authority.includes("@") || authority.includes(":")) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username ||
+    parsed.password ||
+    parsed.port ||
+    !PROJECT_X_HOSTS.has(parsed.hostname.toLowerCase()) ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    return null;
+  }
+  const segments = parsed.pathname.split("/").filter(Boolean);
+  return segments.length === 1 ? normalizeGmgnProjectXHandle(segments[0]) : null;
+}
+
+function isProjectXLabel(value: unknown): boolean {
+  return typeof value === "string" && PROJECT_X_LABELS.has(value.trim().toLowerCase());
+}
+
+function declaredProjectXHandles(value: unknown): string[] {
+  const handles = new Set<string>();
+  let visited = 0;
+  const add = (candidate: unknown, allowBareHandle: boolean) => {
+    const handle = projectXHandleFromString(candidate, allowBareHandle);
+    if (handle) handles.add(handle);
+  };
+  const visit = (current: unknown, depth: number, containerLabelled: boolean, allowBareHandle = false): void => {
+    visited += 1;
+    if (visited > PROJECT_X_MAX_NODES || depth > PROJECT_X_MAX_DEPTH) return;
+    if (typeof current === "string") {
+      if (containerLabelled) add(current, allowBareHandle);
+      return;
+    }
+    if (Array.isArray(current)) {
+      for (const entry of current.slice(0, PROJECT_X_MAX_NODES)) {
+        visit(entry, depth + 1, containerLabelled, allowBareHandle);
+      }
+      return;
+    }
+    const record = asRecord(current);
+    if (!record) return;
+    for (const [key, entry] of Object.entries(record)) {
+      if (isProjectXLabel(key)) visit(entry, depth + 1, true, true);
+    }
+    const labelledEntry = [record.type, record.platform, record.network, record.name, record.source].some(
+      isProjectXLabel,
+    );
+    if (labelledEntry) {
+      for (const key of ["url", "link", "href", "value"]) add(record[key], false);
+      for (const key of ["handle", "username", "account"]) add(record[key], true);
+    }
+    for (const key of ["links", "socials", "social_links"]) {
+      if (Object.hasOwn(record, key)) visit(record[key], depth + 1, false);
+    }
+  };
+  visit(value, 0, true);
+  return [...handles].sort();
+}
+
 function segmentSeconds(segment: GmgnObservation["segment"]): number {
   if (segment === "5m") return 300;
   if (segment === "1h") return 3600;
@@ -193,6 +299,8 @@ function normalizeRow(
   ]) {
     if (Object.hasOwn(row, key)) evidence[key] = row[key];
   }
+  const projectXHandles = declaredProjectXHandles(evidence.social_links);
+  if (projectXHandles.length > 0) evidence.projectXHandles = projectXHandles;
   return {
     observationKey: `gmgn:${feed}:${segment}:${tokenAddress}:${windowStart}`,
     feed,
@@ -334,11 +442,29 @@ export function buildGmgnCandidates(
     else if (fiveMinute.isWashTrading) reasons.push("wash_trading_detected");
     const pools = [...new Set(values.map((value) => value.poolAddress).filter((value): value is string => !!value))];
     if (pools.length > 1) reasons.push("pool_address_conflict");
+    const freshValues = values.filter((value) => value.fresh);
+    const socialDuplicate = freshValues.some((value) => value.evidence.is_social_duplicate === true);
+    const projectXHandles = [
+      ...new Set(
+        freshValues.flatMap((value) => {
+          const normalized = Array.isArray(value.evidence.projectXHandles)
+            ? value.evidence.projectXHandles
+                .map((handle) => normalizeGmgnProjectXHandle(handle))
+                .filter((handle): handle is string => handle != null)
+            : [];
+          return normalized.length > 0 ? normalized : declaredProjectXHandles(value.evidence.social_links);
+        }),
+      ),
+    ].sort();
+    if (socialDuplicate) reasons.push("social_identity_duplicate");
+    if (projectXHandles.length > 1) reasons.push("social_identity_conflict");
+    const projectXHandle = !socialDuplicate && projectXHandles.length === 1 ? projectXHandles[0] : null;
     let score = 50 + (oneMinute ? 20 : 0);
     if (trenches.some((value) => value.segment === "new_creation" || value.segment === "near_completion")) score += 15;
     else if (trenches.some((value) => value.segment === "completed")) score += 10;
     if ((fiveMinute.smartDegenCount ?? 0) > 0) score += 5;
     if ((fiveMinute.renownedCount ?? 0) > 0) score += 5;
+    if (projectXHandle) score += 5;
     score = Math.min(100, score);
     if (score < config.minTrendScore) reasons.push("trend_score_below_minimum");
     const provenance = [...values]
@@ -364,6 +490,7 @@ export function buildGmgnCandidates(
         holderCount: fiveMinute.holderCount,
         smartDegenCount: fiveMinute.smartDegenCount,
         renownedCount: fiveMinute.renownedCount,
+        ...(projectXHandle ? { projectXHandle } : {}),
       },
       verified: false,
       verificationReasons: [],

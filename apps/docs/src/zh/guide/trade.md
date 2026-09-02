@@ -77,7 +77,7 @@ king-ai trade daemon --push-tg
 | `data_sources.pumpfun` / `leaderboard` | 链上晨报板块 |
 | `data_sources.robinhood_chain` | 可选的只读 Robinhood Chain Phase 0 采集器与保留配置 |
 | `data_sources.robinhood_chain.phase1.discovery_source` | 显式趋势源：默认的全链 `rpc`，或只读 `gmgn` |
-| `data_sources.robinhood_chain.phase1.phase2` | 可选的本地 shadow 草稿与 72 小时 readiness 台账 |
+| `data_sources.robinhood_chain.phase1.phase2` | 可选的本地草稿/readiness 台账，默认 shadow，可由 sidecar 显式 Telegram 投递 |
 | `treasury` | 美债抛售 / 收益率阈值 |
 | `kimpremium` | 韩国杠杆 KPI、采集间隔和阈值（默认不启用） |
 | `alerts.celebrity_tweet.max_classifications_per_tick` | 每轮名人推文最多 LLM 分类数（默认 `8`，范围 `1..50`） |
@@ -243,7 +243,7 @@ shadow tick：
 king-ai trade collect-robinhood-phase1
 ```
 
-手动命令始终只读，只输出有界 shadow 摘要。至少完成 72 小时 shadow 证据后，Telegram 仍需单独批准。
+手动命令始终只读，只输出有界 shadow 摘要，且永远不会调用 Phase 2 Telegram 投递阶段。
 
 显式 X 注册表在 Phase 1 启用时默认开启；如需关闭请设置 `phase1.x_enabled=false`。shadow sidecar 按
 `x_collect_seconds`（默认 300 秒）调度它。它会直接搜索配置的 Tier A/B/C 账号，而不是假设主页时间线一定
@@ -257,16 +257,23 @@ king-ai trade collect-robinhood-phase1
 点赞动作。
 
 显式设置 `phase1.discovery_source="gmgn"` 可启用以 GMGN 为主源的 token 趋势路径。该模式只要求
-`GMGN_API_KEY`；运行时不读取 `GMGN_PRIVATE_KEY`，不签名钱包载荷，也不具备 swap、订单或投递能力。每个到期
+`GMGN_API_KEY`；GMGN collector 不读取 `GMGN_PRIVATE_KEY`，不签名钱包载荷，不执行 swap 或订单，也不自行
+投递消息。每个到期
 tick 读取 Robinhood 的 `1m`、`5m`、`1h` 排名，以及 trenches 的 `new_creation`、`near_completion`、
 `completed` 三类数据，在客户端对每个分类分别执行硬上限，并把归一化观测写入独立数据库
 `~/.king-ai/trade/state/robinhood_chain_gmgn.sqlite`。API origin 固定为 `https://openapi.gmgn.ai`；认证
 timestamp 根据有界的 HTTPS `Date` 响应校正，不修改操作系统时钟。
 
 候选必须由 fresh 且安全的 `5m` 记录与同窗 `1m` 或 trenches 记录交叉确认，再对最多 20 个唯一地址执行
-Chain ID 和 bytecode 限界验证。GMGN 模式下 daemon 跳过全链 Phase 0 和 RPC Phase 1 发现，保留其数据库与
-历史 cursor 不动，然后仅使用已验证的 GMGN 候选运行 Phase 2。Phase 2 自动隔离到
-`phase2-v13-gmgn-primary`，旧 RPC epoch 不能计入 readiness；X 仍只能按精确地址补充证据。
+Chain ID 和 bytecode 限界验证。当现有 GMGN 响应提供且只提供一个经过严格归一化的项目 X 账号时，系统会
+把它作为“GMGN 声明的项目账号”增加 5 分证据分，并在 Phase 2 消息中显示
+`project_x=@handle (GMGN-declared)`。这并不独立证明该账号确属官方。社交字段缺失或畸形时不加分，但不会
+拒绝其他证据完整的候选；明确的布尔型社交重复标志或多个有效账号冲突会拒绝候选。项目账号不能替代市场、
+风险、交叉确认或 RPC 验证门禁。
+
+GMGN 模式下 daemon 跳过全链 Phase 0 和 RPC Phase 1 发现，保留其数据库与历史 cursor 不动，然后仅使用
+已验证的 GMGN 候选运行 Phase 2。Phase 2 自动隔离到 `phase2-v14-gmgn-project-x`，v13 和更旧 epoch 不能
+计入 readiness 或自动投递；X 帖子仍只能按精确地址补充证据。
 `gmgn_limit`（默认 100，最大 200）、`gmgn_max_age_seconds`（最大 600）和 `gmgn_rpc_verify_limit`（最大 20）
 都是 fail-closed 边界。可手动执行一次已配置的 GMGN tick：
 
@@ -275,17 +282,19 @@ king-ai trade collect-robinhood-gmgn
 ```
 
 该命令始终为 shadow-only，不会启用交易或 Telegram 投递。把 `discovery_source` 改回 `rpc` 即可恢复使用未被
-改写的旧扫描器数据库；v13 readiness 不会并入 RPC epoch。
+改写的旧扫描器数据库；GMGN readiness 不会并入 RPC epoch。
 
-### Robinhood Chain Phase 2 shadow readiness
+### Robinhood Chain Phase 2 readiness 与可选 Telegram 投递
 
-Phase 2 是 `phase1.phase2` 下额外启用的本地证据层。它只读取候选和审计记录，在独立数据库中
-物化确定性的 shadow 告警草稿，并衡量 72 小时实地门禁；它不会重新扫描链或修改 Phase 1 分数。只有当
-X 帖子正文包含完整池地址或代币地址时，才会附加为补充证据，而且 X 不能创建草稿。
+Phase 2 是 `phase1.phase2` 下额外启用的本地证据层。它只读取候选和审计记录，在独立数据库中物化确定性的
+告警草稿，并衡量 72 小时质量指标；它不会重新扫描链或修改 Phase 1 分数。只有当 X 帖子正文包含完整池地址
+或代币地址时，才会附加为补充证据，而且 X 不能创建草稿。`delivery` 默认是 `shadow`；显式设置为
+`telegram` 时，只有隔离 shadow daemon 能在 Phase 2 事务提交后投递新物化且已经 GMGN 验证的草稿。
 
-默认 readiness 要求至少覆盖 72 小时、成功运行 800 次、运行间隔不超过 15 分钟、源错误率不超过 5%、
-至少一个 Phase 1 审计窗口，以及十条经过人工明确复核的 shadow 草稿。全部通过时只返回
-`approval_required`，不会授权或开启 Telegram 投递。
+默认 readiness 指标要求至少覆盖 72 小时、成功运行 800 次、运行间隔不超过 15 分钟、源错误率不超过 5%、
+至少一个 Phase 1 审计窗口，以及十条经过人工明确复核的草稿。这些指标继续用于质量观测；显式
+`delivery="telegram"` 时不再作为逐条人工批准门禁。`liveDeliveryAuthorized` 只表示当前配置授权了投递，
+不表示交易授权或信号质量。
 
 readiness 按 `phase2.field_run_revision` 隔离。旧 revision 的运行、草稿和复核记录仍保留在 SQLite 中供
 审计，但不会计入当前 72 小时门禁。每当采集器、解码器、阈值或现场配置发生实质变更并加载后，都必须
@@ -302,16 +311,21 @@ king-ai trade review-robinhood-phase2 <alert-id> accepted --note "复核说明"
 如需隔离开展现场运行，应准备一个仅包含 Robinhood Chain 设置的独立 `KING_AI_CONFIG_DIR`，并启动
 `king-ai trade robinhood-shadow-daemon`。仅当清洗后的 RPC endpoint 集合完全不重叠时，该 sidecar 才并行运行到期的 Phase 0 与 Phase 1；
 否则继续使用串行 provider cooldown 路径，Phase 2 始终等待两个链上阶段结束。Phase 1 X 注册表作为独立的
-single-flight 任务调度，账号扫描不会延迟链上周期。它使用独立 PID 锁与
-SQLite 文件，不包含 Telegram、LLM、钱包、签名、下单或晨报路径。调度器默认每 30 秒唤醒，同时保留
-配置中的 30/60/300 秒周期；停止时会等待已在运行的链上与 X 采集结束，再释放 PID 锁。
+single-flight 任务调度，账号扫描不会延迟链上周期。它使用独立 PID 锁与 SQLite 文件，不包含 LLM、钱包、
+签名、下单、交易或晨报路径。调度器默认每 30 秒唤醒，同时保留配置中的 30/60/300 秒周期；停止时会等待
+已在运行的采集、投递与 X 任务结束，再释放 PID 锁。
 
 ```sh
 KING_AI_CONFIG_DIR=~/.king-ai-robinhood-shadow king-ai trade robinhood-shadow-daemon
 ```
 
-人工结论只能是 `accepted` 或 `rejected`。Phase 2 固定为 `delivery=shadow`，不调用 LLM、不访问钱包、
-不签名、不下单、不交易。完成 readiness 证据和误报样本复核后，live delivery 仍需单独批准。
+人工结论只能是 `accepted` 或 `rejected`。手动采集、状态和复核命令都不会投递。sidecar 首次观察到
+`delivery="telegram"` 时，会记录启用边界，把当前 revision 已存在的草稿标记为 `suppressed_existing`，并为
+其 subject 建立 cooldown，不补发历史消息。后续 alert 按“field revision + subject type + 小写地址”识别；
+默认 cooldown 为 3,600 秒，可配置范围为 300-86,400 秒。每周期最多执行十次单 alert 请求，且不会把一条
+alert 拆成多个 Telegram 分片。已知失败进入有界指数退避的 `retry_wait`；中断或无法判定的 `sending` 结果
+转为终态 `unknown`，不会自动重试。网络请求期间不持有 SQLite 事务。Phase 2 不调用 LLM、不访问钱包、
+不签名、不下单、不交易。
 
 晨报 Telegram 投递会在 `~/.king-ai/trade/logs/daemon.log` 写入
 `[morning-brief] telegram push ok|failed chunks=N`，最近一次投递元数据在

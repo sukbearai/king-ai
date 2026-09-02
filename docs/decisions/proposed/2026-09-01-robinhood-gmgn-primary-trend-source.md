@@ -16,7 +16,7 @@ GMGN HTTPS `Date` 是认证时间偏移的网络 authority。offset 只存在内
 
 GMGN observation 使用精确 EVM token address、feed/interval/category、上游观测时间、摄取时间和 deterministic observation window 作为身份，并写入独立的 `robinhood_chain_gmgn.sqlite`。重复 poll 幂等更新，同一 token 的多 feed 记录保留独立 provenance 后合并。缺少市场或风险字段保持 unknown，不转成零。Phase 2 使用新增的 source-agnostic subject 字段作为 GMGN token identity，旧 pool-oriented 字段只承担已声明的兼容用途。
 
-候选必须由 fresh `5m` trending 与同窗 `1m` 或 trenches 交叉确认，并通过已声明的 volume、liquidity、swap、holder、honeypot 和 wash-trading 门禁。Phase 2 使用 `phase2-v13-gmgn-primary` 独立 epoch；旧 v12、RPC backfill 和 X-only 数据不能计入 readiness。X 只按精确地址补充证据。
+候选必须由 fresh `5m` trending 与同窗 `1m` 或 trenches 交叉确认，并通过已声明的 volume、liquidity、swap、holder、honeypot 和 wash-trading 门禁。当同窗 fresh GMGN evidence 中只有一个严格合法的 X/Twitter 项目账号时，它以“GMGN 声明、未经独立归属验证”的语义增加 5 分；明确的布尔型社交重复标志或多个有效账号冲突会拒绝候选。缺失或畸形社交字段不构成拒绝，项目账号也不能替代任何市场、风险、交叉确认或 RPC 验证。Phase 2 使用 `phase2-v14-gmgn-project-x` 独立 epoch；旧 v13、RPC backfill 和 X-only 数据不能计入 readiness 或自动投递。X 帖子继续只按精确地址补充证据。
 
 Robinhood RPC 不再负责全链发现或历史清零，只对当前 GMGN shortlist 做最多 20 个地址的 Chain ID、bytecode 和 pool/contract identity 验证。RPC 不能创建或补齐 GMGN 候选，验证失败的候选不能进入 Phase 2 materialization。
 
@@ -31,20 +31,20 @@ Robinhood RPC 不再负责全链发现或历史清零，只对当前 GMGN shortl
 
 ## Risks
 
-- GMGN 是外部中心化数据源，字段和 envelope 可能变化；通过严格 parser、source health、freshness、recorded fixture 和 schema-drift fail-closed 控制。
+- GMGN 是外部中心化数据源，字段和 envelope 可能变化；通过严格 parser、source health、freshness、recorded fixture 和 schema-drift fail-closed 控制。项目 X 字段只表示 GMGN 声明，不能被描述为已验证官方；现场当前 observation 也可能完全不返回该字段，因此它只能是软加分而非硬门槛。
 - API key 与同目录 private key 可能被环境误传；生产 adapter 只读取一个命名变量，不启动继承 ambient environment 的子进程，并以 secret/capability tests 验证。
 - GMGN rank/trenches 是 token-centric，而旧 Phase 1/2 是 pool-centric；Revision 9 必须使用 source-agnostic token subject DTO 和独立 GMGN observation persistence，不能把 token address 静默伪装成 pool identity。
 - GMGN outage 会停止新趋势发现；RPC 只能验证既有候选，不能作为隐藏 fallback 制造新数据。
-- 本决策改变 readiness authority，因此必须开启 v13 epoch；任何旧运行时长或 review 都不能迁入。
+- 本决策改变 readiness authority，项目社交评分语义因此开启 v14 epoch；任何 v13 运行时长、review、draft、claim 或 cooldown authority 都不能迁入。
 
 ## Verification
 
-- Source/unit: 本地实现已完成。GMGN/Phase 2 subset 通过 35/35，覆盖 auth clock skew、严格 nested envelope、trenches per-category client cap、address/numeric validation、unknown handling、dedup/provenance merge、candidate gate、secret redaction、严格 Chain ID、RPC non-creation、RPC abort、v13-only materialization 和 unverified rejection。
-- Integration/lifecycle: Robinhood Phase 0、Phase 1、GMGN、Phase 2 和 shadow-daemon compiled suite 通过 105/105，覆盖 GMGN mode 跳过 full-chain discovery、single-flight、bounded parallel requests、timestamp replay、刷新后的 429 request budget、shutdown abort/drain、partial tick atomicity 和 ordinary trade daemon isolation。
-- Test sensitivity: repository-owned manual mutation runner kill 8/8 mutants，并在恢复源码后重跑 focused suite 成功。它只证明这八个缺陷被当前测试捕获，不替代完整 mutation coverage。
-- Repository: `pnpm lint` 检查 262 个文件；`pnpm verify` 通过 CLI 643/643、GUI worker 177/177、skill Node 11/11、skill Python 9/9 和 12 个 skill validation；双语 VitePress docs build、decision validator、secret/capability scan 和 `git diff --check` 均通过。生产源码没有 `GMGN_PRIVATE_KEY` 或 `X-Signature`，也没有 wallet、signature、signing、swap、order 或 trading 写能力。
-- Deployed/field: 尚未执行。没有运行本实现的 live GMGN tick，没有重启 sidecar，没有修改现场 DB。仍需单独批准 isolated shadow build/restart，并证明至少三次连续 fresh GMGN ticks、六类 feed freshness、bounded RPC verification、v13-only accounting、无 secret 泄露或重复 observation/candidate/draft。72 小时、800 runs、review 和 live-delivery approval gate 均未完成，因此状态继续为 `proposed`。
+- Source/unit: GMGN、Phase 2 与 Telegram subset 通过 48/48，覆盖严格 X/Twitter profile 归一化、危险 URL 拒绝、缺失/畸形字段兼容、5 分软加分、duplicate/conflict fail-closed、市场与风险门禁不可绕过、v13 到 v14 隔离、纯文本 `GMGN-declared` 展示，以及原有 auth、clock、RPC 和 delivery 行为。
+- Integration/lifecycle: Robinhood Phase 0、Phase 1、GMGN、Phase 2、Telegram 和 shadow-daemon compiled suite 通过 127/127，覆盖 GMGN mode 跳过 full-chain discovery、single-flight、bounded parallel requests、timestamp replay、刷新后的 429 request budget、shutdown abort/drain、partial tick atomicity、automatic-delivery ownership 和 ordinary trade daemon isolation。
+- Test sensitivity: repository-owned GMGN manual mutation runner kill 14/14 mutants，并在恢复源码后重跑 focused suite 成功。其中新增 mutant 攻击 reserved route、duplicate/conflict rejection、score bonus、v14 epoch 和错误的 `official` 标签。它不替代完整 mutation coverage。
+- Repository: `pnpm lint` 检查 264 个文件；`pnpm verify` 通过 CLI 661/661、GUI worker 177/177、skill Node 11/11、skill Python 9/9 和 12 个 skill validation；双语 VitePress docs build、decision validator、secret/capability scan 和 `git diff --check` 均通过。生产源码没有 `GMGN_PRIVATE_KEY` 或 `X-Signature`，也没有 wallet/private-key/swap/order/trade route。
+- Deployed/field: v14 尚未部署。没有从本实现运行 live GMGN tick，没有重启 sidecar，也没有修改现场 DB。只读现场快照显示现有 26,326 条 observation 均未包含 `social_links` 或 `is_social_duplicate`，因此项目账号保持软信号。仍需单独批准 fixed build/restart，并证明 fresh GMGN ticks、六类 feed freshness、bounded RPC verification、v14-only accounting、无 secret 泄露或重复 observation/candidate/draft，以及真实 Telegram 结果。状态继续为 `proposed`。
 
 ## Rollback
 
-关闭 GMGN mode 并恢复旧 RPC collector 代码。旧 RPC 数据库和 cursor 从未删除或改写，因此可继续原有语义。GMGN observation、candidate 和 v13 readiness 数据保留只读审计，不与回滚后的 RPC epoch 合并。无需 down-migration；任何后续重新启用都必须使用新的 `field_run_revision`。
+关闭 GMGN mode 并恢复旧 RPC collector 代码。旧 RPC 数据库和 cursor 从未删除或改写，因此可继续原有语义。GMGN observation、candidate 和 v13/v14 readiness 数据保留只读审计，不与回滚后的 RPC epoch 合并。无需 down-migration；任何后续重新启用都必须使用新的 `field_run_revision`。

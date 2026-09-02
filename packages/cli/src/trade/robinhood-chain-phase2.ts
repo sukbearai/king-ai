@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { mkdirSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -8,15 +9,17 @@ import {
   ROBINHOOD_CHAIN_PHASE2_DB_PATH,
 } from "../paths.js";
 import { dotGet, type TradeConfig } from "./config.js";
-import { GMGN_FIELD_RUN_REVISION } from "./robinhood-chain-gmgn.js";
+import { GMGN_FIELD_RUN_REVISION, normalizeGmgnProjectXHandle } from "./robinhood-chain-gmgn.js";
 import { closeSqliteDb, openSqliteDb, sqliteDbExists } from "./sqlite-db.js";
+import { sendTelegramSingle, TG_MAX_LEN, type TelegramSingleSendResult } from "./telegram.js";
 
 const DEFAULT_FIELD_RUN_REVISION = "phase2-v3-readiness-epoch";
 
 export interface RobinhoodPhase2Config {
   enabled: boolean;
-  delivery: "shadow";
+  delivery: "shadow" | "telegram";
   fieldRunRevision: string;
+  telegramSubjectCooldownSeconds: number;
   collectSeconds: number;
   lookbackHours: number;
   sourceMaxAgeSeconds: number;
@@ -44,15 +47,34 @@ export interface RobinhoodPhase2Readiness {
   auditedWindows: number;
   reviewedAlerts: number;
   shadowAlerts: number;
-  liveDeliveryAuthorized: false;
+  liveDeliveryAuthorized: boolean;
 }
 
 export interface RobinhoodPhase2Result {
   status: "disabled" | "source_unavailable" | "source_unhealthy" | "persisted";
-  delivery: "shadow";
+  delivery: "shadow" | "telegram";
   draftsMaterialized: number;
   draftsStaled: number;
   readiness?: RobinhoodPhase2Readiness;
+}
+
+export interface RobinhoodPhase2TelegramDeliveryResult {
+  status: "disabled" | "initialized" | "completed";
+  sent: number;
+  retryWait: number;
+  unknown: number;
+  suppressedCooldown: number;
+  oversized: number;
+}
+
+type TelegramDeliverySendOutcome = "sent" | "failed" | "unknown";
+
+interface TelegramDeliveryCandidate {
+  alert_id: string;
+  message: string;
+  subject_key: string;
+  delivery_state: string | null;
+  attempts: number | null;
 }
 
 interface Phase1CandidateRow {
@@ -105,11 +127,14 @@ export function resolveRobinhoodPhase2Config(config: TradeConfig): RobinhoodPhas
   const discoverySource = dotGet(config, "data_sources.robinhood_chain.phase1.discovery_source", "rpc");
   const enabled = raw.enabled === true;
   const delivery = String(raw.delivery ?? "shadow");
-  if (enabled && delivery !== "shadow") throw new Error("Robinhood Chain Phase 2 supports shadow delivery only");
+  if (enabled && delivery !== "shadow" && delivery !== "telegram") {
+    throw new Error("Robinhood Chain Phase 2 delivery must be shadow or telegram");
+  }
   return {
     enabled,
-    delivery: "shadow",
+    delivery: delivery === "telegram" ? "telegram" : "shadow",
     fieldRunRevision: discoverySource === "gmgn" ? GMGN_FIELD_RUN_REVISION : fieldRunRevision(raw.field_run_revision),
+    telegramSubjectCooldownSeconds: boundedInt(raw.telegram_subject_cooldown_seconds, 3_600, 300, 86_400),
     collectSeconds: boundedInt(raw.collect_seconds, 300, 60, 86400),
     lookbackHours: boundedInt(raw.lookback_hours, 24, 1, 168),
     sourceMaxAgeSeconds: boundedInt(raw.source_max_age_seconds, 600, 60, 600),
@@ -157,10 +182,12 @@ function draftMessage(row: Phase1CandidateRow): string {
   const poolAddress = row.pool_address ?? (subjectType === "pool" ? row.pool_key : null);
   const sourceKind = row.source_kind ?? "rpc";
   const identity = poolAddress ? `token=${subjectAddress} pool=${poolAddress}` : `${subjectType}=${subjectAddress}`;
+  const projectXHandle = normalizeGmgnProjectXHandle(evidence.projectXHandle);
   return [
     `Robinhood Chain shadow trend (${strength(row.score)})`,
     `source=${sourceKind} ${identity}`,
     `score=${row.score.toFixed(2)} volume_5m_usd=${volume.toFixed(2)} unique_traders=${traders}`,
+    ...(projectXHandle ? [`project_x=@${projectXHandle} (GMGN-declared)`] : []),
     sourceKind === "rpc"
       ? `window_start=${row.window_start} blocks=${row.source_first_block}-${row.source_last_block}`
       : `window_start=${row.window_start}`,
@@ -625,7 +652,7 @@ export class RobinhoodPhase2Store {
       auditedWindows,
       reviewedAlerts,
       shadowAlerts,
-      liveDeliveryAuthorized: false,
+      liveDeliveryAuthorized: cfg.delivery === "telegram",
     };
   }
 
@@ -684,6 +711,335 @@ export class RobinhoodPhase2Store {
   }
 }
 
+function openTelegramDeliveryDb(path: string): DatabaseSync {
+  mkdirSync(dirname(path), { recursive: true });
+  const db = new DatabaseSync(path);
+  db.exec("PRAGMA journal_mode=WAL");
+  db.exec("PRAGMA busy_timeout=5000");
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS telegram_delivery_metadata (
+      field_run_revision TEXT PRIMARY KEY,
+      enabled_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS telegram_deliveries (
+      alert_id TEXT PRIMARY KEY,
+      field_run_revision TEXT NOT NULL,
+      subject_key TEXT NOT NULL,
+      state TEXT NOT NULL,
+      attempts INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      next_attempt_at INTEGER,
+      sent_at INTEGER,
+      last_error_category TEXT
+    );
+    CREATE INDEX IF NOT EXISTS telegram_deliveries_revision_state_idx
+    ON telegram_deliveries(field_run_revision,state,next_attempt_at,created_at);
+    CREATE TABLE IF NOT EXISTS telegram_subject_cooldowns (
+      subject_key TEXT PRIMARY KEY,
+      last_delivered_at INTEGER NOT NULL,
+      source_alert_id TEXT NOT NULL
+    );
+  `);
+  return db;
+}
+
+function telegramSubjectKey(fieldRunRevision: string, subjectType: string, subjectAddress: string): string {
+  return `${fieldRunRevision}:${subjectType}:${subjectAddress.toLowerCase()}`;
+}
+
+function emptyTelegramDeliveryResult(
+  status: RobinhoodPhase2TelegramDeliveryResult["status"],
+): RobinhoodPhase2TelegramDeliveryResult {
+  return {
+    status,
+    sent: 0,
+    retryWait: 0,
+    unknown: 0,
+    suppressedCooldown: 0,
+    oversized: 0,
+  };
+}
+
+function initializeTelegramDeliveryDb(
+  db: DatabaseSync,
+  cfg: RobinhoodPhase2Config,
+  now: number,
+): { initialized: boolean; suppressedExisting: number } {
+  const existing = db
+    .prepare("SELECT enabled_at FROM telegram_delivery_metadata WHERE field_run_revision=?")
+    .get(cfg.fieldRunRevision);
+  if (existing) return { initialized: false, suppressedExisting: 0 };
+
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const inserted = db
+      .prepare("INSERT OR IGNORE INTO telegram_delivery_metadata (field_run_revision,enabled_at) VALUES (?,?)")
+      .run(cfg.fieldRunRevision, now);
+    if (Number(inserted.changes) === 0) {
+      db.exec("COMMIT");
+      return { initialized: false, suppressedExisting: 0 };
+    }
+    const drafts = db
+      .prepare(`
+        SELECT alert_id,subject_type,subject_address
+        FROM shadow_alerts
+        WHERE field_run_revision=? AND state='draft'
+        ORDER BY first_materialized_at,alert_id
+      `)
+      .all(cfg.fieldRunRevision) as Array<{
+      alert_id: string;
+      subject_type: string;
+      subject_address: string;
+    }>;
+    const suppress = db.prepare(`
+      INSERT INTO telegram_deliveries (
+        alert_id,field_run_revision,subject_key,state,attempts,created_at,updated_at,
+        next_attempt_at,sent_at,last_error_category
+      ) VALUES (?,?,?,'suppressed_existing',0,?,?,NULL,NULL,NULL)
+    `);
+    const seedCooldown = db.prepare(`
+      INSERT INTO telegram_subject_cooldowns (subject_key,last_delivered_at,source_alert_id)
+      VALUES (?,?,?)
+      ON CONFLICT(subject_key) DO UPDATE SET
+        last_delivered_at=MAX(last_delivered_at,excluded.last_delivered_at),
+        source_alert_id=excluded.source_alert_id
+    `);
+    for (const draft of drafts) {
+      const subjectKey = telegramSubjectKey(cfg.fieldRunRevision, draft.subject_type, draft.subject_address);
+      suppress.run(draft.alert_id, cfg.fieldRunRevision, subjectKey, now, now);
+      seedCooldown.run(subjectKey, now, draft.alert_id);
+    }
+    db.exec("COMMIT");
+    return { initialized: true, suppressedExisting: drafts.length };
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+export function initializeRobinhoodPhase2TelegramDelivery(options: {
+  config: TradeConfig;
+  phase2DbPath?: string;
+  now?: number;
+}): { initialized: boolean; suppressedExisting: number } {
+  const cfg = resolveRobinhoodPhase2Config(options.config);
+  if (cfg.delivery !== "telegram") return { initialized: false, suppressedExisting: 0 };
+  const db = openTelegramDeliveryDb(options.phase2DbPath ?? ROBINHOOD_CHAIN_PHASE2_DB_PATH);
+  try {
+    return initializeTelegramDeliveryDb(db, cfg, options.now ?? Math.floor(Date.now() / 1000));
+  } finally {
+    db.close();
+  }
+}
+
+function normalizedTelegramSendResult(
+  result: TelegramDeliverySendOutcome | TelegramSingleSendResult,
+): TelegramSingleSendResult {
+  return typeof result === "string" ? { outcome: result } : result;
+}
+
+function telegramRetryDelaySeconds(attempts: number): number {
+  return Math.min(3_600, 60 * 2 ** Math.max(0, attempts - 1));
+}
+
+export async function deliverRobinhoodPhase2Telegram(options: {
+  config: TradeConfig;
+  phase2DbPath?: string;
+  now?: number;
+  signal?: AbortSignal;
+  send?: (
+    message: string,
+    config: TradeConfig,
+    signal?: AbortSignal,
+  ) => Promise<TelegramDeliverySendOutcome | TelegramSingleSendResult>;
+  afterSend?: () => void;
+}): Promise<RobinhoodPhase2TelegramDeliveryResult> {
+  const cfg = resolveRobinhoodPhase2Config(options.config);
+  const now = options.now ?? Math.floor(Date.now() / 1000);
+  const db = openTelegramDeliveryDb(options.phase2DbPath ?? ROBINHOOD_CHAIN_PHASE2_DB_PATH);
+  try {
+    if (cfg.delivery !== "telegram") return emptyTelegramDeliveryResult("disabled");
+    const initialization = initializeTelegramDeliveryDb(db, cfg, now);
+    if (initialization.initialized) return emptyTelegramDeliveryResult("initialized");
+
+    const result = emptyTelegramDeliveryResult("completed");
+    const recovered = db
+      .prepare(`
+        UPDATE telegram_deliveries
+        SET state='unknown',updated_at=?,next_attempt_at=NULL,last_error_category='telegram_restart_ambiguous'
+        WHERE field_run_revision=? AND state='sending'
+      `)
+      .run(now, cfg.fieldRunRevision);
+    result.unknown += Number(recovered.changes);
+
+    const metadata = db
+      .prepare("SELECT enabled_at FROM telegram_delivery_metadata WHERE field_run_revision=?")
+      .get(cfg.fieldRunRevision) as { enabled_at?: number } | undefined;
+    if (metadata?.enabled_at == null) throw new Error("Robinhood Phase 2 Telegram enablement boundary is missing");
+    const candidates = db
+      .prepare(`
+        SELECT a.alert_id,a.message,
+               a.field_run_revision || ':' || a.subject_type || ':' || lower(a.subject_address) AS subject_key,
+               d.state AS delivery_state,d.attempts
+        FROM shadow_alerts a
+        LEFT JOIN telegram_deliveries d ON d.alert_id=a.alert_id
+        WHERE a.field_run_revision=? AND a.state='draft' AND a.source_kind='gmgn'
+          AND a.first_materialized_at>?
+          AND (d.alert_id IS NULL OR (d.state='retry_wait' AND d.next_attempt_at<=?))
+        ORDER BY a.first_materialized_at,a.alert_id
+        LIMIT 500
+      `)
+      .all(cfg.fieldRunRevision, Number(metadata.enabled_at), now) as unknown as TelegramDeliveryCandidate[];
+
+    let networkAttempts = 0;
+    const insertTerminal = db.prepare(`
+      INSERT INTO telegram_deliveries (
+        alert_id,field_run_revision,subject_key,state,attempts,created_at,updated_at,
+        next_attempt_at,sent_at,last_error_category
+      ) VALUES (?,?,?,?,0,?,?,NULL,NULL,?)
+    `);
+    for (const candidate of candidates) {
+      if (options.signal?.aborted) break;
+      const cooldown = db
+        .prepare("SELECT last_delivered_at FROM telegram_subject_cooldowns WHERE subject_key=?")
+        .get(candidate.subject_key) as { last_delivered_at?: number } | undefined;
+      if (
+        cooldown?.last_delivered_at != null &&
+        now - Number(cooldown.last_delivered_at) < cfg.telegramSubjectCooldownSeconds
+      ) {
+        if (candidate.delivery_state === "retry_wait") {
+          db.prepare(`
+            UPDATE telegram_deliveries
+            SET state='suppressed_cooldown',updated_at=?,next_attempt_at=NULL,last_error_category=NULL
+            WHERE alert_id=? AND state='retry_wait'
+          `).run(now, candidate.alert_id);
+        } else {
+          insertTerminal.run(
+            candidate.alert_id,
+            cfg.fieldRunRevision,
+            candidate.subject_key,
+            "suppressed_cooldown",
+            now,
+            now,
+            null,
+          );
+        }
+        result.suppressedCooldown += 1;
+        continue;
+      }
+      if (candidate.message.length > TG_MAX_LEN) {
+        if (candidate.delivery_state === "retry_wait") {
+          db.prepare(`
+            UPDATE telegram_deliveries
+            SET state='oversized',updated_at=?,next_attempt_at=NULL,last_error_category='telegram_message_oversized'
+            WHERE alert_id=? AND state='retry_wait'
+          `).run(now, candidate.alert_id);
+        } else {
+          insertTerminal.run(
+            candidate.alert_id,
+            cfg.fieldRunRevision,
+            candidate.subject_key,
+            "oversized",
+            now,
+            now,
+            "telegram_message_oversized",
+          );
+        }
+        result.oversized += 1;
+        continue;
+      }
+      if (networkAttempts >= 10) break;
+
+      db.exec("BEGIN IMMEDIATE");
+      let claimedAttempts = Number(candidate.attempts ?? 0) + 1;
+      try {
+        if (candidate.delivery_state === "retry_wait") {
+          const claimed = db
+            .prepare(`
+            UPDATE telegram_deliveries
+            SET state='sending',attempts=attempts+1,updated_at=?,next_attempt_at=NULL,last_error_category=NULL
+            WHERE alert_id=? AND state='retry_wait' AND next_attempt_at<=?
+          `)
+            .run(now, candidate.alert_id, now);
+          if (Number(claimed.changes) === 0) {
+            db.exec("COMMIT");
+            continue;
+          }
+        } else {
+          db.prepare(`
+            INSERT INTO telegram_deliveries (
+              alert_id,field_run_revision,subject_key,state,attempts,created_at,updated_at,
+              next_attempt_at,sent_at,last_error_category
+            ) VALUES (?,?,?,'sending',1,?,?,NULL,NULL,NULL)
+          `).run(candidate.alert_id, cfg.fieldRunRevision, candidate.subject_key, now, now);
+          claimedAttempts = 1;
+        }
+        db.exec("COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+
+      networkAttempts += 1;
+      let sendResult: TelegramSingleSendResult;
+      try {
+        const rawResult = options.send
+          ? await options.send(candidate.message, options.config, options.signal)
+          : await sendTelegramSingle(candidate.message, options.config, { signal: options.signal });
+        sendResult = normalizedTelegramSendResult(rawResult);
+      } catch {
+        sendResult = { outcome: "unknown", errorCategory: "telegram_sender_threw_unknown" };
+      }
+      options.afterSend?.();
+
+      if (sendResult.outcome === "sent") {
+        db.exec("BEGIN IMMEDIATE");
+        try {
+          db.prepare(`
+            UPDATE telegram_deliveries
+            SET state='sent',updated_at=?,next_attempt_at=NULL,sent_at=?,last_error_category=NULL
+            WHERE alert_id=? AND state='sending'
+          `).run(now, now, candidate.alert_id);
+          db.prepare(`
+            INSERT INTO telegram_subject_cooldowns (subject_key,last_delivered_at,source_alert_id)
+            VALUES (?,?,?)
+            ON CONFLICT(subject_key) DO UPDATE SET
+              last_delivered_at=excluded.last_delivered_at,source_alert_id=excluded.source_alert_id
+          `).run(candidate.subject_key, now, candidate.alert_id);
+          db.exec("COMMIT");
+        } catch (error) {
+          db.exec("ROLLBACK");
+          throw error;
+        }
+        result.sent += 1;
+      } else if (sendResult.outcome === "failed") {
+        db.prepare(`
+          UPDATE telegram_deliveries
+          SET state='retry_wait',updated_at=?,next_attempt_at=?,last_error_category=?
+          WHERE alert_id=? AND state='sending'
+        `).run(
+          now,
+          now + telegramRetryDelaySeconds(claimedAttempts),
+          sendResult.errorCategory ?? "telegram_send_failed",
+          candidate.alert_id,
+        );
+        result.retryWait += 1;
+      } else {
+        db.prepare(`
+          UPDATE telegram_deliveries
+          SET state='unknown',updated_at=?,next_attempt_at=NULL,last_error_category=?
+          WHERE alert_id=? AND state='sending'
+        `).run(now, sendResult.errorCategory ?? "telegram_send_unknown", candidate.alert_id);
+        result.unknown += 1;
+      }
+    }
+    return result;
+  } finally {
+    db.close();
+  }
+}
+
 export async function collectRobinhoodPhase2(options: {
   config: TradeConfig;
   phase1DbPath?: string;
@@ -694,7 +1050,7 @@ export async function collectRobinhoodPhase2(options: {
 }): Promise<RobinhoodPhase2Result> {
   const cfg = resolveRobinhoodPhase2Config(options.config);
   if (!cfg.enabled && !options.force) {
-    return { status: "disabled", delivery: "shadow", draftsMaterialized: 0, draftsStaled: 0 };
+    return { status: "disabled", delivery: cfg.delivery, draftsMaterialized: 0, draftsStaled: 0 };
   }
   const phase2DbPath = options.phase2DbPath ?? ROBINHOOD_CHAIN_PHASE2_DB_PATH;
   await mkdir(dirname(phase2DbPath), { recursive: true });
@@ -715,7 +1071,7 @@ export async function collectRobinhoodPhase2(options: {
           : snapshot.status === "unhealthy"
             ? "source_unhealthy"
             : "source_unavailable",
-      delivery: "shadow",
+      delivery: cfg.delivery,
       draftsMaterialized: result.materialized,
       draftsStaled: Math.max(0, result.staled),
       readiness: result.readiness,

@@ -142,6 +142,66 @@ describe("Robinhood GMGN primary collector", () => {
     );
   });
 
+  it("normalizes bounded GMGN-declared project X account shapes", () => {
+    const socialRows = [
+      trendingRow({
+        address: `0x${"1".repeat(40)}`,
+        social_links: "https://x.com/Project_One",
+      }),
+      trendingRow({
+        address: `0x${"2".repeat(40)}`,
+        social_links: { twitter: "ProjectTwo" },
+      }),
+      trendingRow({
+        address: `0x${"3".repeat(40)}`,
+        social_links: [{ type: "twitter", url: "https://twitter.com/ProjectThree" }],
+      }),
+      trendingRow({
+        address: `0x${"4".repeat(40)}`,
+        social_links: { links: [{ platform: "x", handle: "@ProjectFour" }] },
+      }),
+    ];
+    const normalized = normalizeGmgnTrending(
+      { code: 0, data: { code: 0, data: { rank: socialRows } } },
+      "5m",
+      1_700_000_000,
+      1_699_999_895,
+      100,
+      600,
+    );
+    assert.deepEqual(
+      normalized.map((row) => row.evidence.projectXHandles),
+      [["project_one"], ["projecttwo"], ["projectthree"], ["projectfour"]],
+    );
+  });
+
+  it("rejects hostile or non-profile X values during normalization", () => {
+    const hostile = [
+      "http://x.com/project",
+      "https://user:pass@x.com/project",
+      "https://x.com:8443/project",
+      "https://x.example/project",
+      "https://x.com/i/status/123",
+      "https://x.com/share",
+      "https://x.com/project/extra",
+      "https://x.com/project?ref=gmgn",
+      "https://x.com/project#bio",
+      "https://x.com/handle-is-too-long",
+      "project_without_at",
+    ];
+    for (const social_links of hostile) {
+      const [row] = normalizeGmgnTrending(
+        { code: 0, data: { code: 0, data: { rank: [trendingRow({ social_links })] } } },
+        "5m",
+        1_700_000_000,
+        1_699_999_895,
+        100,
+        600,
+      );
+      assert.equal(row?.evidence.projectXHandles, undefined, social_links);
+    }
+  });
+
   it("enforces the trenches limit independently for every required category", () => {
     const rows = Array.from({ length: 60 }, (_, index) =>
       trendingRow({ address: `0x${index.toString(16).padStart(40, "0")}`, pool_address: POOL }),
@@ -223,6 +283,123 @@ describe("Robinhood GMGN primary collector", () => {
     })[0]!;
     assert.equal(unsafe.state, "rejected");
     assert.ok(unsafe.reasons.includes("honeypot_status_unknown"));
+  });
+
+  it("uses a project X account only as a bounded score bonus", () => {
+    const withProjectX = buildGmgnCandidates(
+      [
+        observation("5m", { evidence: { social_links: { twitter: "https://x.com/ProjectAlpha" } } }),
+        observation("1m"),
+        observation("new_creation"),
+      ],
+      { minLiquidityUsd: 25_000, minVolume5mUsd: 10_000, minTrendScore: 50 },
+    )[0]!;
+    assert.equal(withProjectX.state, "qualified");
+    assert.equal(withProjectX.score, 100);
+    assert.equal(withProjectX.evidence.projectXHandle, "projectalpha");
+
+    const missing = buildGmgnCandidates([observation("5m"), observation("1m"), observation("new_creation")], {
+      minLiquidityUsd: 25_000,
+      minVolume5mUsd: 10_000,
+      minTrendScore: 50,
+    })[0]!;
+    assert.equal(missing.state, "qualified");
+    assert.equal(missing.score, 95);
+    assert.equal(missing.evidence.projectXHandle, undefined);
+
+    const malformed = buildGmgnCandidates(
+      [
+        observation("5m", { evidence: { social_links: { website: "https://example.com/project" } } }),
+        observation("1m"),
+        observation("new_creation"),
+      ],
+      { minLiquidityUsd: 25_000, minVolume5mUsd: 10_000, minTrendScore: 50 },
+    )[0]!;
+    assert.equal(malformed.state, "qualified");
+    assert.equal(malformed.score, 95);
+    assert.equal(malformed.evidence.projectXHandle, undefined);
+
+    const thresholdHelp = buildGmgnCandidates(
+      [
+        observation("5m", {
+          smartDegenCount: 0,
+          renownedCount: 0,
+          evidence: { social_links: "@ThresholdHelp" },
+        }),
+        observation("1m"),
+      ],
+      { minLiquidityUsd: 25_000, minVolume5mUsd: 10_000, minTrendScore: 75 },
+    )[0]!;
+    assert.equal(thresholdHelp.score, 75);
+    assert.equal(thresholdHelp.state, "qualified");
+
+    const stillUnsafe = buildGmgnCandidates(
+      [
+        observation("5m", {
+          isHoneypot: null,
+          evidence: { social_links: "https://x.com/CannotBypassRisk" },
+        }),
+        observation("1m"),
+      ],
+      { minLiquidityUsd: 25_000, minVolume5mUsd: 10_000, minTrendScore: 50 },
+    )[0]!;
+    assert.equal(stillUnsafe.state, "rejected");
+    assert.ok(stillUnsafe.reasons.includes("honeypot_status_unknown"));
+  });
+
+  it("fails closed for duplicate or conflicting project X identities", () => {
+    const duplicate = buildGmgnCandidates(
+      [
+        observation("5m", {
+          evidence: {
+            social_links: { twitter: "https://x.com/CloneProject" },
+            is_social_duplicate: true,
+          },
+        }),
+        observation("1m"),
+      ],
+      { minLiquidityUsd: 25_000, minVolume5mUsd: 10_000, minTrendScore: 50 },
+    )[0]!;
+    assert.equal(duplicate.state, "rejected");
+    assert.ok(duplicate.reasons.includes("social_identity_duplicate"));
+
+    const conflictInputs = [
+      observation("5m", { evidence: { social_links: { twitter: "@FirstProject" } } }),
+      observation("1m", { evidence: { social_links: [{ type: "x", handle: "@SecondProject" }] } }),
+    ];
+    for (const values of [conflictInputs, [...conflictInputs].reverse()]) {
+      const conflict = buildGmgnCandidates(values, {
+        minLiquidityUsd: 25_000,
+        minVolume5mUsd: 10_000,
+        minTrendScore: 50,
+      })[0]!;
+      assert.equal(conflict.state, "rejected");
+      assert.ok(conflict.reasons.includes("social_identity_conflict"));
+      assert.equal(conflict.evidence.projectXHandle, undefined);
+    }
+
+    const malformedFlag = buildGmgnCandidates(
+      [
+        observation("5m", {
+          evidence: { social_links: "@LegitProject", is_social_duplicate: "true" },
+        }),
+        observation("1m"),
+      ],
+      { minLiquidityUsd: 25_000, minVolume5mUsd: 10_000, minTrendScore: 50 },
+    )[0]!;
+    assert.equal(malformedFlag.state, "qualified");
+    assert.equal(malformedFlag.evidence.projectXHandle, "legitproject");
+
+    const staleDuplicate = buildGmgnCandidates(
+      [
+        observation("5m", { evidence: { social_links: "@FreshProject" } }),
+        observation("1m"),
+        observation("completed", { fresh: false, evidence: { is_social_duplicate: true } }),
+      ],
+      { minLiquidityUsd: 25_000, minVolume5mUsd: 10_000, minTrendScore: 50 },
+    )[0]!;
+    assert.equal(staleDuplicate.state, "qualified");
+    assert.equal(staleDuplicate.evidence.projectXHandle, "freshproject");
   });
 
   it("corrects a 105-second clock skew from HTTPS Date and sends no signature", async () => {

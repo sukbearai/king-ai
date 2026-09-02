@@ -4,6 +4,11 @@ import { loadTradeConfig, telegramFromConfig } from "./config.js";
 export const TG_MAX_LEN = 4000;
 export const MAX_TELEGRAM_CHUNKS = 10;
 
+export interface TelegramSingleSendResult {
+  outcome: "sent" | "failed" | "unknown";
+  errorCategory?: string;
+}
+
 export function chunkTelegramMessage(text: string, maxLen = TG_MAX_LEN): string[] {
   if (text.length <= maxLen) return [text];
 
@@ -78,6 +83,42 @@ async function sendChunk(botToken: string, chatId: string, text: string): Promis
     }
   }
   return false;
+}
+
+export async function sendTelegramSingle(
+  text: string,
+  config: TradeConfig,
+  options: { signal?: AbortSignal; timeoutMs?: number } = {},
+): Promise<TelegramSingleSendResult> {
+  if (text.length > TG_MAX_LEN) {
+    return { outcome: "failed", errorCategory: "telegram_message_oversized" };
+  }
+  const { botToken, chatId } = telegramFromConfig(config);
+  if (!botToken || !chatId) {
+    return { outcome: "failed", errorCategory: "telegram_credentials_missing" };
+  }
+  if (options.signal?.aborted) {
+    return { outcome: "unknown", errorCategory: "telegram_aborted_unknown" };
+  }
+
+  const timeoutMs = Math.min(60_000, Math.max(1_000, Math.trunc(options.timeoutMs ?? 15_000)));
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const signal = options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ chat_id: chatId, text }),
+      signal,
+    });
+    if (response.ok) return { outcome: "sent" };
+    return { outcome: "failed", errorCategory: `telegram_http_${response.status}` };
+  } catch {
+    return {
+      outcome: "unknown",
+      errorCategory: options.signal?.aborted ? "telegram_aborted_unknown" : "telegram_transport_unknown",
+    };
+  }
 }
 
 export async function sendTelegram(text: string, config?: TradeConfig): Promise<boolean> {
