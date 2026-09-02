@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import {
+  BUILTIN_ROBINHOOD_ACCOUNTS,
   BUILTIN_ROBINHOOD_PROTOCOLS,
   RobinhoodPhase1Store,
   collectRobinhoodPhase1,
@@ -98,6 +99,35 @@ describe("Robinhood Chain Phase 1", () => {
     assert.equal(resolveRobinhoodPhase1Config(config({ backfill_collect_seconds: 1 })).backfillCollectSeconds, 30);
     assert.equal(resolved.stablePoolDiscoveryBackfillBlocks, 1_000_000);
     assert.equal(resolved.xEnabled, true);
+    assert.equal(defaults.xMaxAccounts, BUILTIN_ROBINHOOD_ACCOUNTS.length);
+    assert.deepEqual(defaults.xAccounts.slice(0, 6), [
+      "vladtenev",
+      "BaijuBhatt",
+      "JohannKerbrat",
+      "fern",
+      "abhishekf96",
+      "GrantBradford",
+    ]);
+    for (const handle of [
+      "23XIRacing",
+      "yeon_",
+      "kenjidgn",
+      "PhilOnChai",
+      "Wolves_Techml",
+      "GuarEmperor",
+      "KookCapitalLLC",
+      "Cyril_Cryptt",
+      "cypherpunkgod",
+      "theunipcs",
+      "CryptoKaleo",
+      "blknoiz06",
+      "Mrbankstips",
+      "eliz883",
+      "Arnold__AI",
+      "FloorWatchRH",
+    ]) {
+      assert.ok(defaults.xAccounts.includes(handle), `missing default Robinhood X account: ${handle}`);
+    }
     assert.equal(resolveRobinhoodPhase1Config(config({ x_enabled: false })).xEnabled, false);
     assert.equal(
       resolveRobinhoodPhase1Config(config({ stable_pool_discovery_backfill_blocks: 9_999 }))

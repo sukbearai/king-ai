@@ -249,7 +249,12 @@ king-ai trade collect-robinhood-phase1
 `x_collect_seconds`（默认 300 秒）调度它。它会直接搜索配置的 Tier A/B/C 账号，而不是假设主页时间线一定
 覆盖这些账号；系统只保存有界的推文证据和账号健康状态（`ok`、`no_results`、`auth_required`、`challenge`、
 `unknown` 或 `error`），X 内容本身不能创建链上趋势信号。可用 `king-ai trade collect-robinhood-x` 手动执行
-一次账号采集。
+一次账号采集。默认注册表会优先监控用户提供的 Robinhood 管理层/产品与早期 Alpha 名单：`vladtenev`、
+`BaijuBhatt`、`JohannKerbrat`、`fern`、`abhishekf96`、`GrantBradford`、`23XIRacing`、`yeon_`、
+`kenjidgn`、`PhilOnChai`、`Wolves_Techml`、`GuarEmperor`、`KookCapitalLLC`、`Cyril_Cryptt`、
+`cypherpunkgod`、`theunipcs`、`CryptoKaleo`、`blknoiz06`、`Mrbankstips`、`eliz883`、`Arnold__AI` 和
+`FloorWatchRH`，随后再采集原有官方与基础设施账号。当前采集器读取账号发帖搜索结果，不宣称覆盖关注或
+点赞动作。
 
 显式设置 `phase1.discovery_source="gmgn"` 可启用以 GMGN 为主源的 token 趋势路径。该模式只要求
 `GMGN_API_KEY`；运行时不读取 `GMGN_PRIVATE_KEY`，不签名钱包载荷，也不具备 swap、订单或投递能力。每个到期

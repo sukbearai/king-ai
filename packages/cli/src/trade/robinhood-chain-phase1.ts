@@ -120,10 +120,30 @@ export const BUILTIN_ROBINHOOD_PROTOCOLS: RobinhoodProtocolDefinition[] = [
 ];
 
 export const BUILTIN_ROBINHOOD_ACCOUNTS = [
+  { handle: "vladtenev", tier: "A", category: "leadership" },
+  { handle: "BaijuBhatt", tier: "A", category: "leadership" },
+  { handle: "JohannKerbrat", tier: "A", category: "leadership" },
+  { handle: "fern", tier: "A", category: "product" },
+  { handle: "abhishekf96", tier: "A", category: "leadership" },
+  { handle: "GrantBradford", tier: "A", category: "leadership" },
+  { handle: "23XIRacing", tier: "B", category: "sponsor" },
+  { handle: "yeon_", tier: "B", category: "early-alpha" },
+  { handle: "kenjidgn", tier: "B", category: "early-alpha" },
+  { handle: "PhilOnChai", tier: "B", category: "early-alpha" },
+  { handle: "Wolves_Techml", tier: "B", category: "early-alpha" },
+  { handle: "GuarEmperor", tier: "B", category: "early-alpha" },
+  { handle: "KookCapitalLLC", tier: "B", category: "early-alpha" },
+  { handle: "Cyril_Cryptt", tier: "B", category: "early-alpha" },
+  { handle: "cypherpunkgod", tier: "B", category: "early-alpha" },
+  { handle: "theunipcs", tier: "B", category: "amplifier" },
+  { handle: "CryptoKaleo", tier: "B", category: "amplifier" },
+  { handle: "blknoiz06", tier: "B", category: "amplifier" },
+  { handle: "Mrbankstips", tier: "B", category: "amplifier" },
+  { handle: "eliz883", tier: "B", category: "amplifier" },
+  { handle: "Arnold__AI", tier: "B", category: "analytics" },
+  { handle: "FloorWatchRH", tier: "B", category: "analytics" },
   { handle: "RobinhoodCrypto", tier: "A", category: "official" },
   { handle: "RobinhoodApp", tier: "A", category: "official" },
-  { handle: "JohannKerbrat", tier: "A", category: "official" },
-  { handle: "vladtenev", tier: "A", category: "official" },
   { handle: "Uniswap", tier: "B", category: "infrastructure" },
   { handle: "Morpho", tier: "B", category: "infrastructure" },
   { handle: "LayerZero_Core", tier: "B", category: "infrastructure" },
@@ -136,6 +156,14 @@ export const BUILTIN_ROBINHOOD_ACCOUNTS = [
   { handle: "OrvexFi", tier: "C", category: "venue" },
   { handle: "arcus_xyz", tier: "C", category: "venue" },
 ] as const;
+
+function accountVerificationSource(account: (typeof BUILTIN_ROBINHOOD_ACCOUNTS)[number]): string {
+  if (account.category === "official") return "Robinhood public identity";
+  if (account.category === "infrastructure" || account.category === "venue") {
+    return "project metadata research snapshot 2026-08-31";
+  }
+  return "user-provided Robinhood watchlist 2026-09-02; identity unverified";
+}
 
 export interface RobinhoodPhase1Config {
   enabled: boolean;
@@ -330,7 +358,7 @@ export function resolveRobinhoodPhase1Config(config: TradeConfig): RobinhoodPhas
     xEnabled: raw.x_enabled !== false,
     xCollectSeconds: boundedInt(raw.x_collect_seconds, 300, 300, 86400),
     xFetchLimit: boundedInt(raw.x_fetch_limit, 5, 1, 20),
-    xMaxAccounts: boundedInt(raw.x_max_accounts, 15, 1, 50),
+    xMaxAccounts: boundedInt(raw.x_max_accounts, BUILTIN_ROBINHOOD_ACCOUNTS.length, 1, 50),
     xAccounts: xAccounts.length ? xAccounts : BUILTIN_ROBINHOOD_ACCOUNTS.map((account) => account.handle),
     backfillCollectSeconds: boundedInt(raw.backfill_collect_seconds, 300, 30, 3600),
   };
@@ -642,7 +670,7 @@ export class RobinhoodPhase1Store {
         account.tier,
         account.category,
         `https://x.com/${account.handle}`,
-        account.tier === "A" ? "Robinhood public identity" : "project metadata research snapshot 2026-08-31",
+        accountVerificationSource(account),
         now,
       );
     }

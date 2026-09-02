@@ -85,11 +85,16 @@ The existing collector observes the authenticated home timeline and is not a com
 
 Initial account tiers:
 
-- Tier A, official Robinhood: `RobinhoodCrypto`, `RobinhoodApp`, `JohannKerbrat`, `vladtenev`.
+- Tier A, user-provided leadership/product watchlist entries plus official accounts: `vladtenev`, `BaijuBhatt`,
+  `JohannKerbrat`, `fern`, `abhishekf96`, `GrantBradford`, `RobinhoodCrypto`, and `RobinhoodApp`.
+- Tier B, explicitly monitored sponsor, early-alpha, amplification, and analytics accounts: `23XIRacing`, `yeon_`,
+  `kenjidgn`, `PhilOnChai`, `Wolves_Techml`, `GuarEmperor`, `KookCapitalLLC`, `Cyril_Cryptt`, `cypherpunkgod`,
+  `theunipcs`, `CryptoKaleo`, `blknoiz06`, `Mrbankstips`, `eliz883`, `Arnold__AI`, and `FloorWatchRH`.
 - Tier B, verified core infrastructure: `Uniswap`, `Morpho`, `LayerZero`, `Lighter_xyz`, `Paxos` and Chainlink-related official accounts.
 - Tier C, active venue/project candidates from the research snapshot: `fablesfi`, `alandalexyz`, `giga_dex`, `OrvexFi`, `josephdelong`, `arcus_xyz` and other projects only after handle/domain verification.
 
 Handles are configuration, not truth. Each account requires an identity record containing canonical URL, verification source, last successful search time, and challenge/login status. A candidate X post can enrich a chain signal, but cannot create one by itself. The collector must report `login_required`, `challenge`, `no_results`, `unknown`, and `error` distinctly.
+Account search covers authored posts only; follow and like actions require a separate proven source and are not inferred.
 
 ## Storage and audit contract
 

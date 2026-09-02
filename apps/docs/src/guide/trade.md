@@ -265,7 +265,13 @@ The explicit X registry is enabled by default when Phase 1 is enabled; set `phas
 The shadow sidecar schedules it every `x_collect_seconds` (default 300 seconds). It searches configured Tier
 A/B/C accounts directly rather than assuming that the home timeline covers them, stores bounded post evidence and
 per-account health (`ok`, `no_results`, `auth_required`, `challenge`, `unknown`, or `error`), and never creates a
-chain trend by itself. Run one account pass with `king-ai trade collect-robinhood-x`.
+chain trend by itself. The default registry prioritizes the user-supplied Robinhood leadership/product and
+early-alpha watchlist
+(`vladtenev`, `BaijuBhatt`, `JohannKerbrat`, `fern`, `abhishekf96`, `GrantBradford`, `23XIRacing`, `yeon_`,
+`kenjidgn`, `PhilOnChai`, `Wolves_Techml`, `GuarEmperor`, `KookCapitalLLC`, `Cyril_Cryptt`, `cypherpunkgod`,
+`theunipcs`, `CryptoKaleo`, `blknoiz06`, `Mrbankstips`, `eliz883`, `Arnold__AI`, and `FloorWatchRH`) before the
+existing official and infrastructure accounts. This collector reads account-authored search results; it does not
+claim coverage of follows or likes. Run one account pass with `king-ai trade collect-robinhood-x`.
 
 Set `phase1.discovery_source="gmgn"` explicitly to use the GMGN-primary token trend path. This mode requires only
 `GMGN_API_KEY`; the runtime does not read `GMGN_PRIVATE_KEY`, does not sign wallet payloads, and does not expose
